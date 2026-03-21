@@ -55,9 +55,12 @@ router.post("/login", authLimiter, async (req, res) => {
   try {
     const result = await db.query("SELECT * FROM users WHERE email=$1", [email]);
     const user = result.rows[0];
-    if (!user) return res.status(401).json({ error: "invalid" });
+    if (!user) return res.status(401).json({ error: "Invalid email or password" });
+    if (!user.password_hash) {
+      return res.status(401).json({ error: `This account uses ${user.provider || "OAuth"} login. Please sign in with ${user.provider || "your OAuth provider"} instead.` });
+    }
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: "invalid" });
+    if (!ok) return res.status(401).json({ error: "Invalid email or password" });
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -117,10 +120,57 @@ router.patch("/password", authenticateToken, async (req, res) => {
 router.get("/me", authenticateToken, async (req, res) => {
   try {
     const result = await db.query(
-      "SELECT id, email, name, role, provider, created_at FROM users WHERE id = $1",
+      "SELECT id, email, name, role, provider, avatar, created_at FROM users WHERE id = $1",
       [req.user.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: "User not found" });
+    res.json(result.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch("/profile", authenticateToken, async (req, res) => {
+  try {
+    const { name, avatar } = req.body;
+    const updates = [];
+    const values = [];
+    let idx = 1;
+
+    if (name !== undefined) {
+      if (typeof name !== "string" || name.trim().length < 1 || name.trim().length > 100) {
+        return res.status(400).json({ error: "Name must be 1-100 characters" });
+      }
+      updates.push(`name = $${idx++}`);
+      values.push(name.trim());
+    }
+
+    if (avatar !== undefined) {
+      if (avatar === null) {
+        // Allow removing avatar
+        updates.push(`avatar = $${idx++}`);
+        values.push(null);
+      } else if (typeof avatar === "string" && avatar.startsWith("data:image/")) {
+        // Max ~500KB base64 (roughly 375KB image)
+        if (avatar.length > 500000) {
+          return res.status(400).json({ error: "Image too large. Max 500KB." });
+        }
+        updates.push(`avatar = $${idx++}`);
+        values.push(avatar);
+      } else {
+        return res.status(400).json({ error: "Invalid avatar format" });
+      }
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: "No fields to update" });
+    }
+
+    values.push(req.user.id);
+    const result = await db.query(
+      `UPDATE users SET ${updates.join(", ")} WHERE id = $${idx} RETURNING name, avatar`,
+      values
+    );
     res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });

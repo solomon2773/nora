@@ -204,6 +204,7 @@ async function migrateDB() {
     `CREATE INDEX IF NOT EXISTS idx_usage_metrics_agent ON usage_metrics(agent_id, recorded_at)`,
     `CREATE INDEX IF NOT EXISTS idx_usage_metrics_user ON usage_metrics(user_id, recorded_at)`,
     `CREATE INDEX IF NOT EXISTS idx_usage_metrics_type ON usage_metrics(metric_type, recorded_at)`,
+    `DO $$ BEGIN ALTER TABLE users ADD COLUMN avatar TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
   ];
 
   for (const sql of migrations) {
@@ -226,6 +227,25 @@ if (require.main === module) {
     console.log(`api running on ${PORT}`);
 
     try { await migrateDB(); } catch (e) { console.error("DB migration error:", e.message); }
+
+    // Seed default admin account on first boot
+    try {
+      const { rows } = await db.query("SELECT id FROM users LIMIT 1");
+      if (rows.length === 0) {
+        const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || "admin@nora.local";
+        const adminPass = process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
+        const bcrypt = require("bcryptjs");
+        const hash = await bcrypt.hash(adminPass, 10);
+        await db.query(
+          "INSERT INTO users(email, password_hash, role, name) VALUES($1, $2, 'admin', 'Admin') ON CONFLICT DO NOTHING",
+          [adminEmail, hash]
+        );
+        console.log(`Default admin account created: ${adminEmail}`);
+        if (adminPass === "admin123") {
+          console.warn("WARNING: Using default admin password. Change it immediately in Settings or set DEFAULT_ADMIN_PASSWORD in .env");
+        }
+      }
+    } catch (e) { console.error("Failed to seed admin account:", e.message); }
 
     try { await integrations.seedCatalog(); } catch (e) { console.error("Failed to seed integration catalog:", e.message); }
 

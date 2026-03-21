@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Lock, Mail, Zap, Loader2 } from "lucide-react";
 import { signIn } from "next-auth/react";
@@ -9,11 +9,33 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState("");
+  const [error, setError] = useState("");
   const toast = useToast();
+
+  // If already logged in, redirect to dashboard
+  useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (token) {
+      // Verify the token is still valid
+      fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } })
+        .then((res) => {
+          if (res.ok) {
+            window.location.href = "/app/dashboard";
+          } else {
+            // Token is expired/invalid — clear it
+            localStorage.removeItem("token");
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem("token");
+        });
+    }
+  }, []);
 
   async function handleLogin(e) {
     e.preventDefault();
     setLoading(true);
+    setError("");
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -21,15 +43,15 @@ export default function Login() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
-      if (res.ok) {
+      if (res.ok && data.token) {
         localStorage.setItem("token", data.token);
         window.location.href = "/app/dashboard";
       } else {
-        toast.error("Login failed: " + data.error);
+        setError(data.error || "Login failed");
       }
     } catch (err) {
       console.error(err);
-      toast.error("An error occurred during login.");
+      setError("An error occurred. Please try again.");
     }
     setLoading(false);
   }
@@ -111,7 +133,13 @@ export default function Login() {
             </div>
           </div>
 
-          <button 
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400 font-medium">
+              {error}
+            </div>
+          )}
+
+          <button
             type="submit"
             disabled={loading}
             className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 py-4 rounded-2xl font-black text-sm transition-all shadow-xl shadow-blue-500/20 active:scale-95 disabled:opacity-50"

@@ -71,11 +71,7 @@ export default function Topbar({ onMenuClick }) {
            
            {userMenuOpen && (
               <div className="absolute right-0 top-12 md:top-14 w-48 bg-white border border-slate-200 rounded-2xl shadow-xl p-2 z-[60] animate-in fade-in zoom-in-95 duration-200">
-                 <div className="flex items-center gap-3 p-3 text-slate-600 hover:bg-slate-50 rounded-xl transition-all text-sm font-medium cursor-pointer">
-                    <User size={16} />
-                    Profile
-                 </div>
-                 <div className="flex items-center gap-3 p-3 text-red-600 hover:bg-red-50 rounded-xl transition-all text-sm font-medium cursor-pointer" onClick={() => { localStorage.removeItem("token"); window.location.href = "/login"; }}>
+                 <div className="flex items-center gap-3 p-3 text-red-600 hover:bg-red-50 rounded-xl transition-all text-sm font-medium cursor-pointer" onClick={() => { localStorage.removeItem("token"); fetch("/api/auth/signout", { method: "POST" }).catch(() => {}); window.location.href = "/login"; }}>
                     <LogOut size={16} />
                     Log Out
                  </div>

@@ -166,6 +166,25 @@ case "$backend_answer" in
     ;;
 esac
 
+# ── Default Admin Account ─────────────────────────────────────
+
+header "Default Admin Account"
+
+printf "  This account is created on first boot so you can log in immediately.\n\n"
+printf "  Admin email [admin@nora.local]: "
+read -r admin_email_input
+DEFAULT_ADMIN_EMAIL="${admin_email_input:-admin@nora.local}"
+
+printf "  Admin password [admin123]: "
+read -r admin_pass_input
+DEFAULT_ADMIN_PASSWORD="${admin_pass_input:-admin123}"
+
+if [ "$DEFAULT_ADMIN_PASSWORD" = "admin123" ]; then
+  warn "Using default password 'admin123' — change it after first login"
+else
+  ok "Admin account: $DEFAULT_ADMIN_EMAIL (custom password)"
+fi
+
 # ── NemoClaw / NVIDIA ────────────────────────────────────────
 
 header "NemoClaw (Optional)"
@@ -245,6 +264,10 @@ cat > "$ENV_FILE" <<EOF
 JWT_SECRET=${JWT_SECRET}
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
+# ── Default Admin Account (created on first boot) ────────────
+DEFAULT_ADMIN_EMAIL=${DEFAULT_ADMIN_EMAIL}
+DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
+
 # ── Database (defaults work with Docker Compose) ─────────────
 DB_HOST=postgres
 DB_USER=platform
@@ -319,6 +342,8 @@ echo ""
 echo "┌────────────────────────────────────────────────────────┐"
 echo "│                  Nora — Setup Complete                  │"
 echo "├────────────────────────────────────────────────────────┤"
+printf "│  Admin:        %s\n" "$DEFAULT_ADMIN_EMAIL"
+printf "│  Password:     %s\n" "$(echo "$DEFAULT_ADMIN_PASSWORD" | sed 's/./*/g')"
 printf "│  Secrets:      auto-generated (JWT, AES, NextAuth)    │\n"
 printf "│  Database:     PostgreSQL 15 (Docker Compose)         │\n"
 printf "│  Redis:        Redis 7 (Docker Compose)               │\n"
@@ -356,7 +381,8 @@ echo "│                                                        │"
 echo "│  Next steps:                                           │"
 echo "│    1. docker compose up -d                             │"
 echo "│    2. open http://localhost:8080                        │"
-echo "│    3. Sign up and deploy your first agent              │"
+printf "│    3. Log in with: %-36s │\n" "$DEFAULT_ADMIN_EMAIL"
+echo "│    4. Deploy your first agent                          │"
 echo "│                                                        │"
 echo "│  Useful commands:                                      │"
 echo "│    docker compose logs -f          # watch all logs    │"

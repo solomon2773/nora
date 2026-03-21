@@ -232,7 +232,7 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
               className="px-3 py-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-1 disabled:opacity-50"
             >
               {saving ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
-              Sync to Agents
+              Sync to All Agents
             </button>
           </div>
           <div className="space-y-2">

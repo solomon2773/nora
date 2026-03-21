@@ -82,8 +82,9 @@ The script will:
 2. Auto-generate cryptographic secrets (JWT, AES-256-GCM, NextAuth)
 3. Ask you to choose platform mode (self-hosted or PaaS)
 4. Ask you to choose provisioner backend (Docker, Proxmox, or Kubernetes)
-5. Optionally configure NemoClaw (NVIDIA sandbox) and OAuth (Google/GitHub)
-6. Write `.env` and offer to start the platform
+5. Set up a default admin account (email + password for first login)
+6. Optionally configure NemoClaw (NVIDIA sandbox) and OAuth (Google/GitHub)
+7. Write `.env` and offer to start the platform
 
 ### Option B: Manual Setup
 
@@ -99,6 +100,10 @@ Edit `.env` with your secrets:
 # Required — generate with: openssl rand -hex 32
 JWT_SECRET=your-64-char-hex-key
 ENCRYPTION_KEY=your-64-char-hex-key
+
+# Default admin account (created on first boot)
+DEFAULT_ADMIN_EMAIL=admin@nora.local
+DEFAULT_ADMIN_PASSWORD=changeme           # change this!
 
 # Optional — OAuth (leave blank to disable)
 GOOGLE_CLIENT_ID=
@@ -132,12 +137,14 @@ Eight services come up automatically: Nginx, two frontends, backend API, worker,
 
 ### Deploy your first agent
 
-1. Go to [Deploy](http://localhost:8080/app/deploy)
-2. Enter an agent name
-3. Click **Deploy**
+1. Log in with your admin account (default: `admin@nora.local` / `admin123`)
+2. Go to [Deploy](http://localhost:8080/app/deploy)
+3. Enter an agent name and click **Deploy**
 4. Go to **Settings** > add your LLM API key (e.g., Google AI, OpenAI, Anthropic)
 5. Click **Sync to Agent**
 6. Open the **Chat** tab and start talking to your agent
+
+> **Note:** Change the default admin password after first login. You can also create additional accounts from the signup page.
 
 ---
 
@@ -188,7 +195,6 @@ Use the Cron sub-panel to schedule recurring prompts with standard cron syntax. 
                         └── OpenClaw Gateway (WS-RPC :18789 per agent)
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical breakdown including data flows, database schema, module inventory, and file map.
 
 ---
 
