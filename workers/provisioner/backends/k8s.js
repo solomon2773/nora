@@ -102,6 +102,13 @@ class K8sBackend extends ProvisionerBackend {
             },
           },
           spec: {
+            // DNS-safe hostname from agent name (avoids Bonjour conflicts)
+            hostname: (name || `agent-${id}`)
+              .toLowerCase()
+              .replace(/[^a-z0-9-]/g, '-')
+              .replace(/-+/g, '-')
+              .replace(/^-|-$/g, '')
+              .slice(0, 63) || `agent-${id}`,
             containers: [
               {
                 name: "agent",

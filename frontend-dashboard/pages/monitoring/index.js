@@ -1,5 +1,5 @@
 import Layout from "../../components/layout/Layout";
-import { Activity, Zap, Cpu, HardDrive, LayoutDashboard, Globe, AlertCircle, CheckCircle2, Loader2, RefreshCw } from "lucide-react";
+import { Activity, Zap, Cpu, HardDrive, LayoutDashboard, Globe, AlertCircle, CheckCircle2, Loader2, RefreshCw, BarChart3 } from "lucide-react";
 import { clsx } from "clsx";
 import { useState, useEffect, useCallback } from "react";
 import { fetchWithAuth } from "../../lib/api";
@@ -7,16 +7,19 @@ import { fetchWithAuth } from "../../lib/api";
 export default function Monitoring() {
   const [metrics, setMetrics] = useState(null);
   const [events, setEvents] = useState([]);
+  const [perfMetrics, setPerfMetrics] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     try {
-      const [metricsRes, eventsRes] = await Promise.all([
+      const [metricsRes, eventsRes, perfRes] = await Promise.all([
         fetchWithAuth("/api/monitoring/metrics"),
         fetchWithAuth("/api/monitoring/events?limit=20"),
+        fetchWithAuth("/api/monitoring/performance"),
       ]);
       if (metricsRes.ok) setMetrics(await metricsRes.json());
       if (eventsRes.ok) setEvents(await eventsRes.json());
+      if (perfRes.ok) setPerfMetrics(await perfRes.json());
     } catch (err) {
       console.error(err);
     }
@@ -128,6 +131,41 @@ export default function Monitoring() {
                 </div>
               </div>
             </div>
+
+            {/* API Performance */}
+            {perfMetrics.length > 0 && (
+              <div className="flex flex-col gap-6">
+                <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                  <BarChart3 size={20} className="text-purple-600" /> API Performance (24h)
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {(() => {
+                    const latest = perfMetrics[perfMetrics.length - 1];
+                    const meta = typeof latest.metadata === 'string' ? JSON.parse(latest.metadata) : latest.metadata;
+                    const totalReqs = perfMetrics.reduce((s, p) => s + parseFloat(p.value), 0);
+                    const avgLatency = perfMetrics.reduce((s, p) => {
+                      const m = typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata;
+                      return s + (m.avgLatencyMs || 0);
+                    }, 0) / perfMetrics.length;
+                    const totalErrors = perfMetrics.reduce((s, p) => {
+                      const m = typeof p.metadata === 'string' ? JSON.parse(p.metadata) : p.metadata;
+                      return s + (m.errorCount || 0);
+                    }, 0);
+
+                    return [
+                      { label: "Total Requests", value: totalReqs, color: "text-blue-600" },
+                      { label: "Avg Latency", value: `${avgLatency.toFixed(1)}ms`, color: "text-emerald-600" },
+                      { label: "Server Errors", value: totalErrors, color: totalErrors > 0 ? "text-red-600" : "text-emerald-600" },
+                    ].map(s => (
+                      <div key={s.label} className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
+                        <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">{s.label}</p>
+                        <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

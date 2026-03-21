@@ -252,9 +252,18 @@ class NemoClawBackend extends ProvisionerBackend {
       networkingConfig[composeNetwork] = {};
     }
 
+    // DNS-safe hostname from agent name (avoids Bonjour conflicts across containers)
+    const safeHostname = (name || containerName)
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 63) || `nemoclaw-${id}`;
+
     const container = await this.docker.createContainer({
       Image: SANDBOX_IMAGE,
       name: containerName,
+      Hostname: safeHostname,
       Env: envArray,
       Cmd: startCmd,
       WorkingDir: "/sandbox",

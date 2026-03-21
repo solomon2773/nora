@@ -192,7 +192,11 @@ export default function CronPanel({ agentId }) {
                   <Clock size={14} className="text-slate-400 shrink-0" />
                   <div>
                     <p className="text-sm font-bold text-slate-700">{job.name || "Unnamed"}</p>
-                    <p className="text-xs font-mono text-blue-500">{job.schedule}</p>
+                    <p className="text-xs font-mono text-blue-500">
+                      {typeof job.schedule === "object"
+                        ? (job.schedule.expr || job.schedule.cron || job.schedule.interval || JSON.stringify(job.schedule))
+                        : job.schedule}
+                    </p>
                     {jobMsg && (
                       <p className="text-[10px] text-slate-400 mt-0.5 max-w-xs truncate">{jobMsg}</p>
                     )}

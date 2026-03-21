@@ -21,7 +21,7 @@ const subTabs = [
 export default function OpenClawTab({ agentId, agentStatus }) {
   const [activeSubTab, setActiveSubTab] = useState("status");
 
-  if (agentStatus !== "running") {
+  if (agentStatus !== "running" && agentStatus !== "warning") {
     return (
       <div className="bg-slate-50 border border-slate-200 rounded-2xl p-12 flex flex-col items-center justify-center gap-3">
         <Radio size={32} className="text-slate-400" />

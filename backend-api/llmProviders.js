@@ -8,7 +8,7 @@ const { encrypt, decrypt } = require("./crypto");
 const PROVIDERS = [
   { id: "anthropic", name: "Anthropic", envVar: "ANTHROPIC_API_KEY", models: ["claude-opus-4-6", "claude-sonnet-4-5"] },
   { id: "openai", name: "OpenAI", envVar: "OPENAI_API_KEY", models: ["gpt-5.4", "gpt-5.4-pro"] },
-  { id: "google", name: "Google AI", envVar: "GEMINI_API_KEY", models: ["gemini-3.1-pro-preview", "gemini-3-flash-preview"] },
+  { id: "google", name: "Google AI", envVar: "GEMINI_API_KEY", endpoint: "https://generativelanguage.googleapis.com/v1beta", models: ["gemini-3.1-pro-preview", "gemini-3-flash-preview"] },
   { id: "groq", name: "Groq", envVar: "GROQ_API_KEY", models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"] },
   { id: "mistral", name: "Mistral AI", envVar: "MISTRAL_API_KEY", models: ["mistral-large-latest"] },
   { id: "deepseek", name: "DeepSeek", envVar: "DEEPSEEK_API_KEY", models: ["deepseek-chat", "deepseek-reasoner"] },

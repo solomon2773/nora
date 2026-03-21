@@ -5,6 +5,214 @@ const { encrypt, decrypt } = require("./crypto");
 const path = require("path");
 const fs = require("fs");
 
+// ── Integration → Env Var Name Map ───────────────────────
+// Maps provider ID → the env var for the primary credential (the access_token column).
+// The access_token column stores the first password+required configField per provider.
+const INTEGRATION_ENV_MAP = {
+  huggingface:          'HF_TOKEN',
+  github:               'GITHUB_TOKEN',
+  gitlab:               'GITLAB_TOKEN',
+  slack:                'SLACK_TOKEN',
+  discord:              'DISCORD_TOKEN',
+  notion:               'NOTION_TOKEN',
+  linear:               'LINEAR_API_KEY',
+  datadog:              'DD_API_KEY',
+  sentry:               'SENTRY_AUTH_TOKEN',
+  sendgrid:             'SENDGRID_API_KEY',
+  openai:               'OPENAI_API_KEY',
+  anthropic:            'ANTHROPIC_API_KEY',
+  airtable:             'AIRTABLE_API_KEY',
+  asana:                'ASANA_TOKEN',
+  stripe:               'STRIPE_SECRET_KEY',
+  hubspot:              'HUBSPOT_ACCESS_TOKEN',
+  pipedrive:            'PIPEDRIVE_API_KEY',
+  pinecone:             'PINECONE_API_KEY',
+  vercel:               'VERCEL_TOKEN',
+  circleci:             'CIRCLE_TOKEN',
+  terraform:            'TFE_TOKEN',
+  pagerduty:            'PAGERDUTY_TOKEN',
+  dropbox:              'DROPBOX_ACCESS_TOKEN',
+  twilio:               'TWILIO_AUTH_TOKEN',
+  shopify:              'SHOPIFY_ACCESS_TOKEN',
+  linkedin:             'LINKEDIN_ACCESS_TOKEN',
+  salesforce:           'SALESFORCE_ACCESS_TOKEN',
+  twitter:              'TWITTER_BEARER_TOKEN',
+  digitalocean:         'DIGITALOCEAN_TOKEN',
+  algolia:              'ALGOLIA_API_KEY',
+  clickup:              'CLICKUP_API_KEY',
+  monday:               'MONDAY_API_KEY',
+  zendesk:              'ZENDESK_API_TOKEN',
+  'docker-hub':         'DOCKER_HUB_TOKEN',
+  bitbucket:            'BITBUCKET_TOKEN',
+  confluence:           'CONFLUENCE_TOKEN',
+  jira:                 'JIRA_API_TOKEN',
+  jenkins:              'JENKINS_TOKEN',
+  grafana:              'GRAFANA_TOKEN',
+  woocommerce:          'WOOCOMMERCE_SECRET_KEY',
+  trello:               'TRELLO_TOKEN',
+  elasticsearch:        'ELASTICSEARCH_PASSWORD',
+  supabase:             'SUPABASE_SERVICE_ROLE_KEY',
+  facebook:             'FACEBOOK_ACCESS_TOKEN',
+  // Cloud / infra
+  aws:                  'AWS_SECRET_ACCESS_KEY',
+  azure:                'AZURE_CLIENT_SECRET',
+  s3:                   'S3_SECRET_ACCESS_KEY',
+  // Databases
+  mongodb:              'MONGODB_URI',
+  redis:                'REDIS_PASSWORD',
+  postgresql:           'PGPASSWORD',
+  // Payments
+  paypal:               'PAYPAL_CLIENT_SECRET',
+  // Analytics / automation
+  segment:              'SEGMENT_WRITE_KEY',
+  mixpanel:             'MIXPANEL_API_SECRET',
+  // Vector DBs
+  weaviate:             'WEAVIATE_API_KEY',
+  // Communication
+  email:                'SMTP_PASS',
+  // Automation webhooks — these have no token; webhook_url is in config
+  // (handled via INTEGRATION_CONFIG_ENV_MAP below)
+};
+
+// ── Integration Config Field → Env Var Map ────────────────
+// Maps "provider.configFieldKey" → env var name for non-secret config fields
+// (and optional secondary secrets) that the agent needs alongside the primary token.
+const INTEGRATION_CONFIG_ENV_MAP = {
+  // Developer tools
+  'github.org':                       'GITHUB_ORG',
+  'gitlab.base_url':                  'GITLAB_BASE_URL',
+  'bitbucket.username':               'BITBUCKET_USERNAME',
+  'bitbucket.workspace':              'BITBUCKET_WORKSPACE',
+  'jira.email':                       'JIRA_EMAIL',
+  'jira.site_url':                    'JIRA_BASE_URL',
+  'jira.project_key':                 'JIRA_PROJECT_KEY',
+  'linear.team_id':                   'LINEAR_TEAM_ID',
+  // Communication
+  'slack.default_channel':            'SLACK_DEFAULT_CHANNEL',
+  'discord.guild_id':                 'DISCORD_GUILD_ID',
+  'teams.webhook_url':                'TEAMS_WEBHOOK_URL',
+  'email.smtp_host':                  'SMTP_HOST',
+  'email.smtp_port':                  'SMTP_PORT',
+  'email.smtp_user':                  'SMTP_USER',
+  'email.from_address':               'SMTP_FROM_ADDRESS',
+  'twilio.account_sid':               'TWILIO_ACCOUNT_SID',
+  'twilio.phone_number':              'TWILIO_PHONE_NUMBER',
+  'sendgrid.from_email':              'SENDGRID_FROM_EMAIL',
+  // AI / ML
+  'openai.org_id':                    'OPENAI_ORG_ID',
+  'huggingface.model_id':             'HF_DEFAULT_MODEL',
+  // Cloud
+  'aws.access_key_id':                'AWS_ACCESS_KEY_ID',
+  'aws.region':                       'AWS_DEFAULT_REGION',
+  'gcp.service_account_json':         'GOOGLE_APPLICATION_CREDENTIALS_JSON',
+  'gcp.project_id':                   'GCP_PROJECT_ID',
+  'azure.tenant_id':                  'AZURE_TENANT_ID',
+  'azure.client_id':                  'AZURE_CLIENT_ID',
+  // Storage
+  's3.access_key_id':                 'S3_ACCESS_KEY_ID',
+  's3.region':                        'S3_REGION',
+  's3.bucket':                        'S3_BUCKET',
+  'google-drive.service_account_json':'GOOGLE_DRIVE_SA_JSON',
+  'google-drive.folder_id':           'GOOGLE_DRIVE_FOLDER_ID',
+  // Databases
+  'postgresql.host':                  'PGHOST',
+  'postgresql.port':                  'PGPORT',
+  'postgresql.database':              'PGDATABASE',
+  'postgresql.user':                  'PGUSER',
+  'mongodb.database':                 'MONGODB_DATABASE',
+  'redis.host':                       'REDIS_HOST',
+  'redis.port':                       'REDIS_PORT',
+  'redis.password':                   'REDIS_PASSWORD',
+  'supabase.url':                     'SUPABASE_URL',
+  'firebase.service_account_json':    'FIREBASE_SA_JSON',
+  'firebase.database_url':            'FIREBASE_DATABASE_URL',
+  'elasticsearch.node_url':           'ELASTICSEARCH_URL',
+  'elasticsearch.username':           'ELASTICSEARCH_USERNAME',
+  'elasticsearch.password':           'ELASTICSEARCH_PASSWORD',
+  'elasticsearch.index':              'ELASTICSEARCH_INDEX',
+  'weaviate.host':                    'WEAVIATE_HOST',
+  'weaviate.api_key':                 'WEAVIATE_API_KEY',
+  // Search
+  'pinecone.environment':             'PINECONE_ENVIRONMENT',
+  'pinecone.index_name':              'PINECONE_INDEX',
+  'algolia.app_id':                   'ALGOLIA_APP_ID',
+  'algolia.index_name':               'ALGOLIA_INDEX',
+  // Monitoring
+  'datadog.app_key':                  'DD_APP_KEY',
+  'datadog.site':                     'DD_SITE',
+  'pagerduty.routing_key':            'PAGERDUTY_ROUTING_KEY',
+  'sentry.organization':              'SENTRY_ORG',
+  'sentry.project':                   'SENTRY_PROJECT',
+  'grafana.url':                      'GRAFANA_URL',
+  // DevOps
+  'jenkins.url':                      'JENKINS_URL',
+  'jenkins.username':                 'JENKINS_USERNAME',
+  'vercel.team_id':                   'VERCEL_TEAM_ID',
+  'terraform.organization':           'TF_ORGANIZATION',
+  'kubernetes.kubeconfig':            'KUBECONFIG_CONTENT',
+  'kubernetes.context':               'KUBE_CONTEXT',
+  // Productivity
+  'notion.workspace_id':              'NOTION_WORKSPACE_ID',
+  'airtable.base_id':                 'AIRTABLE_BASE_ID',
+  'trello.api_key':                   'TRELLO_API_KEY',
+  'trello.board_id':                  'TRELLO_BOARD_ID',
+  'clickup.workspace_id':             'CLICKUP_WORKSPACE_ID',
+  'confluence.base_url':              'CONFLUENCE_BASE_URL',
+  'confluence.email':                 'CONFLUENCE_EMAIL',
+  'google-sheets.service_account_json': 'GOOGLE_SHEETS_SA_JSON',
+  'google-sheets.spreadsheet_id':     'GOOGLE_SHEETS_SPREADSHEET_ID',
+  'google-calendar.service_account_json': 'GOOGLE_CALENDAR_SA_JSON',
+  'google-calendar.calendar_id':      'GOOGLE_CALENDAR_ID',
+  // CRM
+  'salesforce.instance_url':          'SALESFORCE_INSTANCE_URL',
+  'zendesk.subdomain':                'ZENDESK_SUBDOMAIN',
+  'zendesk.email':                    'ZENDESK_EMAIL',
+  'pipedrive.company_domain':         'PIPEDRIVE_DOMAIN',
+  // Payment
+  'paypal.client_id':                 'PAYPAL_CLIENT_ID',
+  'stripe.webhook_secret':            'STRIPE_WEBHOOK_SECRET',
+  // Social
+  'twitter.api_key':                  'TWITTER_API_KEY',
+  'twitter.api_secret':               'TWITTER_API_SECRET',
+  'facebook.page_id':                 'FACEBOOK_PAGE_ID',
+  // Analytics
+  'mixpanel.project_token':           'MIXPANEL_PROJECT_TOKEN',
+  'google-analytics.service_account_json': 'GOOGLE_ANALYTICS_SA_JSON',
+  'google-analytics.property_id':     'GA4_PROPERTY_ID',
+  // E-commerce
+  'shopify.shop_domain':              'SHOPIFY_SHOP_DOMAIN',
+  'woocommerce.site_url':             'WOOCOMMERCE_STORE_URL',
+  'woocommerce.consumer_key':         'WOOCOMMERCE_CONSUMER_KEY',
+  // Automation webhooks
+  'zapier.webhook_url':               'ZAPIER_WEBHOOK_URL',
+  'make.webhook_url':                 'MAKE_WEBHOOK_URL',
+  'n8n.webhook_url':                  'N8N_WEBHOOK_URL',
+  'n8n.api_key':                      'N8N_API_KEY',
+  // DevOps
+  'docker-hub.username':              'DOCKER_HUB_USERNAME',
+};
+
+// ── SSRF Protection ──────────────────────────────────────
+// Block user-supplied URLs from targeting internal/private network addresses.
+const PRIVATE_IP_RE = /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1|fc00:|fe80:)/i;
+
+function assertSafeUrl(rawUrl, label = "URL") {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`${label} is not a valid URL`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`${label} must use http or https`);
+  }
+  const host = parsed.hostname;
+  if (PRIVATE_IP_RE.test(host)) {
+    throw new Error(`${label} must not target internal or private network addresses`);
+  }
+  return parsed.origin; // return validated origin only (strips path/query)
+}
+
 // ── Catalog ──────────────────────────────────────────────
 
 let catalogCache = null;
@@ -155,7 +363,7 @@ async function testIntegration(integrationId, agentId) {
     },
     gitlab: async () => {
       const config = typeof integration.config === "string" ? JSON.parse(integration.config) : (integration.config || {});
-      const baseUrl = config.base_url || "https://gitlab.com";
+      const baseUrl = assertSafeUrl(config.base_url || "https://gitlab.com", "GitLab base URL");
       const res = await fetch(`${baseUrl}/api/v4/user`, {
         headers: { "PRIVATE-TOKEN": token },
       });
@@ -192,7 +400,8 @@ async function testIntegration(integrationId, agentId) {
       const config = typeof integration.config === "string" ? JSON.parse(integration.config) : (integration.config || {});
       const domain = config.site_url || config.domain || config.base_url;
       if (!domain) throw new Error("Jira site URL not configured");
-      const url = domain.includes("://") ? domain : `https://${domain}`;
+      const rawUrl = domain.includes("://") ? domain : `https://${domain}`;
+      const url = assertSafeUrl(rawUrl, "Jira site URL");
       const email = config.email;
       if (!email) throw new Error("Jira email not configured");
       const res = await fetch(`${url}/rest/api/3/myself`, {
@@ -585,6 +794,38 @@ async function getIntegrationsForSync(agentId) {
   }));
 }
 
+/**
+ * Return a plain object of { ENV_VAR_NAME: decryptedToken } for all active
+ * integrations on the given agent that have a known env var mapping.
+ * Used by the provisioner (bake into container at creation time) and by the
+ * integrations sync route (push live tokens into a running gateway via RPC).
+ */
+async function getIntegrationEnvVars(agentId) {
+  const result = await db.query(
+    "SELECT provider, access_token, config FROM integrations WHERE agent_id = $1 AND status = 'active'",
+    [agentId]
+  );
+  const envVars = {};
+  for (const row of result.rows) {
+    // 1. Primary credential stored in access_token column
+    const envName = INTEGRATION_ENV_MAP[row.provider];
+    if (envName && row.access_token) {
+      envVars[envName] = decrypt(row.access_token);
+    }
+
+    // 2. Additional config fields (URLs, usernames, IDs, secondary secrets)
+    const cfg = typeof row.config === 'string' ? JSON.parse(row.config) : (row.config || {});
+    for (const [cfgKey, cfgValue] of Object.entries(cfg)) {
+      if (!cfgValue) continue;
+      const cfgEnvName = INTEGRATION_CONFIG_ENV_MAP[`${row.provider}.${cfgKey}`];
+      if (cfgEnvName) {
+        envVars[cfgEnvName] = String(cfgValue);
+      }
+    }
+  }
+  return envVars;
+}
+
 module.exports = {
   seedCatalog,
   getCatalog,
@@ -594,4 +835,7 @@ module.exports = {
   removeIntegration,
   testIntegration,
   getIntegrationsForSync,
+  getIntegrationEnvVars,
+  INTEGRATION_ENV_MAP,
+  INTEGRATION_CONFIG_ENV_MAP,
 };

@@ -18,6 +18,7 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=development
+      - PLATFORM_MODE=${PLATFORM_MODE:-selfhosted}
     env_file: .env
 
   frontend-dashboard:
@@ -76,6 +77,12 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:4001/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   postgres:
     image: postgres:15

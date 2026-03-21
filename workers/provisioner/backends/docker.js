@@ -65,8 +65,8 @@ class DockerBackend extends ProvisionerBackend {
       // No existing container — expected path
     }
 
-    // Generate per-agent Gateway auth token
-    const gatewayToken = crypto.randomBytes(16).toString("hex");
+    // Generate per-agent Gateway auth token (32 bytes = 256 bits of entropy)
+    const gatewayToken = crypto.randomBytes(32).toString("hex");
 
     // Derive deterministic Ed25519 device identity from gatewayToken —
     // same derivation used by gatewayProxy.js so both sides share the keypair.
@@ -137,6 +137,10 @@ class DockerBackend extends ProvisionerBackend {
       CEREBRAS_API_KEY: "cerebras",
       NVIDIA_API_KEY: "nvidia",
     };
+    // Build auth-profiles at CREATION TIME to determine the default model for setModelCmd.
+    // This is only used for model selection — the actual auth-profiles.json on disk is
+    // written dynamically at startup via authProfilesCmd below, so it stays correct
+    // on every container restart without baking in stale or missing keys.
     const authProfiles = {};
     if (env) {
       for (const [envKey, provider] of Object.entries(llmKeyMap)) {
@@ -145,21 +149,66 @@ class DockerBackend extends ProvisionerBackend {
         }
       }
     }
-    const hasAuthProfiles = Object.keys(authProfiles).length > 0;
-    const authProfilesCmd = hasAuthProfiles
-      ? `mkdir -p /root/.openclaw/agents/main/agent && echo '${JSON.stringify(authProfiles).replace(/'/g, "'\\''")}' > /root/.openclaw/agents/main/agent/auth-profiles.json && `
+    // Dynamic auth-profiles builder: a node script (base64-encoded to avoid shell escaping)
+    // that reads the CURRENT container env vars at startup and writes auth-profiles.json.
+    // Because it reads env vars at runtime (not creation time), it is correct on every
+    // container restart — even after keys were injected post-creation via Docker exec sync.
+    const buildAuthScript =
+      `var m=${JSON.stringify(llmKeyMap)},p={};` +
+      `Object.entries(m).forEach(function(e){` +
+        `if(process.env[e[0]])p[e[1]]={apiKey:process.env[e[0]]};` +
+      `});` +
+      `require("fs").mkdirSync("/root/.openclaw/agents/main/agent",{recursive:true});` +
+      `require("fs").writeFileSync("/root/.openclaw/agents/main/agent/auth-profiles.json",JSON.stringify(p));`;
+    const buildAuthScriptB64 = Buffer.from(buildAuthScript).toString("base64");
+    // On first start: no auth-profiles.json exists → node script runs → writes from env vars.
+    // On restart after live sync: auth-profiles.json exists (written by Docker exec) →
+    //   script is skipped → gateway reads the exec-written file with up-to-date keys.
+    // On container recreate: file gone → script runs → writes from creation-time env vars.
+    const authProfilesCmd =
+      `mkdir -p /root/.openclaw/agents/main/agent && ` +
+      `printf '%s' '${buildAuthScriptB64}' | base64 -d > /tmp/_build_auth.js && ` +
+      `(test -f /root/.openclaw/agents/main/agent/auth-profiles.json || node /tmp/_build_auth.js) && `;
+
+    // Determine default model from the first auth profile provider
+    const providerModelDefaults = {
+      anthropic: "anthropic/claude-sonnet-4-5",
+      openai: "openai/gpt-5.4",
+      google: "google/gemini-3-flash-preview",
+      groq: "groq/llama-3.3-70b-versatile",
+      mistral: "mistral/mistral-large-latest",
+      deepseek: "deepseek/deepseek-chat",
+      cohere: "cohere/command-r-plus",
+      xai: "xai/grok-2",
+      nvidia: "nvidia/nemotron-3-super-120b-a12b",
+      moonshot: "moonshot/kimi-k2.5",
+      zai: "zai/glm-5",
+    };
+    const firstProvider = Object.keys(authProfiles)[0];
+    const defaultModel = firstProvider ? providerModelDefaults[firstProvider] : undefined;
+
+    // After gateway starts, set the model via CLI (runs in background after a delay).
+    // Validate defaultModel against the known hardcoded map to prevent injection.
+    // Uses a nested `sh -c '... &'` to background the model-set without the `&` breaking
+    // the outer && chain (bare `&` acts as a command separator, causing later commands
+    // to run unconditionally even if earlier steps like npm install failed).
+    const safeDefaultModel = defaultModel && /^[a-zA-Z0-9_\-/.]+$/.test(defaultModel) ? defaultModel : null;
+    const setModelCmd = safeDefaultModel
+      ? `sh -c 'sleep 10 && openclaw models set ${safeDefaultModel} 2>/dev/null &' && `
       : "";
 
-    // CMD: install openclaw, configure gateway + pre-approved pairing, write auth profiles, and start it
+    // CMD: install openclaw (only if not already present), configure gateway, write auth profiles, and start it.
+    // The `which openclaw` guard means restarts after a successful first boot skip the slow
+    // apt-get + npm install steps entirely, preventing crash loops when the npm registry is unreachable.
     const startCmd = [
       "sh", "-c",
-      'apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 && ' +
-      'npm install -g openclaw@latest 2>&1 && ' +
+      '(which openclaw > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 && npm install -g openclaw@latest 2>&1)) && ' +
       'mkdir -p ~/.openclaw/devices && ' +
       'echo \'' + JSON.stringify(JSON.parse('{"gateway":{"port":18789,"bind":"lan","mode":"local"}}')) + '\' > ~/.openclaw/openclaw.json && ' +
       "echo '" + pairedJson.replace(/'/g, "'\\''") + "' > ~/.openclaw/devices/paired.json && " +
       'echo \'{}\' > ~/.openclaw/devices/pending.json && ' +
       authProfilesCmd +
+      setModelCmd +
       `openclaw gateway --port 18789 --password ${gatewayToken}`
     ];
 
@@ -170,9 +219,20 @@ class DockerBackend extends ProvisionerBackend {
       networkingConfig[composeNetwork] = {};
     }
 
+    // Derive a DNS-safe hostname from the agent name (lowercase, alphanumeric + hyphens, max 63 chars).
+    // This controls the container's /etc/hostname and avoids Bonjour name-conflict warnings
+    // (e.g. "gateway hostname conflict resolved") when multiple agents run on the same host.
+    const safeHostname = (name || containerName)
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 63) || `agent-${id}`;
+
     const container = await this.docker.createContainer({
       Image: imgName,
       name: containerName,
+      Hostname: safeHostname,
       Env: envArray,
       Cmd: startCmd,
       WorkingDir: "/root",

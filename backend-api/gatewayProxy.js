@@ -7,6 +7,7 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const db = require("./db");
 
+const metrics = require("./metrics");
 const GATEWAY_PORT = 18789;
 const CONNECT_TIMEOUT = 8000;
 const CALL_TIMEOUT = 30000;
@@ -69,6 +70,18 @@ class GatewayConnection {
     this._reqId = 0;
     this._connectPromise = null;
     this._identity = deriveDeviceIdentity(token);
+
+    // Reconnection state
+    this._reconnectAttempts = 0;
+    this._maxReconnectAttempts = 8;
+    this._baseDelay = 1000; // 1s base, doubles each attempt (max ~2 min)
+
+    // Circuit breaker state
+    this._circuitState = 'closed'; // closed | open | half-open
+    this._circuitOpenedAt = 0;
+    this._circuitCooldown = 30000; // 30s before half-open probe
+    this._consecutiveFailures = 0;
+    this._circuitThreshold = 3; // failures before opening circuit
   }
 
   /** Open WS, complete challenge-response handshake, resolve when ready. */
@@ -143,6 +156,7 @@ class GatewayConnection {
       });
 
       this.ws.on("close", () => {
+        const wasConnected = this.connected;
         this.connected = false;
         this._connectPromise = null;
         // Reject all pending
@@ -151,6 +165,10 @@ class GatewayConnection {
           rej(new Error("Gateway connection closed"));
         }
         this.pending.clear();
+        // Attempt background reconnect if we were previously connected
+        if (wasConnected) {
+          this._scheduleBackgroundReconnect();
+        }
       });
     });
     return this._connectPromise;
@@ -182,6 +200,56 @@ class GatewayConnection {
     this.eventListeners.get(event)?.delete(callback);
   }
 
+  /** Attempt reconnection with exponential backoff, respecting circuit breaker. */
+  async reconnect() {
+    if (this._circuitState === 'open') {
+      if (Date.now() - this._circuitOpenedAt < this._circuitCooldown) {
+        throw new Error('Circuit breaker open — gateway temporarily unavailable');
+      }
+      this._circuitState = 'half-open';
+    }
+
+    if (this._reconnectAttempts >= this._maxReconnectAttempts) {
+      this._openCircuit();
+      throw new Error(`Max reconnect attempts (${this._maxReconnectAttempts}) exceeded`);
+    }
+
+    this.close();
+    const delay = Math.min(this._baseDelay * Math.pow(2, this._reconnectAttempts), 120000);
+    console.log(`[gatewayProxy] Reconnecting to ${this.host} in ${delay}ms (attempt ${this._reconnectAttempts + 1}/${this._maxReconnectAttempts})`);
+    await new Promise(r => setTimeout(r, delay));
+    this._reconnectAttempts++;
+
+    try {
+      await this.connect();
+      this._reconnectAttempts = 0;
+      this._consecutiveFailures = 0;
+      this._circuitState = 'closed';
+    } catch (err) {
+      this._consecutiveFailures++;
+      if (this._consecutiveFailures >= this._circuitThreshold) {
+        this._openCircuit();
+      }
+      throw err;
+    }
+  }
+
+  _openCircuit() {
+    this._circuitState = 'open';
+    this._circuitOpenedAt = Date.now();
+    console.warn(`[gatewayProxy] Circuit breaker OPEN for ${this.host} — cooling down ${this._circuitCooldown / 1000}s`);
+  }
+
+  /** Schedule a background reconnect attempt (non-blocking). */
+  _scheduleBackgroundReconnect() {
+    if (this._backgroundReconnecting) return;
+    this._backgroundReconnecting = true;
+    this.reconnect()
+      .then(() => console.log(`[gatewayProxy] Background reconnect succeeded for ${this.host}`))
+      .catch(() => {}) // silently fail — next getConnection() call will retry
+      .finally(() => { this._backgroundReconnecting = false; });
+  }
+
   close() {
     this.connected = false;
     this._connectPromise = null;
@@ -194,6 +262,10 @@ class GatewayConnection {
   get isAlive() {
     return this.connected && this.ws?.readyState === WebSocket.OPEN;
   }
+
+  get circuitState() {
+    return this._circuitState;
+  }
 }
 
 // Simple connection pool: one connection per agent host
@@ -204,12 +276,29 @@ async function getConnection(agent) {
   let conn = pool.get(key);
   if (conn?.isAlive) return conn;
 
+  // Check circuit breaker on existing connection before cleaning up
+  if (conn?.circuitState === 'open') {
+    if (Date.now() - conn._circuitOpenedAt < conn._circuitCooldown) {
+      throw new Error('Circuit breaker open — gateway temporarily unavailable');
+    }
+  }
+
   // Clean up dead connection
   if (conn) { conn.close(); pool.delete(key); }
 
   conn = new GatewayConnection(agent.host, agent.gateway_token);
   pool.set(key, conn);
-  await conn.connect();
+  try {
+    await conn.connect();
+  } catch (err) {
+    // First connect failed — try one reconnect with backoff
+    try {
+      await conn.reconnect();
+    } catch {
+      pool.delete(key);
+      throw err;
+    }
+  }
   return conn;
 }
 
@@ -243,11 +332,15 @@ function createGatewayRouter() {
   const router = require("express").Router();
 
   // Middleware: resolve agent + verify ownership
+  // Allow both 'running' and 'warning' statuses — 'warning' means the post-deploy
+  // health check was inconclusive (e.g. npm install was slow), but the gateway may
+  // still be reachable. Blocking 'warning' agents would break all tabs even when the
+  // gateway eventually starts successfully.
   router.use("/agents/:agentId/gateway", async (req, res, next) => {
     try {
       const agent = await resolveAgent(req.params.agentId, req.user.id);
       if (!agent) return res.status(404).json({ error: "Agent not found" });
-      if (agent.status !== "running") {
+      if (agent.status !== "running" && agent.status !== "warning") {
         return res.status(409).json({ error: `Agent is ${agent.status}, not running` });
       }
       if (!agent.host) {
@@ -267,6 +360,11 @@ function createGatewayRouter() {
         rpcCall(req.agent, "health").catch(() => null),
         rpcCall(req.agent, "status").catch(() => null),
       ]);
+      // If we got a successful health response and the agent is in 'warning' state,
+      // auto-promote to 'running' — the gateway proved itself healthy.
+      if (health && req.agent.status === "warning") {
+        db.query("UPDATE agents SET status = 'running' WHERE id = $1", [req.agent.id]).catch(() => {});
+      }
       res.json({ health, status });
     } catch (err) {
       res.status(502).json({ error: "Gateway unreachable", details: err.message });
@@ -294,7 +392,6 @@ function createGatewayRouter() {
         sessionKey: session_id || "main",
         idempotencyKey,
         message: text,
-        messages: Array.isArray(messages) ? messages : undefined,
       };
 
       if (stream) {
@@ -322,8 +419,13 @@ function createGatewayRouter() {
         try {
           const result = await conn.call("chat.send", params, CHAT_TIMEOUT);
           res.write(`data: ${JSON.stringify({ type: "done", result: result.result || result.payload })}\n\n`);
+          // Record metrics
+          metrics.recordMetric(req.agent.id, req.user.id, 'messages_sent', 1).catch(() => {});
+          const tokens = result.result?.usage?.total_tokens || result.payload?.usage?.total_tokens;
+          if (tokens) metrics.recordMetric(req.agent.id, req.user.id, 'tokens_used', tokens).catch(() => {});
         } catch (err) {
           res.write(`data: ${JSON.stringify({ type: "error", error: err.message })}\n\n`);
+          metrics.recordMetric(req.agent.id, req.user.id, 'error', 1, { error: err.message }).catch(() => {});
         }
 
         conn.off("chat", chatHandler);
@@ -333,10 +435,17 @@ function createGatewayRouter() {
       } else {
         // Non-streaming: wait for final response
         const result = await rpcCall(req.agent, "chat.send", params, CHAT_TIMEOUT);
+        // Record metrics
+        metrics.recordMetric(req.agent.id, req.user.id, 'messages_sent', 1).catch(() => {});
+        const tokens = result?.usage?.total_tokens;
+        if (tokens) metrics.recordMetric(req.agent.id, req.user.id, 'tokens_used', tokens).catch(() => {});
         res.json(result);
       }
     } catch (err) {
       if (!res.headersSent) {
+        if (req.agent?.id && req.user?.id) {
+          metrics.recordMetric(req.agent.id, req.user.id, 'error', 1, { error: err.message }).catch(() => {});
+        }
         res.status(502).json({ error: "Chat failed", details: err.message });
       }
     }
@@ -370,11 +479,13 @@ function createGatewayRouter() {
     }
   });
 
+  // Sessions are created implicitly by sending a chat.send with a new sessionKey.
+  // This endpoint generates a key and returns it so the UI can start using it.
   router.post("/agents/:agentId/gateway/sessions", async (req, res) => {
     try {
       const { name } = req.body;
-      const result = await rpcCall(req.agent, "sessions.create", { name: name || undefined });
-      res.json(result);
+      const key = name || `session-${crypto.randomUUID().slice(0, 8)}`;
+      res.json({ key, created: true });
     } catch (err) {
       res.status(502).json({ error: err.message });
     }
@@ -483,7 +594,7 @@ function attachGatewayWS(server) {
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
-    const match = url.pathname.match(/^\/ws\/gateway\/(.+)$/);
+    const match = url.pathname.match(/^\/ws\/gateway\/([a-zA-Z0-9_-]+)$/);
     if (!match) return; // not ours — let other handlers process
 
     const token = url.searchParams.get("token");
@@ -552,4 +663,4 @@ function attachGatewayWS(server) {
   return wss;
 }
 
-module.exports = { createGatewayRouter, attachGatewayWS };
+module.exports = { createGatewayRouter, attachGatewayWS, rpcCall, resolveAgent };

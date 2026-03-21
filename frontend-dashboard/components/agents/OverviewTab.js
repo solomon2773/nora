@@ -1,11 +1,77 @@
+import { useState, useEffect } from "react";
 import {
-  Bot, Cpu, MemoryStick, HardDrive, Globe, Clock, Activity, Power, RefreshCw, Loader2, Zap, Radio, ShieldCheck, Brain
+  Bot, Cpu, MemoryStick, HardDrive, Globe, Clock, Activity, Power, RefreshCw, Loader2, Zap, Radio, ShieldCheck, Brain,
+  AlertTriangle, XCircle, AlertOctagon
 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
+import { fetchWithAuth } from "../../lib/api";
 
 export default function OverviewTab({ agent, actionLoading, onStart, onStop, onRestart, onRedeploy }) {
+  const [lastError, setLastError] = useState(null);
+
+  // Fetch last error event when agent is in error state
+  useEffect(() => {
+    if (agent.status !== "error") { setLastError(null); return; }
+    fetchWithAuth(`/api/monitoring/events?agentId=${agent.id}&limit=1`)
+      .then(r => r.ok ? r.json() : [])
+      .then(events => setLastError(events[0]?.message || null))
+      .catch(() => {});
+  }, [agent.status, agent.id]);
+
+  const isStaleQueued = agent.status === "queued" && agent.created_at &&
+    (Date.now() - new Date(agent.created_at).getTime()) > 5 * 60 * 1000;
+
   return (
     <div className="space-y-6">
+      {/* Status Banners */}
+      {isStaleQueued && (
+        <div className="flex items-center gap-3 bg-yellow-50 border border-yellow-200 rounded-2xl px-5 py-3">
+          <AlertTriangle size={18} className="text-yellow-600 shrink-0" />
+          <div>
+            <p className="text-sm font-bold text-yellow-800">Deployment is taking longer than expected</p>
+            <p className="text-xs text-yellow-600">The system will retry automatically. Check the Logs tab for details.</p>
+          </div>
+        </div>
+      )}
+
+      {agent.status === "queued" && !isStaleQueued && (
+        <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-2xl px-5 py-3">
+          <Loader2 size={18} className="text-blue-600 animate-spin shrink-0" />
+          <div>
+            <p className="text-sm font-bold text-blue-800">Deploying agent...</p>
+            <p className="text-xs text-blue-600">Your agent is being provisioned. This usually takes 30-60 seconds.</p>
+          </div>
+        </div>
+      )}
+
+      {agent.status === "error" && (
+        <div className="flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-5 py-3">
+          <XCircle size={18} className="text-red-600 shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-bold text-red-800">Deployment failed</p>
+            <p className="text-xs text-red-600">{lastError || "An error occurred during provisioning."}</p>
+          </div>
+          <button
+            onClick={onRedeploy}
+            disabled={!!actionLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 shrink-0"
+          >
+            {actionLoading === "redeploy" ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+            Redeploy
+          </button>
+        </div>
+      )}
+
+      {agent.status === "warning" && (
+        <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 rounded-2xl px-5 py-3">
+          <AlertOctagon size={18} className="text-orange-600 shrink-0" />
+          <div>
+            <p className="text-sm font-bold text-orange-800">Gateway health check failed</p>
+            <p className="text-xs text-orange-600">Agent deployed but the gateway is not responding. It may still be starting up.</p>
+          </div>
+        </div>
+      )}
+
       {/* Quick Actions */}
       <div className="flex items-center gap-3 flex-wrap">
         {agent.status === "running" && (

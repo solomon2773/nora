@@ -23,7 +23,7 @@ export default function Login() {
       const data = await res.json();
       if (res.ok) {
         localStorage.setItem("token", data.token);
-        window.location.href = "/app/agents";
+        window.location.href = "/app/dashboard";
       } else {
         toast.error("Login failed: " + data.error);
       }

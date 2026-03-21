@@ -1,7 +1,8 @@
-import { Activity, Terminal, ScrollText, Zap, Settings, ShieldCheck } from "lucide-react";
+import { Activity, Terminal, ScrollText, Zap, Settings, ShieldCheck, BarChart3 } from "lucide-react";
 
 const baseTabs = [
   { id: "overview", label: "Overview", icon: Activity },
+  { id: "metrics", label: "Metrics", icon: BarChart3 },
   { id: "terminal", label: "Terminal", icon: Terminal },
   { id: "logs", label: "Logs", icon: ScrollText },
   { id: "openclaw", label: "OpenClaw", icon: Zap },

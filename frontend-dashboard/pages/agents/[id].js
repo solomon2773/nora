@@ -1,10 +1,11 @@
 import { useRouter } from "next/router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Layout from "../../components/layout/Layout";
 import TabBar from "../../components/agents/TabBar";
 import OverviewTab from "../../components/agents/OverviewTab";
-import LogsTab from "../../components/agents/LogsTab";
+import MetricsTab from "../../components/agents/MetricsTab";
+import LogViewer from "../../components/LogViewer";
 import OpenClawTab from "../../components/agents/OpenClawTab";
 import SettingsTab from "../../components/agents/SettingsTab";
 import NemoClawTab from "../../components/agents/NemoClawTab";
@@ -25,6 +26,11 @@ export default function AgentDetail() {
   const [actionLoading, setActionLoading] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
   const toast = useToast();
+
+  // Persistent history refs — survive tab switches
+  const terminalHistoryRef = useRef([]);
+  const terminalWsRef = useRef(null);
+  const logHistoryRef = useRef([]);
 
   const refreshAgent = () => {
     if (!id) return;
@@ -49,12 +55,13 @@ export default function AgentDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // Poll for status updates every 10s (reconciles live container state)
+  // Poll for status updates — faster (5s) for transient states, normal (10s) otherwise
   useEffect(() => {
     if (!id || loading) return;
-    const interval = setInterval(refreshAgent, 10000);
+    const isTransient = agent && (agent.status === "queued" || agent.status === "deploying");
+    const interval = setInterval(refreshAgent, isTransient ? 5000 : 10000);
     return () => clearInterval(interval);
-  }, [id, loading]);
+  }, [id, loading, agent?.status]);
 
   async function handleAction(action) {
     setActionLoading(action);
@@ -75,7 +82,8 @@ export default function AgentDetail() {
         setTimeout(refreshAgent, 2000);
       } else {
         const data = await res.json();
-        toast.error(data.error || `Failed to ${action} agent`);
+        const ref = data.correlationId ? ` (ref: ${data.correlationId.slice(0, 8)})` : '';
+        toast.error((data.error || `Failed to ${action} agent`) + ref);
       }
     } catch (err) {
       console.error(err);
@@ -127,7 +135,7 @@ export default function AgentDetail() {
 
   return (
     <Layout>
-      <div className="w-full max-w-full space-y-4 sm:space-y-6">
+      <div className={`w-full max-w-full space-y-4 sm:space-y-6 ${activeTab === "terminal" ? "flex-1 flex flex-col min-h-0" : ""}`}>
         {/* Header Bar */}
         <div className="flex items-center justify-between min-w-0">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
@@ -157,7 +165,7 @@ export default function AgentDetail() {
         <TabBar activeTab={activeTab} onTabChange={setActiveTab} sandboxType={agent.sandbox_type} />
 
         {/* Tab Content */}
-        <div className={`w-full min-w-0 overflow-x-hidden ${activeTab === "terminal" ? "" : "min-h-[400px]"}`}>
+        <div className={`w-full min-w-0 overflow-x-hidden ${activeTab === "terminal" || activeTab === "logs" ? "flex-1 flex flex-col min-h-0" : "min-h-[200px] sm:min-h-[400px]"}`}>
           {activeTab === "overview" && (
             <OverviewTab
               agent={agent}
@@ -169,25 +177,55 @@ export default function AgentDetail() {
             />
           )}
 
-          {activeTab === "terminal" && (
-            agent.status === "running" ? (
-              <div style={{ height: "calc(100vh - 17rem)", minHeight: "300px" }}>
-                <AgentTerminal agentId={id} />
-              </div>
-            ) : (
-              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-12 flex flex-col items-center justify-center gap-3">
-                <Terminal size={32} className="text-slate-700" />
-                <p className="text-sm text-slate-500 font-medium">
-                  Terminal available when agent is <span className="text-green-400 font-bold">running</span>
-                </p>
-                <p className="text-xs text-slate-600">
-                  Agent is currently <span className="font-bold">{agent.status}</span>
-                </p>
-              </div>
-            )
-          )}
+          {activeTab === "metrics" && <MetricsTab agentId={id} />}
 
-          {activeTab === "logs" && <LogsTab agentId={id} />}
+          {/* Terminal — always mounted when agent is running, hidden via CSS when not active */}
+          {agent.status === "running" ? (
+            <div
+              className="w-full"
+              style={{
+                height: activeTab === "terminal" ? "calc(100vh - 200px)" : "0",
+                minHeight: activeTab === "terminal" ? "300px" : "0",
+                overflow: activeTab === "terminal" ? "visible" : "hidden",
+                position: activeTab === "terminal" ? "relative" : "absolute",
+                visibility: activeTab === "terminal" ? "visible" : "hidden",
+              }}
+            >
+              <AgentTerminal
+                agentId={id}
+                historyRef={terminalHistoryRef}
+                wsRef={terminalWsRef}
+                visible={activeTab === "terminal"}
+              />
+            </div>
+          ) : activeTab === "terminal" ? (
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-12 flex flex-col items-center justify-center gap-3">
+              <Terminal size={32} className="text-slate-700" />
+              <p className="text-sm text-slate-500 font-medium">
+                Terminal available when agent is <span className="text-green-400 font-bold">running</span>
+              </p>
+              <p className="text-xs text-slate-600">
+                Agent is currently <span className="font-bold">{agent.status}</span>
+              </p>
+            </div>
+          ) : null}
+
+          {/* Logs — always mounted, hidden via CSS when not active */}
+          <div
+            style={{
+              height: activeTab === "logs" ? "calc(100vh - 200px)" : "0",
+              minHeight: activeTab === "logs" ? "300px" : "0",
+              overflow: activeTab === "logs" ? "visible" : "hidden",
+              position: activeTab === "logs" ? "relative" : "absolute",
+              visibility: activeTab === "logs" ? "visible" : "hidden",
+            }}
+          >
+            <LogViewer
+              agentId={id}
+              historyRef={logHistoryRef}
+              visible={activeTab === "logs"}
+            />
+          </div>
 
           {activeTab === "openclaw" && <OpenClawTab agentId={id} agentStatus={agent.status} />}
 

@@ -22,21 +22,41 @@
 
 ## What is Nora?
 
-Nora is an open-source platform that gives you a complete control plane for running AI agents at scale. Provision agents as Docker-in-Docker sandboxed containers — or use NemoClaw for NVIDIA Nemotron-powered secure sandboxes — connect them to any LLM, wire up your tools, and manage everything from a clean web UI.
+Nora is an open-source control plane for [OpenClaw](https://github.com/openclaw/openclaw) agents. It handles the full lifecycle — provisioning, deploying, monitoring, and managing autonomous AI agents at scale — so you can focus on what your agents do, not on the infrastructure running them.
 
-**Built on the OpenClaw gateway protocol** — each agent gets its own secure WS-RPC gateway with Ed25519 device identity, so you have real control over what your agents can do.
+Each OpenClaw agent is deployed into its own sandboxed container. Nora connects them to any LLM, wires up your tools and communication channels, and gives you a single dashboard to manage everything.
 
-### Highlights
+### Why Nora?
 
-- **60-second deployment** — name your agent, pick an LLM, click deploy. Nora handles container provisioning, gateway setup, and key injection automatically.
+- **60-second deployment** — name your agent, pick an LLM, click deploy. Done.
 - **Real agent control** — interactive terminal, streaming chat, session management, cron scheduling, and tool inventory per agent.
-- **60+ integrations** — GitHub, Slack, Jira, Notion, Stripe, AWS, and more across 17 categories. Connect from the UI, no code needed.
-- **18 LLM providers** — Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek, OpenRouter, Together, Cohere, xAI, and more. Keys encrypted at rest with AES-256-GCM.
-- **9 communication channels** — Slack, Discord, WhatsApp, Telegram, LINE, Email, Webhook, Microsoft Teams, SMS.
-- **NemoClaw sandbox** — optional NVIDIA Nemotron-powered secure sandbox with deny-by-default networking and capability-restricted containers.
-- **Self-hosted or PaaS** — run on your own infra with operator-controlled limits, or deploy as a SaaS with Stripe billing.
-- **Pluggable backends** — Docker, Proxmox LXC, Kubernetes, or NemoClaw. Bring your own infrastructure.
-- **Security first** — helmet, rate limiting, CORS whitelist, JWT + RBAC, AES-256-GCM encryption, Ed25519 device identity auth.
+- **60+ integrations** — GitHub, Slack, Jira, Notion, Stripe, AWS, and more. Connect from the UI, no code needed.
+- **18 LLM providers** — Anthropic, OpenAI, Google, Groq, Mistral, DeepSeek, OpenRouter, and more. Keys encrypted at rest.
+- **9 communication channels** — Slack, Discord, WhatsApp, Telegram, LINE, Email, Webhook, Teams, SMS.
+- **Pluggable infrastructure** — Docker, Proxmox LXC, Kubernetes, or NemoClaw (NVIDIA Nemotron sandbox).
+- **Self-hosted or PaaS** — run on your own infra or deploy as a SaaS with Stripe billing.
+- **Security first** — AES-256-GCM encryption, Ed25519 device identity, JWT + RBAC, rate limiting.
+
+---
+
+## How It Works
+
+```
+  You                    Nora                         Your Infrastructure
+  ───                    ────                         ────────────────────
+
+  Click "Deploy"  ──►  Queue job  ──►  Provision container
+                                        ├── Inject LLM keys
+                                        ├── Setup Ed25519 identity
+                                        └── Start OpenClaw Gateway
+
+  Chat / Terminal ──►  WS-RPC Proxy  ──►  Agent Container (:18789)
+  Cron / Tools                             └── OpenClaw Gateway
+
+  Monitor         ──►  Metrics API  ──►  Token usage, costs, errors
+```
+
+Nora sits between you and your agent fleet. It provisions containers, injects credentials, proxies all communication through secure WebSocket-RPC, and tracks everything.
 
 ---
 
@@ -47,7 +67,25 @@ Nora is an open-source platform that gives you a complete control plane for runn
 - [Docker](https://docs.docker.com/get-docker/) & [Docker Compose](https://docs.docker.com/compose/install/) v2+
 - Git
 
-### 1. Clone & configure
+### Option A: Guided Setup (Recommended)
+
+The interactive setup script generates secrets, configures your platform mode, provisioner backend, OAuth, and NemoClaw — then optionally starts everything for you.
+
+```bash
+git clone https://github.com/solomon2773/nora.git
+cd nora
+bash setup.sh
+```
+
+The script will:
+1. Verify Docker, Docker Compose, and openssl are installed
+2. Auto-generate cryptographic secrets (JWT, AES-256-GCM, NextAuth)
+3. Ask you to choose platform mode (self-hosted or PaaS)
+4. Ask you to choose provisioner backend (Docker, Proxmox, or Kubernetes)
+5. Optionally configure NemoClaw (NVIDIA sandbox) and OAuth (Google/GitHub)
+6. Write `.env` and offer to start the platform
+
+### Option B: Manual Setup
 
 ```bash
 git clone https://github.com/solomon2773/nora.git
@@ -58,35 +96,32 @@ cp .env.example .env
 Edit `.env` with your secrets:
 
 ```bash
-# Required
-JWT_SECRET=your-jwt-secret-here
-ENCRYPTION_KEY=your-32-byte-hex-key    # openssl rand -hex 32
+# Required — generate with: openssl rand -hex 32
+JWT_SECRET=your-64-char-hex-key
+ENCRYPTION_KEY=your-64-char-hex-key
 
-# Optional — OAuth (Google/GitHub login)
+# Optional — OAuth (leave blank to disable)
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
-NEXTAUTH_SECRET=your-nextauth-secret
+NEXTAUTH_SECRET=your-64-char-hex-key
 
-# Optional — Billing (Stripe)
+# Optional — Stripe billing (only for PaaS mode)
 STRIPE_SECRET_KEY=
 STRIPE_PRICE_PRO=
 STRIPE_PRICE_ENTERPRISE=
-
-# Optional — NemoClaw sandbox
-NEMOCLAW_ENABLED=false
 ```
 
-### 2. Start everything
+Then start:
 
 ```bash
 docker compose up -d
 ```
 
-That's it. Eight services start up automatically: Nginx, two frontends, backend API, worker, admin panel, PostgreSQL, and Redis. The database schema is applied on first boot.
+Eight services come up automatically: Nginx, two frontends, backend API, worker, admin panel, PostgreSQL, and Redis. Database schema is applied on first boot.
 
-### 3. Open the dashboard
+### Open the dashboard
 
 | URL | What |
 |---|---|
@@ -94,91 +129,53 @@ That's it. Eight services start up automatically: Nginx, two frontends, backend 
 | [localhost:8080/login](http://localhost:8080/login) | Login / Sign up |
 | [localhost:8080/app/agents](http://localhost:8080/app/agents) | Agent fleet |
 | [localhost:8080/app/deploy](http://localhost:8080/app/deploy) | Deploy new agent |
-| [localhost:8080/api/health](http://localhost:8080/api/health) | API health check |
+
+### Deploy your first agent
+
+1. Go to [Deploy](http://localhost:8080/app/deploy)
+2. Enter an agent name
+3. Click **Deploy**
+4. Go to **Settings** > add your LLM API key (e.g., Google AI, OpenAI, Anthropic)
+5. Click **Sync to Agent**
+6. Open the **Chat** tab and start talking to your agent
 
 ---
 
 ## What You Can Do
 
-### Deploy Agents
-Create agents with a name, optional custom container name, deploy mode (Docker or NemoClaw), and resource allocation. Agents are provisioned as isolated containers running the OpenClaw Gateway with pre-configured device identity.
+### Deploy & Manage Agents
 
-### Manage Your Fleet
-The fleet page shows all agents with status, container name/ID, and quick actions (start/stop). Click into any agent for the full detail view.
+Create agents with a name, pick a backend (Docker or NemoClaw), and set resource limits. Start, stop, restart, or redeploy from the dashboard.
 
-### Agent Detail — 6 Tabs
+### Chat with Agents
 
-| Tab | What it does |
-|---|---|
-| **Overview** | Container info, resource allocation, status, quick actions |
-| **Terminal** | Interactive web terminal (xterm.js + WebSocket) |
-| **Logs** | Real-time log streaming |
-| **OpenClaw** | 7 sub-panels: Status, Chat, Sessions, Channels, Integrations, Cron, Tools |
-| **NemoClaw** | Secure sandbox panel (NemoClaw-mode agents only) |
-| **Settings** | Config, LLM provider keys, danger zone (delete) |
+Streaming chat with real-time token-by-token responses, tool call visualization, thinking traces, and full session history with infinite scroll.
+
+### Interactive Terminal
+
+Web terminal connected directly to the agent container. Persistent history, keyboard shortcuts, and export for audit.
 
 ### Connect LLM Providers
-Set up API keys for any of 18 supported providers. Keys are encrypted with AES-256-GCM and automatically injected into agent containers on deploy.
 
-### Wire Up Integrations
-Browse 60+ integrations across 17 categories — developer tools, communication, AI/ML, cloud, data, monitoring, CRM, and more. Connect from the UI with per-integration config forms.
+18 providers supported. Add your API key from Settings, then sync to any running agent. Per-agent model selection.
 
-### Schedule Recurring Tasks
-Use the Cron sub-panel to schedule recurring prompts with standard cron syntax. Agents execute tasks on schedule in new sessions.
+**Providers:** Anthropic, OpenAI, Google AI, Groq, Mistral, DeepSeek, OpenRouter, Together AI, Cohere, xAI, Moonshot, Z.AI, Ollama, MiniMax, GitHub Copilot, Hugging Face, Cerebras, NVIDIA
 
----
+### Communication Channels
 
-## Architecture
+Connect agents to Discord, Slack, WhatsApp, Telegram, LINE, Email, Webhook, Teams, or SMS.
 
-```
-  Nginx (:8080)
-  ├── /           → frontend-marketing  (Next.js)
-  ├── /app/*      → frontend-dashboard  (Next.js)
-  ├── /admin/*    → admin-dashboard     (Next.js)
-  └── /api/*      → backend-api         (Express.js)
-                        ├── PostgreSQL 15
-                        ├── Redis 7 + BullMQ  →  worker-provisioner
-                        │                          └── Docker / Proxmox / K8s / NemoClaw
-                        └── OpenClaw Gateway (WS-RPC :18789 per agent)
-```
+### Integrations
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical breakdown including data flows, database schema, module inventory, and file map.
+60+ pre-built integrations across 17 categories — developer tools, communication, AI/ML, cloud, data, monitoring, CRM, and more. Connect from the UI.
 
----
+### Schedule Tasks
 
-## Tech Stack
+Cron scheduling with standard syntax. Agents execute recurring prompts on schedule via the OpenClaw Gateway.
 
-| Layer | Technology |
-|---|---|
-| Reverse Proxy | Nginx |
-| Frontend | Next.js 14, React 18, Tailwind CSS 3.4, Lucide React |
-| Terminal | xterm.js |
-| Backend | Express.js 4, Node.js 20 |
-| Auth | NextAuth.js (Google/GitHub), bcryptjs, JWT |
-| Database | PostgreSQL 15 |
-| Queue | BullMQ + Redis 7 |
-| Agent Gateway | OpenClaw WS-RPC, Ed25519 device identity |
-| Encryption | AES-256-GCM |
-| Billing | Stripe |
-| Provisioner | dockerode, Proxmox API, Kubernetes API, NemoClaw |
+### Monitor & Export
 
----
-
-## Project Structure
-
-```
-├── backend-api/            Express.js API + OpenClaw Gateway proxy
-├── frontend-marketing/     Landing page, login, signup
-├── frontend-dashboard/     Agent management dashboard
-├── admin-dashboard/        Operator admin panel
-├── workers/provisioner/    BullMQ worker (Docker/Proxmox/K8s/NemoClaw)
-├── agent-runtime/          OpenClaw CLI agent runtime (reference)
-├── e2e/                    Playwright E2E tests
-├── infra/                  Backup & TLS configs
-├── docs/                   Additional docs (HTTPS, etc.)
-├── docker-compose.yml      Service orchestration
-└── nginx.conf              Reverse proxy config
-```
+Per-agent metrics (tokens, messages, errors, costs), system health dashboard, real-time log streaming, and export for audit compliance.
 
 ---
 
@@ -189,192 +186,77 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical breakdown includin
 | Variable | Required | Description |
 |---|---|---|
 | `JWT_SECRET` | Yes | Secret for signing JWTs |
-| `ENCRYPTION_KEY` | Yes | 32-byte hex key for AES-256-GCM (`openssl rand -hex 32`) |
+| `ENCRYPTION_KEY` | Yes | 32-byte hex key (`openssl rand -hex 32`) |
 | `PLATFORM_MODE` | No | `selfhosted` (default) or `paas` |
-| `NEMOCLAW_ENABLED` | No | `true` to enable NemoClaw sandbox mode |
 | `PROVISIONER_BACKEND` | No | `docker` (default), `proxmox`, `k8s` |
-| `GOOGLE_CLIENT_ID` | For OAuth | Google OAuth credentials |
-| `GOOGLE_CLIENT_SECRET` | For OAuth | |
-| `GITHUB_CLIENT_ID` | For OAuth | GitHub OAuth credentials |
-| `GITHUB_CLIENT_SECRET` | For OAuth | |
-| `NEXTAUTH_SECRET` | For OAuth | NextAuth.js session secret |
-| `STRIPE_SECRET_KEY` | For billing | Stripe API key |
-| `STRIPE_PRICE_PRO` | For billing | Stripe price ID (Pro tier) |
-| `STRIPE_PRICE_ENTERPRISE` | For billing | Stripe price ID (Enterprise tier) |
+| `NEMOCLAW_ENABLED` | No | `true` to enable NemoClaw sandbox |
 | `CORS_ORIGINS` | No | Comma-separated allowed origins |
-
-### Self-Hosted Limits
-
-When running in `selfhosted` mode, you can set operator limits:
-
-| Variable | Default | Description |
-|---|---|---|
-| `SELFHOSTED_MAX_AGENTS` | 50 | Max agents per user |
-| `SELFHOSTED_MAX_VCPU` | 16 | Max vCPU per agent |
-| `SELFHOSTED_MAX_RAM_MB` | 32768 | Max RAM per agent |
-| `SELFHOSTED_MAX_DISK_GB` | 500 | Max disk per agent |
-
-### Provisioner Backends
-
-| Backend | Env Value | Requirements |
-|---|---|---|
-| Docker | `docker` | Docker socket mounted (`/var/run/docker.sock`) |
-| Proxmox | `proxmox` | Proxmox VE REST API credentials |
-| Kubernetes | `k8s` | Kubeconfig or in-cluster service account |
-| NemoClaw | `nemoclaw` | NVIDIA Nemotron endpoint + `NEMOCLAW_ENABLED=true` |
 
 ---
 
 ## Development
 
-### Local development (without Docker)
-
 ```bash
-git clone https://github.com/solomon2773/nora.git && cd nora
-
-# Backend API (requires PostgreSQL + Redis running)
-cd backend-api && npm install && npm run dev     # API on :3001
-
-# Frontend dashboard
-cd frontend-dashboard && npm install && npm run dev  # Dashboard on :3000
-
-# Marketing site
-cd frontend-marketing && npm install && npm run dev  # Landing on :3002
-```
-
-### Docker development
-
-```bash
-docker compose logs -f                    # All services
-docker compose logs -f backend-api        # Single service
+# Docker (recommended)
+docker compose up -d
+docker compose logs -f backend-api       # Watch logs
 docker compose up -d --build backend-api  # Rebuild a service
-```
 
-### Access the database
+# Local (requires PostgreSQL + Redis)
+cd backend-api && npm install && npm run dev
+cd frontend-dashboard && npm install && npm run dev
 
-```bash
+# Tests
+cd backend-api && npx jest --no-watchman
+
+# Database
 docker compose exec postgres psql -U platform -d platform
 ```
 
-### Run tests
-
-```bash
-cd backend-api && npx jest --no-watchman
-```
+For HTTPS/TLS setup, see [docs/HTTPS_SETUP.md](docs/HTTPS_SETUP.md).
 
 ---
 
 ## Roadmap
 
-- [ ] Agent-to-agent communication
-- [ ] Plugin marketplace
-- [ ] Visual workflow builder
-- [ ] Mobile companion app
-- [ ] Multi-tenant teams & orgs
-- [ ] Custom tool authoring SDK
-- [ ] Agent templates & sharing
+### In Progress
+
+- [ ] Per-agent LLM key sync
+- [ ] Terminal session history persistence
+- [ ] Log export for audit compliance
+- [ ] Mobile-responsive layouts
+
+### Planned
+
+- [ ] MCP (Model Context Protocol) tool server support
+- [ ] Agent cloning and templates
+- [ ] Alerting rules (error rate, cost thresholds)
+- [ ] Public REST API with API keys for CI/CD
+- [ ] Multi-tenant teams with RBAC
+- [ ] Agent versioning and rollback
+- [ ] CLI tool (`nora deploy`, `nora sync`)
 
 Have an idea? [Open a discussion](https://github.com/solomon2773/nora/discussions).
 
 ---
 
-## API Reference
-
-### Auth
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/auth/signup` | Register |
-| `POST` | `/api/auth/login` | Login (returns JWT) |
-| `POST` | `/api/auth/oauth-login` | OAuth login |
-| `GET` | `/api/auth/me` | Current user |
-
-### Agents
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/agents` | List agents |
-| `POST` | `/api/agents/deploy` | Deploy new agent |
-| `GET` | `/api/agents/:id` | Agent detail |
-| `POST` | `/api/agents/:id/start` | Start |
-| `POST` | `/api/agents/:id/stop` | Stop |
-| `POST` | `/api/agents/:id/restart` | Restart |
-| `DELETE` | `/api/agents/:id` | Delete |
-
-### OpenClaw Gateway (per agent)
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/agents/:id/gateway/status` | Gateway status |
-| `POST` | `/api/agents/:id/gateway/chat` | Send chat message |
-| `GET/POST` | `/api/agents/:id/gateway/sessions` | List/create sessions |
-| `GET/POST` | `/api/agents/:id/gateway/cron` | List/add cron jobs |
-| `GET` | `/api/agents/:id/gateway/tools` | List tools |
-
-### LLM Providers
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/llm-providers/available` | Supported providers |
-| `GET` | `/api/llm-providers` | Configured keys (masked) |
-| `POST` | `/api/llm-providers` | Add provider key |
-| `DELETE` | `/api/llm-providers/:id` | Remove provider key |
-
-### Channels & Integrations
-| Method | Path | Description |
-|---|---|---|
-| `GET/POST` | `/api/agents/:id/channels` | List/create channels |
-| `GET` | `/api/integrations/catalog` | Browse catalog |
-| `GET/POST` | `/api/agents/:id/integrations` | List/connect integrations |
-
-Full API documentation available in [ARCHITECTURE.md](ARCHITECTURE.md).
-
----
-
-## HTTPS / TLS
-
-See [docs/HTTPS_SETUP.md](docs/HTTPS_SETUP.md) for instructions on setting up TLS with Let's Encrypt, Cloudflare, or Traefik.
-
----
-
-## Database Backups
-
-```bash
-docker compose run --rm backup
-```
-
-Backups are saved to the `backups` Docker volume. Configure `AWS_S3_BUCKET` for automatic S3 uploads.
-
----
-
-## We're Looking for Contributors!
-
-Nora is in active development and we're looking for developers who want to help shape the future of AI agent infrastructure. Whether you're into frontend, backend, DevOps, or AI — there's meaningful work to pick up.
-
-**Areas we need help with:**
-- **Frontend** — React components, dashboard UX, data visualization
-- **Backend** — API endpoints, provisioner backends, queue workers
-- **Integrations** — adding new third-party connectors (60+ and growing)
-- **Documentation** — tutorials, guides, API docs
-- **Testing** — unit tests, E2E tests, load testing
-- **DevOps** — Kubernetes support, CI/CD, container security
-
-**Why contribute?**
-- Active development — new features shipping weekly
-- Beginner-friendly — issues tagged `good first issue` with clear scope
-- Real users — your code ships to production
-- Clean stack — Next.js, Express, PostgreSQL. No obscure frameworks.
-- Responsive maintainers — PRs reviewed within 48 hours
-
 ## Contributing
+
+Nora is in active development. We're looking for developers who want to shape the future of AI agent infrastructure.
+
+**Areas we need help with:** Frontend (React, UX), Backend (API, workers), Integrations (connectors), Testing (unit, E2E, load), DevOps (K8s, CI/CD).
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+3. Commit your changes
+4. Open a Pull Request
+
+PRs reviewed within 48 hours. Issues tagged `good first issue` for newcomers.
 
 ---
 
 ## Community
 
-- [Discord](https://discord.gg/your-invite) — chat with contributors and the core team
 - [Discussions](https://github.com/solomon2773/nora/discussions) — ideas, questions, and RFC proposals
 - [Issues](https://github.com/solomon2773/nora/issues) — bug reports and feature requests
 

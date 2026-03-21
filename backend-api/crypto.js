@@ -3,7 +3,17 @@
 const crypto = require("crypto");
 
 const ALGORITHM = "aes-256-gcm";
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // 64-char hex string (32 bytes)
+// Extract just the 64-char hex key — strip inline comments and whitespace
+const RAW_KEY = (process.env.ENCRYPTION_KEY || "").split("#")[0].trim();
+const ENCRYPTION_KEY = /^[0-9a-fA-F]{64}$/.test(RAW_KEY) ? RAW_KEY : null;
+
+if (!ENCRYPTION_KEY) {
+  console.error(
+    "SECURITY WARNING: ENCRYPTION_KEY is not set or invalid. " +
+    "Sensitive data (API keys, tokens) will be stored in PLAINTEXT. " +
+    "Set a 64-char hex key in .env to enable encryption at rest."
+  );
+}
 
 /**
  * Encrypt plaintext. Returns "iv:authTag:ciphertext" hex string.
@@ -37,8 +47,9 @@ function decrypt(data) {
     let decrypted = decipher.update(encrypted, "hex", "utf8");
     decrypted += decipher.final("utf8");
     return decrypted;
-  } catch {
-    return data; // decryption failed — return raw value
+  } catch (err) {
+    console.error("Decryption failed (key mismatch or corrupted data):", err.message);
+    return data; // return raw value so callers don't crash
   }
 }
 

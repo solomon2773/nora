@@ -12,10 +12,16 @@ const PROVIDER_META = {
   deepseek: { name: "DeepSeek", color: "bg-cyan-100 text-cyan-700 border-cyan-200", icon: "🔍" },
   openrouter: { name: "OpenRouter", color: "bg-pink-100 text-pink-700 border-pink-200", icon: "🔀" },
   together: { name: "Together AI", color: "bg-yellow-100 text-yellow-700 border-yellow-200", icon: "🤝" },
-  fireworks: { name: "Fireworks AI", color: "bg-red-100 text-red-700 border-red-200", icon: "🎆" },
   cohere: { name: "Cohere", color: "bg-teal-100 text-teal-700 border-teal-200", icon: "💎" },
   xai: { name: "xAI", color: "bg-gray-100 text-gray-700 border-gray-200", icon: "✖️" },
-  perplexity: { name: "Perplexity", color: "bg-sky-100 text-sky-700 border-sky-200", icon: "🔮" },
+  moonshot: { name: "Moonshot AI", color: "bg-violet-100 text-violet-700 border-violet-200", icon: "🌙" },
+  zai: { name: "Z.AI", color: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: "🇿" },
+  ollama: { name: "Ollama", color: "bg-slate-100 text-slate-700 border-slate-200", icon: "🦙" },
+  minimax: { name: "MiniMax", color: "bg-amber-100 text-amber-700 border-amber-200", icon: "🔶" },
+  "github-copilot": { name: "GitHub Copilot", color: "bg-gray-100 text-gray-700 border-gray-200", icon: "🐙" },
+  huggingface: { name: "Hugging Face", color: "bg-yellow-100 text-yellow-700 border-yellow-200", icon: "🤗" },
+  cerebras: { name: "Cerebras", color: "bg-red-100 text-red-700 border-red-200", icon: "🧬" },
+  nvidia: { name: "NVIDIA", color: "bg-lime-100 text-lime-700 border-lime-200", icon: "💚" },
 };
 
 export default function LLMSetupWizard({ onComplete, compact = false }) {
@@ -101,6 +107,22 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
   const hasProviders = existing.length > 0;
   const configuredIds = new Set(existing.map((e) => e.provider));
 
+  async function handleSyncToAgents() {
+    setSaving(true);
+    try {
+      const res = await fetchWithAuth("/api/llm-providers/sync", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        toast.success(`Keys synced to ${data.synced}/${data.total} running agent(s)`);
+      } else {
+        toast.error(data.error || "Sync failed");
+      }
+    } catch {
+      toast.error("Failed to sync keys");
+    }
+    setSaving(false);
+  }
+
   // Step 2: Success / add more
   if (step === 2) {
     return (
@@ -111,10 +133,18 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
           </div>
           <h3 className="text-lg font-bold text-slate-900">Provider Added!</h3>
           <p className="text-sm text-slate-500">
-            Your API key has been securely saved. <strong>Restart or redeploy</strong> your agent for the key to take effect.
+            Your API key has been securely saved. Sync to push keys to running agents, or they'll apply on next deploy.
           </p>
         </div>
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <button
+            onClick={handleSyncToAgents}
+            disabled={saving}
+            className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            Sync to Running Agents
+          </button>
           <button
             onClick={() => { setStep(0); setSelectedProvider(null); }}
             className="px-4 py-2 text-xs font-bold text-blue-600 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors flex items-center gap-1.5"
@@ -124,9 +154,9 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
           {onComplete && (
             <button
               onClick={onComplete}
-              className="px-4 py-2 text-xs font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors flex items-center gap-1.5"
+              className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors flex items-center gap-1.5"
             >
-              <RefreshCw size={14} /> Done
+              Done
             </button>
           )}
         </div>
@@ -191,10 +221,20 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
       {/* Existing providers */}
       {existing.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-4">
-          <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-            <Key size={16} className="text-blue-600" />
-            Configured LLM Providers
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+              <Key size={16} className="text-blue-600" />
+              Configured LLM Providers
+            </h3>
+            <button
+              onClick={handleSyncToAgents}
+              disabled={saving}
+              className="px-3 py-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors flex items-center gap-1 disabled:opacity-50"
+            >
+              {saving ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+              Sync to Agents
+            </button>
+          </div>
           <div className="space-y-2">
             {existing.map((p) => {
               const meta = PROVIDER_META[p.provider] || { name: p.provider, color: "bg-slate-100 text-slate-700", icon: "🔑" };
