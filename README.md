@@ -169,13 +169,62 @@ Connect agents to Discord, Slack, WhatsApp, Telegram, LINE, Email, Webhook, Team
 
 60+ pre-built integrations across 17 categories — developer tools, communication, AI/ML, cloud, data, monitoring, CRM, and more. Connect from the UI.
 
-### Schedule Tasks
+### Schedule Recurring Tasks
+Use the Cron sub-panel to schedule recurring prompts with standard cron syntax. Agents execute tasks on schedule in new sessions.
 
-Cron scheduling with standard syntax. Agents execute recurring prompts on schedule via the OpenClaw Gateway.
+---
 
-### Monitor & Export
+## Architecture
 
-Per-agent metrics (tokens, messages, errors, costs), system health dashboard, real-time log streaming, and export for audit compliance.
+```
+  Nginx (:8080)
+  ├── /           → frontend-marketing  (Next.js)
+  ├── /app/*      → frontend-dashboard  (Next.js)
+  ├── /admin/*    → admin-dashboard     (Next.js)
+  └── /api/*      → backend-api         (Express.js)
+                        ├── PostgreSQL 15
+                        ├── Redis 7 + BullMQ  →  worker-provisioner
+                        │                          └── Docker / Proxmox / K8s / NemoClaw
+                        └── OpenClaw Gateway (WS-RPC :18789 per agent)
+```
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical breakdown including data flows, database schema, module inventory, and file map.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Reverse Proxy | Nginx |
+| Frontend | Next.js 14, React 18, Tailwind CSS 3.4, Lucide React |
+| Terminal | xterm.js |
+| Backend | Express.js 4, Node.js 20 |
+| Auth | NextAuth.js (Google/GitHub), bcryptjs, JWT |
+| Database | PostgreSQL 15 |
+| Queue | BullMQ + Redis 7 |
+| Agent Gateway | OpenClaw WS-RPC, Ed25519 device identity |
+| Encryption | AES-256-GCM |
+| Billing | Stripe |
+| Provisioner | dockerode, Proxmox API, Kubernetes API, NemoClaw |
+
+---
+
+## Project Structure
+
+```
+├── backend-api/            Express.js API + OpenClaw Gateway proxy
+├── frontend-marketing/     Landing page, login, signup
+├── frontend-dashboard/     Agent management dashboard
+├── admin-dashboard/        Operator admin panel
+├── workers/provisioner/    BullMQ worker (Docker/Proxmox/K8s/NemoClaw)
+├── agent-runtime/          OpenClaw CLI agent runtime (reference)
+├── e2e/                    Playwright E2E tests
+├── infra/                  Backup & TLS configs
+├── docs/                   Additional docs (HTTPS, etc.)
+├── docker-compose.yml      Service orchestration
+└── nginx.conf              Reverse proxy config
+```
 
 ---
 
