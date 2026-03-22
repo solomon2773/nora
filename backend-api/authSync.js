@@ -8,19 +8,33 @@ const llmProviders = require('./llmProviders');
 
 const LLM_ENV_VARS = new Set(llmProviders.PROVIDERS.map(p => p.envVar));
 
-const PROVIDER_MODEL_DEFAULTS = {
-  anthropic: 'claude-sonnet-4-5',
-  openai:    'gpt-5.4',
-  google:    'gemini-3-flash-preview',
-  groq:      'llama-3.3-70b-versatile',
-  mistral:   'mistral-large-latest',
-  deepseek:  'deepseek-chat',
-  cohere:    'command-r-plus',
-  xai:       'grok-2',
-  nvidia:    'nvidia/nemotron-3-super-120b-a12b',
-  moonshot:  'kimi-k2.5',
-  zai:       'glm-5',
-};
+/**
+ * Poll the agent's gateway health endpoint until it returns 200 OK
+ * or the maximum retries are reached.
+ */
+async function waitForGateway(container, maxRetries = 15, intervalMs = 1000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const healthExec = await container.exec({
+        Cmd: ['curl', '-sf', 'http://localhost:18789/health'],
+        AttachStdout: true,
+        AttachStderr: true,
+      });
+      const stream = await healthExec.start({});
+      const exitCode = await new Promise((resolve) => {
+        stream.on('end', async () => {
+          const { ExitCode } = await healthExec.inspect();
+          resolve(ExitCode);
+        });
+      });
+      if (exitCode === 0) return true;
+    } catch (e) {
+      // ignore and retry
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false;
+}
 
 /**
  * Build auth-profiles.json content for a specific agent.
@@ -86,20 +100,24 @@ async function writeAuthToContainer(docker, containerId, authProfiles, defaultPr
   } catch { /* container may already be restarting */ }
 
   // 3. After restart, set the default model (runs in the fresh gateway).
-  //    Wait briefly for the gateway to re-initialize before issuing CLI commands.
+  //    Wait for the gateway to re-initialize before issuing CLI commands.
   if (defaultProvider) {
-    const modelId = defaultProvider.model || PROVIDER_MODEL_DEFAULTS[defaultProvider.provider];
+    const modelId = defaultProvider.model || llmProviders.MODEL_DEFAULTS[defaultProvider.provider];
     if (modelId) {
       const fullModel = modelId.includes('/') ? modelId : `${defaultProvider.provider}/${modelId}`;
-      await new Promise(r => setTimeout(r, 8000));
-      try {
-        const modelExec = await container.exec({
-          Cmd: ['openclaw', 'models', 'set', fullModel],
-          AttachStdout: true,
-          AttachStderr: true,
-        });
-        await modelExec.start({});
-      } catch { /* non-critical */ }
+      const isUp = await waitForGateway(container);
+      if (isUp) {
+        try {
+          const modelExec = await container.exec({
+            Cmd: ['openclaw', 'models', 'set', fullModel],
+            AttachStdout: true,
+            AttachStderr: true,
+          });
+          await modelExec.start({});
+        } catch { /* non-critical */ }
+      } else {
+        console.warn(`[authSync] Gateway did not come up in time for agent ${containerId} - skipped model set`);
+      }
     }
   }
 }

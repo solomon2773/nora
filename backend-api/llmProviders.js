@@ -26,6 +26,20 @@ const PROVIDERS = [
   { id: "nvidia", name: "NVIDIA", envVar: "NVIDIA_API_KEY", endpoint: "https://integrate.api.nvidia.com/v1", models: ["nvidia/nemotron-3-super-120b-a12b", "nvidia/llama-3.1-nemotron-ultra-253b-v1", "nvidia/llama-3.3-nemotron-super-49b-v1.5", "nvidia/nemotron-3-nano-30b-a3b"] },
 ];
 
+const MODEL_DEFAULTS = {
+  anthropic: 'claude-sonnet-4-5',
+  openai:    'gpt-5.4',
+  google:    'gemini-3-flash-preview',
+  groq:      'llama-3.3-70b-versatile',
+  mistral:   'mistral-large-latest',
+  deepseek:  'deepseek-chat',
+  cohere:    'command-r-plus',
+  xai:       'grok-2',
+  nvidia:    'nvidia/nemotron-3-super-120b-a12b',
+  moonshot:  'kimi-k2.5',
+  zai:       'glm-5',
+};
+
 function getAvailableProviders() {
   return PROVIDERS.map(({ id, name, models }) => ({ id, name, models }));
 }
@@ -175,4 +189,5 @@ module.exports = {
   getProviderKeys,
   buildAuthProfiles,
   PROVIDERS,
+  MODEL_DEFAULTS,
 };
