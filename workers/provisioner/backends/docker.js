@@ -3,6 +3,8 @@ const ProvisionerBackend = require("./interface");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { buildRuntimeBootstrapCommand, buildRuntimeEnv } = require("../runtimeBootstrap");
+const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
 
 class DockerBackend extends ProvisionerBackend {
   constructor() {
@@ -160,11 +162,12 @@ class DockerBackend extends ProvisionerBackend {
       }
     });
 
-    // Convert env object to array of KEY=VALUE + inject gateway token
-    const envArray = env
-      ? Object.entries(env).map(([k, v]) => `${k}=${v}`)
-      : [];
-    envArray.push(`OPENCLAW_GATEWAY_TOKEN=${gatewayToken}`);
+    // Convert env object to array of KEY=VALUE + inject runtime/gateway contract vars.
+    const envArray = Object.entries({
+      ...(env || {}),
+      ...buildRuntimeEnv(),
+      OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+    }).map(([k, v]) => `${k}=${v}`);
 
     // Build auth-profiles.json from any LLM API keys in env
     const llmKeyMap = {
@@ -269,7 +272,10 @@ class DockerBackend extends ProvisionerBackend {
       gatewayConfig.agents = { defaults: { model: safeDefaultModel } };
     }
 
-    // CMD: install openclaw (only if not already present), configure gateway, write auth profiles, and start it.
+    const runtimeBootstrapCmd = buildRuntimeBootstrapCommand();
+
+    // CMD: install openclaw (only if not already present), configure gateway, start the
+    // agent runtime on port 9090, write auth profiles, and launch the gateway.
     // The `which openclaw` guard means restarts after a successful first boot skip the slow
     // apt-get + npm install steps entirely, preventing crash loops when the npm registry is unreachable.
     const startCmd = [
@@ -279,8 +285,9 @@ class DockerBackend extends ProvisionerBackend {
       'echo \'' + JSON.stringify(gatewayConfig) + '\' > ~/.openclaw/openclaw.json && ' +
       "echo '" + pairedJson.replace(/'/g, "'\\''") + "' > ~/.openclaw/devices/paired.json && " +
       'echo \'{}\' > ~/.openclaw/devices/pending.json && ' +
+      runtimeBootstrapCmd +
       authProfilesCmd +
-      `openclaw gateway --port 18789`
+      `openclaw gateway --port ${OPENCLAW_GATEWAY_PORT}`
     ];
 
     // Resolve the Compose network for cross-service communication
@@ -307,7 +314,7 @@ class DockerBackend extends ProvisionerBackend {
       Env: envArray,
       Cmd: startCmd,
       WorkingDir: "/root",
-      ExposedPorts: { "18789/tcp": {} },
+      ExposedPorts: { "18789/tcp": {}, "9090/tcp": {} },
       HostConfig: {
         // CPU: vcpu cores -> NanoCPUs
         NanoCpus: (vcpu || 2) * 1e9,
@@ -327,7 +334,8 @@ class DockerBackend extends ProvisionerBackend {
       Labels: {
         "openclaw.agent.id": String(id),
         "openclaw.agent.name": name || "",
-        "openclaw.gateway.port": "18789",
+        "openclaw.gateway.port": String(OPENCLAW_GATEWAY_PORT),
+        "openclaw.runtime.port": String(AGENT_RUNTIME_PORT),
       },
     });
 

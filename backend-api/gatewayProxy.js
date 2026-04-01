@@ -8,7 +8,8 @@ const crypto = require("crypto");
 const db = require("./db");
 
 const metrics = require("./metrics");
-const GATEWAY_PORT = 18789;
+const { OPENCLAW_GATEWAY_PORT } = require("../agent-runtime/lib/contracts");
+const GATEWAY_PORT = OPENCLAW_GATEWAY_PORT;
 const CONNECT_TIMEOUT = 8000;
 const CALL_TIMEOUT = 30000;
 const CHAT_TIMEOUT = 120000;

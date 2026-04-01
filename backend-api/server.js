@@ -13,16 +13,21 @@ const snapshots = require("./snapshots");
 const { authenticateToken } = require("./middleware/auth");
 const { correlationId, errorHandler } = require("./middleware/errorHandler");
 const { createGatewayRouter, attachGatewayWS } = require("./gatewayProxy");
+const { OPENCLAW_GATEWAY_PORT } = require("../agent-runtime/lib/contracts");
 
 // ─── JWT Secret ───────────────────────────────────────────────────
+const IS_TEST_ENV = process.env.NODE_ENV === "test" || !!process.env.JEST_WORKER_ID;
 if (!process.env.JWT_SECRET) {
-  if (process.env.NODE_ENV === "production") {
+  if (IS_TEST_ENV) {
+    process.env.JWT_SECRET = "secret";
+  } else if (process.env.NODE_ENV === "production") {
     console.error("FATAL: JWT_SECRET must be set in production. Refusing to start with an ephemeral secret.");
     process.exit(1);
+  } else {
+    console.warn("SECURITY WARNING: JWT_SECRET not configured. Using ephemeral secret — all tokens will invalidate on restart. Set JWT_SECRET in .env.");
+    process.env.JWT_SECRET = crypto.randomBytes(32).toString("hex");
   }
-  console.warn("SECURITY WARNING: JWT_SECRET not configured. Using ephemeral secret — all tokens will invalidate on restart. Set JWT_SECRET in .env.");
 }
-process.env.JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString("hex");
 
 // ─── App Setup ────────────────────────────────────────────────────
 const app = express();
@@ -60,7 +65,7 @@ app.use(require("./middleware/requestMetrics"));
 
 // ─── Public Routes ────────────────────────────────────────────────
 
-let _startupComplete = false;
+let _startupComplete = IS_TEST_ENV;
 app.get("/health", (req, res) => {
   if (!_startupComplete) return res.status(503).json({ status: "starting" });
   res.json({ status: "ok" });
@@ -137,7 +142,7 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
     if (!result.rows[0]) return res.status(404).send("agent not found or not running");
 
     const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
-    const gwPort = result.rows[0].gateway_host_port || 18789;
+    const gwPort = result.rows[0].gateway_host_port || OPENCLAW_GATEWAY_PORT;
     const gatewayToken = result.rows[0].gateway_token;
 
     // Fetch the gateway root HTML
@@ -200,7 +205,7 @@ async function proxyGatewayAsset(req, res) {
     );
     if (!result.rows[0]) return res.status(404).end();
     const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
-    const gwPort = result.rows[0].gateway_host_port || 18789;
+    const gwPort = result.rows[0].gateway_host_port || OPENCLAW_GATEWAY_PORT;
     const gatewayPath = req.path.split("/gateway/")[1] || "";
     const targetUrl = `http://${gwHost}:${gwPort}/${gatewayPath}`;
     const resp = await fetch(targetUrl, {
