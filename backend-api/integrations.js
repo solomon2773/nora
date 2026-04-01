@@ -1,7 +1,7 @@
 // integration registry backed by PostgreSQL + catalog
 
 const db = require("./db");
-const { encrypt, decrypt } = require("./crypto");
+const { encrypt, decrypt, ensureEncryptionConfigured } = require("./crypto");
 const path = require("path");
 const fs = require("fs");
 
@@ -293,6 +293,74 @@ async function getCatalogItem(catalogId) {
   }
 }
 
+const SECRET_CONFIG_KEY_RE = /(token|secret|password|api[_-]?key|private[_-]?key|service[_-]?account|credentials?)/i;
+const REDACTED_SECRET = "[REDACTED]";
+
+function getSensitiveConfigKeys(provider) {
+  const catalogItem = loadCatalog().find((item) => item.id === provider);
+  const schemaKeys = new Set(
+    (catalogItem?.configFields || [])
+      .filter((field) => field?.type === "password" || SECRET_CONFIG_KEY_RE.test(field?.key || ""))
+      .map((field) => field.key)
+  );
+  if (provider === "gcp" || provider === "google-drive" || provider === "google-sheets" || provider === "google-calendar" || provider === "firebase" || provider === "google-analytics") {
+    for (const key of ["service_account_json", "credentials_json"]) schemaKeys.add(key);
+  }
+  return schemaKeys;
+}
+
+function parseConfig(config) {
+  return typeof config === "string" ? JSON.parse(config) : (config || {});
+}
+
+function encryptSensitiveConfig(provider, config = {}) {
+  const plain = parseConfig(config);
+  const sensitiveKeys = getSensitiveConfigKeys(provider);
+  const secured = { ...plain };
+  let hasSensitiveMaterial = false;
+
+  for (const key of Object.keys(secured)) {
+    const value = secured[key];
+    if (!value) continue;
+    if (sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) {
+      hasSensitiveMaterial = true;
+      secured[key] = encrypt(String(value));
+    }
+  }
+
+  return { secured, hasSensitiveMaterial };
+}
+
+function decryptSensitiveConfig(provider, config = {}) {
+  const parsed = parseConfig(config);
+  const sensitiveKeys = getSensitiveConfigKeys(provider);
+  const revealed = { ...parsed };
+
+  for (const key of Object.keys(revealed)) {
+    const value = revealed[key];
+    if (!value) continue;
+    if (sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) {
+      revealed[key] = decrypt(String(value));
+    }
+  }
+
+  return revealed;
+}
+
+function redactSensitiveConfig(provider, config = {}) {
+  const parsed = parseConfig(config);
+  const sensitiveKeys = getSensitiveConfigKeys(provider);
+  const redacted = { ...parsed };
+
+  for (const key of Object.keys(redacted)) {
+    if (sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) {
+      if (redacted[key]) redacted[key] = REDACTED_SECRET;
+    }
+  }
+
+  return redacted;
+}
+
 // ── Agent Integrations (CRUD) ────────────────────────────
 
 async function connectIntegration(agentId, provider, token, config = {}) {
@@ -307,12 +375,21 @@ async function connectIntegration(agentId, provider, token, config = {}) {
       }
     }
   }
+
+  const { secured: securedConfig, hasSensitiveMaterial } = encryptSensitiveConfig(provider, config);
+  if (token || hasSensitiveMaterial) {
+    ensureEncryptionConfigured("Integration credential storage");
+  }
+
   const encryptedToken = token ? encrypt(token) : null;
   const result = await db.query(
     "INSERT INTO integrations(agent_id, provider, catalog_id, access_token, config) VALUES($1, $2, $3, $4, $5) RETURNING *",
-    [agentId, provider, provider, encryptedToken, JSON.stringify(config)]
+    [agentId, provider, provider, encryptedToken, JSON.stringify(securedConfig)]
   );
-  return result.rows[0];
+  return {
+    ...result.rows[0],
+    config: redactSensitiveConfig(provider, securedConfig),
+  };
 }
 
 async function listIntegrations(agentId) {
@@ -325,7 +402,10 @@ async function listIntegrations(agentId) {
      ORDER BY i.created_at DESC`,
     [agentId]
   );
-  return result.rows;
+  return result.rows.map((row) => ({
+    ...row,
+    config: redactSensitiveConfig(row.provider, row.config),
+  }));
 }
 
 async function removeIntegration(integrationId, agentId) {
@@ -350,6 +430,7 @@ async function testIntegration(integrationId, agentId) {
 
   const token = decrypt(integration.access_token);
   const provider = integration.provider;
+  integration.config = decryptSensitiveConfig(provider, integration.config);
 
   // Real API connectivity tests per provider
   const connectivityTests = {
@@ -789,7 +870,7 @@ async function getIntegrationsForSync(agentId) {
     provider: r.provider,
     name: r.catalog_name || r.provider,
     category: r.catalog_category || "unknown",
-    config: typeof r.config === "string" ? JSON.parse(r.config) : (r.config || {}),
+    config: decryptSensitiveConfig(r.provider, r.config),
     status: r.status,
   }));
 }
@@ -814,7 +895,7 @@ async function getIntegrationEnvVars(agentId) {
     }
 
     // 2. Additional config fields (URLs, usernames, IDs, secondary secrets)
-    const cfg = typeof row.config === 'string' ? JSON.parse(row.config) : (row.config || {});
+    const cfg = decryptSensitiveConfig(row.provider, row.config);
     for (const [cfgKey, cfgValue] of Object.entries(cfg)) {
       if (!cfgValue) continue;
       const cfgEnvName = INTEGRATION_CONFIG_ENV_MAP[`${row.provider}.${cfgKey}`];

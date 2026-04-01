@@ -3,8 +3,11 @@ const db = require("../db");
 const monitoring = require("../monitoring");
 const metricsModule = require("../metrics");
 const { asyncHandler } = require("../middleware/errorHandler");
+const { findOwnedAgent, requireOwnedAgent } = require("../middleware/ownership");
 
 const router = express.Router();
+
+router.use("/agents/:id", requireOwnedAgent("id"));
 
 // ─── Platform monitoring ──────────────────────────────────────────
 
@@ -15,6 +18,8 @@ router.get("/monitoring/metrics", asyncHandler(async (req, res) => {
 router.get("/monitoring/events", asyncHandler(async (req, res) => {
   const { agentId, limit } = req.query;
   if (agentId) {
+    const agent = await findOwnedAgent(agentId, req.user.id);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
     const result = await db.query(
       "SELECT * FROM events WHERE metadata->>'agentId' = $1 ORDER BY created_at DESC LIMIT $2",
       [agentId, parseInt(limit) || 20]

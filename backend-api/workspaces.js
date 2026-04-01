@@ -18,7 +18,18 @@ async function listWorkspaces(userId) {
   return result.rows;
 }
 
-async function addAgent(workspaceId, agentId, role = "member") {
+async function addAgent(workspaceId, agentId, role = "member", userId = null) {
+  if (userId) {
+    const ownership = await db.query(
+      `SELECT w.id
+       FROM workspaces w
+       JOIN agents a ON a.id = $2
+       WHERE w.id = $1 AND w.user_id = $3 AND a.user_id = $3`,
+      [workspaceId, agentId, userId]
+    );
+    if (!ownership.rows[0]) throw new Error("Workspace or agent not found");
+  }
+
   const result = await db.query(
     "INSERT INTO workspace_agents(workspace_id, agent_id, role) VALUES($1, $2, $3) RETURNING *",
     [workspaceId, agentId, role]
@@ -26,11 +37,18 @@ async function addAgent(workspaceId, agentId, role = "member") {
   return result.rows[0];
 }
 
-async function getWorkspaceAgents(workspaceId) {
-  const result = await db.query(
-    "SELECT wa.*, a.name as agent_name, a.status as agent_status FROM workspace_agents wa JOIN agents a ON wa.agent_id = a.id WHERE wa.workspace_id = $1",
-    [workspaceId]
-  );
+async function getWorkspaceAgents(workspaceId, userId = null) {
+  const params = [workspaceId];
+  let query =
+    "SELECT wa.*, a.name as agent_name, a.status as agent_status FROM workspace_agents wa JOIN agents a ON wa.agent_id = a.id WHERE wa.workspace_id = $1";
+
+  if (userId) {
+    params.push(userId);
+    query += " AND a.user_id = $2";
+  }
+
+  query += " ORDER BY wa.created_at DESC";
+  const result = await db.query(query, params);
   return result.rows;
 }
 

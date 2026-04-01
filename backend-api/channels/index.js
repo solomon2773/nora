@@ -82,10 +82,15 @@ async function sendMessage(channelId, content, metadata = {}) {
   return result;
 }
 
-async function getMessages(channelId, limit = 50) {
+async function getMessages(channelId, agentId, limit = 50) {
   const result = await db.query(
-    "SELECT * FROM channel_messages WHERE channel_id = $1 ORDER BY created_at DESC LIMIT $2",
-    [channelId, limit]
+    `SELECT cm.*
+     FROM channel_messages cm
+     JOIN channels c ON c.id = cm.channel_id
+     WHERE cm.channel_id = $1 AND c.agent_id = $2
+     ORDER BY cm.created_at DESC
+     LIMIT $3`,
+    [channelId, agentId, limit]
   );
   return result.rows;
 }

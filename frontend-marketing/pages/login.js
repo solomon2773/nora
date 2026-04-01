@@ -4,6 +4,8 @@ import { Lock, Mail, Zap, Loader2 } from "lucide-react";
 import { signIn } from "next-auth/react";
 import { useToast } from "../components/Toast";
 
+const OAUTH_LOGIN_ENABLED = process.env.NEXT_PUBLIC_OAUTH_LOGIN_ENABLED === "true";
+
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -70,6 +72,7 @@ export default function Login() {
         </div>
 
         {/* OAuth Buttons */}
+        {OAUTH_LOGIN_ENABLED && (
         <div className="flex flex-col gap-3">
           <button
             onClick={() => handleOAuth("google")}
@@ -96,10 +99,11 @@ export default function Login() {
             Continue with GitHub
           </button>
         </div>
+        )}
 
         <div className="flex items-center gap-4">
           <div className="flex-1 h-px bg-white/10"></div>
-          <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">or</span>
+          <span className="text-xs text-slate-500 font-bold uppercase tracking-widest">{OAUTH_LOGIN_ENABLED ? "or" : "email"}</span>
           <div className="flex-1 h-px bg-white/10"></div>
         </div>
 

@@ -64,6 +64,7 @@ jest.mock("../llmProviders", () => ({
   deleteProvider: jest.fn(),
   getProviderKeys: jest.fn().mockResolvedValue([]),
   buildAuthProfiles: jest.fn().mockReturnValue({}),
+  PROVIDERS: [],
 }));
 jest.mock("../channels", () => ({
   listChannels: jest.fn().mockResolvedValue([]),
@@ -78,6 +79,7 @@ jest.mock("../metrics", () => ({
   getAgentMetrics: jest.fn().mockResolvedValue([]),
   getAgentSummary: jest.fn().mockResolvedValue({}),
   getAgentCost: jest.fn().mockResolvedValue(null),
+  recordApiMetric: jest.fn(),
 }));
 
 const app = require("../server");

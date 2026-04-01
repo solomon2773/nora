@@ -3,8 +3,11 @@ const db = require("../db");
 const integrations = require("../integrations");
 const { rpcCall } = require("../gatewayProxy");
 const { syncAuthToUserAgents } = require("../authSync");
+const { requireOwnedAgent } = require("../middleware/ownership");
 
 const router = express.Router();
+
+router.use("/agents/:id/integrations", requireOwnedAgent("id"));
 
 async function syncIntegrationsToAgent(agentId) {
   const agentResult = await db.query(
@@ -47,7 +50,7 @@ router.get("/agents/:id/integrations", async (req, res) => {
   try {
     res.json(await integrations.listIntegrations(req.params.id));
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.statusCode || 500).json({ error: e.message });
   }
 });
 
@@ -61,7 +64,7 @@ router.post("/agents/:id/integrations", async (req, res) => {
     syncAuthToUserAgents(req.user.id, req.params.id).catch(() => {});
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.statusCode || 500).json({ error: e.message });
   }
 });
 
@@ -72,7 +75,7 @@ router.delete("/agents/:id/integrations/:iid", async (req, res) => {
     syncAuthToUserAgents(req.user.id, req.params.id).catch(() => {});
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.statusCode || 500).json({ error: e.message });
   }
 });
 
@@ -81,7 +84,7 @@ router.post("/agents/:id/integrations/:iid/test", async (req, res) => {
     const result = await integrations.testIntegration(req.params.iid, req.params.id);
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.statusCode || 500).json({ error: e.message });
   }
 });
 

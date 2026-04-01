@@ -1,9 +1,11 @@
 const jwt = require("jsonwebtoken");
 
 function authenticateToken(req, res, next) {
-  const authHeader = req.headers["authorization"];
-  const token = (authHeader && authHeader.split(" ")[1]) || req.query.token;
-  if (!token) return res.status(401).json({ error: "No token provided" });
+  const authHeader = req.headers["authorization"] || "";
+  const [scheme, token] = authHeader.split(" ");
+  if (scheme !== "Bearer" || !token) {
+    return res.status(401).json({ error: "Bearer token required" });
+  }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);

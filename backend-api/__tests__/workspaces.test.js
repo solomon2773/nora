@@ -5,6 +5,7 @@ const request = require("supertest");
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
+process.env.JWT_SECRET = JWT_SECRET;
 
 const mockDb = { query: jest.fn() };
 jest.mock("../db", () => mockDb);
@@ -68,6 +69,7 @@ jest.mock("../llmProviders", () => ({
   deleteProvider: jest.fn(),
   getProviderKeys: jest.fn().mockResolvedValue([]),
   buildAuthProfiles: jest.fn().mockReturnValue({}),
+  PROVIDERS: [],
 }));
 jest.mock("../channels", () => ({
   listChannels: jest.fn().mockResolvedValue([]),
@@ -82,6 +84,7 @@ jest.mock("../metrics", () => ({
   getAgentMetrics: jest.fn().mockResolvedValue([]),
   getAgentSummary: jest.fn().mockResolvedValue({}),
   getAgentCost: jest.fn().mockResolvedValue(null),
+  recordApiMetric: jest.fn(),
 }));
 
 const app = require("../server");
@@ -162,12 +165,42 @@ describe("DELETE /workspaces/:id", () => {
   });
 });
 
+describe("GET /workspaces/:id/agents", () => {
+  it("rejects if not workspace owner", async () => {
+    mockDb.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await auth(request(app).get("/workspaces/ws-1/agents"));
+    expect(res.status).toBe(404);
+  });
+
+  it("returns workspace agents for owned workspace", async () => {
+    mockDb.query.mockResolvedValueOnce({ rows: [{ id: "ws-1", user_id: "user-1" }] });
+    mockWorkspaces.getWorkspaceAgents.mockResolvedValueOnce([{ agent_id: "a1", agent_name: "Agent 1" }]);
+
+    const res = await auth(request(app).get("/workspaces/ws-1/agents"));
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(mockWorkspaces.getWorkspaceAgents).toHaveBeenCalledWith("ws-1", "user-1");
+  });
+});
+
 describe("POST /workspaces/:id/agents", () => {
   it("rejects if not workspace owner", async () => {
     mockDb.query.mockResolvedValueOnce({ rows: [] }); // ownership check fails
 
     const res = await auth(
       request(app).post("/workspaces/ws-1/agents").send({ agentId: "a1" })
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects if agent is not owned by the workspace owner", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ id: "ws-1", user_id: "user-1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await auth(
+      request(app).post("/workspaces/ws-1/agents").send({ agentId: "a-foreign" })
     );
     expect(res.status).toBe(404);
   });

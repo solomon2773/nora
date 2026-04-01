@@ -1,7 +1,7 @@
 // LLM Provider key management — encrypted storage of user API keys
 
 const db = require("./db");
-const { encrypt, decrypt } = require("./crypto");
+const { encrypt, decrypt, ensureEncryptionConfigured } = require("./crypto");
 
 // Approved LLM providers and their env var names
 // Models updated per https://docs.openclaw.ai/providers (March 2026)
@@ -61,6 +61,7 @@ async function addProvider(userId, provider, apiKey, model, config = {}) {
   }
   if (!apiKey) throw new Error("API key is required");
 
+  ensureEncryptionConfigured("LLM provider credential storage");
   const encryptedKey = encrypt(apiKey);
 
   // If no other providers exist for this user, make it default
@@ -81,6 +82,7 @@ async function updateProvider(id, userId, updates) {
   let idx = 1;
 
   if (updates.apiKey) {
+    ensureEncryptionConfigured("LLM provider credential storage");
     sets.push(`api_key = $${idx++}`);
     params.push(encrypt(updates.apiKey));
   }

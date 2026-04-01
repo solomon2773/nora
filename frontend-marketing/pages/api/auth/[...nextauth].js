@@ -5,6 +5,7 @@ import GithubProvider from "next-auth/providers/github";
 
 // Backend API base — inside Docker this resolves to the backend service
 const API_INTERNAL = process.env.API_INTERNAL_URL || "http://backend-api:4000";
+const OAUTH_LOGIN_ENABLED = process.env.OAUTH_LOGIN_ENABLED === "true" || process.env.NEXT_PUBLIC_OAUTH_LOGIN_ENABLED === "true";
 
 export const authOptions = {
   providers: [
@@ -42,7 +43,7 @@ export const authOptions = {
       },
     }),
 
-    ...(process.env.GOOGLE_CLIENT_ID
+    ...(OAUTH_LOGIN_ENABLED && process.env.GOOGLE_CLIENT_ID
       ? [
           GoogleProvider({
             clientId: process.env.GOOGLE_CLIENT_ID,
@@ -51,7 +52,7 @@ export const authOptions = {
         ]
       : []),
 
-    ...(process.env.GITHUB_CLIENT_ID
+    ...(OAUTH_LOGIN_ENABLED && process.env.GITHUB_CLIENT_ID
       ? [
           GithubProvider({
             clientId: process.env.GITHUB_CLIENT_ID,

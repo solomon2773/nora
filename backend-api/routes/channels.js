@@ -1,7 +1,10 @@
 const express = require("express");
 const channels = require("../channels");
+const { requireOwnedAgent } = require("../middleware/ownership");
 
 const router = express.Router();
+
+router.use("/:id/channels", requireOwnedAgent("id"));
 
 router.get("/:id/channels", async (req, res) => {
   try {
@@ -52,7 +55,7 @@ router.post("/:id/channels/:cid/test", async (req, res) => {
 router.get("/:id/channels/:cid/messages", async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
-    res.json(await channels.getMessages(req.params.cid, limit));
+    res.json(await channels.getMessages(req.params.cid, req.params.id, limit));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

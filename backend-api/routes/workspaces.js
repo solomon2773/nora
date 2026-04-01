@@ -1,8 +1,11 @@
 const express = require("express");
 const db = require("../db");
 const workspaces = require("../workspaces");
+const { findOwnedAgent, requireOwnedWorkspace } = require("../middleware/ownership");
 
 const router = express.Router();
+
+router.use("/:id", requireOwnedWorkspace("id"));
 
 router.get("/", async (req, res) => {
   try {
@@ -25,7 +28,7 @@ router.post("/", async (req, res) => {
 
 router.get("/:id/agents", async (req, res) => {
   try {
-    res.json(await workspaces.getWorkspaceAgents(req.params.id));
+    res.json(await workspaces.getWorkspaceAgents(req.params.id, req.user.id));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -33,11 +36,11 @@ router.get("/:id/agents", async (req, res) => {
 
 router.post("/:id/agents", async (req, res) => {
   try {
-    const ws = await db.query("SELECT id FROM workspaces WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]);
-    if (!ws.rows[0]) return res.status(404).json({ error: "Workspace not found" });
     const { agentId, role } = req.body;
     if (!agentId) return res.status(400).json({ error: "agentId required" });
-    res.json(await workspaces.addAgent(req.params.id, agentId, role));
+    const agent = await findOwnedAgent(agentId, req.user.id);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.json(await workspaces.addAgent(req.params.id, agentId, role, req.user.id));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -45,8 +48,6 @@ router.post("/:id/agents", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    const ws = await db.query("SELECT id FROM workspaces WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]);
-    if (!ws.rows[0]) return res.status(404).json({ error: "Workspace not found" });
     await db.query("DELETE FROM workspace_agents WHERE workspace_id = $1", [req.params.id]);
     await db.query("DELETE FROM workspaces WHERE id = $1", [req.params.id]);
     res.json({ success: true });

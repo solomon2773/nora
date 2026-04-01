@@ -10,14 +10,26 @@ const ENCRYPTION_KEY = /^[0-9a-fA-F]{64}$/.test(RAW_KEY) ? RAW_KEY : null;
 if (!ENCRYPTION_KEY) {
   console.error(
     "SECURITY WARNING: ENCRYPTION_KEY is not set or invalid. " +
-    "Sensitive data (API keys, tokens) will be stored in PLAINTEXT. " +
-    "Set a 64-char hex key in .env to enable encryption at rest."
+    "Sensitive credential writes are blocked until encryption at rest is configured. " +
+    "Set a 64-char hex key in .env to enable secure storage."
   );
+}
+
+function isEncryptionConfigured() {
+  return Boolean(ENCRYPTION_KEY);
+}
+
+function ensureEncryptionConfigured(context = "Sensitive credential storage") {
+  if (ENCRYPTION_KEY) return;
+  const err = new Error(`${context} requires ENCRYPTION_KEY to be configured with a valid 64-char hex key`);
+  err.statusCode = 503;
+  throw err;
 }
 
 /**
  * Encrypt plaintext. Returns "iv:authTag:ciphertext" hex string.
- * If ENCRYPTION_KEY is not set, returns plaintext unchanged (graceful degradation).
+ * If ENCRYPTION_KEY is not set, returns plaintext unchanged (callers should use
+ * ensureEncryptionConfigured() before accepting new secret material).
  */
 function encrypt(text) {
   if (!ENCRYPTION_KEY || !text) return text;
@@ -53,4 +65,4 @@ function decrypt(data) {
   }
 }
 
-module.exports = { encrypt, decrypt };
+module.exports = { encrypt, decrypt, isEncryptionConfigured, ensureEncryptionConfigured };

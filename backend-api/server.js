@@ -60,7 +60,7 @@ app.use(require("./middleware/requestMetrics"));
 
 // ─── Public Routes ────────────────────────────────────────────────
 
-let _startupComplete = false;
+let _startupComplete = process.env.NODE_ENV === "test";
 app.get("/health", (req, res) => {
   if (!_startupComplete) return res.status(503).json({ status: "starting" });
   res.json({ status: "ok" });
@@ -361,21 +361,25 @@ if (require.main === module) {
 
     try { await migrateDB(); } catch (e) { console.error("DB migration error:", e.message); }
 
-    // Seed default admin account on first boot
+    // Seed bootstrap admin account on first boot only when explicit secure credentials are provided.
     try {
       const { rows } = await db.query("SELECT id FROM users LIMIT 1");
       if (rows.length === 0) {
-        const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || "admin@nora.local";
-        const adminPass = process.env.DEFAULT_ADMIN_PASSWORD || "admin123";
-        const bcrypt = require("bcryptjs");
-        const hash = await bcrypt.hash(adminPass, 10);
-        await db.query(
-          "INSERT INTO users(email, password_hash, role, name) VALUES($1, $2, 'admin', 'Admin') ON CONFLICT DO NOTHING",
-          [adminEmail, hash]
-        );
-        console.log(`Default admin account created: ${adminEmail}`);
-        if (adminPass === "admin123") {
-          console.warn("WARNING: Using default admin password. Change it immediately in Settings or set DEFAULT_ADMIN_PASSWORD in .env");
+        const adminEmail = (process.env.DEFAULT_ADMIN_EMAIL || "").trim();
+        const adminPass = process.env.DEFAULT_ADMIN_PASSWORD || "";
+        const hasExplicitBootstrapCreds = Boolean(adminEmail) && Boolean(adminPass);
+        const hasSecureBootstrapPassword = adminPass.length >= 12 && adminPass !== "admin123";
+
+        if (!hasExplicitBootstrapCreds || !hasSecureBootstrapPassword) {
+          console.warn("Skipping bootstrap admin seed: set explicit DEFAULT_ADMIN_EMAIL and a non-default DEFAULT_ADMIN_PASSWORD with at least 12 characters.");
+        } else {
+          const bcrypt = require("bcryptjs");
+          const hash = await bcrypt.hash(adminPass, 10);
+          await db.query(
+            "INSERT INTO users(email, password_hash, role, name) VALUES($1, $2, 'admin', 'Admin') ON CONFLICT DO NOTHING",
+            [adminEmail, hash]
+          );
+          console.log(`Bootstrap admin account created: ${adminEmail}`);
         }
       }
     } catch (e) { console.error("Failed to seed admin account:", e.message); }

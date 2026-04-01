@@ -35,7 +35,7 @@ export default function OpenClawUIPanel({ agentId }) {
     if (!gatewayInfo) return "";
     const jwt = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (!jwt) return "";
-    return `/api/agents/${agentId}/gateway/embed?token=${encodeURIComponent(jwt)}#password=${encodeURIComponent(gatewayInfo.token)}`;
+    return `/api/agents/${agentId}/gateway/embed?token=${encodeURIComponent(jwt)}`;
   }
 
   // Direct host port URL for opening in a new window (no iframe restrictions)

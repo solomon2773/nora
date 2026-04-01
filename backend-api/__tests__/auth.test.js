@@ -6,6 +6,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
+process.env.JWT_SECRET = JWT_SECRET;
 
 const mockDb = { query: jest.fn() };
 jest.mock("../db", () => mockDb);
@@ -68,6 +69,7 @@ jest.mock("../llmProviders", () => ({
   deleteProvider: jest.fn(),
   getProviderKeys: jest.fn().mockResolvedValue([]),
   buildAuthProfiles: jest.fn().mockReturnValue({}),
+  PROVIDERS: [],
 }));
 jest.mock("../channels", () => ({
   listChannels: jest.fn().mockResolvedValue([]),
@@ -82,6 +84,7 @@ jest.mock("../metrics", () => ({
   getAgentMetrics: jest.fn().mockResolvedValue([]),
   getAgentSummary: jest.fn().mockResolvedValue({}),
   getAgentCost: jest.fn().mockResolvedValue(null),
+  recordApiMetric: jest.fn(),
 }));
 
 const app = require("../server");
@@ -170,5 +173,24 @@ describe("POST /auth/login", () => {
 
     const decoded = jwt.verify(res.body.token, JWT_SECRET);
     expect(decoded).toHaveProperty("id", "uuid-1");
+  });
+});
+
+describe("OAuth hardening", () => {
+  it("rejects oauth-login when OAuth is disabled", async () => {
+    const res = await request(app)
+      .post("/auth/oauth-login")
+      .send({ email: "user@example.com", provider: "google" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toMatch(/disabled/i);
+  });
+
+  it("rejects query-string JWTs on protected routes", async () => {
+    const token = jwt.sign({ id: "user-1", role: "user" }, JWT_SECRET, { expiresIn: "1h" });
+    const res = await request(app).get(`/auth/me?token=${encodeURIComponent(token)}`);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/bearer token required/i);
   });
 });

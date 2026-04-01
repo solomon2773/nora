@@ -7,6 +7,8 @@ const { authenticateToken } = require("../middleware/auth");
 
 const router = express.Router();
 
+const OAUTH_LOGIN_ENABLED = process.env.OAUTH_LOGIN_ENABLED === "true";
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
@@ -73,6 +75,9 @@ router.post("/login", authLimiter, async (req, res) => {
 });
 
 router.post("/oauth-login", authLimiter, async (req, res) => {
+  if (!OAUTH_LOGIN_ENABLED) {
+    return res.status(403).json({ error: "OAuth login is disabled until server-side provider verification is implemented" });
+  }
   const { email, name, provider, providerId } = req.body;
   if (!email || !provider) return res.status(400).json({ error: "email and provider required" });
   try {
