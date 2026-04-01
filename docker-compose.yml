@@ -51,6 +51,8 @@ services:
     command: sh -c "npm install && node server.js"
     ports:
       - "4100:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file: .env
     depends_on:
       postgres:
@@ -71,6 +73,8 @@ services:
       - ./workers/provisioner:/app
       - /var/run/docker.sock:/var/run/docker.sock
     command: sh -c "npm install && node worker.js"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file: .env
     depends_on:
       redis:

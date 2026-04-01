@@ -237,29 +237,50 @@ class DockerBackend extends ProvisionerBackend {
     const firstProvider = Object.keys(authProfiles)[0];
     const defaultModel = firstProvider ? providerModelDefaults[firstProvider] : undefined;
 
-    // After gateway starts, set the model via CLI (runs in background after a delay).
-    // Validate defaultModel against the known hardcoded map to prevent injection.
-    // Uses a nested `sh -c '... &'` to background the model-set without the `&` breaking
-    // the outer && chain (bare `&` acts as a command separator, causing later commands
-    // to run unconditionally even if earlier steps like npm install failed).
+    // Set default model in the config file BEFORE gateway starts (not via background CLI after).
+    // Writing it into openclaw.json pre-launch avoids the config-change file watcher triggering
+    // a SIGUSR1 restart loop when `openclaw models set` rewrites the config post-boot.
     const safeDefaultModel = defaultModel && /^[a-zA-Z0-9_\-/.]+$/.test(defaultModel) ? defaultModel : null;
-    const setModelCmd = safeDefaultModel
-      ? `sh -c 'sleep 10 && openclaw models set ${safeDefaultModel} 2>/dev/null &' && `
-      : "";
+
+    // Derive the deterministic host port for this agent to include in allowedOrigins
+    const hostPort = 19000 + (parseInt(id.replace(/\D/g, '').slice(0, 4)) || 0) % 1000;
+
+    const gatewayConfig = {
+      gateway: {
+        bind: "lan",
+        mode: "local",
+        reload: { mode: "hot" },
+        auth: {
+          password: gatewayToken,
+        },
+        trustedProxies: ["127.0.0.1", "::1"],
+        controlUi: {
+          allowedOrigins: [
+            "http://localhost:8080", "http://127.0.0.1:8080", "https://localhost:8080",
+            "http://localhost:18789", "http://127.0.0.1:18789",
+            "http://localhost:3000", "http://127.0.0.1:3000",
+            "http://localhost:4000", "http://127.0.0.1:4000",
+            `http://localhost:${hostPort}`, `http://127.0.0.1:${hostPort}`,
+          ],
+        },
+      },
+    };
+    if (safeDefaultModel) {
+      gatewayConfig.agents = { defaults: { model: safeDefaultModel } };
+    }
 
     // CMD: install openclaw (only if not already present), configure gateway, write auth profiles, and start it.
     // The `which openclaw` guard means restarts after a successful first boot skip the slow
     // apt-get + npm install steps entirely, preventing crash loops when the npm registry is unreachable.
     const startCmd = [
       "sh", "-c",
-      '(which openclaw > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 && npm install -g openclaw@latest 2>&1)) && ' +
+      '(which openclaw > /dev/null 2>&1 || ((apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 || true) && npm install -g openclaw@latest 2>&1)) && ' +
       'mkdir -p ~/.openclaw/devices && ' +
-      'echo \'' + JSON.stringify(JSON.parse('{"gateway":{"port":18789,"bind":"lan","mode":"local"}}')) + '\' > ~/.openclaw/openclaw.json && ' +
+      'echo \'' + JSON.stringify(gatewayConfig) + '\' > ~/.openclaw/openclaw.json && ' +
       "echo '" + pairedJson.replace(/'/g, "'\\''") + "' > ~/.openclaw/devices/paired.json && " +
       'echo \'{}\' > ~/.openclaw/devices/pending.json && ' +
       authProfilesCmd +
-      setModelCmd +
-      `openclaw gateway --port 18789 --password ${gatewayToken}`
+      `openclaw gateway --port 18789`
     ];
 
     // Resolve the Compose network for cross-service communication
@@ -294,6 +315,9 @@ class DockerBackend extends ProvisionerBackend {
         Memory: (ram_mb || 2048) * 1024 * 1024,
         // Restart policy
         RestartPolicy: { Name: "unless-stopped" },
+        // Publish gateway port for direct browser access (control UI).
+        // Use a deterministic port based on agent ID to survive container restarts.
+        PortBindings: { "18789/tcp": [{ HostPort: String(hostPort) }] },
         // DNS servers for internet access from within the container
         Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
       },
@@ -327,8 +351,12 @@ class DockerBackend extends ProvisionerBackend {
       host = info.NetworkSettings?.IPAddress || "localhost";
     }
 
-    console.log(`[docker] Container ${container.id} started at ${host} (gateway port 18789)`);
-    return { containerId: container.id, host, gatewayToken, containerName };
+    // Get the published host port for the gateway (for direct browser access to control UI)
+    const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
+    const gatewayHostPort = portBindings?.[0]?.HostPort || null;
+
+    console.log(`[docker] Container ${container.id} started at ${host} (gateway port 18789, host port ${gatewayHostPort || 'none'})`);
+    return { containerId: container.id, host, gatewayToken, containerName, gatewayHostPort };
   }
 
   async destroy(containerId) {

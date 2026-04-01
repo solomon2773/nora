@@ -63,6 +63,13 @@ export default function AgentDetail() {
     return () => clearInterval(interval);
   }, [id, loading, agent?.status]);
 
+  // Refresh immediately when tab becomes visible (e.g. after using Docker Desktop)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible" && id) refreshAgent(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [id]);
+
   async function handleAction(action) {
     setActionLoading(action);
     try {

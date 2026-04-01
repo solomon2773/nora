@@ -22,9 +22,6 @@ function base64UrlEncode(buf) {
   return buf.toString("base64").replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
 }
 
-/** Derive a deterministic Ed25519 keypair from the gateway token.
- *  This allows both the provisioner (pre-approving pairing) and the proxy
- *  to produce the same device identity without extra DB storage. */
 function deriveDeviceIdentity(gatewayToken) {
   const seed = crypto.createHash("sha256").update("openclaw-device:" + gatewayToken).digest();
   const privateDer = Buffer.concat([PKCS8_ED25519_PREFIX, seed]);
@@ -35,7 +32,7 @@ function deriveDeviceIdentity(gatewayToken) {
   const raw = spki.subarray(ED25519_SPKI_PREFIX.length);
   const deviceId = crypto.createHash("sha256").update(raw).digest("hex");
   const publicKeyB64 = base64UrlEncode(raw);
-  return { deviceId, publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(), privateKeyPem, publicKeyB64 };
+  return { deviceId, privateKeyPem, publicKeyB64 };
 }
 
 function signDevicePayload(privateKeyPem, payload) {
@@ -60,9 +57,10 @@ function buildConnectDevice(identity, role, scopes, nonce) {
 // ─── WS-RPC Connection Pool ─────────────────────────────────────
 
 class GatewayConnection {
-  constructor(host, token) {
+  constructor(host, token, port) {
     this.host = host;
     this.token = token;
+    this.port = port || GATEWAY_PORT;
     this.ws = null;
     this.connected = false;
     this.pending = new Map(); // id -> { resolve, reject, timer }
@@ -93,13 +91,13 @@ class GatewayConnection {
         reject(new Error("Gateway connect timeout"));
       }, CONNECT_TIMEOUT);
 
-      this.ws = new WebSocket(`ws://${this.host}:${GATEWAY_PORT}`);
+      this.ws = new WebSocket(`ws://${this.host}:${this.port}`);
 
       this.ws.on("message", (raw) => {
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
 
-        // Phase 1: Challenge → send connect frame with device identity
+        // Phase 1: Challenge → send connect frame with password + device identity.
         if (msg.type === "event" && msg.event === "connect.challenge") {
           const nonce = msg.payload?.nonce || "";
           const role = "operator";
@@ -109,9 +107,8 @@ class GatewayConnection {
             type: "req", id: "__connect__", method: "connect",
             params: {
               minProtocol: 3, maxProtocol: 3,
-              client: { id: "gateway-client", version: "1.0.0", platform: process.platform, mode: "backend" },
-              role,
-              scopes,
+              client: { id: "gateway-client", version: "1.0.0", platform: "linux", mode: "backend" },
+              role, scopes,
               caps: ["thinking-events"], commands: [],
               auth: this.token ? { password: this.token } : {},
               device
@@ -216,7 +213,7 @@ class GatewayConnection {
 
     this.close();
     const delay = Math.min(this._baseDelay * Math.pow(2, this._reconnectAttempts), 120000);
-    console.log(`[gatewayProxy] Reconnecting to ${this.host} in ${delay}ms (attempt ${this._reconnectAttempts + 1}/${this._maxReconnectAttempts})`);
+    console.log(`[gatewayProxy] Reconnecting to ${this.host}:${this.port} in ${delay}ms (attempt ${this._reconnectAttempts + 1}/${this._maxReconnectAttempts})`);
     await new Promise(r => setTimeout(r, delay));
     this._reconnectAttempts++;
 
@@ -272,7 +269,8 @@ class GatewayConnection {
 const pool = new Map(); // host -> GatewayConnection
 
 async function getConnection(agent) {
-  const key = agent.host;
+  const addr = gatewayAddress(agent);
+  const key = `${addr.host}:${addr.port}`;
   let conn = pool.get(key);
   if (conn?.isAlive) return conn;
 
@@ -290,7 +288,7 @@ async function getConnection(agent) {
   // Clean up dead connection
   if (conn) { conn.close(); pool.delete(key); }
 
-  conn = new GatewayConnection(agent.host, agent.gateway_token);
+  conn = new GatewayConnection(addr.host, agent.gateway_token, addr.port);
   pool.set(key, conn);
   try {
     await conn.connect();
@@ -310,12 +308,25 @@ async function getConnection(agent) {
 
 async function resolveAgent(agentId, userId) {
   const result = await db.query(
-    "SELECT id, name, status, container_id, host, backend_type, gateway_token, user_id FROM agents WHERE id = $1",
+    "SELECT id, name, status, container_id, host, backend_type, gateway_token, gateway_host_port, user_id FROM agents WHERE id = $1",
     [agentId]
   );
   const agent = result.rows[0];
   if (!agent || agent.user_id !== userId) return null;
   return agent;
+}
+
+/** Resolve the gateway address (host:port) for an agent.
+ *  Prefers the published Docker host port over internal Docker IP.
+ *  Uses GATEWAY_HOST env var (default: host.docker.internal) to reach
+ *  published ports from inside the backend-api container. */
+const GATEWAY_DOCKER_HOST = process.env.GATEWAY_HOST || "host.docker.internal";
+
+function gatewayAddress(agent) {
+  if (agent.gateway_host_port) {
+    return { host: GATEWAY_DOCKER_HOST, port: agent.gateway_host_port };
+  }
+  return { host: agent.host, port: GATEWAY_PORT };
 }
 
 /** Make an RPC call to an agent's gateway, return the result or throw. */
@@ -645,7 +656,8 @@ function createGatewayRouter() {
       try {
         const subPath = req.params[0] || "";
         const gatewayPath = prefix + subPath;
-        const targetUrl = `http://${req.agent.host}:${GATEWAY_PORT}/${gatewayPath}${req._parsedUrl?.search || ""}`;
+        const addr = gatewayAddress(req.agent);
+        const targetUrl = `http://${addr.host}:${addr.port}/${gatewayPath}${req._parsedUrl?.search || ""}`;
 
         const resp = await fetch(targetUrl, {
           method: req.method,
@@ -672,7 +684,8 @@ function createGatewayRouter() {
   async function proxyGatewayFavicon(req, res) {
     try {
       const fullPath = req.path.split("/gateway/")[1] || "favicon.svg";
-      const targetUrl = `http://${req.agent.host}:${GATEWAY_PORT}/${fullPath}`;
+      const addr = gatewayAddress(req.agent);
+      const targetUrl = `http://${addr.host}:${addr.port}/${fullPath}`;
       const resp = await fetch(targetUrl, { signal: AbortSignal.timeout(5000) });
       res.status(resp.status);
       const ct = resp.headers.get("content-type");
@@ -721,29 +734,105 @@ function attachGatewayWS(server) {
         ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
         ws.close(); return;
       }
-      if (agent.status !== "running" || !agent.host) {
+      if ((agent.status !== "running" && agent.status !== "warning") || !agent.host) {
         ws.send(JSON.stringify({ type: "error", message: `Agent is ${agent.status}` }));
         ws.close(); return;
       }
 
-      // Open a raw WS to the Gateway (the client handles the handshake themselves)
-      const gwWs = new WebSocket(`ws://${agent.host}:${GATEWAY_PORT}`);
+      const identity = deriveDeviceIdentity(agent.gateway_token);
+      let handshakeComplete = false;
+      let connectResult = null; // stored relay handshake result
+      let pendingClientConnect = null; // client's connect msg awaiting relay handshake
+      const clientQueue = []; // buffer client messages until handshake is done
 
-      gwWs.on("open", () => {
-        ws.send(JSON.stringify({ type: "system", message: `Connected to ${agent.name} Gateway` }));
+      const addr = gatewayAddress(agent);
+      const gwWs = new WebSocket(`ws://${addr.host}:${addr.port}`, {
+        headers: { "Origin": `http://localhost:${addr.port}` }
       });
 
-      // Bidirectional relay
-      gwWs.on("message", (data) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(data.toString());
+      gwWs.on("message", (raw) => {
+        const str = raw.toString();
+        if (!handshakeComplete) {
+          let msg;
+          try { msg = JSON.parse(str); } catch { return; }
+
+          if (msg.type === "event" && msg.event === "connect.challenge") {
+            // Forward challenge to client so its UI can go through the normal auth flow
+            if (ws.readyState === WebSocket.OPEN) ws.send(str);
+            // Complete handshake on relay side with password + device identity
+            const nonce = msg.payload?.nonce || "";
+            const role = "operator";
+            const scopes = ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing"];
+            const { device } = buildConnectDevice(identity, role, scopes, nonce);
+            gwWs.send(JSON.stringify({
+              type: "req", id: "__relay_connect__", method: "connect",
+              params: {
+                minProtocol: 3, maxProtocol: 3,
+                client: { id: "gateway-client", version: "1.0.0", platform: "linux", mode: "backend" },
+                role, scopes,
+                caps: ["thinking-events"], commands: [],
+                auth: agent.gateway_token ? { password: agent.gateway_token } : {},
+                device
+              }
+            }));
+            return;
+          }
+
+          if (msg.id === "__relay_connect__") {
+            if (msg.ok) {
+              handshakeComplete = true;
+              connectResult = msg.result || {};
+              // If client already sent connect while we were handshaking, respond now
+              if (pendingClientConnect) {
+                ws.send(JSON.stringify({ id: pendingClientConnect.id, ok: true, result: connectResult }));
+                pendingClientConnect = null;
+              }
+              // Flush any buffered non-connect client messages
+              for (const queued of clientQueue) {
+                if (gwWs.readyState === WebSocket.OPEN) gwWs.send(queued);
+              }
+              clientQueue.length = 0;
+            } else {
+              console.error(`[gatewayProxy] WS relay handshake failed for ${agentId}:`, msg.error);
+              ws.send(JSON.stringify({ type: "error", message: `Gateway handshake failed: ${msg.error?.message || "unknown"}` }));
+              ws.close();
+              gwWs.close();
+            }
+            return;
+          }
+        }
+        // Post-handshake: relay gateway → client
+        if (ws.readyState === WebSocket.OPEN) ws.send(str);
       });
+
       ws.on("message", (data) => {
-        if (gwWs.readyState === WebSocket.OPEN) gwWs.send(data.toString());
+        const str = data.toString();
+        try {
+          const msg = JSON.parse(str);
+          if (msg.method === "connect") {
+            // Relay already authenticated (or is authenticating) — don't forward to gateway.
+            // Respond with the relay's stored result so the client UI completes its auth flow.
+            if (handshakeComplete && connectResult) {
+              ws.send(JSON.stringify({ id: msg.id, ok: true, result: connectResult }));
+            } else {
+              // Relay still handshaking — respond when ready
+              pendingClientConnect = msg;
+            }
+            return;
+          }
+        } catch { /* not JSON */ }
+        if (!handshakeComplete) {
+          clientQueue.push(str);
+          return;
+        }
+        if (gwWs.readyState === WebSocket.OPEN) gwWs.send(str);
       });
 
-      gwWs.on("close", (code) => {
+      gwWs.on("close", (code, reason) => {
+        const reasonStr = reason ? reason.toString() : "";
+        console.error(`[gatewayProxy] WS relay gateway closed for ${agentId}: code=${code} reason=${reasonStr}`);
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "system", message: `Gateway closed (${code})` }));
+          ws.send(JSON.stringify({ type: "system", message: `Gateway closed (${code}${reasonStr ? ": " + reasonStr : ""})` }));
           ws.close();
         }
       });
@@ -768,11 +857,13 @@ function attachGatewayWS(server) {
 /** Evict a cached gateway connection so the next request creates a fresh one.
  *  Called after authSync restarts an agent container. */
 function evictConnection(host) {
-  const conn = pool.get(host);
-  if (conn) {
-    conn.close();
-    pool.delete(host);
-    console.log(`[gatewayProxy] Evicted connection for ${host}`);
+  // Pool keys are now "host:port" — evict any key that starts with the given host
+  for (const [key, conn] of pool) {
+    if (key === host || key.startsWith(host + ":")) {
+      conn.close();
+      pool.delete(key);
+      console.log(`[gatewayProxy] Evicted connection for ${key}`);
+    }
   }
 }
 

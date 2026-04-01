@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { fetchWithAuth } from "../../lib/api";
 import { Cpu, MemoryStick, Network, HardDrive, Clock, Loader2, AlertTriangle } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -10,25 +10,19 @@ const YAxis = dynamic(() => import("recharts").then(m => m.YAxis), { ssr: false 
 const Tooltip = dynamic(() => import("recharts").then(m => m.Tooltip), { ssr: false });
 const ResponsiveContainer = dynamic(() => import("recharts").then(m => m.ResponsiveContainer), { ssr: false });
 
-const INTERVAL_OPTIONS = [
-  { label: "1s", value: 1000 },
-  { label: "3s", value: 3000 },
-  { label: "5s", value: 5000 },
-  { label: "10s", value: 10000 },
-  { label: "30s", value: 30000 },
-  { label: "1m", value: 60000 },
+const RANGE_OPTIONS = [
+  { label: "5m", value: "5m" },
+  { label: "15m", value: "15m" },
+  { label: "30m", value: "30m" },
+  { label: "1h", value: "1h" },
+  { label: "6h", value: "6h" },
+  { label: "24h", value: "24h" },
 ];
 
-const MAX_POINTS = 120;
-
-function formatUptime(seconds) {
-  if (!seconds) return "—";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h ${m}m`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+function formatUptime(s) {
+  if (!s) return "—";
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h ${m}m` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 function formatBytes(mb) {
@@ -37,84 +31,70 @@ function formatBytes(mb) {
   return `${(mb * 1024).toFixed(0)} KB`;
 }
 
+function fmtTime(iso, range) {
+  const d = new Date(iso);
+  if (["6h", "24h"].includes(range)) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
 export default function MetricsTab({ agentId }) {
   const [stats, setStats] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [range, setRange] = useState("15m");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [interval, setInterval_] = useState(3000);
-  const historyRef = useRef([]);
-  const [history, setHistory] = useState([]);
-  const prevNetRef = useRef({ rx: 0, tx: 0 });
-  const prevDiskRef = useRef({ read: 0, write: 0 });
 
-  const fetchStats = useCallback(async () => {
+  // Fetch current stats (live snapshot)
+  const fetchLive = useCallback(async () => {
     try {
       const res = await fetchWithAuth(`/api/agents/${agentId}/stats`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      setStats(data);
-      setError(null);
-
-      // Compute deltas for network and disk (cumulative → rate)
-      const netRxDelta = prevNetRef.current.rx ? Math.max(0, data.network_rx_mb - prevNetRef.current.rx) : 0;
-      const netTxDelta = prevNetRef.current.tx ? Math.max(0, data.network_tx_mb - prevNetRef.current.tx) : 0;
-      prevNetRef.current = { rx: data.network_rx_mb, tx: data.network_tx_mb };
-
-      const diskReadDelta = prevDiskRef.current.read ? Math.max(0, data.disk_read_mb - prevDiskRef.current.read) : 0;
-      const diskWriteDelta = prevDiskRef.current.write ? Math.max(0, data.disk_write_mb - prevDiskRef.current.write) : 0;
-      prevDiskRef.current = { read: data.disk_read_mb, write: data.disk_write_mb };
-
-      const point = {
-        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        cpu: data.cpu_percent,
-        memory: data.memory_percent,
-        memoryMb: data.memory_usage_mb,
-        netRx: netRxDelta,
-        netTx: netTxDelta,
-        diskRead: diskReadDelta,
-        diskWrite: diskWriteDelta,
-      };
-      historyRef.current = [...historyRef.current.slice(-(MAX_POINTS - 1)), point];
-      setHistory([...historyRef.current]);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+      if (res.ok) { setStats(await res.json()); setError(null); }
+    } catch {}
   }, [agentId]);
 
+  // Fetch historical stats from DB
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetchWithAuth(`/api/agents/${agentId}/stats/history?range=${range}`);
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.map(r => ({
+          time: fmtTime(r.recorded_at, range),
+          cpu_percent: parseFloat(r.cpu_percent) || 0,
+          memory_percent: parseFloat(r.memory_percent) || 0,
+          memory_usage_mb: parseInt(r.memory_usage_mb) || 0,
+          memory_limit_mb: parseInt(r.memory_limit_mb) || 0,
+          network_rx_mb: parseFloat(r.network_rx_mb) || 0,
+          network_tx_mb: parseFloat(r.network_tx_mb) || 0,
+          disk_read_mb: parseFloat(r.disk_read_mb) || 0,
+          disk_write_mb: parseFloat(r.disk_write_mb) || 0,
+          pids: parseInt(r.pids) || 0,
+        })));
+      }
+    } catch {}
+    setLoading(false);
+  }, [agentId, range]);
+
+  // Initial load + polling
   useEffect(() => {
     if (!agentId) return;
-    // Reset history on interval change
-    historyRef.current = [];
-    prevNetRef.current = { rx: 0, tx: 0 };
-    prevDiskRef.current = { read: 0, write: 0 };
-    setHistory([]);
+    setLoading(true);
+    fetchLive();
+    fetchHistory();
+    const liveInterval = setInterval(fetchLive, 5000);
+    const histInterval = setInterval(fetchHistory, 10000);
+    return () => { clearInterval(liveInterval); clearInterval(histInterval); };
+  }, [agentId, range, fetchLive, fetchHistory]);
 
-    fetchStats();
-    const id = setInterval(fetchStats, interval);
-    return () => clearInterval(id);
-  }, [agentId, interval, fetchStats]);
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="animate-spin text-blue-500" size={24} />
-      </div>
-    );
+  if (loading && !stats) {
+    return <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-blue-500" size={24} /></div>;
   }
 
   if (error && !stats) {
     return (
       <div className="bg-red-50 border border-red-200 rounded-2xl p-6 flex items-center gap-3">
         <AlertTriangle size={20} className="text-red-500 shrink-0" />
-        <div>
-          <p className="text-sm font-bold text-red-700">Cannot fetch container stats</p>
-          <p className="text-xs text-red-500 mt-1">{error}</p>
-        </div>
+        <div><p className="text-sm font-bold text-red-700">Cannot fetch stats</p><p className="text-xs text-red-500 mt-1">{error}</p></div>
       </div>
     );
   }
@@ -123,19 +103,17 @@ export default function MetricsTab({ agentId }) {
 
   return (
     <div className="space-y-4">
-      {/* Toolbar: interval selector + summary */}
+      {/* Toolbar */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500 font-medium">Refresh:</span>
+          <span className="text-xs text-slate-500 font-medium">Time Range:</span>
           <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
-            {INTERVAL_OPTIONS.map((opt) => (
+            {RANGE_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => setInterval_(opt.value)}
-                className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
-                  interval === opt.value
-                    ? "bg-white text-blue-600 shadow-sm"
-                    : "text-slate-500 hover:text-slate-700"
+                onClick={() => setRange(opt.value)}
+                className={`px-2.5 py-1 text-[10px] font-bold rounded-md transition-all ${
+                  range === opt.value ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
                 }`}
               >
                 {opt.label}
@@ -153,47 +131,27 @@ export default function MetricsTab({ agentId }) {
       {/* 4-panel chart grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <ChartCard
-          title="CPU Usage"
-          icon={Cpu}
+          title="CPU Usage" icon={Cpu}
           current={`${s.cpu_percent?.toFixed(1) || 0}%`}
-          color="#3b82f6"
-          data={history}
-          dataKey="cpu"
-          unit="%"
-          domain={[0, "auto"]}
+          color="#3b82f6" data={history} dataKey="cpu_percent" unit="%" domain={[0, "auto"]}
         />
         <ChartCard
-          title="Memory Usage"
-          icon={MemoryStick}
+          title="Memory Usage" icon={MemoryStick}
           current={`${formatBytes(s.memory_usage_mb || 0)} / ${formatBytes(s.memory_limit_mb || 0)} (${s.memory_percent?.toFixed(1) || 0}%)`}
-          color="#a855f7"
-          data={history}
-          dataKey="memory"
-          unit="%"
-          domain={[0, 100]}
+          color="#a855f7" data={history} dataKey="memory_percent" unit="%" domain={[0, 100]}
         />
         <ChartCard
-          title="Network I/O"
-          icon={Network}
-          current={`↓ ${formatBytes(s.network_rx_mb || 0)}  ↑ ${formatBytes(s.network_tx_mb || 0)} (cumulative)`}
-          color="#10b981"
-          secondColor="#f59e0b"
-          data={history}
-          dataKey="netRx"
-          secondDataKey="netTx"
-          unit=" MB"
+          title="Network I/O (cumulative)" icon={Network}
+          current={`↓ ${formatBytes(s.network_rx_mb || 0)}  ↑ ${formatBytes(s.network_tx_mb || 0)}`}
+          color="#10b981" secondColor="#f59e0b"
+          data={history} dataKey="network_rx_mb" secondDataKey="network_tx_mb" unit=" MB"
           legend={["Received", "Sent"]}
         />
         <ChartCard
-          title="Disk I/O"
-          icon={HardDrive}
-          current={`Read: ${formatBytes(s.disk_read_mb || 0)}  Write: ${formatBytes(s.disk_write_mb || 0)} (cumulative)`}
-          color="#06b6d4"
-          secondColor="#f97316"
-          data={history}
-          dataKey="diskRead"
-          secondDataKey="diskWrite"
-          unit=" MB"
+          title="Disk I/O (cumulative)" icon={HardDrive}
+          current={`Read: ${formatBytes(s.disk_read_mb || 0)}  Write: ${formatBytes(s.disk_write_mb || 0)}`}
+          color="#06b6d4" secondColor="#f97316"
+          data={history} dataKey="disk_read_mb" secondDataKey="disk_write_mb" unit=" MB"
           legend={["Read", "Write"]}
         />
       </div>
@@ -202,8 +160,8 @@ export default function MetricsTab({ agentId }) {
 }
 
 function ChartCard({ title, icon: Icon, current, color, secondColor, data, dataKey, secondDataKey, unit, domain, legend }) {
-  const gradId = `grad-${dataKey}`;
-  const gradId2 = secondDataKey ? `grad-${secondDataKey}` : null;
+  const g1 = `g-${dataKey}`;
+  const g2 = secondDataKey ? `g-${secondDataKey}` : null;
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-3">
@@ -214,55 +172,43 @@ function ChartCard({ title, icon: Icon, current, color, secondColor, data, dataK
         </div>
         <span className="text-[10px] text-slate-500 font-medium">{current}</span>
       </div>
-
-      <div style={{ height: 140 }}>
+      <div style={{ height: 150 }}>
         {data.length > 1 ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={data} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
               <defs>
-                <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id={g1} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={color} stopOpacity={0.3} />
                   <stop offset="95%" stopColor={color} stopOpacity={0.02} />
                 </linearGradient>
-                {gradId2 && (
-                  <linearGradient id={gradId2} x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={secondColor} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={secondColor} stopOpacity={0.02} />
-                  </linearGradient>
-                )}
+                {g2 && <linearGradient id={g2} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={secondColor} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={secondColor} stopOpacity={0.02} />
+                </linearGradient>}
               </defs>
               <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 9 }} domain={domain || [0, "auto"]} width={35} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 9 }} domain={domain || [0, "auto"]} width={40} axisLine={false} tickLine={false} />
               <Tooltip
                 contentStyle={{ fontSize: 10, borderRadius: 8, border: "1px solid #e2e8f0", padding: "4px 8px" }}
                 formatter={(v, name) => {
-                  const label = legend
-                    ? (name === dataKey ? legend[0] : legend[1])
-                    : title;
-                  return [`${typeof v === 'number' ? v.toFixed(2) : v}${unit || ""}`, label];
+                  const label = legend ? (name === dataKey ? legend[0] : legend[1]) : title;
+                  return [`${Number(v).toFixed(2)}${unit || ""}`, label];
                 }}
               />
-              <Area type="monotone" dataKey={dataKey} stroke={color} fill={`url(#${gradId})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              {secondDataKey && (
-                <Area type="monotone" dataKey={secondDataKey} stroke={secondColor} fill={`url(#${gradId2})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
-              )}
+              <Area type="monotone" dataKey={dataKey} stroke={color} fill={`url(#${g1})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />
+              {secondDataKey && <Area type="monotone" dataKey={secondDataKey} stroke={secondColor} fill={`url(#${g2})`} strokeWidth={1.5} dot={false} isAnimationActive={false} />}
             </AreaChart>
           </ResponsiveContainer>
         ) : (
           <div className="flex items-center justify-center h-full text-[10px] text-slate-400">
-            Collecting data...
+            Collecting data... (samples every 10s)
           </div>
         )}
       </div>
-
       {legend && data.length > 1 && (
         <div className="flex items-center justify-center gap-3 mt-1">
-          <span className="flex items-center gap-1 text-[9px] text-slate-500">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} /> {legend[0]}
-          </span>
-          <span className="flex items-center gap-1 text-[9px] text-slate-500">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: secondColor }} /> {legend[1]}
-          </span>
+          <span className="flex items-center gap-1 text-[9px] text-slate-500"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} /> {legend[0]}</span>
+          <span className="flex items-center gap-1 text-[9px] text-slate-500"><span className="w-2 h-2 rounded-full" style={{ backgroundColor: secondColor }} /> {legend[1]}</span>
         </div>
       )}
     </div>

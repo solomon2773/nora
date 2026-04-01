@@ -116,18 +116,93 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/assets/*", proxyGatewayAsset);
 gatewayUIAssetProxy.get("/agents/:agentId/gateway/favicon*", proxyGatewayAsset);
 gatewayUIAssetProxy.get("/agents/:agentId/gateway/__openclaw__/*", proxyGatewayAsset);
 
+// ─── Gateway UI Embed (pre-auth — authenticates via ?token= query param) ──────────
+// Serves the gateway control UI HTML for iframe embedding. Authenticates via JWT in
+// the query string (iframes can't set Authorization headers). Injects a WebSocket
+// interceptor so the control UI connects through the backend's relay instead of
+// directly to the container port (avoids cross-origin / allowedOrigins issues).
+gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
+  try {
+    const jwt = require("jsonwebtoken");
+    const token = req.query.token;
+    if (!token) return res.status(401).send("token required");
+    let payload;
+    try { payload = jwt.verify(token, process.env.JWT_SECRET); } catch { return res.status(401).send("invalid token"); }
+
+    const agentId = req.params.agentId;
+    const result = await db.query(
+      "SELECT host, gateway_token, gateway_host_port FROM agents WHERE id = $1 AND user_id = $2 AND status IN ('running','warning') AND host IS NOT NULL",
+      [agentId, payload.id]
+    );
+    if (!result.rows[0]) return res.status(404).send("agent not found or not running");
+
+    const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
+    const gwPort = result.rows[0].gateway_host_port || 18789;
+    const gatewayToken = result.rows[0].gateway_token;
+
+    // Fetch the gateway root HTML
+    let resp;
+    try {
+      resp = await fetch(`http://${gwHost}:${gwPort}/`, {
+        headers: { "Accept": "text/html", "Accept-Encoding": "identity" },
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (fetchErr) {
+      return res.status(502).send(`gateway unreachable at ${gwHost}:${gwPort} — ${fetchErr.message}`);
+    }
+    if (!resp.ok) return res.status(502).send(`gateway returned ${resp.status}`);
+    let html = await resp.text();
+
+    // Build the WebSocket relay URL. Must include /api/ prefix because nginx
+    // routes /api/ws/* → backend /ws/* (strips the /api prefix).
+    const wsProto = req.protocol === "https" ? "wss" : "ws";
+    const wsRelayUrl = `${wsProto}://${req.headers.host}/api/ws/gateway/${agentId}?token=${encodeURIComponent(token)}`;
+
+    // Inject a WebSocket interceptor + auto-connect config before </head>.
+    // The interceptor redirects all WS connections to the backend relay (which
+    // sets Origin: http://localhost:18789 server-side, bypassing origin checks).
+    // Also inject the gateway password into the URL hash so the control UI auto-fills it.
+    const injectScript = `<script>
+(function(){
+  var R=${JSON.stringify(wsRelayUrl)};
+  var P=${JSON.stringify(gatewayToken)};
+  var _WS=window.WebSocket;
+  window.WebSocket=function(u,p){return p?new _WS(R,p):new _WS(R)};
+  window.WebSocket.prototype=_WS.prototype;
+  window.WebSocket.CONNECTING=_WS.CONNECTING;
+  window.WebSocket.OPEN=_WS.OPEN;
+  window.WebSocket.CLOSING=_WS.CLOSING;
+  window.WebSocket.CLOSED=_WS.CLOSED;
+  // Override stored WebSocket URL so the gateway UI uses our relay
+  try{localStorage.setItem('oc-gateway-url',R);localStorage.setItem('openclaw-ws-url',R);}catch(e){}
+  // Set token in URL hash for gateway UI auto-login
+  window.location.hash='password='+encodeURIComponent(P);
+})();
+</script>`;
+    html = html.replace(/<head[^>]*>/i, (m) => m + injectScript);
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(html);
+  } catch (err) {
+    console.error("[gateway-embed] error:", err);
+    if (!res.headersSent) res.status(502).send(`embed proxy error: ${err.message}`);
+  }
+});
+
 async function proxyGatewayAsset(req, res) {
   try {
     const db = require("./db");
     const agentId = req.params.agentId;
     const result = await db.query(
-      "SELECT host FROM agents WHERE id = $1 AND status IN ('running','warning') AND host IS NOT NULL",
+      "SELECT host, gateway_host_port FROM agents WHERE id = $1 AND status IN ('running','warning') AND host IS NOT NULL",
       [agentId]
     );
     if (!result.rows[0]) return res.status(404).end();
-    const host = result.rows[0].host;
+    const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
+    const gwPort = result.rows[0].gateway_host_port || 18789;
     const gatewayPath = req.path.split("/gateway/")[1] || "";
-    const targetUrl = `http://${host}:18789/${gatewayPath}`;
+    const targetUrl = `http://${gwHost}:${gwPort}/${gatewayPath}`;
     const resp = await fetch(targetUrl, {
       headers: { "Accept": req.headers.accept || "*/*", "Accept-Encoding": "identity" },
       signal: AbortSignal.timeout(10000),
@@ -247,6 +322,22 @@ async function migrateDB() {
     `CREATE INDEX IF NOT EXISTS idx_usage_metrics_user ON usage_metrics(user_id, recorded_at)`,
     `CREATE INDEX IF NOT EXISTS idx_usage_metrics_type ON usage_metrics(metric_type, recorded_at)`,
     `DO $$ BEGIN ALTER TABLE users ADD COLUMN avatar TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+    `CREATE TABLE IF NOT EXISTS container_stats (
+       id BIGSERIAL PRIMARY KEY,
+       agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
+       cpu_percent NUMERIC NOT NULL DEFAULT 0,
+       memory_usage_mb INTEGER NOT NULL DEFAULT 0,
+       memory_limit_mb INTEGER NOT NULL DEFAULT 0,
+       memory_percent NUMERIC NOT NULL DEFAULT 0,
+       network_rx_mb NUMERIC NOT NULL DEFAULT 0,
+       network_tx_mb NUMERIC NOT NULL DEFAULT 0,
+       disk_read_mb NUMERIC NOT NULL DEFAULT 0,
+       disk_write_mb NUMERIC NOT NULL DEFAULT 0,
+       pids INTEGER NOT NULL DEFAULT 0,
+       recorded_at TIMESTAMPTZ DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_container_stats_agent_time ON container_stats(agent_id, recorded_at DESC)`,
+    `DO $$ BEGIN ALTER TABLE agents ADD COLUMN gateway_host_port INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
   ];
 
   for (const sql of migrations) {
@@ -306,6 +397,76 @@ if (require.main === module) {
 
     _startupComplete = true;
     console.log("Startup complete — health check now returning ok");
+
+    // ── Background stats collector: sample running containers every 10s ──
+    const STATS_INTERVAL = 10000;
+    setInterval(async () => {
+      try {
+        const Docker = require("dockerode");
+        const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+        const agents = await db.query(
+          "SELECT id, container_id FROM agents WHERE status IN ('running','warning') AND container_id IS NOT NULL"
+        );
+        for (const agent of agents.rows) {
+          try {
+            const container = docker.getContainer(agent.container_id);
+            const stats = await container.stats({ stream: false });
+            const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - (stats.precpu_stats.cpu_usage?.total_usage || 0);
+            const systemDelta = stats.cpu_stats.system_cpu_usage - (stats.precpu_stats.system_cpu_usage || 0);
+            const cpuCount = stats.cpu_stats.online_cpus || 1;
+            const cpuPercent = systemDelta > 0 ? (cpuDelta / systemDelta) * cpuCount * 100 : 0;
+            const memUsage = stats.memory_stats.usage || 0;
+            const memLimit = stats.memory_stats.limit || 0;
+            const memCache = stats.memory_stats.stats?.cache || 0;
+            const memActual = memUsage - memCache;
+            let netRx = 0, netTx = 0;
+            if (stats.networks) { for (const i of Object.values(stats.networks)) { netRx += i.rx_bytes || 0; netTx += i.tx_bytes || 0; } }
+            let diskR = 0, diskW = 0;
+            if (stats.blkio_stats?.io_service_bytes_recursive) {
+              for (const e of stats.blkio_stats.io_service_bytes_recursive) {
+                if (e.op === "read" || e.op === "Read") diskR += e.value || 0;
+                if (e.op === "write" || e.op === "Write") diskW += e.value || 0;
+              }
+            }
+            await db.query(
+              `INSERT INTO container_stats(agent_id, cpu_percent, memory_usage_mb, memory_limit_mb, memory_percent, network_rx_mb, network_tx_mb, disk_read_mb, disk_write_mb, pids)
+               VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+              [agent.id, Math.round(cpuPercent*100)/100, Math.round(memActual/1048576), Math.round(memLimit/1048576),
+               memLimit>0?Math.round(memActual/memLimit*10000)/100:0, Math.round(netRx/1048576*100)/100, Math.round(netTx/1048576*100)/100,
+               Math.round(diskR/1048576*100)/100, Math.round(diskW/1048576*100)/100, stats.pids_stats?.current||0]
+            );
+          } catch { /* container may have stopped */ }
+        }
+        // Prune old stats (keep 24h)
+        await db.query("DELETE FROM container_stats WHERE recorded_at < NOW() - INTERVAL '24 hours'").catch(() => {});
+      } catch { /* docker unavailable */ }
+    }, STATS_INTERVAL);
+
+    // ── Background status reconciler: sync DB status with real container state every 30s ──
+    const RECONCILE_INTERVAL = 30000;
+    setInterval(async () => {
+      try {
+        const Docker = require("dockerode");
+        const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+        const agents = await db.query(
+          "SELECT id, container_id, status FROM agents WHERE container_id IS NOT NULL AND status IN ('running','warning','stopped','error')"
+        );
+        for (const agent of agents.rows) {
+          try {
+            const info = await docker.getContainer(agent.container_id).inspect();
+            const liveStatus = info.State?.Running ? "running" : "stopped";
+            if (liveStatus !== agent.status && agent.status !== "queued" && agent.status !== "deploying") {
+              await db.query("UPDATE agents SET status = $1 WHERE id = $2", [liveStatus, agent.id]);
+            }
+          } catch (e) {
+            // Container removed or unreachable — mark as stopped if it was running
+            if (agent.status === "running" || agent.status === "warning") {
+              await db.query("UPDATE agents SET status = 'stopped' WHERE id = $1", [agent.id]);
+            }
+          }
+        }
+      } catch { /* docker unavailable */ }
+    }, RECONCILE_INTERVAL);
   });
 
   attachLogStream(server);

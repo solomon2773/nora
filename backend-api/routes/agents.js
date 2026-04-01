@@ -43,6 +43,78 @@ router.get("/:id", asyncHandler(async (req, res) => {
   res.json(agent);
 }));
 
+// Historical container stats with time range
+// Query params: ?range=5m|15m|1h|6h|24h (default 15m) or ?from=ISO&to=ISO
+router.get("/:id/stats/history", asyncHandler(async (req, res) => {
+  const agentCheck = await db.query(
+    "SELECT id FROM agents WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]
+  );
+  if (!agentCheck.rows[0]) return res.status(404).json({ error: "Agent not found" });
+
+  const rangeMap = { "5m": "5 minutes", "15m": "15 minutes", "30m": "30 minutes", "1h": "1 hour", "6h": "6 hours", "24h": "24 hours" };
+  let fromTime, toTime;
+
+  if (req.query.from && req.query.to) {
+    fromTime = new Date(req.query.from);
+    toTime = new Date(req.query.to);
+  } else {
+    const range = rangeMap[req.query.range || "15m"] || "15 minutes";
+    toTime = new Date();
+    fromTime = new Date(Date.now() - parseInterval(range));
+  }
+
+  const result = await db.query(
+    `SELECT cpu_percent, memory_usage_mb, memory_limit_mb, memory_percent,
+            network_rx_mb, network_tx_mb, disk_read_mb, disk_write_mb, pids, recorded_at
+     FROM container_stats WHERE agent_id = $1 AND recorded_at BETWEEN $2 AND $3
+     ORDER BY recorded_at ASC LIMIT 2000`,
+    [req.params.id, fromTime, toTime]
+  );
+  res.json(result.rows);
+}));
+
+function parseInterval(pg) {
+  const m = pg.match(/(\d+)\s*(minute|hour|second)/);
+  if (!m) return 15 * 60 * 1000;
+  const n = parseInt(m[1]);
+  if (m[2] === "hour") return n * 3600000;
+  if (m[2] === "minute") return n * 60000;
+  return n * 1000;
+}
+
+// Get the gateway control UI URL (published host port for direct browser access)
+router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
+  const result = await db.query(
+    "SELECT id, container_id, gateway_token, gateway_host_port, user_id FROM agents WHERE id = $1 AND user_id = $2",
+    [req.params.id, req.user.id]
+  );
+  const agent = result.rows[0];
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+  if (!agent.container_id) return res.status(409).json({ error: "No container" });
+
+  // Use stored host port if available, otherwise fall back to Docker inspect
+  let hostPort = agent.gateway_host_port;
+  if (!hostPort) {
+    try {
+      const Docker = require("dockerode");
+      const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+      const info = await docker.getContainer(agent.container_id).inspect();
+      const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
+      hostPort = portBindings?.[0]?.HostPort || null;
+    } catch (e) {
+      return res.status(502).json({ error: "Could not inspect container", details: e.message });
+    }
+  }
+
+  if (!hostPort) return res.status(409).json({ error: "Gateway port not published" });
+
+  res.json({
+    url: `http://localhost:${hostPort}`,
+    port: parseInt(hostPort),
+    token: agent.gateway_token,
+  });
+}));
+
 // Live container resource stats (CPU, memory, network, PIDs)
 router.get("/:id/stats", asyncHandler(async (req, res) => {
   const result = await db.query(

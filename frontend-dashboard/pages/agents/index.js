@@ -30,6 +30,19 @@ export default function Agents() {
 
   useEffect(() => { loadAgents(); }, []);
 
+  // Poll every 15s + refresh on tab visibility change
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchWithAuth("/api/agents")
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then(setAgents)
+        .catch(() => {});
+    }, 15000);
+    const onVisible = () => { if (document.visibilityState === "visible") loadAgents(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
+
   const handleAction = async (id, action) => {
     try {
       const res = await fetchWithAuth(`/api/agents/${id}/${action}`, { method: "POST" });

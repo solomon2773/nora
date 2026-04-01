@@ -125,7 +125,7 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
           <div>
             <p className="text-sm font-bold text-slate-800">OpenClaw Gateway Active</p>
             <p className="text-[10px] text-slate-500">
-              Port 18789 &bull; Chat, Sessions, Cron, Tools available in the OpenClaw tab
+              {agent.gateway_host_port ? `localhost:${agent.gateway_host_port}` : "Port 18789"} &bull; Chat, Sessions, Cron, Tools available in the OpenClaw tab
             </p>
           </div>
           <Radio size={14} className="ml-auto text-green-500 animate-pulse" />
@@ -154,7 +154,7 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
           { label: "vCPU", value: agent.vcpu || "2", icon: Cpu, color: "text-blue-600" },
           { label: "RAM", value: `${agent.ram_mb ? agent.ram_mb / 1024 : 2} GB`, icon: MemoryStick, color: "text-emerald-600" },
           { label: "Disk", value: `${agent.disk_gb || 20} GB`, icon: HardDrive, color: "text-purple-600" },
-          { label: "Host", value: agent.host || "—", icon: Globe, color: "text-orange-600" },
+          { label: "Host", value: agent.gateway_host_port ? `localhost:${agent.gateway_host_port}` : (agent.host || "—"), icon: Globe, color: "text-orange-600" },
         ].map((item) => (
           <div key={item.label} className="bg-slate-50 border border-slate-200 rounded-2xl p-5">
             <div className="flex items-center gap-2 mb-2">

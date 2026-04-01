@@ -314,6 +314,7 @@ const worker = new Worker('deployments', async (job) => {
     host = result.host;
     gatewayToken = result.gatewayToken;
     containerName = result.containerName || container_name;
+    var gatewayHostPort = result.gatewayHostPort || null;
 
     // If network discovery failed, host may be "localhost" which is unreachable
     // from backend-api. Attempt to resolve the correct Compose network IP.
@@ -354,8 +355,8 @@ const worker = new Worker('deployments', async (job) => {
   // Update agent with real container info
   try {
     await db.query(
-      "UPDATE agents SET status = 'running', container_id = $2, host = $3, backend_type = $4, gateway_token = $5, container_name = COALESCE($6, container_name) WHERE id = $1",
-      [id, containerId, host, backendName, gatewayToken, containerName || null]
+      "UPDATE agents SET status = 'running', container_id = $2, host = $3, backend_type = $4, gateway_token = $5, container_name = COALESCE($6, container_name), gateway_host_port = COALESCE($7, gateway_host_port) WHERE id = $1",
+      [id, containerId, host, backendName, gatewayToken, containerName || null, gatewayHostPort ? parseInt(gatewayHostPort) : null]
     );
     await db.query("UPDATE deployments SET status = 'completed' WHERE agent_id = $1", [id]);
     await db.query(
@@ -367,12 +368,15 @@ const worker = new Worker('deployments', async (job) => {
     // Post-deploy health check: verify gateway is reachable.
     // First boot runs apt-get + npm install (~60-90s) before the gateway starts,
     // so we allow up to ~150s (15 attempts × 10s) for the gateway to come up.
+    // Prefer the published host port (localhost:<hostPort>) over internal Docker IP.
+    const healthHost = gatewayHostPort ? (process.env.GATEWAY_HOST || "host.docker.internal") : host;
+    const healthPort = gatewayHostPort || 18789;
     let gatewayHealthy = false;
     for (let attempt = 0; attempt < 15; attempt++) {
       try {
         const ctrl = new AbortController();
         const timeout = setTimeout(() => ctrl.abort(), 5000);
-        await fetch(`http://${host}:18789`, { signal: ctrl.signal });
+        await fetch(`http://${healthHost}:${healthPort}`, { signal: ctrl.signal });
         clearTimeout(timeout);
         gatewayHealthy = true;
         break;
@@ -381,7 +385,7 @@ const worker = new Worker('deployments', async (job) => {
       }
     }
     if (!gatewayHealthy) {
-      console.warn(`[provisioner] Gateway health check failed for agent ${id} at ${host}:18789`);
+      console.warn(`[provisioner] Gateway health check failed for agent ${id} at ${healthHost}:${healthPort}`);
       await db.query("UPDATE agents SET status = 'warning' WHERE id = $1", [id]);
       await db.query(
         "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
