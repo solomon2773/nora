@@ -1,5 +1,6 @@
 const express = require("express");
 const db = require("../db");
+const { agentRuntimeUrl } = require("../../agent-runtime/lib/contracts");
 
 const router = express.Router();
 
@@ -11,7 +12,7 @@ router.get("/:id/nemoclaw/status", async (req, res) => {
     if (agent.sandbox_type !== "nemoclaw") return res.status(400).json({ error: "Agent is not a NemoClaw sandbox" });
     if (!agent.host || agent.status !== "running") return res.json({ status: agent.status, sandbox: null });
 
-    const resp = await fetch(`http://${agent.host}:9090/nemoclaw/status`);
+    const resp = await fetch(agentRuntimeUrl(agent.host, "/nemoclaw/status"));
     if (!resp.ok) throw new Error(`Agent runtime returned ${resp.status}`);
     res.json(await resp.json());
   } catch (e) {
@@ -27,7 +28,7 @@ router.get("/:id/nemoclaw/policy", async (req, res) => {
     if (agent.sandbox_type !== "nemoclaw") return res.status(400).json({ error: "Agent is not a NemoClaw sandbox" });
     if (!agent.host || agent.status !== "running") return res.status(400).json({ error: "Agent is not running" });
 
-    const resp = await fetch(`http://${agent.host}:9090/nemoclaw/policy`);
+    const resp = await fetch(agentRuntimeUrl(agent.host, "/nemoclaw/policy"));
     if (!resp.ok) throw new Error(`Agent runtime returned ${resp.status}`);
     res.json(await resp.json());
   } catch (e) {
@@ -43,7 +44,7 @@ router.post("/:id/nemoclaw/policy", async (req, res) => {
     if (agent.sandbox_type !== "nemoclaw") return res.status(400).json({ error: "Agent is not a NemoClaw sandbox" });
     if (!agent.host || agent.status !== "running") return res.status(400).json({ error: "Agent is not running" });
 
-    const resp = await fetch(`http://${agent.host}:9090/nemoclaw/policy`, {
+    const resp = await fetch(agentRuntimeUrl(agent.host, "/nemoclaw/policy"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body),
@@ -63,7 +64,7 @@ router.get("/:id/nemoclaw/approvals", async (req, res) => {
     if (agent.sandbox_type !== "nemoclaw") return res.status(400).json({ error: "Agent is not a NemoClaw sandbox" });
     if (!agent.host || agent.status !== "running") return res.json({ approvals: [] });
 
-    const resp = await fetch(`http://${agent.host}:9090/nemoclaw/approvals`);
+    const resp = await fetch(agentRuntimeUrl(agent.host, "/nemoclaw/approvals"));
     if (!resp.ok) throw new Error(`Agent runtime returned ${resp.status}`);
     res.json(await resp.json());
   } catch (e) {
@@ -79,7 +80,7 @@ router.post("/:id/nemoclaw/approvals/:rid", async (req, res) => {
     if (agent.sandbox_type !== "nemoclaw") return res.status(400).json({ error: "Agent is not a NemoClaw sandbox" });
     if (!agent.host || agent.status !== "running") return res.status(400).json({ error: "Agent is not running" });
 
-    const resp = await fetch(`http://${agent.host}:9090/nemoclaw/approvals/${req.params.rid}`, {
+    const resp = await fetch(agentRuntimeUrl(agent.host, `/nemoclaw/approvals/${req.params.rid}`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req.body),

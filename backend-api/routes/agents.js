@@ -5,6 +5,7 @@ const billing = require("../billing");
 const scheduler = require("../scheduler");
 const containerManager = require("../containerManager");
 const monitoring = require("../monitoring");
+const { OPENCLAW_GATEWAY_PORT } = require("../../agent-runtime/lib/contracts");
 const { asyncHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
@@ -99,7 +100,7 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
       const Docker = require("dockerode");
       const docker = new Docker({ socketPath: "/var/run/docker.sock" });
       const info = await docker.getContainer(agent.container_id).inspect();
-      const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
+      const portBindings = info.NetworkSettings?.Ports?.[`${OPENCLAW_GATEWAY_PORT}/tcp`];
       hostPort = portBindings?.[0]?.HostPort || null;
     } catch (e) {
       return res.status(502).json({ error: "Could not inspect container", details: e.message });

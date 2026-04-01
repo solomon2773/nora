@@ -1,6 +1,8 @@
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const { Pool } = require('pg');
+const { agentRuntimeUrl } = require('../../agent-runtime/lib/contracts');
+const { waitForAgentReadiness } = require('./healthChecks');
 
 // ── Connections ──────────────────────────────────────────
 const connection = new IORedis({
@@ -365,31 +367,24 @@ const worker = new Worker('deployments', async (job) => {
     );
     console.log(`Agent ${id} deployed: containerId=${containerId} host=${host}`);
 
-    // Post-deploy health check: verify gateway is reachable.
-    // First boot runs apt-get + npm install (~60-90s) before the gateway starts,
-    // so we allow up to ~150s (15 attempts × 10s) for the gateway to come up.
-    // Prefer the published host port (localhost:<hostPort>) over internal Docker IP.
-    const healthHost = gatewayHostPort ? (process.env.GATEWAY_HOST || "host.docker.internal") : host;
-    const healthPort = gatewayHostPort || 18789;
-    let gatewayHealthy = false;
-    for (let attempt = 0; attempt < 15; attempt++) {
-      try {
-        const ctrl = new AbortController();
-        const timeout = setTimeout(() => ctrl.abort(), 5000);
-        await fetch(`http://${healthHost}:${healthPort}`, { signal: ctrl.signal });
-        clearTimeout(timeout);
-        gatewayHealthy = true;
-        break;
-      } catch {
-        if (attempt < 14) await new Promise(r => setTimeout(r, 10000));
+    // Post-deploy readiness check: verify both the runtime sidecar and the gateway.
+    // First boot may need time for npm installation and initial startup, so we allow
+    // generous bounded retries and emit a warning state with explicit component detail.
+    const readiness = await waitForAgentReadiness({ host, gatewayHostPort });
+    if (!readiness.ok) {
+      const problems = [];
+      if (!readiness.runtime.ok) {
+        problems.push(`runtime unavailable at ${readiness.runtime.url} (${readiness.runtime.error || readiness.runtime.status || 'unreachable'})`);
       }
-    }
-    if (!gatewayHealthy) {
-      console.warn(`[provisioner] Gateway health check failed for agent ${id} at ${healthHost}:${healthPort}`);
+      if (!readiness.gateway.ok) {
+        problems.push(`gateway unavailable at ${readiness.gateway.url} (${readiness.gateway.error || readiness.gateway.status || 'unreachable'})`);
+      }
+      const detail = problems.join('; ');
+      console.warn(`[provisioner] Readiness check failed for agent ${id}: ${detail}`);
       await db.query("UPDATE agents SET status = 'warning' WHERE id = $1", [id]);
       await db.query(
         "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
-        ['agent_gateway_unhealthy', `Agent "${name}" deployed but gateway is not responding`, JSON.stringify({ agentId: id, host })]
+        ['agent_runtime_warning', `Agent "${name}" deployed with readiness warning: ${detail}`, JSON.stringify({ agentId: id, host, readiness })]
       );
     }
 
@@ -412,7 +407,7 @@ const worker = new Worker('deployments', async (job) => {
           config: typeof r.config === "string" ? JSON.parse(r.config) : (r.config || {}),
           status: r.status,
         }));
-        await fetch(`http://${host}:9090/integrations/sync`, {
+        await fetch(agentRuntimeUrl(host, "/integrations/sync"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(syncData),

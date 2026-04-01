@@ -8,8 +8,9 @@ const http = require("http");
 const os = require("os");
 const fs = require("fs");
 const { execSync, spawn } = require("child_process");
+const { AGENT_RUNTIME_PORT, OPENCLAW_GATEWAY_PORT } = require("./contracts");
 
-const PORT = parseInt(process.env.AGENT_HTTP_PORT || "9090");
+const PORT = parseInt(process.env.AGENT_HTTP_PORT || String(AGENT_RUNTIME_PORT));
 const LOG_FILE = "/var/log/openclaw-agent.log";
 
 // Simple JSON body parser
@@ -34,7 +35,7 @@ function json(res, status, data) {
 
 const startTime = Date.now();
 
-const GATEWAY_PORT = parseInt(process.env.OPENCLAW_GATEWAY_PORT || "18789");
+const GATEWAY_PORT = parseInt(process.env.OPENCLAW_GATEWAY_PORT || String(OPENCLAW_GATEWAY_PORT));
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
 
 /**

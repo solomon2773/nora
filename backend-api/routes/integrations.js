@@ -4,6 +4,7 @@ const integrations = require("../integrations");
 const { rpcCall } = require("../gatewayProxy");
 const { syncAuthToUserAgents } = require("../authSync");
 const { requireOwnedAgent } = require("../middleware/ownership");
+const { agentRuntimeUrl, AGENT_RUNTIME_PORT } = require("../../agent-runtime/lib/contracts");
 
 const router = express.Router();
 
@@ -17,16 +18,16 @@ async function syncIntegrationsToAgent(agentId) {
   const agent = agentResult.rows[0];
   if (!agent || !agent.host) return;
 
-  // 1. Push integration metadata (non-sensitive) to agent sidecar on port 9090
+  // 1. Push integration metadata (non-sensitive) to the agent runtime.
   try {
     const syncData = await integrations.getIntegrationsForSync(agentId);
-    await fetch(`http://${agent.host}:9090/integrations/sync`, {
+    await fetch(agentRuntimeUrl(agent.host, "/integrations/sync"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(syncData),
     });
   } catch (e) {
-    console.warn(`[sync-integrations] Port-9090 sync failed for agent ${agentId}:`, e.message);
+    console.warn(`[sync-integrations] Runtime sync failed for agent ${agentId} on port ${AGENT_RUNTIME_PORT}:`, e.message);
   }
 
   // 2. Push decrypted tokens into the live gateway env via RPC

@@ -3,6 +3,7 @@
  */
 
 const db = require("../db");
+const { agentRuntimeUrl } = require("../../agent-runtime/lib/contracts");
 const { getAdapter, listAdapterTypes } = require("./adapters");
 
 // ── Channel CRUD ─────────────────────────────────────────
@@ -145,7 +146,7 @@ async function handleInboundWebhook(channelId, payload, headers) {
   const agent = agentResult.rows[0];
   if (agent?.host && agent.host !== "pending") {
     try {
-      await fetch(`http://${agent.host}:9090/channels/receive`, {
+      await fetch(agentRuntimeUrl(agent.host, "/channels/receive"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
