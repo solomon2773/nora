@@ -5,6 +5,8 @@
 const Docker = require("dockerode");
 const ProvisionerBackend = require("./interface");
 const crypto = require("crypto");
+const { buildRuntimeBootstrapCommand, buildRuntimeEnv } = require("../runtimeBootstrap");
+const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
 
 const SANDBOX_IMAGE =
   process.env.NEMOCLAW_SANDBOX_IMAGE ||
@@ -165,12 +167,13 @@ class NemoClawBackend extends ProvisionerBackend {
       },
     });
 
-    // Build env array — inject NVIDIA key + NemoClaw model
-    const envArray = env
-      ? Object.entries(env).map(([k, v]) => `${k}=${v}`)
-      : [];
-    envArray.push(`OPENCLAW_GATEWAY_TOKEN=${gatewayToken}`);
-    envArray.push(`NEMOCLAW_MODEL=${model}`);
+    // Build env array — inject runtime/gateway contract vars + NemoClaw model.
+    const envArray = Object.entries({
+      ...(env || {}),
+      ...buildRuntimeEnv(),
+      OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+      NEMOCLAW_MODEL: model,
+    }).map(([k, v]) => `${k}=${v}`);
     // Ensure NVIDIA_API_KEY is present
     if (env && env.NVIDIA_API_KEY) {
       // already in envArray
@@ -224,7 +227,10 @@ class NemoClawBackend extends ProvisionerBackend {
     };
     const policyCmd = `mkdir -p /opt/openclaw && echo '${JSON.stringify(policyForContainer).replace(/'/g, "'\\''")}' > /opt/openclaw/policy.yaml && `;
 
-    // Startup command: install openclaw + nemoclaw, configure everything, start gateway
+    const runtimeBootstrapCmd = buildRuntimeBootstrapCommand();
+
+    // Startup command: install openclaw + nemoclaw, configure everything, start the
+    // runtime sidecar, then launch the gateway.
     const startCmd = [
       "sh",
       "-c",
@@ -241,8 +247,9 @@ class NemoClawBackend extends ProvisionerBackend {
         "' > ~/.openclaw/devices/paired.json && " +
         "echo '{}' > ~/.openclaw/devices/pending.json && " +
         policyCmd +
+        runtimeBootstrapCmd +
         authProfilesCmd +
-        `openclaw gateway --port 18789 --password ${gatewayToken}`,
+        `openclaw gateway --port ${OPENCLAW_GATEWAY_PORT} --password ${gatewayToken}`,
     ];
 
     // Resolve compose network
@@ -267,7 +274,7 @@ class NemoClawBackend extends ProvisionerBackend {
       Env: envArray,
       Cmd: startCmd,
       WorkingDir: "/sandbox",
-      ExposedPorts: { "18789/tcp": {} },
+      ExposedPorts: { "18789/tcp": {}, "9090/tcp": {} },
       HostConfig: {
         NanoCpus: (vcpu || 2) * 1e9,
         Memory: (ram_mb || 2048) * 1024 * 1024,
@@ -290,7 +297,8 @@ class NemoClawBackend extends ProvisionerBackend {
       Labels: {
         "openclaw.agent.id": String(id),
         "openclaw.agent.name": name || "",
-        "openclaw.gateway.port": "18789",
+        "openclaw.gateway.port": String(OPENCLAW_GATEWAY_PORT),
+        "openclaw.runtime.port": String(AGENT_RUNTIME_PORT),
         "openclaw.sandbox.type": "nemoclaw",
         "openclaw.sandbox.model": model,
       },

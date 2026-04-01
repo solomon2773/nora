@@ -1,4 +1,5 @@
 const { recordApiMetric } = require('../metrics');
+const safeRecordApiMetric = typeof recordApiMetric === 'function' ? recordApiMetric : () => {};
 
 /**
  * Middleware that records request latency and status for API performance tracking.
@@ -11,7 +12,7 @@ function requestMetrics(req, res, next) {
     if (req.originalUrl === '/health') return;
 
     const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
-    recordApiMetric({
+    safeRecordApiMetric({
       method: req.method,
       path: req.route?.path || req.originalUrl,
       status: res.statusCode,

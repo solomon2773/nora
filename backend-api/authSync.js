@@ -5,8 +5,12 @@
 
 const db = require('./db');
 const llmProviders = require('./llmProviders');
+const { OPENCLAW_GATEWAY_PORT } = require('../agent-runtime/lib/contracts');
 
-const LLM_ENV_VARS = new Set(llmProviders.PROVIDERS.map(p => p.envVar));
+const providerCatalog = Array.isArray(llmProviders.PROVIDERS)
+  ? llmProviders.PROVIDERS
+  : (typeof llmProviders.getAvailableProviders === 'function' ? llmProviders.getAvailableProviders() : []);
+const LLM_ENV_VARS = new Set(providerCatalog.map((provider) => provider.envVar).filter(Boolean));
 
 const PROVIDER_MODEL_DEFAULTS = {
   anthropic: 'claude-sonnet-4-5',
@@ -88,7 +92,7 @@ async function writeAuthToContainer(docker, containerId, authProfiles, defaultPr
       for (let i = 0; i < 30; i++) {
         try {
           const checkExec = await container.exec({
-            Cmd: ['sh', '-c', 'curl -sf http://localhost:18789 >/dev/null 2>&1 || wget -q -O /dev/null http://localhost:18789 2>/dev/null'],
+            Cmd: ['sh', '-c', `curl -sf http://localhost:${OPENCLAW_GATEWAY_PORT} >/dev/null 2>&1 || wget -q -O /dev/null http://localhost:${OPENCLAW_GATEWAY_PORT} 2>/dev/null`],
             AttachStdout: true,
             AttachStderr: true,
           });

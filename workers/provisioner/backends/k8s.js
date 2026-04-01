@@ -1,6 +1,8 @@
 const k8s = require("@kubernetes/client-node");
 const crypto = require("crypto");
 const ProvisionerBackend = require("./interface");
+const { buildRuntimeBootstrapCommand, buildRuntimeEnv } = require("../runtimeBootstrap");
+const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
 
 class K8sBackend extends ProvisionerBackend {
   constructor() {
@@ -60,22 +62,26 @@ class K8sBackend extends ProvisionerBackend {
       }
     });
 
-    const envVars = env
-      ? Object.entries(env).map(([k, v]) => ({ name: k, value: String(v) }))
-      : [];
-    envVars.push({ name: "OPENCLAW_GATEWAY_TOKEN", value: gatewayToken });
+    const envVars = Object.entries({
+      ...(env || {}),
+      ...buildRuntimeEnv(),
+      OPENCLAW_GATEWAY_TOKEN: gatewayToken,
+    }).map(([k, v]) => ({ name: k, value: String(v) }));
 
-    // CMD: install openclaw, configure gateway with pre-paired device, start it
+    // CMD: install openclaw, configure gateway with pre-paired device, start the
+    // runtime sidecar, then launch the gateway.
     const escapedPaired = pairedJson.replace(/'/g, "'\\''");
+    const runtimeBootstrapCmd = buildRuntimeBootstrapCommand();
     const gatewayCmd = [
       "sh", "-c",
       'apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 && ' +
       'npm install -g openclaw@latest 2>&1 && ' +
       'mkdir -p ~/.openclaw/devices && ' +
-      `echo '{"gateway":{"port":18789,"bind":"lan","mode":"local"}}' > ~/.openclaw/openclaw.json && ` +
+      `echo '{"gateway":{"port":${OPENCLAW_GATEWAY_PORT},"bind":"lan","mode":"local"}}' > ~/.openclaw/openclaw.json && ` +
       `echo '${escapedPaired}' > ~/.openclaw/devices/paired.json && ` +
       `echo '{}' > ~/.openclaw/devices/pending.json && ` +
-      `openclaw gateway --port 18789 --password ${gatewayToken}`
+      runtimeBootstrapCmd +
+      `openclaw gateway --port ${OPENCLAW_GATEWAY_PORT} --password ${gatewayToken}`
     ];
 
     const deployment = {
@@ -116,7 +122,7 @@ class K8sBackend extends ProvisionerBackend {
                 command: gatewayCmd.slice(0, 2),
                 args: [gatewayCmd[2]],
                 env: envVars,
-                ports: [{ containerPort: 18789 }],
+                ports: [{ containerPort: OPENCLAW_GATEWAY_PORT }, { containerPort: AGENT_RUNTIME_PORT }],
                 resources: {
                   requests: {
                     cpu: `${(vcpu || 2) * 1000}m`,
@@ -146,7 +152,7 @@ class K8sBackend extends ProvisionerBackend {
       },
       spec: {
         selector: { "openclaw.agent.id": String(id) },
-        ports: [{ port: 18789, targetPort: 18789 }],
+        ports: [{ port: OPENCLAW_GATEWAY_PORT, targetPort: OPENCLAW_GATEWAY_PORT }],
         type: "ClusterIP",
       },
     };
