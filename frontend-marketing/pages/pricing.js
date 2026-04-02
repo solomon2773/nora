@@ -79,7 +79,7 @@ function PlanCard({ plan }) {
     >
       {isHighlight && (
         <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full">
-          Current Upgrade Path
+          Current PaaS Upgrade Path
         </div>
       )}
 
