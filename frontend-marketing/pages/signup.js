@@ -70,15 +70,14 @@ export default function Signup() {
 
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs font-semibold mb-6">
               <Shield size={14} />
-              Open-source operator signup
+              Hosted evaluation / custom deployment path
             </div>
 
             <h1 className="text-4xl font-black tracking-tight leading-tight mb-4">
-              Create the operator account for your Nora workspace
+              Start a Nora evaluation without losing the commercial path
             </h1>
             <p className="text-slate-400 leading-relaxed text-base">
-              Nora is an open-source control plane for agent operations. Apache 2.0 allows self-hosting and commercial use,
-              while OpenClaw is the best-supported runtime today and the long-term direction stays friendly to future runtime integrations.
+              Use this flow when you want a faster evaluation start, a managed path, or a custom deployment conversation around Nora instead of a pure DIY rollout. If you already know you want self-hosted help instead, GitHub Discussions is the better support intake.
             </p>
           </div>
 
@@ -113,10 +112,10 @@ export default function Signup() {
               <div className="bg-white/[0.03] border border-white/5 rounded-3xl p-5">
                 <div className="flex items-center gap-2 mb-2 text-amber-300">
                   <Shield size={16} />
-                  <span className="text-sm font-bold">BYO infra + keys</span>
+                  <span className="text-sm font-bold">Need self-hosted rollout help?</span>
                 </div>
                 <p className="text-sm text-slate-400 leading-relaxed">
-                  Keep your runtime, network, and provider credentials under your control.
+                  Use GitHub Discussions if you want onboarding support, deployment review, or faster first value on your own infrastructure.
                 </p>
               </div>
             </div>
@@ -134,7 +133,7 @@ export default function Signup() {
           </div>
 
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 text-sm text-blue-100 leading-relaxed">
-            <span className="font-bold">Open-source note:</span> after account creation, the fastest path to value is Settings → add an LLM provider → Deploy your first agent runtime.
+            <span className="font-bold">Evaluation note:</span> after account creation, the fastest path to value is Settings → add an LLM provider → Deploy your first agent runtime. If you decide you want a self-hosted rollout instead, use GitHub Discussions for paid support intake.
           </div>
 
           {OAUTH_LOGIN_ENABLED && (
