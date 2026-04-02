@@ -1,7 +1,10 @@
 // @ts-check
+const path = require("path");
 const { defineConfig, devices } = require("@playwright/test");
 
-const BASE_URL = process.env.BASE_URL || "http://localhost:8080";
+const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:18080";
+const repoRoot = path.resolve(__dirname, "..");
+const manageLocalStack = !process.env.BASE_URL || process.env.PLAYWRIGHT_MANAGED_SERVER === "1";
 
 module.exports = defineConfig({
   testDir: "./specs",
@@ -21,11 +24,13 @@ module.exports = defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  /* Start the full stack before tests if not already running */
-  // webServer: {
-  //   command: "docker compose up -d",
-  //   url: BASE_URL,
-  //   reuseExistingServer: !process.env.CI,
-  //   timeout: 120000,
-  // },
+  webServer: manageLocalStack
+    ? {
+        command: "./e2e/scripts/start-local-stack.sh",
+        cwd: repoRoot,
+        url: `${BASE_URL}/login`,
+        reuseExistingServer: false,
+        timeout: 240000,
+      }
+    : undefined,
 });

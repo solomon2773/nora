@@ -19,7 +19,8 @@ services:
       - PORT=3000
       - NODE_ENV=development
       - PLATFORM_MODE=${PLATFORM_MODE:-selfhosted}
-    env_file: .env
+    env_file:
+      - ${NORA_ENV_FILE:-.env}
 
   frontend-dashboard:
     build: ./frontend-dashboard
@@ -47,13 +48,15 @@ services:
     volumes:
       - ./backend-api:/app
       - ./workers/provisioner/backends:/app/backends
+      - ./agent-runtime:/agent-runtime:ro
       - /var/run/docker.sock:/var/run/docker.sock
     command: sh -c "npm install && node server.js"
     ports:
       - "4100:4000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    env_file: .env
+    env_file:
+      - ${NORA_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,11 +74,13 @@ services:
     working_dir: /app
     volumes:
       - ./workers/provisioner:/app
+      - ./agent-runtime:/agent-runtime:ro
       - /var/run/docker.sock:/var/run/docker.sock
     command: sh -c "npm install && node worker.js"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    env_file: .env
+    env_file:
+      - ${NORA_ENV_FILE:-.env}
     depends_on:
       redis:
         condition: service_healthy
