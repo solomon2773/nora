@@ -42,7 +42,7 @@ const PATHS = [
       "Keep your own packaging, operations, and relationships",
     ],
     href: "/pricing",
-    cta: "Review usage rights",
+    cta: "Review pricing + support",
     external: false,
   },
   {
@@ -71,11 +71,11 @@ const PROOF_LINKS = [
     external: true,
   },
   {
-    eyebrow: "Usage rights",
-    title: "Apache 2.0 usage is explicit",
-    desc: "The public usage-rights page explains self-hosting, modification, and commercial use by anyone under Apache 2.0.",
+    eyebrow: "Commercial paths",
+    title: "Pricing and usage rights are explicit",
+    desc: "The public pricing page explains self-hosting, commercial use, paid support, and managed/custom paths without unsupported claims.",
     href: "/pricing",
-    cta: "Review usage rights",
+    cta: "Review pricing + support",
     external: false,
   },
   {
@@ -164,7 +164,7 @@ export default function Home() {
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
             <a href="#paths" className="hover:text-white transition-colors">Paths</a>
             <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="/pricing" className="hover:text-white transition-colors">Usage rights</a>
+            <a href="/pricing" className="hover:text-white transition-colors">Pricing + support</a>
           </div>
 
           <div className="hidden md:flex items-center gap-4">
