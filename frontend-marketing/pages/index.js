@@ -65,12 +65,12 @@ export default function Home() {
     {
       num: "01",
       title: "Set up Nora",
-      desc: "Run Nora self-hosted or sign in through the hosted flow, then open the dashboard.",
+      desc: "Install Nora in self-hosted mode, create your operator account, and open the dashboard.",
     },
     {
       num: "02",
       title: "Connect models and tools",
-      desc: "Choose an LLM provider, add integrations, and configure the channels your agent should use.",
+      desc: "Add one LLM provider key, then configure the integrations and channels your agent should use.",
     },
     {
       num: "03",
