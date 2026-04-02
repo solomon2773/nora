@@ -78,7 +78,7 @@ Open the agent detail page and confirm:
 | You hit a bug or broken instruction | [GitHub Issues](https://github.com/solomon2773/nora/issues) |
 | You want rollout help without giving up self-hosting | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
 | You do not want a pure DIY path anymore | [Pricing + enterprise/custom](https://nora.solomontsao.com/pricing) |
-| You want a hosted evaluation or custom deployment conversation | [Hosted evaluation signup](https://nora.solomontsao.com/signup) |
+| You want a hosted evaluation or custom deployment conversation | [Hosted eval / managed path](https://nora.solomontsao.com/signup) |
 
 ## Upgrade paths from self-hosted evaluation
 
