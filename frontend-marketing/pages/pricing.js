@@ -14,7 +14,7 @@ const PLANS = [
       "2 vCPU per agent",
       "2 GB RAM per agent",
       "20 GB SSD storage",
-      "Dashboard deployment flow",
+      "Operator dashboard deployment flow",
       "Works with 18 LLM providers",
     ],
     cta: "Start self-hosted eval",
