@@ -36,7 +36,7 @@ const PLANS = [
       "60+ integrations",
       "9 communication channels",
       "Checkout path exists when billing is enabled",
-      "Team-ready dashboard workflows",
+      "Team-ready operator workflows",
     ],
     cta: "Start self-hosted eval",
     href: "/signup",
