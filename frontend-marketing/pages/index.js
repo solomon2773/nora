@@ -42,7 +42,7 @@ const PATHS = [
       "Keep your own packaging, operations, and relationships",
     ],
     href: "/pricing",
-    cta: "Review usage rights",
+    cta: "Review pricing + support",
     external: false,
   },
   {
