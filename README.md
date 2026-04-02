@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/solomon2773/nora#quick-start">Quick Start</a>
+  <a href="https://github.com/solomon2773/nora#quick-start">Self-host Quick Start</a>
   ·
   <a href="https://nora.solomontsao.com">Live app / hosted eval</a>
   ·
