@@ -4,13 +4,14 @@ Public-facing marketing site for Nora. Built with Next.js 14 and Tailwind CSS.
 
 ## Overview
 
-Runs on `/` behind nginx. Serves the landing page, login, and signup pages. Does not require authentication.
+Runs on `/` behind nginx. Serves the landing page, pricing page, login, and signup pages. Does not require authentication.
 
 ## Pages
 
 | Route | Description |
 |---|---|
-| `/` | Landing page — hero section, feature grid, social proof, CTA |
+| `/` | Landing page — positioning, product facts, feature grid, CTA |
+| `/pricing` | Public plan and deployment-limits page |
 | `/login` | Login form — email/password + Google/GitHub OAuth |
 | `/signup` | Registration form — name, email, password |
 

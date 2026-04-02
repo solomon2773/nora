@@ -1,84 +1,131 @@
 import Link from "next/link";
-import { ArrowRight, Check, CheckCircle2, Server, Shield, Sparkles } from "lucide-react";
+import { Check, Zap, Shield, Crown, ArrowRight } from "lucide-react";
 
 const PLANS = [
   {
-    name: "Community",
-    badge: "Self-hosted now",
-    price: "Open source",
-    description: "Best for builders and small technical teams who want to run Nora on their own infrastructure today.",
-    accent: "blue",
-    cta: "Start self-hosted evaluation",
+    key: "free",
+    name: "Free",
+    price: "Included",
+    period: "",
+    description: "Default PaaS starter tier in the current billing code.",
+    icon: Zap,
+    features: [
+      "Up to 3 agents",
+      "2 vCPU per agent",
+      "2 GB RAM per agent",
+      "20 GB SSD storage",
+      "Dashboard deployment flow",
+      "Works with 18 LLM providers",
+    ],
+    cta: "Get Started",
     href: "/signup",
-    features: [
-      "Apache-2.0 licensed",
-      "Run with your own Docker-based infrastructure",
-      "OpenClaw-native deploy, chat, logs, terminal, and settings UX",
-      "Bring your own LLM provider keys",
-      "Best path for the current MVP",
-      "Recommended starting point for first proof of value",
-    ],
+    highlight: false,
   },
   {
-    name: "Team",
-    badge: "Best fit ICP",
-    price: "Contact us",
-    description: "For internal platform teams evaluating Nora as their control plane for multiple operators, agents, and environments.",
-    accent: "emerald",
-    cta: "Talk to the team",
-    href: "mailto:support@nora.dev",
+    key: "pro",
+    name: "Pro",
+    price: "Upgrade",
+    period: "",
+    description: "Current mid-tier limits defined for Stripe-enabled PaaS setups.",
+    icon: Shield,
     features: [
-      "Everything in Community",
-      "Support for larger self-hosted rollouts",
-      "Help with rollout, architecture, and deployment design",
-      "Ideal for platform, ops, and product engineering teams",
-      "Roadmap input for enterprise-grade needs",
+      "Up to 10 agents",
+      "8 vCPU per agent",
+      "16 GB RAM per agent",
+      "200 GB SSD storage",
+      "60+ integrations",
+      "9 communication channels",
+      "Checkout path exists when billing is enabled",
+      "Team-ready dashboard workflows",
     ],
+    cta: "Continue to Signup",
+    href: "/signup",
+    highlight: true,
   },
   {
-    name: "Managed / Enterprise",
-    badge: "Later-stage offer",
-    price: "Coming soon",
-    description: "For buyers who want the Nora experience but prefer hosted operations, support, and enterprise onboarding.",
-    accent: "purple",
-    cta: "Join interest list",
-    href: "mailto:support@nora.dev?subject=Nora%20Managed%20Interest",
+    key: "enterprise",
+    name: "Enterprise",
+    price: "Contact",
+    period: "",
+    description: "Highest default PaaS resource envelope currently defined in code.",
+    icon: Crown,
     features: [
-      "Managed deployment path",
-      "Commercial support and onboarding",
-      "Enterprise security and compliance discussions",
-      "Potential fit for larger regulated teams",
-      "Useful if you want Nora without running the stack yourself",
+      "Up to 100 agents",
+      "16 vCPU per agent",
+      "32 GB RAM per agent",
+      "500 GB SSD storage",
+      "60+ integrations",
+      "9 communication channels",
+      "Workspace and RBAC support",
+      "Enterprise checkout path exists when billing is enabled",
     ],
+    cta: "Request Enterprise",
+    href: "/signup",
+    highlight: false,
   },
 ];
 
-const pricingDecisionPath = [
-  "Start with Community if you want the fastest, most credible self-hosted MVP evaluation.",
-  "Move to Team when you need rollout help for multiple operators, environments, or internal platform adoption.",
-  "Treat Managed / Enterprise as a later-stage option, not the primary Nora story today.",
-];
+function PlanCard({ plan }) {
+  const Icon = plan.icon;
+  const isHighlight = plan.highlight;
 
-function accentClasses(accent) {
-  if (accent === "emerald") {
-    return {
-      icon: "bg-emerald-500/15 text-emerald-300 border-emerald-400/20",
-      badge: "bg-emerald-500/15 text-emerald-300 border-emerald-400/20",
-      button: "bg-emerald-600 hover:bg-emerald-700 text-white",
-    };
-  }
-  if (accent === "purple") {
-    return {
-      icon: "bg-purple-500/15 text-purple-300 border-purple-400/20",
-      badge: "bg-purple-500/15 text-purple-300 border-purple-400/20",
-      button: "bg-purple-600 hover:bg-purple-700 text-white",
-    };
-  }
-  return {
-    icon: "bg-blue-500/15 text-blue-300 border-blue-400/20",
-    badge: "bg-blue-500/15 text-blue-300 border-blue-400/20",
-    button: "bg-blue-600 hover:bg-blue-700 text-white",
-  };
+  return (
+    <div
+      className={`relative flex flex-col rounded-3xl p-8 transition-all ${
+        isHighlight
+          ? "bg-gradient-to-b from-blue-600/20 to-blue-900/20 border-2 border-blue-500/50 shadow-2xl shadow-blue-500/10 scale-105"
+          : "bg-white/5 border border-white/10 hover:border-white/20"
+      }`}
+    >
+      {isHighlight && (
+        <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full">
+          Current Upgrade Path
+        </div>
+      )}
+
+      <div className="flex items-center gap-3 mb-4">
+        <div
+          className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+            isHighlight ? "bg-blue-600" : "bg-white/10"
+          }`}
+        >
+          <Icon size={20} />
+        </div>
+        <h3 className="text-xl font-black">{plan.name}</h3>
+      </div>
+
+      <div className="flex items-baseline gap-1 mb-2">
+        <span className="text-4xl font-black">{plan.price}</span>
+        {plan.period ? <span className="text-sm text-slate-400 font-medium">{plan.period}</span> : null}
+      </div>
+
+      <p className="text-sm text-slate-400 mb-8">{plan.description}</p>
+
+      <ul className="flex flex-col gap-3 mb-8 flex-1">
+        {plan.features.map((f, i) => (
+          <li key={i} className="flex items-center gap-3 text-sm">
+            <Check
+              size={16}
+              className={isHighlight ? "text-blue-400" : "text-green-400"}
+            />
+            <span className="text-slate-300">{f}</span>
+          </li>
+        ))}
+      </ul>
+
+      <Link
+        href={plan.href}
+        className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 ${
+          isHighlight
+            ? "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20"
+            : "bg-white/10 hover:bg-white/15 text-white"
+        }`}
+      >
+        {plan.cta}
+        <ArrowRight size={16} />
+      </Link>
+    </div>
+  );
 }
 
 export default function Pricing() {
@@ -87,129 +134,97 @@ export default function Pricing() {
       <nav className="flex items-center justify-between px-6 md:px-12 py-6 max-w-7xl mx-auto">
         <Link href="/" className="flex items-center gap-2">
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-            <Sparkles size={18} className="fill-current" />
+            <Zap size={18} className="fill-current" />
           </div>
           <span className="text-lg font-black tracking-tight">Nora</span>
         </Link>
         <div className="flex items-center gap-4">
           <Link href="/login" className="text-sm text-slate-400 hover:text-white transition-colors font-medium">
-            Log in
+            Sign In
           </Link>
           <Link
             href="/signup"
             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 transition-colors text-sm font-bold rounded-xl"
           >
-            Open dashboard
+            Get Started
           </Link>
         </div>
       </nav>
 
-      <div className="text-center px-6 py-16 md:py-24 max-w-4xl mx-auto">
-        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Pricing & packaging</p>
+      <div className="text-center px-6 py-16 md:py-24 max-w-5xl mx-auto">
         <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight mb-6">
-          Self-hosted first.
+          Plans and deployment
           <br />
-          <span className="text-blue-400">Commercial options second.</span>
+          <span className="text-blue-400">limits</span>
         </h1>
-        <p className="text-lg text-slate-400 max-w-3xl mx-auto leading-relaxed">
-          Nora&apos;s clearest offer today is the open-source, self-hosted control plane for OpenClaw teams. This page reflects the current MVP honestly while still making room for team support and future managed offerings.
+        <p className="text-lg text-slate-400 max-w-3xl mx-auto">
+          These plan envelopes are based on the current Nora billing code. Exact billing availability depends on
+          platform mode, Stripe configuration, and whether you run Nora as self-hosted or PaaS.
         </p>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 pb-12">
-        <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6 md:p-8">
-          <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-4">Recommended path</p>
-          <div className="grid md:grid-cols-3 gap-4">
-            {pricingDecisionPath.map((item) => (
-              <div key={item} className="bg-slate-950/50 border border-white/5 rounded-2xl p-5 flex items-start gap-3">
-                <CheckCircle2 size={18} className="text-emerald-400 mt-0.5 shrink-0" />
-                <p className="text-sm text-slate-300 leading-relaxed">{item}</p>
-              </div>
-            ))}
-          </div>
+      <div className="max-w-5xl mx-auto px-6 pb-12 grid md:grid-cols-2 gap-6">
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+          <h2 className="text-lg font-black mb-2">PaaS mode</h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            The code defines Free, Pro, and Enterprise tiers. When billing is enabled, Nora can create checkout
+            sessions for Pro and Enterprise through Stripe.
+          </p>
+        </div>
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+          <h2 className="text-lg font-black mb-2">Self-hosted mode</h2>
+          <p className="text-sm text-slate-400 leading-relaxed">
+            Self-hosted operators are not locked to the PaaS plan table. Max agents, CPU, RAM, and disk limits are
+            configured through environment variables.
+          </p>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 pb-14 grid md:grid-cols-3 gap-6 md:gap-8 items-stretch">
-        {PLANS.map((plan) => {
-          const styles = accentClasses(plan.accent);
-          const isExternal = plan.href.startsWith("mailto:");
+      <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-3 gap-6 md:gap-8 items-start">
+        {PLANS.map((plan) => (
+          <PlanCard key={plan.key} plan={plan} />
+        ))}
+      </div>
 
-          return (
-            <div key={plan.name} className="bg-white/5 border border-white/10 rounded-3xl p-8 flex flex-col">
-              <div className={`inline-flex items-center gap-2 self-start px-3 py-1.5 rounded-full text-xs font-bold border mb-5 ${styles.badge}`}>
-                <Shield size={12} />
-                {plan.badge}
-              </div>
-
-              <div className={`w-12 h-12 rounded-2xl border flex items-center justify-center mb-5 ${styles.icon}`}>
-                {plan.name === "Community" ? <Server size={22} /> : <Shield size={22} />}
-              </div>
-
-              <h2 className="text-2xl font-black mb-2">{plan.name}</h2>
-              <div className="text-3xl font-black mb-3">{plan.price}</div>
-              <p className="text-sm text-slate-400 leading-relaxed mb-8">{plan.description}</p>
-
-              <ul className="space-y-3 mb-8 flex-1">
-                {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-3 text-sm text-slate-300">
-                    <Check size={16} className="text-emerald-400 mt-0.5 shrink-0" />
-                    <span>{feature}</span>
-                  </li>
-                ))}
-              </ul>
-
-              {isExternal ? (
-                <a
-                  href={plan.href}
-                  className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 ${styles.button}`}
-                >
-                  {plan.cta}
-                  <ArrowRight size={16} />
-                </a>
-              ) : (
-                <Link
-                  href={plan.href}
-                  className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 ${styles.button}`}
-                >
-                  {plan.cta}
-                  <ArrowRight size={16} />
-                </Link>
-              )}
+      <div className="max-w-3xl mx-auto px-6 pb-24">
+        <h2 className="text-2xl font-black text-center mb-12">Frequently Asked Questions</h2>
+        <div className="flex flex-col gap-6">
+          {[
+            {
+              q: "How are deployment limits enforced?",
+              a: "Before creating a new agent, Nora checks the user subscription and current agent count in the backend billing flow.",
+            },
+            {
+              q: "What happens when billing is disabled?",
+              a: "In PaaS mode, the backend allows new deployments without Stripe enforcement when billing is turned off.",
+            },
+            {
+              q: "What changes in self-hosted mode?",
+              a: "Self-hosted deployments use operator-configured environment limits instead of the public PaaS plan table.",
+            },
+            {
+              q: "Can Nora still support upgrades?",
+              a: "Yes. The backend includes checkout routes for Pro and Enterprise when Stripe billing is configured and enabled.",
+            },
+          ].map((item, i) => (
+            <div key={i} className="bg-white/5 border border-white/10 rounded-2xl p-6">
+              <h3 className="font-bold mb-2">{item.q}</h3>
+              <p className="text-sm text-slate-400">{item.a}</p>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-6 pb-24">
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-8 md:p-10">
-          <h2 className="text-2xl font-black mb-8 text-center">Frequently asked questions</h2>
-          <div className="grid md:grid-cols-2 gap-6">
-            {[
-              {
-                q: "What should most users choose right now?",
-                a: "Community / self-hosted. That is the strongest and most credible Nora motion today, especially for first evaluation and operator proof of value.",
-              },
-              {
-                q: "Is Nora open source?",
-                a: "Yes. Nora is licensed under Apache-2.0 and can be run on your own infrastructure.",
-              },
-              {
-                q: "Do I need Nora Cloud to get value?",
-                a: "No. The current MVP is specifically positioned to deliver value in self-hosted environments.",
-              },
-              {
-                q: "Who is the best-fit buyer?",
-                a: "Platform teams, AI product builders, and ops-minded technical teams running OpenClaw agents and needing a clean operational control plane.",
-              },
-            ].map((item) => (
-              <div key={item.q} className="bg-slate-950/50 border border-white/5 rounded-2xl p-6">
-                <h3 className="font-bold mb-2">{item.q}</h3>
-                <p className="text-sm text-slate-400 leading-relaxed">{item.a}</p>
-              </div>
-            ))}
-          </div>
-        </div>
+      <div className="text-center px-6 pb-24 text-sm text-slate-500">
+        Questions or feedback?{" "}
+        <a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+          GitHub Discussions
+        </a>
+        {" "}or{" "}
+        <a href="https://github.com/solomon2773/nora/issues" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+          Issues
+        </a>
+        .
       </div>
     </div>
   );
