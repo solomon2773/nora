@@ -5,7 +5,7 @@ const PLANS = [
   {
     key: "free",
     name: "Free",
-    price: "Included",
+    price: "PaaS starter",
     period: "",
     description: "Default PaaS starter tier in the current billing code.",
     icon: Zap,
