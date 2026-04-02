@@ -77,7 +77,7 @@ Open the agent detail page and confirm:
 | You want to keep self-hosting and just need the docs | [README Quick Start](../README.md#quick-start) |
 | You hit a bug or broken instruction | [GitHub Issues](https://github.com/solomon2773/nora/issues) |
 | You want rollout help without giving up self-hosting | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
-| You do not want a pure DIY path anymore | [Pricing / commercial paths](https://nora.solomontsao.com/pricing) |
+| You do not want a pure DIY path anymore | [Pricing + enterprise/custom](https://nora.solomontsao.com/pricing) |
 | You want a hosted evaluation or custom deployment conversation | [Hosted evaluation signup](https://nora.solomontsao.com/signup) |
 
 ## Upgrade paths from self-hosted evaluation
