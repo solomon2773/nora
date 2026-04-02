@@ -15,7 +15,7 @@ Goal: make the public repo and site feel unmistakably open source, self-hostable
 ### 1. README screenshots
 Show:
 - landing page with OSS + self-host framing
-- usage-rights page with Apache 2.0 language
+- pricing/support page with Apache 2.0, commercial-use, and managed-path language
 - signup or onboarding page proving operator flow exists
 - later: agent list, deploy flow, settings, and agent detail surfaces
 
@@ -41,7 +41,7 @@ Show:
 ## Priority copy
 
 - **Landing:** Nora is the open-source control plane for agent operations.
-- **Usage rights page:** Apache 2.0, self-hostable, commercially usable by anyone.
+- **Pricing/support page:** Apache 2.0, self-hostable, commercially usable by anyone, with paid support and managed-path context.
 - **README:** fully open source, self-hostable, commercially usable by anyone, OpenClaw-first today, broader runtime direction over time.
 - **Runtime direction:** strongest with OpenClaw today, not permanently OpenClaw-only.
 
