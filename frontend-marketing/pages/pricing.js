@@ -45,7 +45,7 @@ const PLANS = [
   {
     key: "enterprise",
     name: "Enterprise",
-    price: "Contact",
+    price: "Custom PaaS",
     period: "",
     description: "Highest default PaaS resource envelope currently defined in code.",
     icon: Crown,
