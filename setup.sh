@@ -3,7 +3,7 @@
 # Nora — One-line installer & setup
 # ============================================================
 # Usage:
-#   curl -fsSL https://nora.solomon.com/setup.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh | bash
 #   — or —
 #   bash setup.sh        (from inside the repo)
 #

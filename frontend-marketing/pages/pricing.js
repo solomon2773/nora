@@ -1,73 +1,101 @@
 import Link from "next/link";
 import { Check, Zap, Shield, Crown, ArrowRight } from "lucide-react";
 
-const PLANS = [
+const OFFERS = [
   {
-    key: "free",
-    name: "Free",
-    price: "PaaS starter",
-    period: "",
-    description: "Default PaaS starter tier in the current billing code.",
+    key: "oss",
+    name: "Self-hosted open source",
+    price: "Free",
+    period: "Apache 2.0",
+    description: "The repo is the front door: install Nora yourself and validate the OpenClaw control-plane workflow on your own infrastructure.",
     icon: Zap,
     features: [
-      "Up to 3 agents",
-      "2 vCPU per agent",
-      "2 GB RAM per agent",
-      "20 GB SSD storage",
-      "Operator dashboard deployment flow",
-      "Works with 18 LLM providers",
+      "Open-source repo on GitHub",
+      "Install scripts served from raw.githubusercontent.com",
+      "18 LLM providers",
+      "60+ integrations",
+      "9 communication channels",
+      "Environment-based resource control in self-hosted mode",
     ],
-    cta: "Start self-hosted eval",
-    href: "/signup",
+    cta: "Open install docs",
+    href: "https://github.com/solomon2773/nora#quick-start",
+    external: true,
     highlight: false,
   },
   {
-    key: "pro",
-    name: "Pro",
-    price: "PaaS upgrade",
-    period: "",
-    description: "Current mid-tier limits defined for Stripe-enabled PaaS setups.",
+    key: "support",
+    name: "Paid onboarding & support",
+    price: "Contact",
+    period: "Keep your own infra",
+    description: "For teams that want Nora running faster without turning the rollout into a full DIY project.",
     icon: Shield,
     features: [
-      "Up to 10 agents",
-      "8 vCPU per agent",
-      "16 GB RAM per agent",
-      "200 GB SSD storage",
-      "60+ integrations",
-      "9 communication channels",
-      "Checkout path exists when billing is enabled",
-      "Team-ready operator workflows",
+      "Best for self-hosting teams short on time",
+      "Hands-on setup and rollout guidance",
+      "Operator onboarding and first-value support",
+      "Security and deployment review conversations",
+      "Uses the open-source product as the base",
+      "Start with GitHub Discussions today",
     ],
-    cta: "Start self-hosted eval",
-    href: "/signup",
+    cta: "Start support discussion",
+    href: "https://github.com/solomon2773/nora/discussions",
+    external: true,
     highlight: true,
   },
   {
-    key: "enterprise",
-    name: "Enterprise",
-    price: "Custom PaaS",
-    period: "",
-    description: "Highest default PaaS resource envelope currently defined in code.",
+    key: "managed",
+    name: "Managed Nora / custom deployment",
+    price: "Contact",
+    period: "Hosted or tailored rollout",
+    description: "For teams exploring less self-managed operations, a hosted evaluation path, or a custom Nora deployment around OpenClaw.",
     icon: Crown,
     features: [
-      "Up to 100 agents",
-      "16 vCPU per agent",
-      "32 GB RAM per agent",
-      "500 GB SSD storage",
-      "60+ integrations",
-      "9 communication channels",
-      "Workspace and RBAC support",
-      "Enterprise checkout path exists when billing is enabled",
+      "Hosted signup flow exists at the live app domain",
+      "Useful for managed PaaS or enterprise discovery",
+      "Workspace, RBAC, and billing paths exist in product code",
+      "Custom deployment scoping can start from current product proof",
+      "Best for teams that want less hands-on ops burden",
+      "Use pricing + signup as the current conversion path",
     ],
-    cta: "Contact for enterprise",
+    cta: "Open hosted evaluation",
     href: "/signup",
+    external: false,
     highlight: false,
   },
 ];
 
-function PlanCard({ plan }) {
-  const Icon = plan.icon;
-  const isHighlight = plan.highlight;
+const DOMAIN_LINKS = [
+  {
+    label: "Live app",
+    href: "https://nora.solomontsao.com",
+    text: "nora.solomontsao.com",
+  },
+  {
+    label: "Pricing page",
+    href: "https://nora.solomontsao.com/pricing",
+    text: "nora.solomontsao.com/pricing",
+  },
+  {
+    label: "Bash install",
+    href: "https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh",
+    text: "raw.githubusercontent.com/.../setup.sh",
+  },
+  {
+    label: "PowerShell install",
+    href: "https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1",
+    text: "raw.githubusercontent.com/.../setup.ps1",
+  },
+];
+
+function PlanCard({ offer }) {
+  const Icon = offer.icon;
+  const isHighlight = offer.highlight;
+
+  const classes = `w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 ${
+    isHighlight
+      ? "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20"
+      : "bg-white/10 hover:bg-white/15 text-white"
+  }`;
 
   return (
     <div
@@ -79,7 +107,7 @@ function PlanCard({ plan }) {
     >
       {isHighlight && (
         <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-black uppercase tracking-widest px-4 py-1.5 rounded-full">
-          Current PaaS Upgrade Path
+          Best monetization bridge from OSS
         </div>
       )}
 
@@ -91,39 +119,36 @@ function PlanCard({ plan }) {
         >
           <Icon size={20} />
         </div>
-        <h3 className="text-xl font-black">{plan.name}</h3>
+        <h3 className="text-xl font-black">{offer.name}</h3>
       </div>
 
-      <div className="flex items-baseline gap-1 mb-2">
-        <span className="text-4xl font-black">{plan.price}</span>
-        {plan.period ? <span className="text-sm text-slate-400 font-medium">{plan.period}</span> : null}
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 mb-2">
+        <span className="text-4xl font-black">{offer.price}</span>
+        {offer.period ? <span className="text-sm text-slate-400 font-medium">{offer.period}</span> : null}
       </div>
 
-      <p className="text-sm text-slate-400 mb-8">{plan.description}</p>
+      <p className="text-sm text-slate-400 mb-8">{offer.description}</p>
 
       <ul className="flex flex-col gap-3 mb-8 flex-1">
-        {plan.features.map((f, i) => (
+        {offer.features.map((f, i) => (
           <li key={i} className="flex items-center gap-3 text-sm">
-            <Check
-              size={16}
-              className={isHighlight ? "text-blue-400" : "text-green-400"}
-            />
+            <Check size={16} className={isHighlight ? "text-blue-300" : "text-green-400"} />
             <span className="text-slate-300">{f}</span>
           </li>
         ))}
       </ul>
 
-      <Link
-        href={plan.href}
-        className={`w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 ${
-          isHighlight
-            ? "bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20"
-            : "bg-white/10 hover:bg-white/15 text-white"
-        }`}
-      >
-        {plan.cta}
-        <ArrowRight size={16} />
-      </Link>
+      {offer.external ? (
+        <a href={offer.href} target="_blank" rel="noopener noreferrer" className={classes}>
+          {offer.cta}
+          <ArrowRight size={16} />
+        </a>
+      ) : (
+        <Link href={offer.href} className={classes}>
+          {offer.cta}
+          <ArrowRight size={16} />
+        </Link>
+      )}
     </div>
   );
 }
@@ -146,7 +171,7 @@ export default function Pricing() {
             href="/signup"
             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 transition-colors text-sm font-bold rounded-xl"
           >
-            Start self-hosted eval
+            Hosted evaluation
           </Link>
         </div>
       </nav>
@@ -154,56 +179,61 @@ export default function Pricing() {
       <div className="text-center px-6 py-16 md:py-24 max-w-5xl mx-auto">
         <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Pricing & packaging</p>
         <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight mb-6">
-          Self-hosted first.
+          Open source first.
           <br />
-          <span className="text-blue-400">PaaS limits second.</span>
+          <span className="text-blue-400">Commercial help when you need it.</span>
         </h1>
         <p className="text-lg text-slate-400 max-w-3xl mx-auto">
-          Nora&apos;s clearest offer today is the open-source, self-hosted control plane for OpenClaw teams. This page keeps the current billing-code reality visible while making the self-hosted path the most credible way to evaluate the MVP.
+          Nora&apos;s most credible motion starts with the open-source repo and self-hosted proof of value. From there,
+          the product can convert teams into paid onboarding/support, a hosted evaluation flow, or a custom deployment
+          conversation without relying on unsupported vanity pricing claims.
         </p>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 pb-12 grid md:grid-cols-2 gap-6">
+      <div className="max-w-6xl mx-auto px-6 pb-12 grid md:grid-cols-2 gap-6">
         <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
-          <h2 className="text-lg font-black mb-2">PaaS mode</h2>
+          <h2 className="text-lg font-black mb-2">Current product reality</h2>
           <p className="text-sm text-slate-400 leading-relaxed">
-            The code defines Free, Pro, and Enterprise tiers. When billing is enabled, Nora can create checkout
-            sessions for Pro and Enterprise through Stripe.
+            Self-hosted Nora is the clearest proof path today. The repo, dashboard, login/signup flow, billing routes,
+            and operator surface already exist, so the best public funnel is to keep the open-source core visible and
+            attach commercial rollout options around it.
           </p>
         </div>
         <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-400/10 border border-blue-300/20 text-blue-200 text-[11px] font-black uppercase tracking-widest mb-3">
-            Recommended for MVP
+            Recommended monetization path
           </div>
-          <h2 className="text-lg font-black mb-2 text-blue-100">Self-hosted mode</h2>
+          <h2 className="text-lg font-black mb-2 text-blue-100">Repo → support → managed</h2>
           <p className="text-sm text-blue-50/80 leading-relaxed">
-            Self-hosted operators are not locked to the PaaS plan table. Max agents, CPU, RAM, and disk limits are configured through environment variables, and this is the recommended path for first proof of value today.
+            Let the repo and self-hosted install earn trust first. Then use paid onboarding/support for speed or the
+            hosted/custom path when teams want less self-managed infrastructure work.
           </p>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-6 pb-8">
-        <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6 text-left">
-          <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-2">Recommended evaluation path</p>
-          <p className="text-sm text-blue-50/80 leading-relaxed mb-4">
-            If you are evaluating Nora today, use the self-hosted path first. The plan grid below reflects the current PaaS billing code and resource envelopes, not the primary MVP motion.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Link href="/signup" className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all">
-              Start self-hosted evaluation
-              <ArrowRight size={16} />
-            </Link>
-            <a href="https://github.com/solomon2773/nora" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-blue-300/20 bg-white/5 hover:bg-white/10 text-blue-50 text-sm font-bold transition-all">
-              Read setup docs
-              <ArrowRight size={16} />
-            </a>
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-6 text-left">
+          <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-4">Current public domains and install links</p>
+          <div className="grid md:grid-cols-2 gap-4">
+            {DOMAIN_LINKS.map((item) => (
+              <a
+                key={item.label}
+                href={item.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 hover:bg-white/[0.05] transition-all"
+              >
+                <p className="text-xs uppercase tracking-widest text-slate-500 font-bold mb-1">{item.label}</p>
+                <p className="text-sm text-slate-200 break-all">{item.text}</p>
+              </a>
+            ))}
           </div>
         </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-3 gap-6 md:gap-8 items-start">
-        {PLANS.map((plan) => (
-          <PlanCard key={plan.key} plan={plan} />
+        {OFFERS.map((offer) => (
+          <PlanCard key={offer.key} offer={offer} />
         ))}
       </div>
 
@@ -212,24 +242,24 @@ export default function Pricing() {
         <div className="flex flex-col gap-6">
           {[
             {
-              q: "How are deployment limits enforced?",
-              a: "Before creating a new agent, Nora checks the user subscription and current agent count in the backend billing flow.",
+              q: "What is the main conversion path for Nora right now?",
+              a: "Open-source repo first, self-hosted proof second, then paid onboarding/support or a hosted/custom deployment conversation once the team sees real operator value.",
             },
             {
-              q: "What happens when billing is disabled?",
-              a: "In PaaS mode, the backend allows new deployments without Stripe enforcement when billing is turned off.",
+              q: "Where do the install scripts live right now?",
+              a: "The current public install links should point to raw.githubusercontent.com, while the live app and pricing pages run on nora.solomontsao.com.",
             },
             {
-              q: "What changes in self-hosted mode?",
-              a: "Self-hosted deployments use operator-configured environment limits instead of the public PaaS plan table.",
+              q: "Is self-hosted still the strongest proof path?",
+              a: "Yes. Self-hosted remains the clearest way to prove Nora today because resource limits, infrastructure choices, and rollout timing stay in the operator's control.",
             },
             {
-              q: "What does a successful Nora evaluation look like?",
-              a: "For the current MVP, success is simple: create an operator account, add one provider key, deploy the first OpenClaw agent, and validate chat, logs, and terminal from the same control plane.",
+              q: "How should teams start a paid support conversation?",
+              a: "Use GitHub Discussions as the current commercial intake path for setup help, onboarding, and rollout support requests.",
             },
             {
-              q: "Can Nora still support upgrades?",
-              a: "Yes. The backend includes checkout routes for Pro and Enterprise when Stripe billing is configured and enabled.",
+              q: "What about managed Nora or enterprise deployment?",
+              a: "Use the pricing page and hosted signup flow as the current public path, then scope managed or custom deployment requirements from there. This page intentionally avoids unsupported public price points.",
             },
           ].map((item, i) => (
             <div key={i} className="bg-white/5 border border-white/10 rounded-2xl p-6">
@@ -241,14 +271,14 @@ export default function Pricing() {
       </div>
 
       <div className="text-center px-6 pb-24 text-sm text-slate-500">
-        Questions or feedback?{" "}
+        Need a self-hosted install path, paid rollout help, or a managed deployment conversation?{" "}
         <a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-          GitHub Discussions
+          Start in GitHub Discussions
         </a>
         {" "}or{" "}
-        <a href="https://github.com/solomon2773/nora/issues" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-          Issues
-        </a>
+        <Link href="/signup" className="text-blue-400 hover:underline">
+          open the hosted evaluation flow
+        </Link>
         .
       </div>
     </div>
