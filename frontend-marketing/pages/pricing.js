@@ -38,7 +38,7 @@ const PLANS = [
       "Checkout path exists when billing is enabled",
       "Team-ready dashboard workflows",
     ],
-    cta: "Continue to Signup",
+    cta: "Start self-hosted eval",
     href: "/signup",
     highlight: true,
   },
