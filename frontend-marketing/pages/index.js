@@ -28,7 +28,7 @@ const PATHS = [
       "Best path for teams that want transparency and control",
     ],
     href: "https://github.com/solomon2773/nora#quick-start",
-    cta: "Open quick start",
+    cta: "Open self-host quick start",
     external: true,
   },
   {
