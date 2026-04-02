@@ -146,7 +146,7 @@ export default function Pricing() {
             href="/signup"
             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 transition-colors text-sm font-bold rounded-xl"
           >
-            Get Started
+            Start self-hosted eval
           </Link>
         </div>
       </nav>
@@ -172,6 +172,9 @@ export default function Pricing() {
           </p>
         </div>
         <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-400/10 border border-blue-300/20 text-blue-200 text-[11px] font-black uppercase tracking-widest mb-3">
+            Recommended for MVP
+          </div>
           <h2 className="text-lg font-black mb-2 text-blue-100">Self-hosted mode</h2>
           <p className="text-sm text-blue-50/80 leading-relaxed">
             Self-hosted operators are not locked to the PaaS plan table. Max agents, CPU, RAM, and disk limits are configured through environment variables, and this is the recommended path for first proof of value today.
