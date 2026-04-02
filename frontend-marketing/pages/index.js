@@ -283,21 +283,32 @@ export default function Home() {
 
       <section className="py-24 px-4 sm:px-6">
         <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight mb-6">Ready to run Nora?</h2>
-          <p className="text-slate-400 mb-10 text-lg">
-            Start in the product or review the repo and docs first — whichever fits your workflow.
+          <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight mb-6">Ready to validate Nora?</h2>
+          <p className="text-slate-400 mb-6 text-lg">
+            Start with the self-hosted MVP path: create your operator account, add one provider key, and deploy your first OpenClaw agent.
           </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 mb-10 text-sm">
+            {[
+              "18 LLM providers",
+              "60+ integrations",
+              "9 communication channels",
+            ].map((item) => (
+              <div key={item} className="rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-slate-300">
+                {item}
+              </div>
+            ))}
+          </div>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/signup" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-xl font-bold text-lg transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2">
-              Open Nora <ArrowRight size={20} />
+              Start self-hosted eval <ArrowRight size={20} />
             </Link>
             <a
-              href="https://github.com/solomon2773/nora"
+              href="https://github.com/solomon2773/nora#readme"
               target="_blank"
               rel="noopener noreferrer"
               className="w-full sm:w-auto bg-slate-900 border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
             >
-              View the Repo <ShoppingBag size={20} />
+              Review setup docs <ShoppingBag size={20} />
             </a>
           </div>
         </div>
