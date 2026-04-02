@@ -44,7 +44,7 @@ If those three steps work cleanly, Nora has already proven the core self-hosted 
 
 - **internal AI platform teams** running multiple OpenClaw agents
 - **technical product teams** who need a credible operator UX around OpenClaw
-- **ops-minded founders and technical teams** who want to self-host from day one
+- **ops-minded operators and technical teams** who want to self-host from day one
 
 ### Nora is not trying to be
 
