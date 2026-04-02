@@ -17,7 +17,7 @@
   ·
   <a href="https://nora.solomontsao.com">Live app</a>
   ·
-  <a href="https://nora.solomontsao.com/pricing">Usage rights</a>
+  <a href="https://nora.solomontsao.com/pricing">Pricing + commercial paths</a>
   ·
   <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh">Install script (bash)</a>
   ·
