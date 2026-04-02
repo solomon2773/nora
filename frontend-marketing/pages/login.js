@@ -144,8 +144,8 @@ export default function Login() {
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="max-w-md w-full flex flex-col gap-8">
           <div className="text-center">
-            <h1 className="text-3xl font-black tracking-tight mb-2">Welcome Back</h1>
-            <p className="text-sm text-slate-400 font-medium">Sign in to the Nora Console</p>
+            <h1 className="text-3xl font-black tracking-tight mb-2">Return to your operator console</h1>
+            <p className="text-sm text-slate-400 font-medium">Sign in to continue managing your self-hosted Nora workspace.</p>
           </div>
 
           {OAUTH_LOGIN_ENABLED && (
