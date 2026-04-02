@@ -22,7 +22,7 @@ const PATHS = [
   {
     key: "commercial-use",
     name: "Use it commercially yourself",
-    price: "Allowed",
+    price: "Commercial use",
     period: "Apache 2.0",
     description: "You can run Nora as part of a service business, host it for clients, or build on top of it.",
     icon: Globe,
