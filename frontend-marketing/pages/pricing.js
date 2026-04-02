@@ -179,6 +179,15 @@ export default function Pricing() {
         </div>
       </div>
 
+      <div className="max-w-6xl mx-auto px-6 pb-8">
+        <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6 text-left">
+          <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-2">Recommended evaluation path</p>
+          <p className="text-sm text-blue-50/80 leading-relaxed">
+            If you are evaluating Nora today, use the self-hosted path first. The plan grid below reflects the current PaaS billing code and resource envelopes, not the primary MVP motion.
+          </p>
+        </div>
+      </div>
+
       <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-3 gap-6 md:gap-8 items-start">
         {PLANS.map((plan) => (
           <PlanCard key={plan.key} plan={plan} />
