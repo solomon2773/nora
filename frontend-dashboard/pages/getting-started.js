@@ -17,8 +17,8 @@ const bestFit = [
   },
   {
     icon: Bot,
-    title: "AI product builders",
-    desc: "Ship a more credible runtime experience with deployment, key sync, and observability already packaged together.",
+    title: "Technical product teams",
+    desc: "Give OpenClaw-backed products a more credible operator surface with deployment, key sync, and observability already packaged together.",
   },
   {
     icon: FolderKanban,
