@@ -104,7 +104,7 @@ export default function Home() {
               GitHub
             </a>
             <Link href="/signup" className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-blue-500/20">
-              Get Started
+              Start self-hosted eval
             </Link>
           </div>
 
@@ -129,7 +129,7 @@ export default function Home() {
               GitHub
             </a>
             <Link href="/signup" className="bg-blue-600 hover:bg-blue-700 px-4 py-3 rounded-lg text-sm font-semibold text-center" onClick={() => setMobileMenuOpen(false)}>
-              Get Started
+              Start self-hosted eval
             </Link>
           </div>
         )}
@@ -150,22 +150,35 @@ export default function Home() {
           </h1>
 
           <p className="max-w-3xl mx-auto text-base md:text-xl text-slate-400 mb-10 leading-relaxed">
-            Deploy, manage, and monitor autonomous OpenClaw agents from one dashboard. Nora handles provisioning,
-            tool wiring, communication channels, and observability so you can focus on agent work.
+            For internal AI platform teams, technical founders, and ops-minded OpenClaw builders who want a credible
+            self-hosted control plane. Nora handles provisioning, tool wiring, chat access, and observability so you
+            can get the first agent operational faster.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 px-4 sm:px-0">
             <Link href="/signup" className="w-full sm:w-auto bg-white text-slate-950 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-100 transition-all flex items-center justify-center gap-2">
-              Get Started <Zap size={20} className="fill-current" />
+              Start self-hosted eval <Zap size={20} className="fill-current" />
             </Link>
             <a
-              href="https://github.com/solomon2773/nora"
+              href="https://github.com/solomon2773/nora#readme"
               target="_blank"
               rel="noopener noreferrer"
               className="w-full sm:w-auto bg-slate-900 border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
             >
-              View on GitHub <ArrowRight size={20} />
+              Review setup docs <ArrowRight size={20} />
             </a>
+          </div>
+
+          <div className="mt-8 flex flex-col sm:flex-row items-stretch justify-center gap-3 max-w-4xl mx-auto text-left">
+            {[
+              "1. Create your operator account",
+              "2. Add one provider key",
+              "3. Deploy and validate your first OpenClaw agent",
+            ].map((item) => (
+              <div key={item} className="flex-1 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300">
+                {item}
+              </div>
+            ))}
           </div>
         </div>
       </section>
