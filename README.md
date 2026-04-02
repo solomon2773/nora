@@ -79,6 +79,17 @@ Nora currently supports:
 
 These are better signals for the current product than inflated usage claims.
 
+## MVP evaluation checklist
+
+A successful Nora evaluation should prove four things quickly:
+
+1. you can create an operator account without onboarding confusion
+2. you can save one LLM provider key in Settings
+3. you can deploy the first OpenClaw agent through the default Docker path
+4. you can validate chat, logs, and terminal from the same control plane
+
+If those four steps work cleanly, Nora has already demonstrated the core self-hosted control-plane value proposition.
+
 ---
 
 ## Quick Start

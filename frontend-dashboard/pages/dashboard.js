@@ -1,8 +1,9 @@
 import Layout from "../components/layout/Layout";
-import { Activity, Zap, Bot, Cpu, ArrowUpRight, Loader2, KeyRound, Rocket, MessagesSquare } from "lucide-react";
+import { Zap, Bot, Cpu, ArrowUpRight, Loader2, ListChecks } from "lucide-react";
 import { useState, useEffect } from "react";
 import { clsx } from "clsx";
 import { fetchWithAuth } from "../lib/api";
+import ActivationChecklist from "../components/onboarding/ActivationChecklist";
 
 export default function Dashboard() {
   const [agents, setAgents] = useState([]);
@@ -100,33 +101,6 @@ export default function Dashboard() {
 }
 
 function EmptyState() {
-  const steps = [
-    {
-      icon: KeyRound,
-      title: "Add an LLM provider",
-      desc: "Save one provider key in Settings so Nora can sync it to agents.",
-      href: "/app/settings",
-      cta: "Open Settings",
-      accent: "blue",
-    },
-    {
-      icon: Rocket,
-      title: "Deploy your first agent",
-      desc: "Choose a runtime, set resources, and launch an OpenClaw agent.",
-      href: "/app/deploy",
-      cta: "Deploy Agent",
-      accent: "emerald",
-    },
-    {
-      icon: MessagesSquare,
-      title: "Validate the runtime",
-      desc: "Use chat, logs, and terminal to confirm the agent is healthy and ready.",
-      href: "/app/agents",
-      cta: "View Agents",
-      accent: "purple",
-    },
-  ];
-
   return (
     <div className="p-8 sm:p-12 lg:p-14 space-y-8">
       <div className="text-center max-w-2xl mx-auto space-y-3">
@@ -139,52 +113,23 @@ function EmptyState() {
         </p>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-4">
-        {steps.map((step, index) => {
-          const accent =
-            step.accent === "emerald"
-              ? "bg-emerald-50 text-emerald-600 border-emerald-100"
-              : step.accent === "purple"
-                ? "bg-purple-50 text-purple-600 border-purple-100"
-                : "bg-blue-50 text-blue-600 border-blue-100";
-
-          return (
-            <div key={step.title} className="border border-slate-200 rounded-3xl p-6 bg-slate-50/60 flex flex-col gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white flex items-center justify-center text-xs font-black">
-                  {index + 1}
-                </div>
-                <div className={`w-10 h-10 rounded-2xl border flex items-center justify-center ${accent}`}>
-                  <step.icon size={18} />
-                </div>
-              </div>
-              <div>
-                <h4 className="text-lg font-black text-slate-900 mb-2">{step.title}</h4>
-                <p className="text-sm text-slate-500 leading-relaxed">{step.desc}</p>
-              </div>
-              <a href={step.href} className="mt-auto inline-flex items-center gap-2 text-sm font-bold text-blue-600 hover:underline">
-                {step.cta}
-                <ArrowUpRight size={14} />
-              </a>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="bg-blue-50 border border-blue-100 rounded-3xl p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-blue-50 border border-blue-100 rounded-3xl p-6 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div>
           <p className="text-sm font-black text-blue-700 uppercase tracking-widest mb-1">Recommended order</p>
           <p className="text-sm text-blue-700/80">Settings → Deploy → Agents. That is the fastest path to first proof of value.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <a href="/app/settings" className="px-4 py-2.5 bg-white border border-blue-200 text-blue-700 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">
-            Settings
+        <div className="flex flex-wrap items-center gap-3">
+          <a href="/app/getting-started" className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-blue-200 text-blue-700 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">
+            <ListChecks size={15} />
+            Open activation guide
           </a>
           <a href="/app/deploy" className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold transition-all">
             Deploy First Agent
           </a>
         </div>
       </div>
+
+      <ActivationChecklist compact title="Activate Nora" subtitle="Use this first-run checklist to move from setup to proof of value without guessing the next step." />
     </div>
   );
 }

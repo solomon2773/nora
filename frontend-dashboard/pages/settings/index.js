@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { fetchWithAuth } from "../../lib/api";
 import { useToast } from "../../components/Toast";
+import ActivationChecklist from "../../components/onboarding/ActivationChecklist";
 
 export default function SettingsPage() {
   const [profile, setProfile] = useState(null);
@@ -185,6 +186,12 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-black text-slate-900">Settings</h1>
           <p className="text-sm text-slate-400 mt-1">Manage your account, security, and preferences.</p>
         </div>
+
+        <ActivationChecklist
+          compact
+          title="Settings-driven activation"
+          subtitle="For self-hosted MVP evaluation, this page is step one: add one provider key here, then move to Deploy and validate the runtime."
+        />
 
         {/* Profile Card */}
         <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">

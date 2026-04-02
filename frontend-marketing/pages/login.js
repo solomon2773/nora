@@ -30,6 +30,28 @@ export default function Login() {
     }
   }, []);
 
+  async function routeAfterLogin(token) {
+    try {
+      const [providersRes, agentsRes] = await Promise.all([
+        fetch("/api/llm-providers", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/agents", { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+
+      const [providers, agents] = await Promise.all([
+        providersRes.ok ? providersRes.json() : [],
+        agentsRes.ok ? agentsRes.json() : [],
+      ]);
+
+      const hasProviders = Array.isArray(providers) && providers.length > 0;
+      const hasAgents = Array.isArray(agents) && agents.length > 0;
+
+      window.location.href = hasProviders || hasAgents ? "/app/dashboard" : "/app/getting-started";
+    } catch (err) {
+      console.error(err);
+      window.location.href = "/app/dashboard";
+    }
+  }
+
   async function handleLogin(e) {
     e.preventDefault();
     setLoading(true);
@@ -43,7 +65,7 @@ export default function Login() {
       const data = await res.json();
       if (res.ok && data.token) {
         localStorage.setItem("token", data.token);
-        window.location.href = "/app/dashboard";
+        await routeAfterLogin(data.token);
       } else {
         setError(data.error || "Login failed");
       }

@@ -104,6 +104,13 @@ export default function Home() {
     "Focuses the MVP on first deploy, key sync, observability, and day-2 operations instead of inflated enterprise promises.",
   ];
 
+  const evaluationSignals = [
+    "Create an operator account without setup confusion.",
+    "Store one provider key and sync it to agents from Nora.",
+    "Deploy the first OpenClaw agent through the default Docker path.",
+    "Validate chat, logs, and terminal from the same control plane.",
+  ];
+
   return (
     <div className="min-h-screen bg-[#0f172a] text-white font-sans selection:bg-blue-500/30 overflow-x-hidden">
       <nav className="fixed w-full z-50 bg-[#0f172a]/85 backdrop-blur-md border-b border-white/5">
@@ -211,6 +218,29 @@ export default function Home() {
               <p className="text-sm text-slate-500 mt-1 font-medium">{item.label}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="py-20 px-4 sm:px-6">
+        <div className="max-w-5xl mx-auto bg-[#0b1120] border border-white/5 rounded-[2rem] p-8 md:p-10">
+          <div className="text-center mb-10">
+            <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Proof of value</p>
+            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">What a credible Nora evaluation should prove</h2>
+            <p className="text-slate-400 mt-4 max-w-2xl mx-auto">
+              The MVP story is intentionally narrow: get to a trustworthy first deployment and validate the operator workflow end to end.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-4">
+            {evaluationSignals.map((item, index) => (
+              <div key={item} className="rounded-3xl border border-white/5 bg-white/[0.03] p-5 flex items-start gap-4">
+                <div className="w-9 h-9 rounded-2xl bg-blue-600 text-white flex items-center justify-center text-sm font-black shrink-0">
+                  {index + 1}
+                </div>
+                <p className="text-sm text-slate-300 leading-relaxed">{item}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

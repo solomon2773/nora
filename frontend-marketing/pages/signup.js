@@ -32,7 +32,7 @@ export default function Signup() {
         const data = await loginRes.json();
         if (loginRes.ok) {
           localStorage.setItem("token", data.token);
-          window.location.href = "/app/dashboard";
+          window.location.href = "/app/getting-started";
         } else {
           window.location.href = "/login";
         }
