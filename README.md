@@ -91,6 +91,28 @@ That framing keeps the repo honest: the product stays open-source at the core, w
 
 That domain map is intentional: the repo and raw install scripts earn trust for self-hosted evaluation, while the live app, signup flow, and pricing page handle commercial follow-on paths.
 
+## Commercial offers at a glance
+
+Nora does not currently publish fixed support or managed-service pricing. Instead, the repo should make the offer boundaries clear so evaluators know which conversation to start.
+
+| Offer | Best fit | What you get | Start here |
+|---|---|---|---|
+| **Self-hosted open source** | You want full infrastructure control | Nora under Apache 2.0, install docs, setup scripts, and the current self-hosted product surface | [Quick Start](#quick-start) |
+| **Paid onboarding & support** | You want Nora live faster on your own infrastructure | Help with setup, rollout planning, onboarding, deployment review, and first-value delivery using the OSS product as the base | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
+| **Managed Nora / custom deployment** | You want less self-managed ops or expect a tailored rollout | Hosted evaluation entry, managed deployment discussion, or enterprise/custom scoping based on current product proof | [Pricing / commercial paths](https://nora.solomontsao.com/pricing) |
+
+## How to start a paid conversation
+
+If you want paid help, the fastest way to get a useful answer is to include:
+
+- whether you want **self-hosted support** or a **managed / custom deployment** path
+- your target environment or hosting constraints
+- whether this is a proof-of-value, pilot, or production rollout
+- the OpenClaw workflows you need to prove first
+- any security, SSO, networking, or deployment constraints already known
+
+For the current offer framing and guardrails, see [docs/COMMERCIAL_PATHS.md](docs/COMMERCIAL_PATHS.md).
+
 <p align="center">
   <img src="docs/assets/proof-pricing-commercial-paths.png" alt="Nora pricing and commercial paths proof" width="90%" />
 </p>
@@ -120,6 +142,14 @@ The MVP is **self-hosted first** and optimized around the fastest trustworthy pa
 5. validate it via chat, logs, and terminal
 
 That positioning is intentionally narrower and more credible than broad hosted-platform claims.
+
+### Commercial packaging logic
+
+Nora monetizes around **speed, support, and deployment scope** — not by hiding the OSS product or inventing unsupported usage claims.
+
+- **Self-hosted OSS** is the proof path.
+- **Paid onboarding & support** is for teams that want help getting the self-hosted path working faster.
+- **Managed Nora / custom deployment** is for teams that want less operational overhead or already need a tailored rollout.
 
 ### Nora is probably not the right fit if
 

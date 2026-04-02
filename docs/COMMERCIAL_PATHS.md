@@ -39,6 +39,68 @@ Current public motion:
 | Paid onboarding & support | `SUPPORT.md` + GitHub Discussions | Team wants faster rollout without giving up self-hosting | Scoped help around setup, onboarding, and first-value delivery |
 | Managed Nora / custom deployment | Pricing page + hosted signup | Team wants less ops overhead or expects a custom rollout conversation | Faster evaluation start, then managed/custom scoping |
 
+## How commercial pricing works today
+
+Nora does **not** currently publish fixed public pricing for support or managed deployment.
+
+Instead, the public funnel should make three things clear:
+
+1. **Which path to choose** — self-hosted, paid support, or managed/custom
+2. **What changes the scope** — infra ownership, rollout depth, deployment complexity, and operator requirements
+3. **What the next step is** — install docs, GitHub Discussions, or hosted signup
+
+### Scope drivers that affect a quote
+
+- whether the team is staying **fully self-hosted** or wants a **managed/custom** path
+- target environment and hosting model
+- proof-of-value vs pilot vs production rollout
+- deployment count, workspace/team structure, and operator requirements
+- security, SSO, networking, or compliance constraints
+- whether help is limited to onboarding/support or includes broader custom deployment work
+
+## Offer boundaries
+
+### Paid onboarding & support
+
+Use this when the buyer wants to keep their own infrastructure but reduce time-to-value.
+
+Typical fit:
+- setup guidance
+- rollout planning
+- onboarding help
+- deployment review
+- first-value/operator workflow support
+
+### Managed Nora / custom deployment
+
+Use this when the buyer wants less hands-on ops work or already expects a tailored deployment conversation.
+
+Typical fit:
+- hosted evaluation entry
+- managed rollout discussion
+- custom deployment scoping
+- enterprise/team requirements discovery
+
+## Current CTA language
+
+Use CTA copy that matches the current product reality:
+
+- **Self-hosted OSS:** `Open install docs`, `Self-host Nora`, `Review README`
+- **Paid onboarding & support:** `Start support discussion`, `Get rollout help`
+- **Managed Nora / custom deployment:** `Start managed evaluation`, `Open hosted evaluation`
+
+Avoid CTA copy that implies an unsupported instant-sales motion, such as promising fixed plans, guaranteed SLAs, or fully productized managed service features that are not yet publicly backed.
+
+## What a strong intake request includes
+
+Whether the conversation starts in GitHub Discussions or after hosted signup, ask for:
+
+- which path they want: **support** or **managed/custom**
+- target environment or hosting constraints
+- success criteria for the first proof milestone
+- expected rollout stage: evaluation, pilot, or production
+- any known blockers around security, identity, networking, or deployment
+
 ## Current domain consistency rules
 
 - Use the GitHub repo, `docs/INSTALL.md`, and raw install scripts as the trust anchor for self-hosted evaluation.

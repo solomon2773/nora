@@ -80,7 +80,7 @@ export default function Signup() {
             <p className="text-slate-400 leading-relaxed text-base">
               {IS_SELF_HOSTED
                 ? "Nora is built for teams that want a credible, self-hosted way to deploy and operate OpenClaw agents without gluing together provisioning, key sync, and observability by hand."
-                : "Use this flow when you want a faster evaluation start, a managed path, or a custom deployment conversation around Nora instead of a pure DIY rollout."}
+                : "Use this flow when you want a faster evaluation start, a managed path, or a custom deployment conversation around Nora instead of a pure DIY rollout. If you already know you want self-hosted help instead, the support intake remains the better path."}
             </p>
           </div>
 
@@ -130,7 +130,7 @@ export default function Signup() {
                 <div className="bg-blue-500/10 border border-blue-500/20 rounded-3xl p-5">
                   <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-200 mb-3">Need rollout help?</p>
                   <p className="text-sm text-blue-50/80 leading-relaxed mb-4">
-                    If you already know you want setup guidance, onboarding help, or a faster first-value path, start with the support intake instead of guessing.
+                    If you already know you want setup guidance, onboarding help, or a faster first-value path on your own infrastructure, start with the support intake instead of guessing.
                   </p>
                   <a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-white hover:underline">
                     Open GitHub Discussions
