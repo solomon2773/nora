@@ -71,11 +71,11 @@ const PROOF_LINKS = [
     external: true,
   },
   {
-    eyebrow: "Usage rights",
-    title: "Apache 2.0 usage is explicit",
-    desc: "The public usage-rights page explains self-hosting, modification, and commercial use by anyone under Apache 2.0.",
+    eyebrow: "Commercial paths",
+    title: "Pricing and usage rights are explicit",
+    desc: "The public pricing page explains self-hosting, commercial use, paid support, and managed/custom paths without unsupported claims.",
     href: "/pricing",
-    cta: "Review usage rights",
+    cta: "Review pricing + support",
     external: false,
   },
   {
