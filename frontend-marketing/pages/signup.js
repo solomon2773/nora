@@ -127,7 +127,7 @@ export default function Signup() {
       <div className="flex-1 flex flex-col items-center justify-center p-6 md:p-12 lg:p-16 bg-[#0f172a]">
         <div className="max-w-md w-full flex flex-col gap-8 md:gap-10">
           <div className="flex flex-col gap-2">
-            <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight leading-none mb-2">Create Account</h2>
+            <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight leading-none mb-2">Create Operator Account</h2>
             <p className="text-sm text-slate-400 font-medium">
               {IS_SELF_HOSTED
                 ? "This creates an operator account for your self-hosted Nora instance."
@@ -221,7 +221,7 @@ export default function Signup() {
               disabled={loading}
             >
               {loading ? <Loader2 size={18} className="animate-spin" /> : <Zap size={18} className="fill-current" />}
-              Create Account with Email
+              Create Operator Account
             </button>
           </form>
 
