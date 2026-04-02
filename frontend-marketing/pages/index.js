@@ -199,6 +199,40 @@ export default function Home() {
         </div>
       </section>
 
+      <section className="py-16 px-4 sm:px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-10">
+            <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Best fit</p>
+            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">Who Nora is for right now</h2>
+            <p className="text-slate-400 mt-4 max-w-3xl mx-auto">
+              Nora is positioned for teams who already believe in OpenClaw and need a credible self-hosted operator surface — not a generic AI wrapper with vague claims.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-5">
+            {[
+              {
+                title: "Internal AI platform teams",
+                desc: "Run multiple OpenClaw agents with clearer deployment, key management, logs, and operator workflows.",
+              },
+              {
+                title: "Technical founders",
+                desc: "Add a real control plane around OpenClaw instead of stitching together provisioning and observability by hand.",
+              },
+              {
+                title: "Ops-minded builders",
+                desc: "Self-host from day one and validate first value fast: account, provider key, first agent, then chat/logs/terminal.",
+              },
+            ].map((item) => (
+              <div key={item.title} className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+                <h3 className="text-lg font-bold mb-2">{item.title}</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <section id="features" className="py-24 px-4 sm:px-6 scroll-mt-20">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
