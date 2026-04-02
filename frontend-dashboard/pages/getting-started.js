@@ -52,7 +52,7 @@ export default function GettingStartedPage() {
           </div>
 
           <div className="bg-white border border-slate-200 rounded-[2rem] p-6 sm:p-8 shadow-sm">
-            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 mb-4">Fast path</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 mb-4">Fast self-hosted path</p>
             <div className="space-y-4">
               <div className="flex items-start gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -68,7 +68,7 @@ export default function GettingStartedPage() {
                   <Rocket size={18} />
                 </div>
                 <div>
-                  <p className="text-sm font-black text-slate-900">2. Deploy through the default path</p>
+                  <p className="text-sm font-black text-slate-900">2. Deploy your first OpenClaw agent</p>
                   <p className="text-sm text-slate-500 mt-1">Use OpenClaw + Docker unless you specifically need a different runtime for evaluation.</p>
                 </div>
               </div>
@@ -88,7 +88,7 @@ export default function GettingStartedPage() {
                 Start in Settings <ArrowRight size={15} />
               </a>
               <a href="/app/deploy" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 transition-all">
-                Go to Deploy <ArrowRight size={15} />
+                Deploy first agent <ArrowRight size={15} />
               </a>
             </div>
           </div>
