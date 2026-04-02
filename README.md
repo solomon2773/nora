@@ -43,7 +43,7 @@ If those three steps work cleanly, Nora has already proven the core self-hosted 
 ### Nora is best for
 
 - **internal AI platform teams** running multiple OpenClaw agents
-- **AI product builders** who need a credible operator UX around OpenClaw
+- **technical product teams** who need a credible operator UX around OpenClaw
 - **ops-minded founders and technical teams** who want to self-host from day one
 
 ### Nora is not trying to be
