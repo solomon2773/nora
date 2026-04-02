@@ -17,7 +17,7 @@
   ·
   <a href="https://nora.solomontsao.com">Live app / hosted eval / managed path</a>
   ·
-  <a href="https://nora.solomontsao.com/pricing">Pricing + commercial paths</a>
+  <a href="https://nora.solomontsao.com/pricing">Pricing + enterprise/custom</a>
   ·
   <a href="https://github.com/solomon2773/nora/discussions">Paid rollout help</a>
   ·
