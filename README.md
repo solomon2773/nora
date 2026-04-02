@@ -341,7 +341,7 @@ Track agent health, queue state, logs, metrics, and runtime activity.
 
 ### Core components
 
-- `frontend-marketing/` — landing, login, signup, usage-rights page
+- `frontend-marketing/` — landing, login, signup, pricing/support page
 - `frontend-dashboard/` — operator dashboard for agents and settings
 - `backend-api/` — APIs, auth, key management, provisioning, monitoring
 - `admin-dashboard/` — admin/operator surfaces
