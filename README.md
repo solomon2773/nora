@@ -19,7 +19,7 @@
   ·
   <a href="https://nora.solomontsao.com/pricing">Pricing + enterprise/custom</a>
   ·
-  <a href="https://github.com/solomon2773/nora/discussions">Paid rollout help</a>
+  <a href="https://github.com/solomon2773/nora/discussions">Paid rollout help / support</a>
   ·
   <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh">Install script (bash)</a>
   ·
