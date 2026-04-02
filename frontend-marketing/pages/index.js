@@ -247,7 +247,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-12">
             <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Choose your path</p>
-            <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight">Open source first. Open usage rights.</h2>
+            <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight">Open source first. Commercial paths are clear.</h2>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             {PATHS.map((path) => {
