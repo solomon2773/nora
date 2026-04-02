@@ -99,7 +99,7 @@ export default function ActivationChecklist({ compact = false, title = "Activati
             <p className="text-[10px] font-black uppercase tracking-[0.25em] text-blue-600 mb-2">First-run activation</p>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">{title}</h2>
             <p className="text-sm text-slate-500 mt-2 max-w-2xl">
-              {subtitle || "The fastest path to value is simple: connect one provider, deploy one agent, then validate the runtime from Nora itself."}
+              {subtitle || "The fastest self-hosted path to value is simple: connect one provider, deploy one agent, then validate the runtime from Nora itself."}
             </p>
           </div>
 
@@ -218,7 +218,7 @@ export default function ActivationChecklist({ compact = false, title = "Activati
 
       {!loading && !compact && (
         <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600 leading-relaxed">
-          <span className="font-bold text-slate-900">Best-fit evaluator:</span> platform teams, AI product builders, and ops-minded technical teams who want a credible self-hosted control plane for OpenClaw agents.
+          <span className="font-bold text-slate-900">Best-fit evaluator:</span> platform teams, technical product teams, and ops-minded technical teams who want a credible self-hosted control plane for OpenClaw agents.
         </div>
       )}
     </div>
