@@ -182,9 +182,19 @@ export default function Pricing() {
       <div className="max-w-6xl mx-auto px-6 pb-8">
         <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6 text-left">
           <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-2">Recommended evaluation path</p>
-          <p className="text-sm text-blue-50/80 leading-relaxed">
+          <p className="text-sm text-blue-50/80 leading-relaxed mb-4">
             If you are evaluating Nora today, use the self-hosted path first. The plan grid below reflects the current PaaS billing code and resource envelopes, not the primary MVP motion.
           </p>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Link href="/signup" className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-all">
+              Start self-hosted evaluation
+              <ArrowRight size={16} />
+            </Link>
+            <a href="https://github.com/solomon2773/nora" target="_blank" rel="noopener noreferrer" className="inline-flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border border-blue-300/20 bg-white/5 hover:bg-white/10 text-blue-50 text-sm font-bold transition-all">
+              Read setup docs
+              <ArrowRight size={16} />
+            </a>
+          </div>
         </div>
       </div>
 
