@@ -15,7 +15,7 @@ const PATHS = [
       "Use the product internally without asking permission",
       "OpenClaw is the strongest supported runtime today",
     ],
-    cta: "Open quick start",
+    cta: "Open self-host quick start",
     href: "https://github.com/solomon2773/nora#quick-start",
     external: true,
   },
