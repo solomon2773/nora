@@ -59,7 +59,7 @@ const PLANS = [
       "Workspace and RBAC support",
       "Enterprise checkout path exists when billing is enabled",
     ],
-    cta: "Request Enterprise",
+    cta: "Contact for enterprise",
     href: "/signup",
     highlight: false,
   },
