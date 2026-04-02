@@ -53,11 +53,12 @@ test.describe("Marketing site navigation", () => {
 });
 
 test.describe("Pricing page", () => {
-  test("pricing page loads with plan and limits copy", async ({ page }) => {
+  test("pricing page loads with current self-hosted-first copy", async ({ page }) => {
     await page.goto("/pricing");
-    await expect(page.getByRole("heading", { name: /plans and deployment limits/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /self-hosted first\.?\s*paaS limits second\.?/i })).toBeVisible();
     await expect(page.getByText(/self-hosted operators/i)).toBeVisible();
-    await expect(page.getByText(/current Nora billing code/i)).toBeVisible();
+    await expect(page.getByText(/recommended evaluation path/i)).toBeVisible();
+    await expect(page.getByText(/current PaaS billing code/i)).toBeVisible();
   });
 });
 
