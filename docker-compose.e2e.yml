@@ -1,0 +1,76 @@
+services:
+  nginx:
+    image: nginx:latest
+    ports:
+      - "18080:80"
+    volumes:
+      - ./nginx.e2e.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      backend-api:
+        condition: service_healthy
+      frontend-marketing:
+        condition: service_started
+      frontend-dashboard:
+        condition: service_started
+
+  frontend-marketing:
+    build: ./frontend-marketing
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - PLATFORM_MODE=${PLATFORM_MODE:-selfhosted}
+    env_file:
+      - ${NORA_ENV_FILE:-.env}
+
+  frontend-dashboard:
+    build: ./frontend-dashboard
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+
+  backend-api:
+    build: ./backend-api
+    volumes:
+      - ./agent-runtime:/agent-runtime:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - ${NORA_ENV_FILE:-.env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: platform
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend-api/db_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

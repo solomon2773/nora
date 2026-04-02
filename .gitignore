@@ -5,6 +5,8 @@
 # Test / coverage artifacts
 coverage/
 *.log
+**/playwright-report/
+**/test-results/
 
 # Local environment files
 .env
