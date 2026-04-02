@@ -33,7 +33,7 @@ const PATHS = [
       "Keep your own packaging, operations, and customer relationships",
     ],
     cta: "Read commercial-use rights",
-    href: "https://github.com/solomon2773/nora/blob/master/LICENSE",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/OPEN_SOURCE_USAGE.md",
     external: true,
   },
   {
