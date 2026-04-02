@@ -348,11 +348,11 @@ export default function Pricing() {
             <div className="grid md:grid-cols-2 gap-4">
               {[
                 {
-                  title: "Paid onboarding & support",
+                  title: "Support-led rollout",
                   desc: "Best when you are staying self-hosted but want faster setup, rollout help, and first-value support.",
                 },
                 {
-                  title: "Managed Nora / custom deployment",
+                  title: "Managed/custom path",
                   desc: "Best when you want less operational lift or already expect a tailored deployment conversation.",
                 },
               ].map((item) => (
