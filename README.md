@@ -134,7 +134,7 @@ The repo now includes real operator-side screenshots alongside the marketing and
 </p>
 
 <p align="center">
-  <img src="docs/assets/proof-usage-rights-apache.png" alt="Nora usage rights screenshot" width="90%" />
+  <img src="docs/assets/proof-usage-rights-apache.png" alt="Nora pricing, support, and usage-rights screenshot" width="90%" />
 </p>
 
 <p align="center">
