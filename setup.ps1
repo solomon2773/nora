@@ -2,7 +2,7 @@
 # Nora — One-line installer & setup (Windows PowerShell)
 # ============================================================
 # Usage:
-#   iwr -useb https://nora.solomon.com/setup.ps1 | iex
+#   iwr -useb https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1 | iex
 #   — or —
 #   .\setup.ps1        (from inside the repo)
 #

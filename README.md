@@ -12,6 +12,20 @@
   <img src="https://img.shields.io/badge/self--hosted-first-0ea5e9.svg" alt="Self-Hosted First" />
 </p>
 
+<p align="center">
+  <a href="https://nora.solomontsao.com">Live app</a>
+  ·
+  <a href="https://nora.solomontsao.com/pricing">Pricing / commercial paths</a>
+  ·
+  <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh">Install script (bash)</a>
+  ·
+  <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1">Install script (PowerShell)</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/proof-landing-open-source-funnel.png" alt="Nora landing page proof" width="90%" />
+</p>
+
 ---
 
 ## What is Nora?
@@ -37,6 +51,22 @@ Use this path to reach first proof of value quickly:
 3. **Deploy one OpenClaw agent** and validate chat, logs, and terminal from the same surface
 
 If those three steps work cleanly, Nora has already proven the core self-hosted MVP.
+
+## Open-source core, commercial paths around it
+
+Nora should convert open-source repo interest into three clear motions:
+
+| Path | Best for | Current public CTA |
+|---|---|---|
+| **Self-hosted open source** | Teams who want full infrastructure control | [Quick Start](#quick-start) |
+| **Paid onboarding & support** | Teams who want help getting Nora live faster on their own infra | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
+| **Managed Nora / custom deployment** | Teams exploring a hosted or tailored rollout | [Pricing / commercial paths](https://nora.solomontsao.com/pricing) |
+
+That framing keeps the repo honest: the product stays open-source at the core, while monetization happens around implementation speed, support, and deployment scope.
+
+<p align="center">
+  <img src="docs/assets/proof-pricing-commercial-paths.png" alt="Nora pricing and commercial paths proof" width="90%" />
+</p>
 
 ## Product positioning
 
@@ -66,7 +96,7 @@ That positioning is intentionally narrower and more credible than broad hosted-p
 
 ### Nora is probably not the right fit if
 
-- you want a fully managed hosted product today
+- you want a zero-conversation generic SaaS with no implementation planning; Nora's strongest path today is either self-hosted evaluation or a scoped commercial engagement
 - you do not care about OpenClaw-specific operations
 - you want a non-technical “click once and forget infrastructure” experience
 
@@ -124,13 +154,13 @@ If those four steps work cleanly, Nora has already demonstrated the core self-ho
 **macOS / Linux / WSL2**
 
 ```bash
-curl -fsSL https://nora.solomontsao.com/setup.sh | bash
+curl -fsSL https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh | bash
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-iwr -useb https://nora.solomontsao.com/setup.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1 | iex
 ```
 
 The installer will:

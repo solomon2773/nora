@@ -44,21 +44,29 @@ test.describe("Marketing site navigation", () => {
     await expect(page.locator("#features")).toBeInViewport();
   });
 
-  test("primary signup CTA links to signup", async ({ page }) => {
+  test("homepage exposes commercial paths CTA", async ({ page }) => {
     await page.goto("/");
-    const cta = page.locator('a[href="/signup"]').first();
+    const cta = page.locator('a[href="/pricing"]').first();
     await expect(cta).toBeVisible();
-    await expect(cta).toHaveAttribute("href", "/signup");
+    await expect(cta).toHaveAttribute("href", "/pricing");
+  });
+
+  test("homepage exposes install docs link", async ({ page }) => {
+    await page.goto("/");
+    const docsLink = page.locator('a[href="https://github.com/solomon2773/nora#quick-start"]').first();
+    await expect(docsLink).toBeVisible();
+    await expect(docsLink).toHaveAttribute("href", "https://github.com/solomon2773/nora#quick-start");
   });
 });
 
 test.describe("Pricing page", () => {
-  test("pricing page loads with current self-hosted-first copy", async ({ page }) => {
+  test("pricing page loads with commercial-path copy while keeping current domain proof visible", async ({ page }) => {
     await page.goto("/pricing");
-    await expect(page.getByRole("heading", { name: /self-hosted first\.?\s*paaS limits second\.?/i })).toBeVisible();
-    await expect(page.getByText(/self-hosted operators/i)).toBeVisible();
-    await expect(page.getByText(/recommended evaluation path/i)).toBeVisible();
-    await expect(page.getByText(/current PaaS billing code/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /open source first\.?\s*commercial help when you need it\.?/i })).toBeVisible();
+    await expect(page.getByText(/repo → support → managed/i)).toBeVisible();
+    await expect(page.getByText(/paid onboarding & support/i)).toBeVisible();
+    await expect(page.getByText(/managed nora \/ custom deployment/i)).toBeVisible();
+    await expect(page.locator('a[href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh"]').first()).toBeVisible();
   });
 });
 

@@ -1,0 +1,64 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F172A"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#1E293B"/>
+      <stop offset="1" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <text x="800" y="100" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="54" font-weight="700" text-anchor="middle">Nora open-source monetization funnel</text>
+  <text x="800" y="146" fill="#94A3B8" font-family="Arial, Helvetica, sans-serif" font-size="24" text-anchor="middle">Use repo trust first, then monetize rollout speed, support, and deployment scope.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="110" y="240" width="400" height="420" rx="28" fill="url(#card)" stroke="#334155"/>
+    <rect x="600" y="240" width="400" height="420" rx="28" fill="url(#card)" stroke="#3B82F6"/>
+    <rect x="1090" y="240" width="400" height="420" rx="28" fill="url(#card)" stroke="#334155"/>
+  </g>
+
+  <rect x="150" y="280" width="160" height="42" rx="21" fill="#132238" stroke="#24476D"/>
+  <text x="230" y="307" fill="#93C5FD" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">OPEN SOURCE</text>
+  <text x="150" y="370" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">1. Self-hosted Nora</text>
+  <text x="150" y="420" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Apache 2.0 repo</text>
+  <text x="150" y="462" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Quick Start + raw install scripts</text>
+  <text x="150" y="504" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• 18 LLMs / 60+ integrations / 9 channels</text>
+  <text x="150" y="546" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Best for teams who want full control</text>
+  <text x="150" y="610" fill="#60A5FA" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Trust anchor: GitHub repo + README</text>
+
+  <rect x="640" y="280" width="175" height="42" rx="21" fill="#132238" stroke="#3B82F6"/>
+  <text x="727" y="307" fill="#BFDBFE" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">MONETIZATION</text>
+  <text x="640" y="370" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">2. Paid support</text>
+  <text x="640" y="420" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Keep the customer on their own infra</text>
+  <text x="640" y="462" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Sell setup, onboarding, and rollout help</text>
+  <text x="640" y="504" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Best bridge from OSS trust into revenue</text>
+  <text x="640" y="546" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Intake path: GitHub Discussions</text>
+  <text x="640" y="610" fill="#60A5FA" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Monetize speed, not hype</text>
+
+  <rect x="1130" y="280" width="190" height="42" rx="21" fill="#132238" stroke="#24476D"/>
+  <text x="1225" y="307" fill="#93C5FD" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700" text-anchor="middle">MANAGED / CUSTOM</text>
+  <text x="1130" y="370" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="700">3. Managed rollout</text>
+  <text x="1130" y="420" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Use live app + pricing page as entry point</text>
+  <text x="1130" y="462" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Scope hosted or custom deployment needs</text>
+  <text x="1130" y="504" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Best for teams wanting less ops burden</text>
+  <text x="1130" y="546" fill="#CBD5E1" font-family="Arial, Helvetica, sans-serif" font-size="24">• Revenue expands with deployment scope</text>
+  <text x="1130" y="610" fill="#60A5FA" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Use product proof to open bigger deals</text>
+
+  <path d="M520 448H580" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M563 430L595 448L563 466" stroke="url(#accent)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M1010 448H1070" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M1053 430L1085 448L1053 466" stroke="url(#accent)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="250" y="730" width="1100" height="90" rx="22" fill="#111827" stroke="#334155"/>
+  <text x="800" y="785" fill="#E2E8F0" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="700" text-anchor="middle">Current domains: app = nora.solomontsao.com • install scripts = raw.githubusercontent.com/solomon2773/nora/master</text>
+</svg>
