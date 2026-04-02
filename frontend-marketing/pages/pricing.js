@@ -152,14 +152,14 @@ export default function Pricing() {
       </nav>
 
       <div className="text-center px-6 py-16 md:py-24 max-w-5xl mx-auto">
+        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Pricing & packaging</p>
         <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight mb-6">
-          Plans and deployment
+          Self-hosted first.
           <br />
-          <span className="text-blue-400">limits</span>
+          <span className="text-blue-400">PaaS limits second.</span>
         </h1>
         <p className="text-lg text-slate-400 max-w-3xl mx-auto">
-          These plan envelopes are based on the current Nora billing code. Exact billing availability depends on
-          platform mode, Stripe configuration, and whether you run Nora as self-hosted or PaaS.
+          Nora&apos;s clearest offer today is the open-source, self-hosted control plane for OpenClaw teams. This page keeps the current billing-code reality visible while making the self-hosted path the most credible way to evaluate the MVP.
         </p>
       </div>
 
@@ -171,11 +171,10 @@ export default function Pricing() {
             sessions for Pro and Enterprise through Stripe.
           </p>
         </div>
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
-          <h2 className="text-lg font-black mb-2">Self-hosted mode</h2>
-          <p className="text-sm text-slate-400 leading-relaxed">
-            Self-hosted operators are not locked to the PaaS plan table. Max agents, CPU, RAM, and disk limits are
-            configured through environment variables.
+        <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6">
+          <h2 className="text-lg font-black mb-2 text-blue-100">Self-hosted mode</h2>
+          <p className="text-sm text-blue-50/80 leading-relaxed">
+            Self-hosted operators are not locked to the PaaS plan table. Max agents, CPU, RAM, and disk limits are configured through environment variables, and this is the recommended path for first proof of value today.
           </p>
         </div>
       </div>
@@ -201,6 +200,10 @@ export default function Pricing() {
             {
               q: "What changes in self-hosted mode?",
               a: "Self-hosted deployments use operator-configured environment limits instead of the public PaaS plan table.",
+            },
+            {
+              q: "What does a successful Nora evaluation look like?",
+              a: "For the current MVP, success is simple: create an operator account, add one provider key, deploy the first OpenClaw agent, and validate chat, logs, and terminal from the same control plane.",
             },
             {
               q: "Can Nora still support upgrades?",
