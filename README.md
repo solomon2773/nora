@@ -118,7 +118,7 @@ Use these resources when you need to prove that the repo is real and usable:
 
 - [Open-source implementation proof](docs/IMPLEMENTATION_PROOF.md) — code-backed evidence for self-hosting, operator flows, and runtime direction
 - [Adoption checklist](docs/ADOPTION_CHECKLIST.md) — practical paths for self-hosting, Apache 2.0 commercial use, and runtime expansion
-- [Open-source usage guide](docs/OPEN_SOURCE_USAGE.md) — Apache 2.0 usage rights and public repo framing
+- [Open-source usage guide](docs/OPEN_SOURCE_USAGE.md) — Apache 2.0 usage rights plus the repo's pricing/support/commercial framing
 - [README screenshot plan](docs/README_SCREENSHOT_PLAN.md)
 - [Marketing proof asset plan](docs/MARKETING_PROOF_ASSET_PLAN.md)
 - [Operator screenshot capture script](e2e/scripts/capture-operator-screenshots.mjs) — regenerates the operator screenshots from a local self-hosted stack
