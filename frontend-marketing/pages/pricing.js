@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Check, Server, Shield, Sparkles } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, Server, Shield, Sparkles } from "lucide-react";
 
 const PLANS = [
   {
@@ -8,7 +8,7 @@ const PLANS = [
     price: "Open source",
     description: "Best for builders and small technical teams who want to run Nora on their own infrastructure today.",
     accent: "blue",
-    cta: "Create operator account",
+    cta: "Start self-hosted evaluation",
     href: "/signup",
     features: [
       "Apache-2.0 licensed",
@@ -16,6 +16,7 @@ const PLANS = [
       "OpenClaw-native deploy, chat, logs, terminal, and settings UX",
       "Bring your own LLM provider keys",
       "Best path for the current MVP",
+      "Recommended starting point for first proof of value",
     ],
   },
   {
@@ -50,6 +51,12 @@ const PLANS = [
       "Useful if you want Nora without running the stack yourself",
     ],
   },
+];
+
+const pricingDecisionPath = [
+  "Start with Community if you want the fastest, most credible self-hosted MVP evaluation.",
+  "Move to Team when you need rollout help for multiple operators, environments, or internal platform adoption.",
+  "Treat Managed / Enterprise as a later-stage option, not the primary Nora story today.",
 ];
 
 function accentClasses(accent) {
@@ -107,6 +114,20 @@ export default function Pricing() {
         <p className="text-lg text-slate-400 max-w-3xl mx-auto leading-relaxed">
           Nora&apos;s clearest offer today is the open-source, self-hosted control plane for OpenClaw teams. This page reflects the current MVP honestly while still making room for team support and future managed offerings.
         </p>
+      </div>
+
+      <div className="max-w-5xl mx-auto px-6 pb-12">
+        <div className="bg-blue-500/10 border border-blue-400/20 rounded-3xl p-6 md:p-8">
+          <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-4">Recommended path</p>
+          <div className="grid md:grid-cols-3 gap-4">
+            {pricingDecisionPath.map((item) => (
+              <div key={item} className="bg-slate-950/50 border border-white/5 rounded-2xl p-5 flex items-start gap-3">
+                <CheckCircle2 size={18} className="text-emerald-400 mt-0.5 shrink-0" />
+                <p className="text-sm text-slate-300 leading-relaxed">{item}</p>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-6 pb-14 grid md:grid-cols-3 gap-6 md:gap-8 items-stretch">
@@ -167,7 +188,7 @@ export default function Pricing() {
             {[
               {
                 q: "What should most users choose right now?",
-                a: "Community / self-hosted. That is the strongest and most credible Nora motion today.",
+                a: "Community / self-hosted. That is the strongest and most credible Nora motion today, especially for first evaluation and operator proof of value.",
               },
               {
                 q: "Is Nora open source?",
