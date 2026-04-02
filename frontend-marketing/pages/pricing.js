@@ -25,7 +25,7 @@ const OFFERS = [
   {
     key: "support",
     name: "Paid onboarding & support",
-    price: "Contact",
+    price: "Paid support",
     period: "Keep your own infra",
     description: "For teams that want Nora running faster without turning the rollout into a full DIY project.",
     icon: Shield,
