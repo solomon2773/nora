@@ -32,7 +32,7 @@ const PATHS = [
       "Serve clients or internal business units",
       "Keep your own packaging, operations, and customer relationships",
     ],
-    cta: "Read the license",
+    cta: "Read commercial-use rights",
     href: "https://github.com/solomon2773/nora/blob/master/LICENSE",
     external: true,
   },
