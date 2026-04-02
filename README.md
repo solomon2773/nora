@@ -28,6 +28,16 @@ It gives technical teams a single place to:
 
 The core value proposition is simple: **if you are already serious enough about OpenClaw to care about infrastructure, observability, and repeatable operations, Nora helps you get to a usable control plane faster.**
 
+## Start here if you're evaluating Nora today
+
+Use this path to reach first proof of value quickly:
+
+1. **Install Nora** with the setup script or Docker Compose flow
+2. **Create your operator account** and save one LLM provider key
+3. **Deploy one OpenClaw agent** and validate chat, logs, and terminal from the same surface
+
+If those three steps work cleanly, Nora has already proven the core self-hosted MVP.
+
 ## Product positioning
 
 ### Nora is best for
