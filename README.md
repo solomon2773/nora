@@ -17,6 +17,8 @@
   ·
   <a href="https://nora.solomontsao.com/pricing">Pricing / commercial paths</a>
   ·
+  <a href="docs/COMMERCIAL_PATHS.md">Commercial paths doc</a>
+  ·
   <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh">Install script (bash)</a>
   ·
   <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1">Install script (PowerShell)</a>
@@ -62,7 +64,7 @@ Nora should convert open-source repo interest into three clear motions:
 | **Paid onboarding & support** | Teams who want help getting Nora live faster on their own infra | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
 | **Managed Nora / custom deployment** | Teams exploring a hosted or tailored rollout | [Pricing / commercial paths](https://nora.solomontsao.com/pricing) |
 
-That framing keeps the repo honest: the product stays open-source at the core, while monetization happens around implementation speed, support, and deployment scope.
+That framing keeps the repo honest: the product stays open-source at the core, while monetization happens around implementation speed, support, and deployment scope. For the full commercial-path writeup, see [`docs/COMMERCIAL_PATHS.md`](docs/COMMERCIAL_PATHS.md).
 
 <p align="center">
   <img src="docs/assets/proof-pricing-commercial-paths.png" alt="Nora pricing and commercial paths proof" width="90%" />
@@ -125,7 +127,7 @@ Nora currently supports:
 - **9 communication channel types**
 - **3 provisioning backends** (Docker, Proxmox, Kubernetes)
 
-These are better signals for the current product than inflated usage claims.
+These are better signals for the current product than inflated usage claims. The repo-backed proof screenshots used in this README live in [`docs/assets/`](docs/assets), and the local capture workflow is documented in [`docs/MARKETING_PROOF_ASSET_PLAN.md`](docs/MARKETING_PROOF_ASSET_PLAN.md).
 
 ## MVP evaluation checklist
 
@@ -162,6 +164,8 @@ curl -fsSL https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh | 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1 | iex
 ```
+
+**Trust note:** the public installer URLs now point at `raw.githubusercontent.com`, so the script you fetch maps directly to this repository history. If you prefer to inspect everything before running it, use the manual setup path below.
 
 The installer will:
 
