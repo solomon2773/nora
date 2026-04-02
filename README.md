@@ -19,7 +19,7 @@
   ·
   <a href="https://nora.solomontsao.com/pricing">Pricing / commercial paths</a>
   ·
-  <a href="https://nora.solomontsao.com/signup">Hosted evaluation</a>
+  <a href="https://nora.solomontsao.com/signup">Hosted evaluation / managed path</a>
   ·
   <a href="SUPPORT.md">Support paths</a>
   ·
@@ -85,7 +85,7 @@ That framing keeps the repo honest: the product stays open-source at the core, w
 - **GitHub support paths:** `https://github.com/solomon2773/nora/blob/master/SUPPORT.md`
 - **Live app:** `https://nora.solomontsao.com`
 - **Pricing + commercial packaging:** `https://nora.solomontsao.com/pricing`
-- **Hosted evaluation:** `https://nora.solomontsao.com/signup`
+- **Hosted evaluation / managed path:** `https://nora.solomontsao.com/signup`
 - **Paid support intake:** `https://github.com/solomon2773/nora/discussions`
 - **Install scripts:** `https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh` and `https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1`
 
