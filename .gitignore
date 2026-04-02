@@ -1,0 +1,12 @@
+# Node / Next build artifacts
+**/node_modules/
+**/.next/
+
+# Test / coverage artifacts
+coverage/
+*.log
+
+# Local environment files
+.env
+.env.local
+.env.*.local

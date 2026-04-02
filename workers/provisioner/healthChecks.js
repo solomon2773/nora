@@ -1,7 +1,6 @@
 const {
   AGENT_RUNTIME_PORT,
   OPENCLAW_GATEWAY_PORT,
-  agentRuntimeUrl,
   gatewayUrl,
 } = require("../../agent-runtime/lib/contracts");
 
@@ -47,8 +46,18 @@ async function waitForHttpReady(url, options = {}) {
   };
 }
 
-async function waitForAgentReadiness({ host, gatewayHostPort = null, gatewayHost = null }, options = {}) {
-  const runtime = await waitForHttpReady(agentRuntimeUrl(host, "/health"), {
+async function waitForAgentReadiness({
+  host,
+  runtimeHost = null,
+  runtimePort = AGENT_RUNTIME_PORT,
+  gatewayHostPort = null,
+  gatewayHost = null,
+  gatewayPort = OPENCLAW_GATEWAY_PORT,
+} = {}, options = {}) {
+  const resolvedRuntimeHost = runtimeHost || host;
+  const resolvedRuntimePort = runtimePort || AGENT_RUNTIME_PORT;
+
+  const runtime = await waitForHttpReady(gatewayUrl(resolvedRuntimeHost, resolvedRuntimePort, "/health"), {
     attempts: 12,
     intervalMs: 5000,
     timeoutMs: 5000,
@@ -58,8 +67,8 @@ async function waitForAgentReadiness({ host, gatewayHostPort = null, gatewayHost
 
   const resolvedGatewayHost = gatewayHostPort
     ? (gatewayHost || process.env.GATEWAY_HOST || "host.docker.internal")
-    : host;
-  const resolvedGatewayPort = gatewayHostPort || OPENCLAW_GATEWAY_PORT;
+    : (gatewayHost || host);
+  const resolvedGatewayPort = gatewayHostPort || gatewayPort || OPENCLAW_GATEWAY_PORT;
 
   const gateway = await waitForHttpReady(gatewayUrl(resolvedGatewayHost, resolvedGatewayPort, "/"), {
     attempts: 15,
@@ -73,8 +82,8 @@ async function waitForAgentReadiness({ host, gatewayHostPort = null, gatewayHost
     ok: runtime.ok && gateway.ok,
     runtime: {
       ...runtime,
-      host,
-      port: AGENT_RUNTIME_PORT,
+      host: resolvedRuntimeHost,
+      port: resolvedRuntimePort,
     },
     gateway: {
       ...gateway,

@@ -8,8 +8,9 @@ const JWT_SECRET = process.env.JWT_SECRET || "secret";
 process.env.JWT_SECRET = JWT_SECRET;
 
 const mockDb = { query: jest.fn() };
+const mockAddDeploymentJob = jest.fn();
 jest.mock("../db", () => mockDb);
-jest.mock("../redisQueue", () => ({ addDeploymentJob: jest.fn(), getDLQJobs: jest.fn(), retryDLQJob: jest.fn() }));
+jest.mock("../redisQueue", () => ({ addDeploymentJob: mockAddDeploymentJob, getDLQJobs: jest.fn(), retryDLQJob: jest.fn() }));
 jest.mock("../scheduler", () => ({ selectNode: jest.fn().mockResolvedValue({ name: "worker-01" }) }));
 jest.mock("../containerManager", () => ({
   start: jest.fn().mockResolvedValue({}),
@@ -96,6 +97,7 @@ const auth = (req) => req.set("Authorization", `Bearer ${userToken}`);
 
 beforeEach(() => {
   mockDb.query.mockReset();
+  mockAddDeploymentJob.mockReset();
 });
 
 describe("GET /agents", () => {
@@ -147,6 +149,50 @@ describe("POST /agents/deploy", () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("id");
     expect(res.body).toHaveProperty("status", "queued");
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
+      id: "a-new",
+      name: "TestAgent",
+      userId: "user-1",
+      specs: { vcpu: 2, ram_mb: 2048, disk_gb: 20 },
+      sandbox: "standard",
+    }));
+  });
+
+  it("sanitizes deploy input and clamps self-hosted resource requests", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{ id: "a-sanitized", name: "BadName", status: "queued", user_id: "user-1" }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await auth(
+      request(app).post("/agents/deploy").send({
+        name: "Bad\nName\t",
+        vcpu: 999,
+        ram_mb: 999999,
+        disk_gb: 999999,
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockDb.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("INSERT INTO agents"),
+      expect.arrayContaining([
+        "user-1",
+        "BadName",
+        "worker-01",
+        "standard",
+        16,
+        32768,
+        500,
+      ])
+    );
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
+      id: "a-sanitized",
+      name: "BadName",
+      specs: { vcpu: 16, ram_mb: 32768, disk_gb: 500 },
+    }));
   });
 });
 

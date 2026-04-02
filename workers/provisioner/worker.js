@@ -295,7 +295,7 @@ const worker = new Worker('deployments', async (job) => {
 
   const PROVISION_TIMEOUT = 240000; // 4 min (leaving 1 min margin for the 5-min job timeout)
 
-  let containerId, host, gatewayToken, containerName;
+  let containerId, host, gatewayToken, containerName, gatewayHostPort, runtimeHost, runtimePort, gatewayHost, gatewayPort;
   try {
     const result = await Promise.race([
       provisioner.create({
@@ -316,7 +316,11 @@ const worker = new Worker('deployments', async (job) => {
     host = result.host;
     gatewayToken = result.gatewayToken;
     containerName = result.containerName || container_name;
-    var gatewayHostPort = result.gatewayHostPort || null;
+    gatewayHostPort = result.gatewayHostPort || null;
+    runtimeHost = result.runtimeHost || null;
+    runtimePort = result.runtimePort || null;
+    gatewayHost = result.gatewayHost || null;
+    gatewayPort = result.gatewayPort || null;
 
     // If network discovery failed, host may be "localhost" which is unreachable
     // from backend-api. Attempt to resolve the correct Compose network IP.
@@ -370,7 +374,14 @@ const worker = new Worker('deployments', async (job) => {
     // Post-deploy readiness check: verify both the runtime sidecar and the gateway.
     // First boot may need time for npm installation and initial startup, so we allow
     // generous bounded retries and emit a warning state with explicit component detail.
-    const readiness = await waitForAgentReadiness({ host, gatewayHostPort });
+    const readiness = await waitForAgentReadiness({
+      host,
+      runtimeHost,
+      runtimePort,
+      gatewayHost,
+      gatewayHostPort,
+      gatewayPort,
+    });
     if (!readiness.ok) {
       const problems = [];
       if (!readiness.runtime.ok) {

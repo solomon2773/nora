@@ -122,7 +122,10 @@ class K8sBackend extends ProvisionerBackend {
                 command: gatewayCmd.slice(0, 2),
                 args: [gatewayCmd[2]],
                 env: envVars,
-                ports: [{ containerPort: OPENCLAW_GATEWAY_PORT }, { containerPort: AGENT_RUNTIME_PORT }],
+                ports: [
+                  { name: "gateway", containerPort: OPENCLAW_GATEWAY_PORT },
+                  { name: "runtime", containerPort: AGENT_RUNTIME_PORT },
+                ],
                 resources: {
                   requests: {
                     cpu: `${(vcpu || 2) * 1000}m`,
@@ -142,7 +145,10 @@ class K8sBackend extends ProvisionerBackend {
 
     await this.appsApi.createNamespacedDeployment(this.namespace, deployment);
 
-    // Create a ClusterIP service so it's addressable on port 18789
+    // Create a ClusterIP service that exposes both the control-plane gateway
+    // and the runtime sidecar on their contract ports. Readiness checks and
+    // post-deploy integration sync hit the runtime on 9090, while operator
+    // traffic uses the gateway on 18789.
     const service = {
       apiVersion: "v1",
       kind: "Service",
@@ -152,7 +158,10 @@ class K8sBackend extends ProvisionerBackend {
       },
       spec: {
         selector: { "openclaw.agent.id": String(id) },
-        ports: [{ port: OPENCLAW_GATEWAY_PORT, targetPort: OPENCLAW_GATEWAY_PORT }],
+        ports: [
+          { name: "gateway", port: OPENCLAW_GATEWAY_PORT, targetPort: OPENCLAW_GATEWAY_PORT },
+          { name: "runtime", port: AGENT_RUNTIME_PORT, targetPort: AGENT_RUNTIME_PORT },
+        ],
         type: "ClusterIP",
       },
     };
@@ -164,8 +173,16 @@ class K8sBackend extends ProvisionerBackend {
     }
 
     const host = `${deployName}.${this.namespace}.svc.cluster.local`;
-    console.log(`[k8s] Deployment ${deployName} created -> ${host} (gateway port 18789)`);
-    return { containerId: deployName, host, gatewayToken };
+    console.log(`[k8s] Deployment ${deployName} created -> ${host} (gateway ${OPENCLAW_GATEWAY_PORT}, runtime ${AGENT_RUNTIME_PORT})`);
+    return {
+      containerId: deployName,
+      host,
+      gatewayToken,
+      runtimeHost: host,
+      runtimePort: AGENT_RUNTIME_PORT,
+      gatewayHost: host,
+      gatewayPort: OPENCLAW_GATEWAY_PORT,
+    };
   }
 
   async destroy(containerId) {
