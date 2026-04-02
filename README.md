@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/solomon2773/nora#quick-start">Quick Start</a>
   ·
-  <a href="https://nora.solomontsao.com">Live app</a>
+  <a href="https://nora.solomontsao.com">Live app / hosted eval</a>
   ·
   <a href="https://nora.solomontsao.com/pricing">Pricing + commercial paths</a>
   ·
