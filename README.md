@@ -54,6 +54,14 @@ The MVP is **self-hosted first** and optimized around the fastest trustworthy pa
 
 That positioning is intentionally narrower and more credible than broad hosted-platform claims.
 
+### Nora is probably not the right fit if
+
+- you want a fully managed hosted product today
+- you do not care about OpenClaw-specific operations
+- you want a non-technical “click once and forget infrastructure” experience
+
+Stating that boundary explicitly makes the self-hosted MVP more believable for the teams that actually do fit.
+
 ---
 
 ## Why Nora?

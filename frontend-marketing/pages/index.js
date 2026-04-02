@@ -111,6 +111,12 @@ export default function Home() {
     "Validate chat, logs, and terminal from the same control plane.",
   ];
 
+  const notFor = [
+    "Teams looking for a fully managed hosted platform today.",
+    "Buyers who want a generic AI wrapper without caring about OpenClaw operations.",
+    "Non-technical users who do not want to self-host infrastructure or manage provider keys.",
+  ];
+
   return (
     <div className="min-h-screen bg-[#0f172a] text-white font-sans selection:bg-blue-500/30 overflow-x-hidden">
       <nav className="fixed w-full z-50 bg-[#0f172a]/85 backdrop-blur-md border-b border-white/5">
@@ -266,7 +272,7 @@ export default function Home() {
             ))}
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-6">
+          <div className="grid xl:grid-cols-3 gap-6">
             <div className="bg-white/[0.03] border border-white/5 rounded-3xl p-8">
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 mb-4">What Nora replaces</p>
               <ul className="space-y-3 text-sm text-slate-300">
@@ -290,6 +296,18 @@ export default function Home() {
                 {differentiators.map((item) => (
                   <li key={item} className="flex items-start gap-3">
                     <Check size={16} className="text-emerald-400 mt-0.5 shrink-0" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="bg-white/[0.03] border border-white/5 rounded-3xl p-8">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 mb-4">Nora is not for</p>
+              <ul className="space-y-3 text-sm text-slate-300">
+                {notFor.map((item) => (
+                  <li key={item} className="flex items-start gap-3">
+                    <ChevronRight size={16} className="text-amber-400 mt-0.5 shrink-0" />
                     <span>{item}</span>
                   </li>
                 ))}
