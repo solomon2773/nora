@@ -17,8 +17,8 @@ const OFFERS = [
       "9 communication channels",
       "Environment-based resource control in self-hosted mode",
     ],
-    cta: "Open install docs",
-    href: "https://github.com/solomon2773/nora#quick-start",
+    cta: "Open install guide",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md",
     external: true,
     highlight: false,
   },
@@ -76,6 +76,11 @@ const DOMAIN_LINKS = [
     text: "nora.solomontsao.com/pricing",
   },
   {
+    label: "Install guide",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md",
+    text: "github.com/.../docs/INSTALL.md",
+  },
+  {
     label: "Bash install",
     href: "https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh",
     text: "raw.githubusercontent.com/.../setup.sh",
@@ -92,10 +97,10 @@ const DECISION_PATHS = [
     eyebrow: "Best for control",
     title: "Self-hosted evaluation",
     desc: "Use this when you already have operator capacity and want the cleanest proof path on your own infrastructure.",
-    firstStep: "README quick start + raw install scripts",
+    firstStep: "Install guide + raw install scripts",
     outcome: "Prove account creation, provider key setup, and first agent deployment end to end.",
-    href: "https://github.com/solomon2773/nora#quick-start",
-    cta: "Open install docs",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md",
+    cta: "Open install guide",
     external: true,
   },
   {
@@ -121,6 +126,11 @@ const DECISION_PATHS = [
 ];
 
 const PROOF_RESOURCES = [
+  {
+    title: "Install guide",
+    desc: "GitHub-native install and escalation path for self-hosted evaluators.",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md",
+  },
   {
     title: "Commercial path brief",
     desc: "In-repo summary of the OSS → support → managed funnel and the guardrails behind it.",
@@ -358,6 +368,10 @@ export default function Pricing() {
               a: "Open-source repo first, self-hosted proof second, then paid onboarding/support or a hosted/custom deployment conversation once the team sees real operator value.",
             },
             {
+              q: "Where should a self-hosted evaluator start?",
+              a: "Start with the GitHub install guide, then use the raw.githubusercontent.com setup scripts for the cleanest OSS trust path.",
+            },
+            {
               q: "Where do the install scripts live right now?",
               a: "The current public install links should point to raw.githubusercontent.com, while the live app and pricing pages run on nora.solomontsao.com.",
             },
@@ -384,8 +398,12 @@ export default function Pricing() {
 
       <div className="text-center px-6 pb-24 text-sm text-slate-500">
         Need a self-hosted install path, paid rollout help, or a managed deployment conversation?{" "}
+        <a href="https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
+          Open the install guide
+        </a>
+        {" "}, {" "}
         <a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
-          Start in GitHub Discussions
+          start in GitHub Discussions
         </a>
         {" "}or{" "}
         <Link href="/signup" className="text-blue-400 hover:underline">

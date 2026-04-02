@@ -8,6 +8,7 @@ Nora is open source at the core. The commercial motion should sit around rollout
 Best for teams that want full infrastructure control.
 
 - Repo: `https://github.com/solomon2773/nora`
+- Install guide: `https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md`
 - Live app: `https://nora.solomontsao.com`
 - Pricing/commercial page: `https://nora.solomontsao.com/pricing`
 - Bash install: `https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh`
@@ -16,7 +17,8 @@ Best for teams that want full infrastructure control.
 ### 2. Paid onboarding & support
 Best for teams that want Nora live faster on their own infrastructure.
 
-Use GitHub Discussions as the current intake path:
+Use GitHub support routes as the current intake path:
+- `https://github.com/solomon2773/nora/blob/master/SUPPORT.md`
 - `https://github.com/solomon2773/nora/discussions`
 
 This is the cleanest bridge from open-source trust into revenue without inventing unsupported plan claims.
@@ -33,15 +35,15 @@ Current public motion:
 
 | Path | Start here | Best fit signal | Immediate next outcome |
 |---|---|---|---|
-| Self-hosted open source | `README#Quick Start` + raw install scripts | Team wants full infra control and a transparent proof path | Account → provider key → first agent on their own stack |
-| Paid onboarding & support | GitHub Discussions | Team wants faster rollout without giving up self-hosting | Scoped help around setup, onboarding, and first-value delivery |
+| Self-hosted open source | `docs/INSTALL.md` + raw install scripts | Team wants full infra control and a transparent proof path | Account → provider key → first agent on their own stack |
+| Paid onboarding & support | `SUPPORT.md` + GitHub Discussions | Team wants faster rollout without giving up self-hosting | Scoped help around setup, onboarding, and first-value delivery |
 | Managed Nora / custom deployment | Pricing page + hosted signup | Team wants less ops overhead or expects a custom rollout conversation | Faster evaluation start, then managed/custom scoping |
 
 ## Current domain consistency rules
 
-- Use the GitHub repo and raw install scripts as the trust anchor for self-hosted evaluation.
+- Use the GitHub repo, `docs/INSTALL.md`, and raw install scripts as the trust anchor for self-hosted evaluation.
 - Use `nora.solomontsao.com` for the live app, signup flow, and pricing/commercial packaging.
-- Use GitHub Discussions as the current public support intake until a more formal commercial intake exists.
+- Use `SUPPORT.md` and GitHub Discussions as the current public support intake until a more formal commercial intake exists.
 - Avoid mixing install/documentation CTAs with domains that imply unsupported deployment flows.
 
 ## Messaging guardrails

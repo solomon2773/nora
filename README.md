@@ -15,9 +15,13 @@
 <p align="center">
   <a href="https://nora.solomontsao.com">Live app</a>
   ·
+  <a href="docs/INSTALL.md">Install guide</a>
+  ·
   <a href="https://nora.solomontsao.com/pricing">Pricing / commercial paths</a>
   ·
   <a href="https://nora.solomontsao.com/signup">Hosted evaluation</a>
+  ·
+  <a href="SUPPORT.md">Support paths</a>
   ·
   <a href="https://github.com/solomon2773/nora/discussions">Start support discussion</a>
   ·
@@ -58,8 +62,8 @@ If those three steps work cleanly, Nora has already proven the core self-hosted 
 
 ## Choose the path that matches your buying motion
 
-- **Self-hosted open source** — start with the [Quick Start](#quick-start) if you want maximum infrastructure control and a transparent proof path.
-- **Paid onboarding & support** — start a [GitHub Discussion](https://github.com/solomon2773/nora/discussions) if you want the same open-source product with faster rollout help.
+- **Self-hosted open source** — start with the [Install guide](docs/INSTALL.md) or [Quick Start](#quick-start) if you want maximum infrastructure control and a transparent proof path.
+- **Paid onboarding & support** — use [Support paths](SUPPORT.md) or start a [GitHub Discussion](https://github.com/solomon2773/nora/discussions) if you want the same open-source product with faster rollout help.
 - **Managed Nora / custom deployment** — use the [pricing page](https://nora.solomontsao.com/pricing) or [hosted evaluation flow](https://nora.solomontsao.com/signup) if you want less self-managed infrastructure work.
 
 ## Open-source core, commercial paths around it
@@ -68,8 +72,8 @@ Nora should convert open-source repo interest into three clear motions:
 
 | Path | Best for | Current public CTA |
 |---|---|---|
-| **Self-hosted open source** | Teams who want full infrastructure control | [Quick Start](#quick-start) |
-| **Paid onboarding & support** | Teams who want help getting Nora live faster on their own infra | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
+| **Self-hosted open source** | Teams who want full infrastructure control | [Install guide](docs/INSTALL.md) |
+| **Paid onboarding & support** | Teams who want help getting Nora live faster on their own infra | [Support paths](SUPPORT.md) |
 | **Managed Nora / custom deployment** | Teams exploring a hosted or tailored rollout | [Pricing / commercial paths](https://nora.solomontsao.com/pricing) |
 
 That framing keeps the repo honest: the product stays open-source at the core, while monetization happens around implementation speed, support, and deployment scope.
@@ -77,6 +81,8 @@ That framing keeps the repo honest: the product stays open-source at the core, w
 ## Current public entry points
 
 - **Repo + install docs:** `https://github.com/solomon2773/nora`
+- **Install guide:** `https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md`
+- **GitHub support paths:** `https://github.com/solomon2773/nora/blob/master/SUPPORT.md`
 - **Live app:** `https://nora.solomontsao.com`
 - **Pricing + commercial packaging:** `https://nora.solomontsao.com/pricing`
 - **Hosted evaluation:** `https://nora.solomontsao.com/signup`
@@ -196,6 +202,15 @@ The installer will:
 8. take you to the dashboard so you can deploy the first agent
 
 The public install links intentionally use `raw.githubusercontent.com` so the setup path stays aligned with the open-source repo and current trust model.
+
+### If you get stuck or want a faster path
+
+| Situation | Best next step |
+|---|---|
+| You want the cleanest self-serve path | [Install guide](docs/INSTALL.md) |
+| You want help getting Nora live on your own infra | [Support paths](SUPPORT.md) or [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
+| You want less DIY infrastructure work | [Pricing / commercial paths](https://nora.solomontsao.com/pricing) |
+| You want a hosted evaluation or custom deployment conversation | [Hosted evaluation](https://nora.solomontsao.com/signup) |
 
 ### Manual setup
 

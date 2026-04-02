@@ -145,6 +145,15 @@ export default function Signup() {
                     Review pricing paths
                   </Link>
                 </div>
+                <div className="bg-white/[0.03] border border-white/5 rounded-3xl p-5">
+                  <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-400 mb-3">Prefer self-hosting after all?</p>
+                  <p className="text-sm text-slate-400 leading-relaxed mb-4">
+                    Use the GitHub install guide if you want the cleanest OSS evaluation path before opening a support or managed conversation.
+                  </p>
+                  <a href="https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md" target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-blue-400 hover:underline">
+                    Open install guide
+                  </a>
+                </div>
               </div>
             )}
           </div>
