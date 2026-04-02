@@ -127,7 +127,7 @@ export default function Pricing() {
       </nav>
 
       <div className="text-center px-6 py-16 md:py-24 max-w-5xl mx-auto">
-        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Open-source usage & runtime direction</p>
+        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Pricing, support, and commercial paths</p>
         <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight mb-6">
           Fully open source.
           <br />
