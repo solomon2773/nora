@@ -150,7 +150,7 @@ export default function Home() {
           </h1>
 
           <p className="max-w-3xl mx-auto text-base md:text-xl text-slate-400 mb-10 leading-relaxed">
-            For internal AI platform teams, technical founders, and ops-minded OpenClaw builders who want a credible
+            For internal AI platform teams, technical founders, and ops-minded OpenClaw operators who want a credible
             self-hosted control plane. Nora handles provisioning, tool wiring, chat access, and observability so you
             can get the first agent operational faster.
           </p>
@@ -220,7 +220,7 @@ export default function Home() {
                 desc: "Add a real control plane around OpenClaw instead of stitching together provisioning and observability by hand.",
               },
               {
-                title: "Ops-minded builders",
+                title: "Ops-minded operators",
                 desc: "Self-host from day one and validate first value fast: account, provider key, first agent, then chat/logs/terminal.",
               },
             ].map((item) => (
