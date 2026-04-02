@@ -24,7 +24,7 @@ const PLANS = [
   {
     key: "pro",
     name: "Pro",
-    price: "Upgrade",
+    price: "PaaS upgrade",
     period: "",
     description: "Current mid-tier limits defined for Stripe-enabled PaaS setups.",
     icon: Shield,
