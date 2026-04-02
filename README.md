@@ -17,6 +17,10 @@
   ·
   <a href="https://nora.solomontsao.com/pricing">Pricing / commercial paths</a>
   ·
+  <a href="https://nora.solomontsao.com/signup">Hosted evaluation</a>
+  ·
+  <a href="https://github.com/solomon2773/nora/discussions">Start support discussion</a>
+  ·
   <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh">Install script (bash)</a>
   ·
   <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1">Install script (PowerShell)</a>
@@ -52,6 +56,12 @@ Use this path to reach first proof of value quickly:
 
 If those three steps work cleanly, Nora has already proven the core self-hosted MVP.
 
+## Choose the path that matches your buying motion
+
+- **Self-hosted open source** — start with the [Quick Start](#quick-start) if you want maximum infrastructure control and a transparent proof path.
+- **Paid onboarding & support** — start a [GitHub Discussion](https://github.com/solomon2773/nora/discussions) if you want the same open-source product with faster rollout help.
+- **Managed Nora / custom deployment** — use the [pricing page](https://nora.solomontsao.com/pricing) or [hosted evaluation flow](https://nora.solomontsao.com/signup) if you want less self-managed infrastructure work.
+
 ## Open-source core, commercial paths around it
 
 Nora should convert open-source repo interest into three clear motions:
@@ -63,6 +73,17 @@ Nora should convert open-source repo interest into three clear motions:
 | **Managed Nora / custom deployment** | Teams exploring a hosted or tailored rollout | [Pricing / commercial paths](https://nora.solomontsao.com/pricing) |
 
 That framing keeps the repo honest: the product stays open-source at the core, while monetization happens around implementation speed, support, and deployment scope.
+
+## Current public entry points
+
+- **Repo + install docs:** `https://github.com/solomon2773/nora`
+- **Live app:** `https://nora.solomontsao.com`
+- **Pricing + commercial packaging:** `https://nora.solomontsao.com/pricing`
+- **Hosted evaluation:** `https://nora.solomontsao.com/signup`
+- **Paid support intake:** `https://github.com/solomon2773/nora/discussions`
+- **Install scripts:** `https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh` and `https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1`
+
+That domain map is intentional: the repo and raw install scripts earn trust for self-hosted evaluation, while the live app, signup flow, and pricing page handle commercial follow-on paths.
 
 <p align="center">
   <img src="docs/assets/proof-pricing-commercial-paths.png" alt="Nora pricing and commercial paths proof" width="90%" />
@@ -173,6 +194,8 @@ The installer will:
 6. collect an LLM provider key (optional but recommended)
 7. start the Nora stack
 8. take you to the dashboard so you can deploy the first agent
+
+The public install links intentionally use `raw.githubusercontent.com` so the setup path stays aligned with the open-source repo and current trust model.
 
 ### Manual setup
 

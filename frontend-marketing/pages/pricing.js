@@ -87,6 +87,57 @@ const DOMAIN_LINKS = [
   },
 ];
 
+const DECISION_PATHS = [
+  {
+    eyebrow: "Best for control",
+    title: "Self-hosted evaluation",
+    desc: "Use this when you already have operator capacity and want the cleanest proof path on your own infrastructure.",
+    firstStep: "README quick start + raw install scripts",
+    outcome: "Prove account creation, provider key setup, and first agent deployment end to end.",
+    href: "https://github.com/solomon2773/nora#quick-start",
+    cta: "Open install docs",
+    external: true,
+  },
+  {
+    eyebrow: "Best monetization bridge",
+    title: "Paid onboarding & support",
+    desc: "Use this when you want the same OSS product but need rollout help, setup guidance, or a faster operator handoff.",
+    firstStep: "Open a GitHub Discussion with your environment and goals",
+    outcome: "Scope onboarding help, deployment review, and first-value support around the existing product.",
+    href: "https://github.com/solomon2773/nora/discussions",
+    cta: "Start support discussion",
+    external: true,
+  },
+  {
+    eyebrow: "Best for less ops overhead",
+    title: "Hosted evaluation / custom deployment",
+    desc: "Use this when self-hosting is not the preferred first step or you already expect a tailored deployment conversation.",
+    firstStep: "Create an account through the hosted signup flow",
+    outcome: "Start evaluation faster, then scope managed or enterprise requirements from current product proof.",
+    href: "/signup",
+    cta: "Open hosted evaluation",
+    external: false,
+  },
+];
+
+const PROOF_RESOURCES = [
+  {
+    title: "Commercial path brief",
+    desc: "In-repo summary of the OSS → support → managed funnel and the guardrails behind it.",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/COMMERCIAL_PATHS.md",
+  },
+  {
+    title: "Landing proof screenshot",
+    desc: "Captured proof of the current homepage framing and domain positioning.",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/assets/proof-landing-open-source-funnel.png",
+  },
+  {
+    title: "Pricing proof screenshot",
+    desc: "Captured proof of the current pricing/commercial-path messaging.",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/assets/proof-pricing-commercial-paths.png",
+  },
+];
+
 function PlanCard({ offer }) {
   const Icon = offer.icon;
   const isHighlight = offer.highlight;
@@ -231,10 +282,71 @@ export default function Pricing() {
         </div>
       </div>
 
+      <div className="max-w-6xl mx-auto px-6 pb-12">
+        <div className="text-center mb-8">
+          <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Decision clarity</p>
+          <h2 className="text-2xl md:text-4xl font-black tracking-tight">Choose the motion that matches how your team buys</h2>
+          <p className="text-sm md:text-base text-slate-400 max-w-3xl mx-auto mt-4">
+            Nora does not need fake pricing tiers to convert. It needs a clear next action for each evaluator: self-host, ask for rollout help, or open a hosted/custom path.
+          </p>
+        </div>
+        <div className="grid md:grid-cols-3 gap-6">
+          {DECISION_PATHS.map((item) => (
+            <div key={item.title} className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 flex flex-col text-left">
+              <p className="text-[11px] font-black uppercase tracking-[0.25em] text-blue-300 mb-3">{item.eyebrow}</p>
+              <h3 className="text-xl font-black mb-3">{item.title}</h3>
+              <p className="text-sm text-slate-400 leading-relaxed mb-4">{item.desc}</p>
+              <div className="space-y-3 mb-6 flex-1">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-500 mb-1">First public step</p>
+                  <p className="text-sm text-slate-200">{item.firstStep}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-black uppercase tracking-widest text-slate-500 mb-1">Expected outcome</p>
+                  <p className="text-sm text-slate-200">{item.outcome}</p>
+                </div>
+              </div>
+              {item.external ? (
+                <a href={item.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm font-bold text-white hover:text-blue-300 transition-colors">
+                  {item.cta}
+                  <ArrowRight size={16} />
+                </a>
+              ) : (
+                <Link href={item.href} className="inline-flex items-center gap-2 text-sm font-bold text-white hover:text-blue-300 transition-colors">
+                  {item.cta}
+                  <ArrowRight size={16} />
+                </Link>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-3 gap-6 md:gap-8 items-start">
         {OFFERS.map((offer) => (
           <PlanCard key={offer.key} offer={offer} />
         ))}
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 pb-20">
+        <div className="text-center mb-8">
+          <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Proof resources</p>
+          <h2 className="text-2xl md:text-4xl font-black tracking-tight">Evidence operators can inspect today</h2>
+        </div>
+        <div className="grid md:grid-cols-3 gap-6">
+          {PROOF_RESOURCES.map((item) => (
+            <a
+              key={item.title}
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 hover:bg-white/[0.05] transition-all"
+            >
+              <h3 className="text-lg font-black mb-2">{item.title}</h3>
+              <p className="text-sm text-slate-400 leading-relaxed">{item.desc}</p>
+            </a>
+          ))}
+        </div>
       </div>
 
       <div className="max-w-3xl mx-auto px-6 pb-24">

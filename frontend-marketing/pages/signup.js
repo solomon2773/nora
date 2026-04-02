@@ -71,14 +71,16 @@ export default function Signup() {
 
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs font-semibold mb-6">
               <Shield size={14} />
-              Self-hosted OpenClaw control plane
+              {IS_SELF_HOSTED ? "Self-hosted OpenClaw control plane" : "Hosted evaluation / custom deployment path"}
             </div>
 
             <h1 className="text-4xl font-black tracking-tight leading-tight mb-4">
-              Create the operator account for your Nora workspace
+              {IS_SELF_HOSTED ? "Create the operator account for your Nora workspace" : "Start a Nora evaluation without losing the commercial path"}
             </h1>
             <p className="text-slate-400 leading-relaxed text-base">
-              Nora is built for teams that want a credible, self-hosted way to deploy and operate OpenClaw agents without gluing together provisioning, key sync, and observability by hand.
+              {IS_SELF_HOSTED
+                ? "Nora is built for teams that want a credible, self-hosted way to deploy and operate OpenClaw agents without gluing together provisioning, key sync, and observability by hand."
+                : "Use this flow when you want a faster evaluation start, a managed path, or a custom deployment conversation around Nora instead of a pure DIY rollout."}
             </p>
           </div>
 
@@ -113,13 +115,38 @@ export default function Signup() {
               <div className="bg-white/[0.03] border border-white/5 rounded-3xl p-5">
                 <div className="flex items-center gap-2 mb-2 text-amber-300">
                   <Shield size={16} />
-                  <span className="text-sm font-bold">BYO infra + keys</span>
+                  <span className="text-sm font-bold">{IS_SELF_HOSTED ? "BYO infra + keys" : "Commercial path stays clear"}</span>
                 </div>
                 <p className="text-sm text-slate-400 leading-relaxed">
-                  Keep your runtime, network, and provider credentials under your control.
+                  {IS_SELF_HOSTED
+                    ? "Keep your runtime, network, and provider credentials under your control."
+                    : "Self-host if you want control, use support for rollout help, or keep this hosted path for managed/custom evaluation."}
                 </p>
               </div>
             </div>
+
+            {!IS_SELF_HOSTED && (
+              <div className="grid gap-4">
+                <div className="bg-blue-500/10 border border-blue-500/20 rounded-3xl p-5">
+                  <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-200 mb-3">Need rollout help?</p>
+                  <p className="text-sm text-blue-50/80 leading-relaxed mb-4">
+                    If you already know you want setup guidance, onboarding help, or a faster first-value path, start with the support intake instead of guessing.
+                  </p>
+                  <a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="text-sm font-bold text-white hover:underline">
+                    Open GitHub Discussions
+                  </a>
+                </div>
+                <div className="bg-white/[0.03] border border-white/5 rounded-3xl p-5">
+                  <p className="text-xs font-black uppercase tracking-[0.25em] text-slate-400 mb-3">Want packaging context first?</p>
+                  <p className="text-sm text-slate-400 leading-relaxed mb-4">
+                    Review the pricing and commercial paths page to compare self-hosted OSS, paid support, and managed/custom deployment.
+                  </p>
+                  <Link href="/pricing" className="text-sm font-bold text-blue-400 hover:underline">
+                    Review pricing paths
+                  </Link>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -131,13 +158,17 @@ export default function Signup() {
             <p className="text-sm text-slate-400 font-medium">
               {IS_SELF_HOSTED
                 ? "This creates an operator account for your self-hosted Nora instance."
-                : "Create your Nora account and continue to the dashboard."}
+                : "This starts the hosted evaluation flow and keeps the managed/custom deployment path open."}
             </p>
           </div>
 
-          {IS_SELF_HOSTED && (
+          {IS_SELF_HOSTED ? (
             <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 text-sm text-blue-100 leading-relaxed">
               <span className="font-bold">Self-hosted note:</span> after account creation, the fastest path to value is Settings → add an LLM provider → Deploy your first agent.
+            </div>
+          ) : (
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 text-sm text-blue-100 leading-relaxed">
+              <span className="font-bold">Hosted evaluation note:</span> create the account here, then use the product proof to decide whether to stay self-managed, request rollout support, or scope a custom deployment.
             </div>
           )}
 

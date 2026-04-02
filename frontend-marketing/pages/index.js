@@ -54,9 +54,36 @@ const PATHS = [
       "Useful for custom rollout conversations",
       "Best for teams exploring managed operations",
     ],
-    href: "/pricing",
-    cta: "See commercial paths",
+    href: "/signup",
+    cta: "Start hosted evaluation",
     external: false,
+  },
+];
+
+const PROOF_LINKS = [
+  {
+    eyebrow: "Install proof",
+    title: "The repo still leads the funnel",
+    desc: "Self-hosted evaluation starts from the README quick start and raw install scripts, not a vague marketing promise.",
+    href: "https://github.com/solomon2773/nora#quick-start",
+    cta: "Open install docs",
+    external: true,
+  },
+  {
+    eyebrow: "Commercial clarity",
+    title: "Pricing matches the current product reality",
+    desc: "The public pricing page maps repo → support → managed/custom without unsupported public price points.",
+    href: "/pricing",
+    cta: "Review commercial paths",
+    external: false,
+  },
+  {
+    eyebrow: "Paid intake",
+    title: "Support and rollout help have a live CTA",
+    desc: "GitHub Discussions is the current intake path for onboarding help, setup review, and paid rollout conversations.",
+    href: "https://github.com/solomon2773/nora/discussions",
+    cta: "Start support discussion",
+    external: true,
   },
 ];
 
@@ -200,7 +227,7 @@ export default function Home() {
             option.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 px-4 sm:px-0">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4 px-4 sm:px-0">
             <a
               href="https://github.com/solomon2773/nora#quick-start"
               target="_blank"
@@ -209,8 +236,16 @@ export default function Home() {
             >
               Self-host Nora <Zap size={20} className="fill-current" />
             </a>
-            <Link href="/pricing" className="w-full sm:w-auto bg-slate-900 border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2">
-              Paid support / managed <ArrowRight size={20} />
+            <a
+              href="https://github.com/solomon2773/nora/discussions"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="w-full sm:w-auto bg-slate-900 border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
+            >
+              Start support discussion <ArrowRight size={20} />
+            </a>
+            <Link href="/signup" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-xl font-bold text-lg transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2">
+              Hosted evaluation <ArrowRight size={20} />
             </Link>
           </div>
 
@@ -218,7 +253,8 @@ export default function Home() {
             {[
               "App: nora.solomontsao.com",
               "Install scripts: raw.githubusercontent.com/solomon2773/nora/master",
-              "Proof path: account → provider key → first OpenClaw agent",
+              "Support intake: GitHub Discussions",
+              "Hosted eval: nora.solomontsao.com/signup",
             ].map((item) => (
               <div key={item} className="flex-1 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-slate-300">
                 {item}
@@ -241,6 +277,38 @@ export default function Home() {
               <p className="text-sm text-slate-500 mt-1 font-medium">{s.label}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      <section className="py-16 px-4 sm:px-6 border-b border-white/5">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-10">
+            <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Proof before pitch</p>
+            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">Make the next step obvious</h2>
+            <p className="text-slate-400 mt-4 max-w-3xl mx-auto">
+              Nora monetizes best when each public touchpoint tells operators exactly where to go next: install, ask for help, or start a hosted/custom evaluation.
+            </p>
+          </div>
+          <div className="grid md:grid-cols-3 gap-5">
+            {PROOF_LINKS.map((item) => (
+              <div key={item.title} className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 flex flex-col">
+                <p className="text-[11px] font-black uppercase tracking-[0.25em] text-blue-300 mb-3">{item.eyebrow}</p>
+                <h3 className="text-xl font-black mb-3">{item.title}</h3>
+                <p className="text-sm text-slate-400 leading-relaxed mb-6 flex-1">{item.desc}</p>
+                {item.external ? (
+                  <a href={item.href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm font-bold text-white hover:text-blue-300 transition-colors">
+                    {item.cta}
+                    <ArrowRight size={16} />
+                  </a>
+                ) : (
+                  <Link href={item.href} className="inline-flex items-center gap-2 text-sm font-bold text-white hover:text-blue-300 transition-colors">
+                    {item.cta}
+                    <ArrowRight size={16} />
+                  </Link>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -378,11 +446,11 @@ export default function Home() {
       </section>
 
       <section className="py-24 px-4 sm:px-6">
-        <div className="max-w-3xl mx-auto text-center">
+        <div className="max-w-4xl mx-auto text-center">
           <h2 className="text-3xl md:text-5xl font-extrabold tracking-tight mb-6">Use the repo as the front door</h2>
           <p className="text-slate-400 mb-6 text-lg">
-            The cleanest Nora funnel is simple: self-host if you want control, add paid help if you want speed, and use
-            the hosted/commercial path when you need less hands-on infrastructure work.
+            The cleanest Nora funnel is simple: self-host if you want control, ask for paid help if you want speed, and
+            open a hosted/custom evaluation when you want less hands-on infrastructure work.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 mb-10 text-sm">
             {[
@@ -395,17 +463,34 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+          <div className="grid sm:grid-cols-3 gap-4 text-left">
             <a
               href="https://github.com/solomon2773/nora#quick-start"
               target="_blank"
               rel="noopener noreferrer"
-              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-xl font-bold text-lg transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
+              className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 hover:bg-white/[0.05] transition-all"
             >
-              Open install docs <ArrowRight size={20} />
+              <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-300 mb-3">Self-host</p>
+              <h3 className="text-xl font-black mb-2">Review install docs</h3>
+              <p className="text-sm text-slate-400 leading-relaxed mb-4">Best if you want to prove Nora on your own infrastructure first.</p>
+              <span className="inline-flex items-center gap-2 text-sm font-bold text-white">Open README <ArrowRight size={16} /></span>
             </a>
-            <Link href="/pricing" className="w-full sm:w-auto bg-slate-900 border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2">
-              See commercial paths <ShoppingBag size={20} />
+            <a
+              href="https://github.com/solomon2773/nora/discussions"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 hover:bg-white/[0.05] transition-all"
+            >
+              <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-300 mb-3">Paid support</p>
+              <h3 className="text-xl font-black mb-2">Start a rollout discussion</h3>
+              <p className="text-sm text-slate-400 leading-relaxed mb-4">Best if you want setup help, onboarding support, or a faster path to first value.</p>
+              <span className="inline-flex items-center gap-2 text-sm font-bold text-white">Open Discussions <ArrowRight size={16} /></span>
+            </a>
+            <Link href="/signup" className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-6 hover:bg-blue-500/15 transition-all">
+              <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-200 mb-3">Managed / custom</p>
+              <h3 className="text-xl font-black mb-2">Start hosted evaluation</h3>
+              <p className="text-sm text-blue-50/80 leading-relaxed mb-4">Best if you want a lighter-weight evaluation path or a tailored deployment conversation.</p>
+              <span className="inline-flex items-center gap-2 text-sm font-bold text-white">Open signup <ArrowRight size={16} /></span>
             </Link>
           </div>
         </div>
@@ -440,9 +525,9 @@ export default function Home() {
             <div>
               <h4 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-4">Commercial</h4>
               <ul className="space-y-2 text-sm text-slate-400">
-                <li><a href="/pricing" className="hover:text-white transition-colors">Paid Support</a></li>
+                <li><a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Paid Support</a></li>
                 <li><a href="/pricing" className="hover:text-white transition-colors">Managed Nora</a></li>
-                <li><a href="/signup" className="hover:text-white transition-colors">Hosted Signup</a></li>
+                <li><a href="/signup" className="hover:text-white transition-colors">Hosted Evaluation</a></li>
               </ul>
             </div>
           </div>

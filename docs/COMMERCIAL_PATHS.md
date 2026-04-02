@@ -29,6 +29,21 @@ Current public motion:
 - hosted signup flow for account creation
 - follow-up commercial scoping after initial evaluation
 
+## Entry points at a glance
+
+| Path | Start here | Best fit signal | Immediate next outcome |
+|---|---|---|---|
+| Self-hosted open source | `README#Quick Start` + raw install scripts | Team wants full infra control and a transparent proof path | Account → provider key → first agent on their own stack |
+| Paid onboarding & support | GitHub Discussions | Team wants faster rollout without giving up self-hosting | Scoped help around setup, onboarding, and first-value delivery |
+| Managed Nora / custom deployment | Pricing page + hosted signup | Team wants less ops overhead or expects a custom rollout conversation | Faster evaluation start, then managed/custom scoping |
+
+## Current domain consistency rules
+
+- Use the GitHub repo and raw install scripts as the trust anchor for self-hosted evaluation.
+- Use `nora.solomontsao.com` for the live app, signup flow, and pricing/commercial packaging.
+- Use GitHub Discussions as the current public support intake until a more formal commercial intake exists.
+- Avoid mixing install/documentation CTAs with domains that imply unsupported deployment flows.
+
 ## Messaging guardrails
 
 - Keep the repo and README honest about current product proof.
