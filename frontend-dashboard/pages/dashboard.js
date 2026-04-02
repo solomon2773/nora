@@ -37,7 +37,7 @@ export default function Dashboard() {
         </header>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 md:gap-8">
-          <StatCard title="Active Nodes" value={metrics?.activeAgents ?? agents.filter((a) => a.status === "running").length} icon={Zap} color="blue" />
+          <StatCard title="Active Agents" value={metrics?.activeAgents ?? agents.filter((a) => a.status === "running").length} icon={Zap} color="blue" />
           <StatCard title="Total Agents" value={metrics?.totalAgents ?? agents.length} icon={Bot} color="emerald" />
           <StatCard title="Queued Jobs" value={metrics?.queue?.waiting ?? 0} icon={Cpu} color="purple" />
         </div>
@@ -60,7 +60,7 @@ export default function Dashboard() {
                     <tr className="border-b border-slate-100 bg-slate-50/50">
                       <th className="px-4 sm:px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Agent</th>
                       <th className="px-4 sm:px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Status</th>
-                      <th className="px-4 sm:px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest hidden sm:table-cell">Node</th>
+                      <th className="px-4 sm:px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest hidden sm:table-cell">Host</th>
                       <th className="px-4 sm:px-8 py-4"></th>
                     </tr>
                   </thead>
@@ -81,9 +81,9 @@ export default function Dashboard() {
                             <span className="text-xs font-bold text-slate-600 capitalize">{agent.status}</span>
                           </div>
                         </td>
-                        <td className="px-4 sm:px-8 py-4 text-xs font-medium text-slate-500 hidden sm:table-cell">{agent.node || "LocalNode"}</td>
+                        <td className="px-4 sm:px-8 py-4 text-xs font-medium text-slate-500 hidden sm:table-cell">{agent.node || "Local host"}</td>
                         <td className="px-4 sm:px-8 py-4 text-right">
-                          <a href="/app/agents" className="inline-flex p-2 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all">
+                          <a href={`/app/agents/${agent.id}`} className="inline-flex p-2 hover:bg-white rounded-lg border border-transparent hover:border-slate-200 transition-all">
                             <ArrowUpRight size={16} className="text-slate-400" />
                           </a>
                         </td>
@@ -116,7 +116,7 @@ function EmptyState() {
       <div className="bg-blue-50 border border-blue-100 rounded-3xl p-6 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div>
           <p className="text-sm font-black text-blue-700 uppercase tracking-widest mb-1">Recommended order</p>
-          <p className="text-sm text-blue-700/80">Settings → Deploy → Agents. That is the fastest path to first proof of value.</p>
+          <p className="text-sm text-blue-700/80">Settings → Deploy → Validate. That is the fastest path to first proof of value.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <a href="/app/getting-started" className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-blue-200 text-blue-700 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">

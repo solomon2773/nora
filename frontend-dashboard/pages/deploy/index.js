@@ -90,7 +90,8 @@ export default function Deploy() {
         }),
       });
       if (res.ok) {
-        window.location.href = "/app/agents";
+        const data = await res.json();
+        window.location.href = data?.id ? `/app/agents/${data.id}` : "/app/agents";
       } else if (res.status === 402) {
         toast.error("You've reached your plan's agent limit. Please upgrade.");
       } else {
@@ -318,7 +319,7 @@ export default function Deploy() {
               className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 transition-all text-sm font-black text-white px-8 py-5 rounded-2xl shadow-xl shadow-blue-500/30 active:scale-95 disabled:opacity-50 group"
             >
               {loading ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} className="group-hover:scale-125 transition-transform" />}
-              {atLimit ? "Agent Limit Reached" : "Confirm & Deploy Agent"}
+              {atLimit ? "Agent Limit Reached" : "Deploy Agent & Open Validation"}
             </button>
           </div>
 
@@ -346,7 +347,7 @@ export default function Deploy() {
                   </div>
                   <div>
                     <p className="text-sm font-bold text-slate-900">1. Verify provider keys</p>
-                    <p className="text-sm text-slate-500 leading-relaxed">If your agent needs model access, add or sync an LLM provider in Settings.</p>
+                    <p className="text-sm text-slate-500 leading-relaxed">If your agent needs model access, add or sync an LLM provider in Settings before deeper testing.</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
@@ -355,7 +356,7 @@ export default function Deploy() {
                   </div>
                   <div>
                     <p className="text-sm font-bold text-slate-900">2. Validate the runtime</p>
-                    <p className="text-sm text-slate-500 leading-relaxed">Open the agent detail page and confirm chat, logs, and terminal all work as expected.</p>
+                    <p className="text-sm text-slate-500 leading-relaxed">After deploy, Nora sends you straight to the new agent so you can verify chat, logs, and terminal without hunting for the next screen.</p>
                   </div>
                 </div>
                 <div className="flex items-start gap-3">
@@ -364,7 +365,7 @@ export default function Deploy() {
                   </div>
                   <div>
                     <p className="text-sm font-bold text-slate-900">3. Move into operations</p>
-                    <p className="text-sm text-slate-500 leading-relaxed">Once the first agent is healthy, use Nora for channels, integrations, scheduling, and fleet management.</p>
+                    <p className="text-sm text-slate-500 leading-relaxed">Once the first agent is healthy, use Nora for channels, integrations, scheduling, and broader fleet management.</p>
                   </div>
                 </div>
               </div>

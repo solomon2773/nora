@@ -499,9 +499,10 @@ export default function SettingsPage() {
           <p className="text-sm text-slate-500">
             Once you delete your account, all your agents and data will be permanently removed. This action cannot be undone.
           </p>
-          <button className="mt-4 px-6 py-3 bg-red-100 text-red-600 hover:bg-red-200 text-sm font-bold rounded-xl transition-all">
-            Delete Account
-          </button>
+          <div className="mt-4 rounded-2xl border border-red-200 bg-white/70 px-4 py-4">
+            <p className="text-sm font-bold text-red-700">Self-serve account deletion is not available in this build.</p>
+            <p className="text-sm text-red-700/80 mt-1">That dead control has been removed for now so operators do not click into an action Nora cannot actually complete yet.</p>
+          </div>
         </section>
       </div>
     </Layout>

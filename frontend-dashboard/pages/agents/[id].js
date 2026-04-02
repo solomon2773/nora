@@ -13,7 +13,7 @@ import StatusBadge from "../../components/agents/StatusBadge";
 import { useToast } from "../../components/Toast";
 import { fetchWithAuth } from "../../lib/api";
 import {
-  Bot, Loader2, ArrowLeft, Terminal
+  Bot, Loader2, ArrowLeft, Terminal, MessagesSquare, ScrollText, Zap
 } from "lucide-react";
 
 const AgentTerminal = dynamic(() => import("../../components/AgentTerminal"), { ssr: false });
@@ -165,6 +165,39 @@ export default function AgentDetail() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+
+        <div className={`rounded-2xl border px-5 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between ${agent.status === "running" || agent.status === "warning" ? "bg-blue-50 border-blue-100" : "bg-amber-50 border-amber-100"}`}>
+          <div>
+            <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${agent.status === "running" || agent.status === "warning" ? "text-blue-700" : "text-amber-700"}`}>Step 3 of 3 — Validate</p>
+            <p className="text-sm font-bold text-slate-900 mt-1">
+              {agent.status === "running" || agent.status === "warning"
+                ? "Use this agent detail view to prove the runtime works end-to-end."
+                : "This agent still needs to finish starting before the full validation pass."}
+            </p>
+            <p className={`text-sm mt-1 ${agent.status === "running" || agent.status === "warning" ? "text-blue-700/80" : "text-amber-700/80"}`}>
+              {agent.status === "running" || agent.status === "warning"
+                ? "Check chat, logs, terminal, and the OpenClaw surface from this page before scaling the fleet."
+                : "Watch the logs first, then validate chat, terminal, and the OpenClaw surface as soon as the agent is live."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => setActiveTab("openclaw")} className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all">
+              <Zap size={14} />
+              OpenClaw
+            </button>
+            <button onClick={() => setActiveTab("logs")} className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all">
+              <ScrollText size={14} />
+              Logs
+            </button>
+            <button
+              onClick={() => setActiveTab(agent.status === "running" ? "terminal" : "openclaw")}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all"
+            >
+              {agent.status === "running" ? <Terminal size={14} /> : <MessagesSquare size={14} />}
+              {agent.status === "running" ? "Terminal" : "Chat"}
+            </button>
           </div>
         </div>
 

@@ -200,7 +200,7 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
             </p>
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Node</label>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Runtime Host</label>
             <p className="text-sm text-slate-900 mt-1">{agent.node || "—"}</p>
           </div>
         </div>
