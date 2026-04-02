@@ -17,7 +17,7 @@ const PLANS = [
       "Dashboard deployment flow",
       "Works with 18 LLM providers",
     ],
-    cta: "Get Started",
+    cta: "Start self-hosted eval",
     href: "/signup",
     highlight: false,
   },
