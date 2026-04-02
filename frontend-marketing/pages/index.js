@@ -22,12 +22,12 @@ const PATHS = [
     badge: "Apache 2.0",
     desc: "Run Nora on your own infrastructure and evaluate the OpenClaw control-plane workflow end to end.",
     bullets: [
-      "Open-source repo",
+      "Open-source repo + install docs",
       "Raw install scripts + Docker Compose",
-      "Best for teams who want full control",
+      "Best for teams who want full control and a transparent proof path",
     ],
     href: "https://github.com/solomon2773/nora#quick-start",
-    cta: "Review install docs",
+    cta: "Self-host Nora",
     external: true,
   },
   {
@@ -36,12 +36,12 @@ const PATHS = [
     badge: "Commercial path",
     desc: "Keep your own infrastructure but use Nora as a supported rollout instead of a pure DIY setup.",
     bullets: [
-      "Hands-on setup guidance",
-      "Operator onboarding and rollout help",
-      "Best for teams short on implementation time",
+      "Hands-on setup and rollout guidance",
+      "Operator onboarding and deployment review",
+      "Best for teams short on implementation time but staying self-hosted",
     ],
     href: "https://github.com/solomon2773/nora/discussions",
-    cta: "Start support discussion",
+    cta: "Get rollout help",
     external: true,
   },
   {
@@ -50,13 +50,28 @@ const PATHS = [
     badge: "Hosted + enterprise motion",
     desc: "Use the hosted account flow as a starting point if you want less self-managed ops or a tailored deployment plan.",
     bullets: [
-      "Hosted operator entry point exists",
-      "Useful for custom rollout conversations",
-      "Best for teams exploring managed operations",
+      "Hosted operator entry point exists today",
+      "Useful for managed or custom rollout conversations",
+      "Best for teams exploring less hands-on operations",
     ],
     href: "/signup",
-    cta: "Start hosted evaluation",
+    cta: "Start managed evaluation",
     external: false,
+  },
+];
+
+const BUYER_MOTIONS = [
+  {
+    title: "Need control",
+    desc: "Use the repo and install docs when you want the cleanest self-hosted proof path on your own infrastructure.",
+  },
+  {
+    title: "Need speed",
+    desc: "Use paid onboarding/support when you want help getting Nora live faster without giving up self-hosting.",
+  },
+  {
+    title: "Need less ops work",
+    desc: "Use hosted evaluation when you want to start the managed or custom deployment conversation earlier.",
   },
 ];
 
@@ -224,7 +239,8 @@ export default function Home() {
           <p className="max-w-3xl mx-auto text-base md:text-xl text-slate-400 mb-10 leading-relaxed">
             Nora turns open-source OpenClaw operations into a usable control plane today, then gives technical teams a
             clearer path into paid onboarding, managed rollout, or custom deployment when DIY stops being the fastest
-            option.
+            option. The public funnel is simple: self-host for control, ask for support for speed, or open a hosted
+            path when you want less operational overhead.
           </p>
 
           <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4 px-4 sm:px-0">
@@ -242,10 +258,10 @@ export default function Home() {
               rel="noopener noreferrer"
               className="w-full sm:w-auto bg-slate-900 border border-white/10 px-8 py-4 rounded-xl font-bold text-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2"
             >
-              Start support discussion <ArrowRight size={20} />
+              Get rollout help <ArrowRight size={20} />
             </a>
             <Link href="/signup" className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-xl font-bold text-lg transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2">
-              Hosted evaluation <ArrowRight size={20} />
+              Start managed evaluation <ArrowRight size={20} />
             </Link>
           </div>
 
@@ -366,6 +382,23 @@ export default function Home() {
       <section className="py-16 px-4 sm:px-6 bg-white/[0.02] border-y border-white/5">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-10">
+            <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Choose by constraint</p>
+            <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">What are you trying to avoid?</h2>
+            <p className="text-slate-400 mt-4 max-w-3xl mx-auto">
+              The fastest converting Nora funnel is not more features — it is clearer buyer motion. Pick the path that matches the operational constraint you want to remove first.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-5 mb-12">
+            {BUYER_MOTIONS.map((item) => (
+              <div key={item.title} className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+                <h3 className="text-lg font-bold mb-2">{item.title}</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="text-center mb-10">
             <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Best fit</p>
             <h2 className="text-3xl md:text-4xl font-extrabold tracking-tight">Who Nora is for right now</h2>
             <p className="text-slate-400 mt-4 max-w-3xl mx-auto">
@@ -482,13 +515,13 @@ export default function Home() {
               className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 hover:bg-white/[0.05] transition-all"
             >
               <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-300 mb-3">Paid support</p>
-              <h3 className="text-xl font-black mb-2">Start a rollout discussion</h3>
-              <p className="text-sm text-slate-400 leading-relaxed mb-4">Best if you want setup help, onboarding support, or a faster path to first value.</p>
+              <h3 className="text-xl font-black mb-2">Get rollout help</h3>
+              <p className="text-sm text-slate-400 leading-relaxed mb-4">Best if you want setup help, onboarding support, or a faster path to first value while staying self-hosted.</p>
               <span className="inline-flex items-center gap-2 text-sm font-bold text-white">Open Discussions <ArrowRight size={16} /></span>
             </a>
             <Link href="/signup" className="rounded-3xl border border-blue-500/30 bg-blue-500/10 p-6 hover:bg-blue-500/15 transition-all">
               <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-200 mb-3">Managed / custom</p>
-              <h3 className="text-xl font-black mb-2">Start hosted evaluation</h3>
+              <h3 className="text-xl font-black mb-2">Start managed evaluation</h3>
               <p className="text-sm text-blue-50/80 leading-relaxed mb-4">Best if you want a lighter-weight evaluation path or a tailored deployment conversation.</p>
               <span className="inline-flex items-center gap-2 text-sm font-bold text-white">Open signup <ArrowRight size={16} /></span>
             </Link>

@@ -37,7 +37,7 @@ const OFFERS = [
       "Uses the open-source product as the base",
       "Start with GitHub Discussions today",
     ],
-    cta: "Start support discussion",
+    cta: "Get rollout help",
     href: "https://github.com/solomon2773/nora/discussions",
     external: true,
     highlight: true,
@@ -57,11 +57,26 @@ const OFFERS = [
       "Best for teams that want less hands-on ops burden",
       "Use pricing + signup as the current conversion path",
     ],
-    cta: "Open hosted evaluation",
+    cta: "Start managed evaluation",
     href: "/signup",
     external: false,
     highlight: false,
   },
+];
+
+const SCOPE_DRIVERS = [
+  "Whether you want self-hosted support or a managed/custom path",
+  "Your target environment and hosting constraints",
+  "Evaluation, pilot, or production rollout stage",
+  "Security, SSO, networking, or deployment requirements",
+  "How much rollout help you want beyond product access",
+];
+
+const INTAKE_CHECKLIST = [
+  "Which path you want: support or managed/custom",
+  "What environment you are deploying into",
+  "What first proof milestone you need to reach",
+  "Any known blockers around security, identity, or networking",
 ];
 
 const DOMAIN_LINKS = [
@@ -105,7 +120,7 @@ const DECISION_PATHS = [
     firstStep: "Open a GitHub Discussion with your environment and goals",
     outcome: "Scope onboarding help, deployment review, and first-value support around the existing product.",
     href: "https://github.com/solomon2773/nora/discussions",
-    cta: "Start support discussion",
+    cta: "Get rollout help",
     external: true,
   },
   {
@@ -115,7 +130,7 @@ const DECISION_PATHS = [
     firstStep: "Create an account through the hosted signup flow",
     outcome: "Start evaluation faster, then scope managed or enterprise requirements from current product proof.",
     href: "/signup",
-    cta: "Open hosted evaluation",
+    cta: "Start managed evaluation",
     external: false,
   },
 ];
@@ -322,10 +337,75 @@ export default function Pricing() {
         </div>
       </div>
 
+      <div className="max-w-6xl mx-auto px-6 pb-12">
+        <div className="grid lg:grid-cols-[1.15fr_0.85fr] gap-6">
+          <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 md:p-8">
+            <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-3">How commercial pricing works today</p>
+            <h2 className="text-2xl md:text-3xl font-black tracking-tight mb-4">Clear scope first. Scoped quote second.</h2>
+            <p className="text-sm md:text-base text-slate-400 leading-relaxed mb-6">
+              Nora does not publish unsupported fixed pricing for support or managed deployment. The public pricing page should help buyers self-select the right path, then give enough context for a scoped conversation.
+            </p>
+            <div className="grid md:grid-cols-2 gap-4">
+              {[
+                {
+                  title: "Paid onboarding & support",
+                  desc: "Best when you are staying self-hosted but want faster setup, rollout help, and first-value support.",
+                },
+                {
+                  title: "Managed Nora / custom deployment",
+                  desc: "Best when you want less operational lift or already expect a tailored deployment conversation.",
+                },
+              ].map((item) => (
+                <div key={item.title} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+                  <h3 className="font-black mb-2">{item.title}</h3>
+                  <p className="text-sm text-slate-400 leading-relaxed">{item.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-6 md:p-8">
+            <p className="text-blue-200 text-sm font-bold uppercase tracking-widest mb-3">What changes scope</p>
+            <div className="space-y-3 mb-6">
+              {SCOPE_DRIVERS.map((item) => (
+                <div key={item} className="flex items-start gap-3 text-sm text-blue-50/85">
+                  <Check size={16} className="text-blue-300 shrink-0 mt-0.5" />
+                  <span>{item}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-blue-100/70 leading-relaxed">
+              This keeps the page honest: evaluators see what they can do now, what conversation to start next, and why the public site avoids fake package numbers.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-3 gap-6 md:gap-8 items-start">
         {OFFERS.map((offer) => (
           <PlanCard key={offer.key} offer={offer} />
         ))}
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 pb-16">
+        <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 md:p-8">
+          <div className="grid lg:grid-cols-[0.9fr_1.1fr] gap-8 items-start">
+            <div>
+              <p className="text-blue-300 text-sm font-bold uppercase tracking-widest mb-3">Start a useful conversation faster</p>
+              <h2 className="text-2xl md:text-3xl font-black tracking-tight mb-3">What to include in your request</h2>
+              <p className="text-sm text-slate-400 leading-relaxed">
+                Whether you open GitHub Discussions for support or use hosted signup for managed/custom evaluation, a few details make the next response much more useful.
+              </p>
+            </div>
+            <div className="grid md:grid-cols-2 gap-4">
+              {INTAKE_CHECKLIST.map((item) => (
+                <div key={item} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5 text-sm text-slate-300 leading-relaxed">
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="max-w-6xl mx-auto px-6 pb-20">
@@ -367,11 +447,11 @@ export default function Pricing() {
             },
             {
               q: "How should teams start a paid support conversation?",
-              a: "Use GitHub Discussions as the current commercial intake path for setup help, onboarding, and rollout support requests.",
+              a: "Use GitHub Discussions as the current commercial intake path for setup help, onboarding, and rollout support requests. Include your target environment, rollout stage, and first proof milestone if you can.",
             },
             {
               q: "What about managed Nora or enterprise deployment?",
-              a: "Use the pricing page and hosted signup flow as the current public path, then scope managed or custom deployment requirements from there. This page intentionally avoids unsupported public price points.",
+              a: "Use the pricing page and hosted signup flow as the current public path, then scope managed or custom deployment requirements from there. This page intentionally avoids unsupported public price points and instead clarifies the scope drivers behind that conversation.",
             },
           ].map((item, i) => (
             <div key={i} className="bg-white/5 border border-white/10 rounded-2xl p-6">
@@ -387,11 +467,11 @@ export default function Pricing() {
         <a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">
           Start in GitHub Discussions
         </a>
-        {" "}or{" "}
+        {" "}for self-hosted support, or{" "}
         <Link href="/signup" className="text-blue-400 hover:underline">
           open the hosted evaluation flow
         </Link>
-        .
+        {" "}for managed/custom discovery.
       </div>
     </div>
   );
