@@ -188,6 +188,9 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
     res.send(html);
   } catch (err) {
     console.error("[gateway-embed] error:", err);
