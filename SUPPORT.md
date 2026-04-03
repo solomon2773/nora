@@ -27,36 +27,40 @@ Best fit:
 - documentation errors
 - install failures with concrete logs or steps to reproduce
 
-## 3. Paid onboarding and rollout help
+## 3. Rollout help / paid support on your own infrastructure
 
-Use GitHub Discussions if you want the same open-source product but need a faster path to first value.
+Use GitHub Discussions if you want the same open-source product but need a faster path to first value on infrastructure you control.
 
 - [Start a support discussion](https://github.com/solomon2773/nora/discussions)
 - [Commercial paths overview](docs/COMMERCIAL_PATHS.md)
+
+This path is for rollout speed and support around the OSS product, not for unlocking usage rights.
 
 Best fit:
 - setup guidance
 - onboarding help
 - deployment review
 - rollout planning for a self-hosted Nora environment
+- paid-support qualification tied to a real deployment path
 
-## 4. Managed Nora / custom deployment
+## 4. Hosted evaluation / managed PaaS / custom deployment
 
-Use the public commercial routes when self-hosting is not the preferred first step.
+Use the public deployment paths when self-hosting is not the preferred first step.
 
-- [Pricing / commercial paths](https://nora.solomontsao.com/pricing)
+- [Pricing / deployment paths](https://nora.solomontsao.com/pricing)
 - [Hosted evaluation signup](https://nora.solomontsao.com/signup)
 
 Best fit:
 - you want less self-managed infrastructure work
 - you expect a hosted evaluation first
-- you want to scope a custom or managed Nora deployment
+- you want to scope a managed PaaS or custom Nora deployment
+- you have larger-team or enterprise-style environment requirements
 
 ## What to include when asking for help
 
 To reduce back-and-forth, include:
 
-- your deployment mode: self-hosted, rollout-help, or managed/custom evaluation
+- your deployment mode: self-hosted, rollout-help / paid-support, hosted evaluation / managed PaaS, or enterprise/custom
 - OS and environment details
 - whether you used `setup.sh`, `setup.ps1`, or manual setup
 - the step that failed or slowed you down
@@ -68,5 +72,5 @@ Do **not** post secrets, API keys, `.env` files, or private credentials in Issue
 
 If you are unsure where to start:
 - choose [Install guide](docs/INSTALL.md) if you want to self-host
-- choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want rollout help
-- choose [pricing](https://nora.solomontsao.com/pricing) or [signup](https://nora.solomontsao.com/signup) if you want a managed or hosted path
+- choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want rollout help or paid support
+- choose [pricing](https://nora.solomontsao.com/pricing) or [signup](https://nora.solomontsao.com/signup) if you want a hosted, managed, or custom-deployment path

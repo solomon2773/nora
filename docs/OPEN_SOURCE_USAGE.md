@@ -22,6 +22,8 @@ You can:
 
 The repo should not imply that a commercial relationship with the maintainers is required to get value.
 
+It is also reasonable to describe Nora as enterprise-capable, as long as that means the product can support serious self-hosted operator environments rather than serving as vague enterprise packaging language.
+
 ## What the public story should center
 
 1. **The public repo and install path**
@@ -29,6 +31,7 @@ The repo should not imply that a commercial relationship with the maintainers is
 3. **Real operator workflows and screenshots**
 4. **OpenClaw as the strongest supported runtime today**
 5. **A runtime-friendly direction beyond one permanently locked integration**
+6. **A deployment story that scales from single-host through Proxmox, private cloud, and AWS/Azure/GCP**
 
 ## Current runtime direction
 
@@ -52,6 +55,8 @@ Public-facing docs and pages should emphasize:
 - repo-native install scripts and Docker Compose setup
 - operator workflows like signup, deploy, chat, logs, terminal, and settings
 - screenshot proof from the real product
+- enterprise-capable self-hosting in the practical operator sense
+- a clear deployment continuum from single-host to Proxmox, private cloud, and AWS/Azure/GCP
 - OpenClaw as the best-supported example today
 - runtime direction that remains broader than a single runtime forever
 
@@ -61,6 +66,8 @@ Public-facing docs and pages should avoid centering:
 - enterprise packaging language as the repo's front door
 - claims that require a private conversation before the repo feels trustworthy
 - language that treats Nora as permanently useful only with OpenClaw
+
+If enterprise buyers or platform teams are part of the audience, the repo should win them with product proof and operator clarity first, not with a sales-first wrapper.
 
 ## If someone asks what they are allowed to do
 
@@ -75,6 +82,7 @@ Use these repo-native proof resources when you need to show the OSS story clearl
 - `README.md`
 - `docs/IMPLEMENTATION_PROOF.md`
 - `docs/ADOPTION_CHECKLIST.md`
+- `docs/DEPLOYMENT_FOOTPRINTS.md`
 - `docs/README_SCREENSHOT_PLAN.md`
 - `docs/assets/proof-landing-open-source-funnel.png`
 - `docs/assets/proof-usage-rights-apache.png`

@@ -78,7 +78,8 @@ export default function Signup() {
             </h1>
             <p className="text-slate-400 leading-relaxed text-base">
               Nora is an open-source control plane for agent operations. Apache 2.0 allows self-hosting and commercial use,
-              while OpenClaw is the best-supported runtime today and the long-term direction stays friendly to future runtime integrations.
+              the product is meant to stay credible for enterprise-capable self-hosted environments, and OpenClaw is the best-supported runtime today
+              while the long-term direction stays friendly to future runtime integrations.
             </p>
           </div>
 
@@ -134,7 +135,7 @@ export default function Signup() {
           </div>
 
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 text-sm text-blue-100 leading-relaxed">
-            <span className="font-bold">Open-source note:</span> after account creation, the fastest path to value is Settings → add an LLM provider → Deploy your first agent runtime.
+            <span className="font-bold">Open-source note:</span> after account creation, the fastest path to value is Settings → add an LLM provider → Deploy your first agent runtime with OpenClaw as the strongest proof path today.
           </div>
 
           {OAUTH_LOGIN_ENABLED && (

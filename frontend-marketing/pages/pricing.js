@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Check, Server, Globe, GitBranch, ArrowRight, Scale, Shield, FileText } from "lucide-react";
+import { Check, Server, LifeBuoy, Building2, Cloud, ArrowRight, Scale, Shield, FileText } from "lucide-react";
 
 const PATHS = [
   {
@@ -7,50 +7,67 @@ const PATHS = [
     name: "Self-host Nora",
     price: "Free",
     period: "Apache 2.0",
-    description: "Run Nora on infrastructure you control and adapt it to your own workflows.",
+    description: "Run Nora on infrastructure you control and validate the operator workflow directly from the public repo.",
     icon: Server,
     features: [
       "Clone, modify, and self-host the full repo",
       "Install from GitHub + raw setup scripts",
-      "Use the product internally without asking permission",
-      "OpenClaw is the strongest supported runtime today",
+      "Use the product commercially under Apache 2.0",
+      "Best fit for teams that want full infrastructure ownership",
     ],
     cta: "Open self-host quick start",
     href: "https://github.com/solomon2773/nora#quick-start",
     external: true,
   },
   {
-    key: "commercial-use",
-    name: "Use it commercially yourself",
-    price: "Commercial use",
-    period: "Apache 2.0",
-    description: "You can run Nora as part of a service business, host it for clients, or build on top of it.",
-    icon: Globe,
+    key: "rollout-help",
+    name: "Rollout help / paid support",
+    price: "Scoped",
+    period: "Based on rollout needs",
+    description: "Keep Nora on your own infrastructure, but shorten the time to first value with guided rollout help and support.",
+    icon: LifeBuoy,
     features: [
-      "Apache 2.0 commercial use is allowed",
-      "Offer hosted services on your own infrastructure",
-      "Serve clients or internal business units",
-      "Keep your own packaging, operations, and customer relationships",
+      "Best for setup guidance and deployment review",
+      "Support around a real self-hosted Nora environment",
+      "Current public intake path is GitHub Discussions",
+      "Scope depends on environment, rollout depth, and support needs",
     ],
-    cta: "Read commercial-use rights",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/OPEN_SOURCE_USAGE.md",
+    cta: "Start a support discussion",
+    href: "https://github.com/solomon2773/nora/discussions",
     external: true,
   },
   {
-    key: "runtime-direction",
-    name: "Extend beyond OpenClaw",
-    price: "Direction",
-    period: "OpenClaw-first today",
-    description: "Nora should stay useful as an agent-operations control plane even as more runtimes are integrated over time.",
-    icon: GitBranch,
+    key: "managed",
+    name: "Hosted eval / managed PaaS",
+    price: "Scoped",
+    period: "Based on environment",
+    description: "Start with a less DIY path when you want a faster hosted evaluation or a managed Nora experience.",
+    icon: Cloud,
     features: [
-      "Avoid locking the product story to one runtime forever",
-      "Keep terminology and docs broad enough for future integrations",
-      "Use OpenClaw as the best-supported proof path today",
-      "Design for cleaner runtime adapters over time",
+      "Hosted evaluation path",
+      "Managed PaaS qualification",
+      "Best for teams that do not want to start fully self-managed",
+      "Use signup to begin the current public intake path",
     ],
-    cta: "Read runtime direction",
-    href: "https://github.com/solomon2773/nora#runtime-direction",
+    cta: "Start hosted evaluation",
+    href: "https://nora.solomontsao.com/signup",
+    external: true,
+  },
+  {
+    key: "enterprise",
+    name: "Enterprise / custom deployment",
+    price: "Custom",
+    period: "Scoped to requirements",
+    description: "For larger teams, tailored deployment footprints, or more complex security, networking, and rollout requirements.",
+    icon: Building2,
+    features: [
+      "Private cloud / on-prem / AWS / Azure / GCP scoping",
+      "Best for larger-team or enterprise-capable environments",
+      "Scope depends on deployment footprint and rollout complexity",
+      "Pricing page is the current public qualification entry point",
+    ],
+    cta: "Review deployment paths",
+    href: "https://nora.solomontsao.com/pricing",
     external: true,
   },
 ];
@@ -88,19 +105,31 @@ const ENTRY_POINTS = [
 const PROOF_RESOURCES = [
   {
     title: "Open-source usage + commercial guide",
-    desc: "Repo-native explanation of Apache 2.0 rights, self-hosting, pricing/support paths, and runtime direction framing.",
+    desc: "Repo-native explanation of Apache 2.0 rights, self-hosting, rollout help, managed paths, and runtime direction framing.",
     href: "https://github.com/solomon2773/nora/blob/master/docs/OPEN_SOURCE_USAGE.md",
   },
   {
+    title: "Commercial paths",
+    desc: "Public path map covering self-hosted OSS, rollout help / paid support, hosted evaluation / managed PaaS, and enterprise/custom deployment.",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/COMMERCIAL_PATHS.md",
+  },
+  {
     title: "Implementation proof",
-    desc: "Code-backed proof that install flows, auth, operator UI, and runtime direction all exist in-repo today.",
+    desc: "Code-backed proof that install flows, auth, operator UI, and proof assets all exist in-repo today.",
     href: "https://github.com/solomon2773/nora/blob/master/docs/IMPLEMENTATION_PROOF.md",
   },
   {
-    title: "README screenshot plan",
-    desc: "Plan for expanding README proof with onboarding and operator screenshots.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/README_SCREENSHOT_PLAN.md",
+    title: "README screenshots",
+    desc: "Inspect the concrete landing, signup, dashboard, deploy, agent-detail, and provider-setup proof assets in the repo.",
+    href: "https://github.com/solomon2773/nora#screenshots",
   },
+];
+
+const PRICING_RULES = [
+  "Self-hosted OSS is free under Apache 2.0.",
+  "Rollout help / paid support is scoped based on environment, rollout depth, and support needs.",
+  "Hosted evaluation / managed PaaS is scoped based on the evaluation path and environment requirements.",
+  "Enterprise / custom deployment is scoped based on deployment footprint, security, identity, networking, and rollout complexity.",
 ];
 
 export default function Pricing() {
@@ -127,16 +156,16 @@ export default function Pricing() {
       </nav>
 
       <div className="text-center px-6 py-16 md:py-24 max-w-5xl mx-auto">
-        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Pricing, support, and commercial paths</p>
+        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Pricing, support, and deployment paths</p>
         <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight mb-6">
-          Fully open source.
+          Open source first.
           <br />
-          <span className="text-blue-400">Self-host it, extend it, or run it commercially yourself.</span>
+          <span className="text-blue-400">Clear paths into paid help, managed evaluation, and custom deployment.</span>
         </h1>
         <p className="text-lg text-slate-400 max-w-3xl mx-auto">
-          Nora is Apache 2.0 licensed. That means the full repo can stay public, teams can self-host it, and operators can
-          commercially offer Nora-based services on infrastructure they control. OpenClaw is the strongest supported runtime today,
-          but the long-term product direction should remain runtime-friendly.
+          Nora is Apache 2.0 licensed. Teams can self-host it, use it commercially, and inspect real proof in the repo first.
+          When a non-DIY path makes more sense, the public path should stay clear: rollout help / paid support, hosted evaluation /
+          managed PaaS, and enterprise / custom deployment scoping.
         </p>
       </div>
 
@@ -171,31 +200,26 @@ export default function Pricing() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 pb-12 grid md:grid-cols-2 gap-6">
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <GitBranch size={18} className="text-blue-400" />
-            <h2 className="text-xl font-black">Runtime direction</h2>
-          </div>
-          <div className="space-y-3 text-sm text-slate-300 leading-relaxed">
-            <p><span className="font-bold text-white">Today:</span> OpenClaw is the clearest and strongest supported runtime path in Nora.</p>
-            <p><span className="font-bold text-white">Direction:</span> Nora should stay useful as a broader agent-operations control plane rather than a permanently single-runtime shell.</p>
-            <p><span className="font-bold text-white">Rule:</span> use OpenClaw to prove current product value, but keep docs and UX compatible with future runtime integrations.</p>
-          </div>
-        </div>
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+      <div className="max-w-6xl mx-auto px-6 pb-12">
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8">
           <div className="flex items-center gap-3 mb-4">
             <FileText size={18} className="text-blue-400" />
-            <h2 className="text-xl font-black">Public repo rule</h2>
+            <h2 className="text-xl font-black">How pricing works today</h2>
           </div>
-          <p className="text-sm text-slate-300 leading-relaxed">
-            The repo should center the product itself: installability, screenshots, operator workflows, and clear Apache 2.0 rights.
-            It should not depend on maintainer-commercial framing as the main reason to trust Nora.
+          <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300 leading-relaxed">
+            {PRICING_RULES.map((item) => (
+              <div key={item} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
+                {item}
+              </div>
+            ))}
+          </div>
+          <p className="text-sm text-slate-500 mt-4">
+            The goal is path clarity, not invented fixed-plan promises. Public language should help teams choose the right route and next step.
           </p>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-3 gap-6">
+      <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-2 xl:grid-cols-4 gap-6">
         {PATHS.map((path) => {
           const Icon = path.icon;
           return (
@@ -235,9 +259,9 @@ export default function Pricing() {
       <div className="max-w-6xl mx-auto px-6 pb-24">
         <div className="text-center mb-8">
           <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Proof resources</p>
-          <h2 className="text-2xl md:text-4xl font-black tracking-tight">Evidence operators can inspect today</h2>
+          <h2 className="text-2xl md:text-4xl font-black tracking-tight">Evidence operators can inspect before they buy</h2>
         </div>
-        <div className="grid md:grid-cols-3 gap-6">
+        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
           {PROOF_RESOURCES.map((item) => (
             <a key={item.title} href={item.href} target="_blank" rel="noopener noreferrer" className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 hover:bg-white/[0.05] transition-all">
               <h3 className="text-lg font-black mb-2">{item.title}</h3>

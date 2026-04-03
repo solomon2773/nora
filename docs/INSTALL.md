@@ -2,6 +2,8 @@
 
 This guide is for teams evaluating Nora from the open-source repo.
 
+The recommended trust path is to start with a single self-hosted install, prove the operator workflow, and only expand the deployment footprint after the product earns that trust.
+
 The fastest trustworthy proof path is still:
 
 1. install Nora
@@ -76,21 +78,23 @@ Open the agent detail page and confirm:
 |---|---|
 | You want to keep self-hosting and just need the docs | [README Quick Start](../README.md#quick-start) |
 | You hit a bug or broken instruction | [GitHub Issues](https://github.com/solomon2773/nora/issues) |
-| You want rollout help without giving up self-hosting | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
-| You do not want a pure DIY path anymore | [Pricing + enterprise/custom](https://nora.solomontsao.com/pricing) |
-| You want a hosted evaluation or custom deployment conversation | [Hosted eval / managed path](https://nora.solomontsao.com/signup) |
+| You want rollout help or paid support without giving up self-hosting | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
+| You do not want a pure DIY path anymore | [Pricing / deployment paths](https://nora.solomontsao.com/pricing) |
+| You want a hosted evaluation, managed PaaS, or custom deployment conversation | [Hosted evaluation signup](https://nora.solomontsao.com/signup) |
 
 ## Upgrade paths from self-hosted evaluation
 
 Nora should keep the open-source repo as the trust anchor. After that, the current public upgrade routes are:
 
 1. **Stay self-hosted** if the repo and install flow already fit your team.
-2. **Use paid onboarding & support** if you want the same product but need a faster rollout.
-3. **Use hosted evaluation / managed scoping** if you want less self-managed infrastructure work.
+2. **Use rollout help / paid support** if you want the same product but need a faster path to first value.
+3. **Use hosted evaluation / managed PaaS** if you want less self-managed infrastructure work.
+4. **Use enterprise / custom deployment scoping** if the environment, rollout depth, or requirements need a more tailored path.
 
 See also:
-- [Pricing + support + enterprise/custom](COMMERCIAL_PATHS.md)
-- [Paid rollout help / support](../SUPPORT.md)
+- [Commercial paths](COMMERCIAL_PATHS.md)
+- [Deployment footprints](DEPLOYMENT_FOOTPRINTS.md)
+- [Support paths](../SUPPORT.md)
 
 ## Security note
 

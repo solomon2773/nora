@@ -100,7 +100,7 @@ export default function Login() {
               Welcome back to your Nora control plane
             </h1>
             <p className="text-slate-400 leading-relaxed text-base">
-              Sign in to deploy agents, sync provider keys, inspect logs, open terminals, and manage runtime operations from one place. OpenClaw is the strongest supported path today.
+              Sign in to deploy agents, sync provider keys, inspect logs, open terminals, and manage runtime operations from one place. Nora is built to stay credible for serious self-hosted operator teams, with OpenClaw as the strongest supported runtime path today.
             </p>
           </div>
 
@@ -145,7 +145,7 @@ export default function Login() {
         <div className="max-w-md w-full flex flex-col gap-8">
           <div className="text-center">
             <h1 className="text-3xl font-black tracking-tight mb-2">Return to your operator console</h1>
-            <p className="text-sm text-slate-400 font-medium">Sign in to continue managing your self-hosted Nora workspace.</p>
+            <p className="text-sm text-slate-400 font-medium">Sign in to continue managing your self-hosted Nora workspace, from single-host proof through larger operator deployments.</p>
           </div>
 
           {OAUTH_LOGIN_ENABLED && (
