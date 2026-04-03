@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/solomon2773/nora#quick-start">Self-host Quick Start</a>
   ·
-  <a href="https://nora.solomontsao.com">Hosted eval / managed path</a>
+  <a href="https://nora.solomontsao.com">Hosted eval / managed PaaS</a>
   ·
   <a href="https://nora.solomontsao.com/pricing">Pricing + support + enterprise/custom</a>
   ·
