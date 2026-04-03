@@ -90,7 +90,7 @@ Nora should keep the open-source repo as the trust anchor. After that, the curre
 
 See also:
 - [Commercial paths](COMMERCIAL_PATHS.md)
-- [Support paths](../SUPPORT.md)
+- [Paid rollout help / support](../SUPPORT.md)
 
 ## Security note
 
