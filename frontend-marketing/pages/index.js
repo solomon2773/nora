@@ -34,7 +34,7 @@ const PATHS = [
   {
     icon: Globe,
     title: "Use Nora commercially",
-    badge: "Commercial use allowed",
+    badge: "Apache 2.0 commercial use",
     desc: "Apache 2.0 allows you to run Nora inside your company, for clients, or as part of your own service offering.",
     bullets: [
       "Commercial use is allowed by the license",
