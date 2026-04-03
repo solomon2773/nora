@@ -234,9 +234,9 @@ Then edit `.env` with your secrets:
 JWT_SECRET=your-64-char-hex-key
 ENCRYPTION_KEY=your-64-char-hex-key
 
-# Default admin account (created on first boot)
-DEFAULT_ADMIN_EMAIL=admin@nora.local
-DEFAULT_ADMIN_PASSWORD=changeme
+# Optional bootstrap admin (seeded only when both are set securely)
+DEFAULT_ADMIN_EMAIL=<REPLACE_WITH_BOOTSTRAP_ADMIN_EMAIL>
+DEFAULT_ADMIN_PASSWORD=<REPLACE_WITH_STRONG_BOOTSTRAP_PASSWORD>
 
 # Optional — OAuth (leave blank to disable)
 GOOGLE_CLIENT_ID=

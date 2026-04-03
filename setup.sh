@@ -339,24 +339,43 @@ case "$backend_answer" in
     ;;
 esac
 
-# ── Default Admin Account ─────────────────────────────────────
+# ── Bootstrap Admin Account (Optional) ───────────────────────
 
-header "Default Admin Account"
+header "Bootstrap Admin Account (Optional)"
 
-printf "  This account is created on first boot so you can log in immediately.\n\n"
-printf "  Admin email [admin@nora.local]: "
-read -r admin_email_input < /dev/tty
-DEFAULT_ADMIN_EMAIL="${admin_email_input:-admin@nora.local}"
+printf "  Leave both fields blank to skip bootstrap admin creation.\n"
+printf "  If set, the password must be at least 12 characters.\n\n"
 
-printf "  Admin password [admin123]: "
-read -r admin_pass_input < /dev/tty
-DEFAULT_ADMIN_PASSWORD="${admin_pass_input:-admin123}"
+while true; do
+  printf "  Admin email [leave blank to skip]: "
+  read -r admin_email_input < /dev/tty
 
-if [ "$DEFAULT_ADMIN_PASSWORD" = "admin123" ]; then
-  warn "Using default password 'admin123' — change it after first login"
-else
-  ok "Admin account: $DEFAULT_ADMIN_EMAIL (custom password)"
-fi
+  printf "  Admin password (min 12 chars, leave blank to skip): "
+  read -rs admin_pass_input < /dev/tty
+  printf "\n"
+
+  if [ -z "$admin_email_input" ] && [ -z "$admin_pass_input" ]; then
+    DEFAULT_ADMIN_EMAIL=""
+    DEFAULT_ADMIN_PASSWORD=""
+    info "Skipping bootstrap admin seed — create your operator account after first boot."
+    break
+  fi
+
+  if [ -z "$admin_email_input" ] || [ -z "$admin_pass_input" ]; then
+    warn "To pre-seed an admin, provide both email and password, or leave both blank to skip."
+    continue
+  fi
+
+  if [ ${#admin_pass_input} -lt 12 ]; then
+    warn "Bootstrap admin password must be at least 12 characters."
+    continue
+  fi
+
+  DEFAULT_ADMIN_EMAIL="$admin_email_input"
+  DEFAULT_ADMIN_PASSWORD="$admin_pass_input"
+  ok "Bootstrap admin configured: $DEFAULT_ADMIN_EMAIL"
+  break
+done
 
 # ── LLM Provider Key ─────────────────────────────────────────
 
@@ -487,7 +506,7 @@ cat > "$ENV_FILE" <<EOF
 JWT_SECRET=${JWT_SECRET}
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
 
-# ── Default Admin Account (created on first boot) ────────────
+# ── Bootstrap Admin Account (optional; seeded only when both are set securely) ──
 DEFAULT_ADMIN_EMAIL=${DEFAULT_ADMIN_EMAIL}
 DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
 
@@ -564,8 +583,13 @@ ok ".env created successfully"
 echo ""
 header "Setup Complete"
 
-printf "  Admin:        %s\n" "$DEFAULT_ADMIN_EMAIL"
-printf "  Password:     %s\n" "$(echo "$DEFAULT_ADMIN_PASSWORD" | sed 's/./*/g')"
+if [ -n "$DEFAULT_ADMIN_EMAIL" ]; then
+  printf "  Admin:        %s\n" "$DEFAULT_ADMIN_EMAIL"
+  printf "  Password:     %s\n" "$(echo "$DEFAULT_ADMIN_PASSWORD" | sed 's/./*/g')"
+else
+  printf "  Admin:        Not pre-seeded (create via signup)\n"
+  printf "  Password:     Not set\n"
+fi
 printf "  Secrets:      auto-generated (JWT, AES, NextAuth)\n"
 printf "  Database:     PostgreSQL 15 (Docker Compose)\n"
 printf "  Redis:        Redis 7 (Docker Compose)\n"
@@ -637,67 +661,70 @@ ok "Nora is running!"
 # ── Auto-deploy first agent ─────────────────────────────────
 
 if [ -n "$LLM_PROVIDER" ] && [ -n "$LLM_API_KEY" ] && [ -n "$FIRST_AGENT_NAME" ] && [ "$HAS_CURL" = true ]; then
-  header "Deploying First Agent"
+  if [ -z "$DEFAULT_ADMIN_EMAIL" ] || [ -z "$DEFAULT_ADMIN_PASSWORD" ]; then
+    info "Skipping auto-deploy because no bootstrap admin was configured. Create an operator account first, then add your LLM key and deploy manually."
+  else
+    header "Deploying First Agent"
 
-  API_BASE="http://localhost:8080/api"
-  MAX_WAIT=90
-  WAITED=0
+    API_BASE="http://localhost:8080/api"
+    MAX_WAIT=90
+    WAITED=0
 
-  info "Waiting for API to be ready..."
-  while [ $WAITED -lt $MAX_WAIT ]; do
-    if curl -sf "${API_BASE}/health" >/dev/null 2>&1; then
-      break
-    fi
-    sleep 2
-    WAITED=$((WAITED + 2))
-    printf "."
-  done
-  echo ""
-
-  if [ $WAITED -ge $MAX_WAIT ]; then
-    warn "API didn't respond within ${MAX_WAIT}s — skipping auto-deploy"
-    info "After services start, log in and deploy manually."
+    info "Waiting for API to be ready..."
+    while [ $WAITED -lt $MAX_WAIT ]; do
+      if curl -sf "${API_BASE}/health" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 2
+      WAITED=$((WAITED + 2))
+      printf "."
+    done
     echo ""
-    exit 0
-  fi
 
-  ok "API is ready"
+    if [ $WAITED -ge $MAX_WAIT ]; then
+      warn "API didn't respond within ${MAX_WAIT}s — skipping auto-deploy"
+      info "After services start, log in and deploy manually."
+      echo ""
+      exit 0
+    fi
 
-  # Login as admin — retry a few times since DB migration and admin seeding
-  # run asynchronously after the health endpoint is already responding
-  info "Logging in as $DEFAULT_ADMIN_EMAIL..."
-  TOKEN=""
-  LOGIN_ATTEMPTS=0
-  LOGIN_MAX=10
-  while [ $LOGIN_ATTEMPTS -lt $LOGIN_MAX ] && [ -z "$TOKEN" ]; do
-    LOGIN_RESPONSE=$(curl -sf -X POST "${API_BASE}/auth/login" \
-      -H "Content-Type: application/json" \
-      -d "{\"email\":\"${DEFAULT_ADMIN_EMAIL}\",\"password\":\"${DEFAULT_ADMIN_PASSWORD}\"}" 2>&1) || true
+    ok "API is ready"
 
-    TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
+    # Login as admin — retry a few times since DB migration and admin seeding
+    # run asynchronously after the health endpoint is already responding
+    info "Logging in as $DEFAULT_ADMIN_EMAIL..."
+    TOKEN=""
+    LOGIN_ATTEMPTS=0
+    LOGIN_MAX=10
+    while [ $LOGIN_ATTEMPTS -lt $LOGIN_MAX ] && [ -z "$TOKEN" ]; do
+      LOGIN_RESPONSE=$(curl -sf -X POST "${API_BASE}/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${DEFAULT_ADMIN_EMAIL}\",\"password\":\"${DEFAULT_ADMIN_PASSWORD}\"}" 2>&1) || true
+
+      TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
+
+      if [ -z "$TOKEN" ]; then
+        LOGIN_ATTEMPTS=$((LOGIN_ATTEMPTS + 1))
+        sleep 3
+        printf "."
+      fi
+    done
+    if [ -z "$TOKEN" ]; then echo ""; fi
 
     if [ -z "$TOKEN" ]; then
-      LOGIN_ATTEMPTS=$((LOGIN_ATTEMPTS + 1))
-      sleep 3
-      printf "."
+      warn "Could not authenticate after ${LOGIN_MAX} attempts."
+      info "Log in manually at http://localhost:8080 and deploy your agent."
+      echo ""
+      exit 0
     fi
-  done
-  if [ -z "$TOKEN" ]; then echo ""; fi
+    ok "Authenticated"
 
-  if [ -z "$TOKEN" ]; then
-    warn "Could not authenticate after ${LOGIN_MAX} attempts."
-    info "Log in manually at http://localhost:8080 and deploy your agent."
-    echo ""
-    exit 0
-  fi
-  ok "Authenticated"
-
-  # Save LLM key
-  info "Saving $LLM_PROVIDER API key..."
-  PROVIDER_RESPONSE=$(curl -sf -X POST "${API_BASE}/llm-providers" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -d "{\"provider\":\"${LLM_PROVIDER}\",\"apiKey\":\"${LLM_API_KEY}\",\"model\":\"${LLM_MODEL}\"}" 2>&1) || true
+    # Save LLM key
+    info "Saving $LLM_PROVIDER API key..."
+    PROVIDER_RESPONSE=$(curl -sf -X POST "${API_BASE}/llm-providers" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -d "{\"provider\":\"${LLM_PROVIDER}\",\"apiKey\":\"${LLM_API_KEY}\",\"model\":\"${LLM_MODEL}\"}" 2>&1) || true
 
   if echo "$PROVIDER_RESPONSE" | grep -q '"id"'; then
     ok "$LLM_PROVIDER key stored (encrypted, AES-256-GCM)"
@@ -770,6 +797,7 @@ if [ -n "$LLM_PROVIDER" ] && [ -n "$LLM_API_KEY" ] && [ -n "$FIRST_AGENT_NAME" ]
   else
     warn "Could not deploy agent — deploy from the dashboard"
   fi
+  fi
 fi
 
 # ── Done ─────────────────────────────────────────────────────
@@ -778,7 +806,11 @@ echo ""
 header "Nora is live!"
 
 printf "  Open your browser:  http://localhost:8080\n"
-printf "  Login:              %s\n" "$DEFAULT_ADMIN_EMAIL"
+if [ -n "$DEFAULT_ADMIN_EMAIL" ]; then
+  printf "  Login:              %s\n" "$DEFAULT_ADMIN_EMAIL"
+else
+  printf "  Login:              create an account at /signup\n"
+fi
 echo ""
 
 if [ -n "$FIRST_AGENT_NAME" ] && [ -n "$AGENT_ID" ]; then
