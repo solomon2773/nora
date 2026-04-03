@@ -209,7 +209,7 @@ export default function Home() {
         <div className="max-w-7xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold mb-8 animate-fade-in">
             <Boxes size={14} />
-            Fully open source • Self-hostable • Commercial use allowed • OpenClaw-first today
+            Fully open source • Self-hostable • Apache 2.0 commercial use • OpenClaw-first today
           </div>
 
           <h1 className="text-4xl md:text-7xl font-extrabold tracking-tight mb-6 bg-gradient-to-b from-white to-slate-400 bg-clip-text text-transparent leading-[1.1]">
