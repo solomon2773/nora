@@ -117,7 +117,7 @@ Nora should ask people to trust the product itself, the install path, and the op
 Use these resources when you need to prove that the repo is real and usable:
 
 - [Open-source implementation proof](docs/IMPLEMENTATION_PROOF.md) — code-backed evidence for self-hosting, operator flows, and runtime direction
-- [Adoption checklist](docs/ADOPTION_CHECKLIST.md) — practical paths for self-hosting, Apache 2.0 commercial use, and runtime expansion
+- [Adoption checklist](docs/ADOPTION_CHECKLIST.md) — practical paths for self-hosting, Apache 2.0 commercial use, paid support, managed PaaS, and runtime expansion
 - [Open-source usage guide](docs/OPEN_SOURCE_USAGE.md) — Apache 2.0 usage rights plus the repo's pricing/support/commercial framing
 - [README screenshot plan](docs/README_SCREENSHOT_PLAN.md)
 - [Marketing proof asset plan](docs/MARKETING_PROOF_ASSET_PLAN.md)
