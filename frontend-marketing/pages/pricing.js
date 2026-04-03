@@ -27,7 +27,7 @@ const PATHS = [
     description: "You can run Nora as part of a service business, host it for clients, or build on top of it.",
     icon: Globe,
     features: [
-      "Commercial use is allowed",
+      "Apache 2.0 commercial use is allowed",
       "Offer hosted services on your own infrastructure",
       "Serve clients or internal business units",
       "Keep your own packaging, operations, and customer relationships",
