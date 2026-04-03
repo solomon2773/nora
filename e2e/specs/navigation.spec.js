@@ -60,12 +60,12 @@ test.describe("Marketing site navigation", () => {
 });
 
 test.describe("Open-source usage page", () => {
-  test("usage page loads with open-source rights copy", async ({ page }) => {
+  test("usage page loads with current open-source rights copy", async ({ page }) => {
     await page.goto("/pricing");
-    await expect(page.getByRole("heading", { name: /fully open source/i })).toBeVisible();
-    await expect(page.getByText(/self-host it, extend it, or run it commercially yourself/i)).toBeVisible();
-    await expect(page.getByText(/commercial use is allowed/i)).toBeVisible();
-    await expect(page.getByText(/openclaw is the clearest and strongest supported runtime path/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /open source first/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /what apache 2\.0 means here/i })).toBeVisible();
+    await expect(page.getByText(/use the product commercially under apache 2\.0/i)).toBeVisible();
+    await expect(page.getByText(/teams can self-host it, use it commercially, and inspect real proof in the repo first/i)).toBeVisible();
     await expect(page.locator('a[href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh"]').first()).toBeVisible();
   });
 });
