@@ -87,7 +87,7 @@ const ENTRY_POINTS = [
 
 const PROOF_RESOURCES = [
   {
-    title: "Open-source usage guide",
+    title: "Open-source usage + commercial guide",
     desc: "Repo-native explanation of Apache 2.0 rights, self-hosting, pricing/support paths, and runtime direction framing.",
     href: "https://github.com/solomon2773/nora/blob/master/docs/OPEN_SOURCE_USAGE.md",
   },
