@@ -69,7 +69,7 @@ const ENTRY_POINTS = [
     text: "github.com/solomon2773/nora",
   },
   {
-    label: "Live app / hosted eval / managed path",
+    label: "Hosted eval / managed PaaS",
     href: "https://nora.solomontsao.com",
     text: "nora.solomontsao.com",
   },
