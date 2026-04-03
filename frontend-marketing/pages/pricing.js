@@ -64,7 +64,7 @@ const RIGHTS = [
 
 const ENTRY_POINTS = [
   {
-    label: "Repo",
+    label: "Repo / self-host source",
     href: "https://github.com/solomon2773/nora",
     text: "github.com/solomon2773/nora",
   },
