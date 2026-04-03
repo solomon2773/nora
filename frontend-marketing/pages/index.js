@@ -72,7 +72,7 @@ const PROOF_LINKS = [
   },
   {
     eyebrow: "Commercial paths",
-    title: "Pricing and usage rights are explicit",
+    title: "Pricing, support, and usage rights are explicit",
     desc: "The public pricing page explains self-hosting, commercial use, paid support, and managed/custom paths without unsupported claims.",
     href: "/pricing",
     cta: "Review pricing + support",
