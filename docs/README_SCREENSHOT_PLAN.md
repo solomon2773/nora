@@ -50,6 +50,10 @@ Useful environment overrides:
 4. **Settings / provider setup**
    - show how model/provider configuration fits the onboarding loop
 
+5. **Pricing / support path**
+   - show the commercial decision surface alongside Apache 2.0 rights
+   - keep managed path and paid-support language visible without making unsupported claims
+
 ## Narrative guidance
 
 The README screenshots should communicate:
@@ -59,6 +63,7 @@ The README screenshots should communicate:
 - Nora is not conceptually limited to OpenClaw forever
 - the product is self-hostable and practical for technical operators
 - Apache 2.0 allows commercial use by anyone
+- the pricing/support surface is a real commercial path, not just a legal explainer
 
 ## Asset rules
 
