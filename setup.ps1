@@ -310,21 +310,38 @@ switch ($backendAnswer) {
     }
 }
 
-# ── Default Admin Account ─────────────────────────────────────
+# ── Bootstrap Admin Account (Optional) ───────────────────────
 
-Write-Header "Default Admin Account"
+Write-Header "Bootstrap Admin Account (Optional)"
 
-Write-Host "  This account is created on first boot so you can log in immediately.`n"
-$adminEmailInput = Read-Host "  Admin email [admin@nora.local]"
-$DEFAULT_ADMIN_EMAIL = if ($adminEmailInput) { $adminEmailInput } else { "admin@nora.local" }
+Write-Host "  Leave both fields blank to skip bootstrap admin creation."
+Write-Host "  If set, the password must be at least 12 characters.`n"
 
-$adminPassInput = Read-Host "  Admin password [admin123]"
-$DEFAULT_ADMIN_PASSWORD = if ($adminPassInput) { $adminPassInput } else { "admin123" }
+while ($true) {
+    $adminEmailInput = Read-Host "  Admin email [leave blank to skip]"
+    $adminPassInput = Read-Host "  Admin password (min 12 chars, leave blank to skip)"
 
-if ($DEFAULT_ADMIN_PASSWORD -eq "admin123") {
-    Write-Warn "Using default password 'admin123' — change it after first login"
-} else {
-    Write-Ok "Admin account: $DEFAULT_ADMIN_EMAIL (custom password)"
+    if (-not $adminEmailInput -and -not $adminPassInput) {
+        $DEFAULT_ADMIN_EMAIL = ""
+        $DEFAULT_ADMIN_PASSWORD = ""
+        Write-Info "Skipping bootstrap admin seed — create your operator account after first boot."
+        break
+    }
+
+    if (-not $adminEmailInput -or -not $adminPassInput) {
+        Write-Warn "To pre-seed an admin, provide both email and password, or leave both blank to skip."
+        continue
+    }
+
+    if ($adminPassInput.Length -lt 12) {
+        Write-Warn "Bootstrap admin password must be at least 12 characters."
+        continue
+    }
+
+    $DEFAULT_ADMIN_EMAIL = $adminEmailInput
+    $DEFAULT_ADMIN_PASSWORD = $adminPassInput
+    Write-Ok "Bootstrap admin configured: $DEFAULT_ADMIN_EMAIL"
+    break
 }
 
 # ── LLM Provider Key ─────────────────────────────────────────
@@ -444,7 +461,7 @@ $envContent = @"
 JWT_SECRET=$JWT_SECRET
 ENCRYPTION_KEY=$ENCRYPTION_KEY
 
-# ── Default Admin Account (created on first boot) ────────────
+# ── Bootstrap Admin Account (optional; seeded only when both are set securely) ──
 DEFAULT_ADMIN_EMAIL=$DEFAULT_ADMIN_EMAIL
 DEFAULT_ADMIN_PASSWORD=$DEFAULT_ADMIN_PASSWORD
 
@@ -523,9 +540,14 @@ Write-Ok ".env created successfully"
 Write-Host ""
 Write-Header "Setup Complete"
 
-$maskedPass = '*' * $DEFAULT_ADMIN_PASSWORD.Length
-Write-Host "  Admin:        $DEFAULT_ADMIN_EMAIL"
-Write-Host "  Password:     $maskedPass"
+if ($DEFAULT_ADMIN_EMAIL) {
+    $maskedPass = '*' * $DEFAULT_ADMIN_PASSWORD.Length
+    Write-Host "  Admin:        $DEFAULT_ADMIN_EMAIL"
+    Write-Host "  Password:     $maskedPass"
+} else {
+    Write-Host "  Admin:        Not pre-seeded (create via signup)"
+    Write-Host "  Password:     Not set"
+}
 Write-Host "  Secrets:      auto-generated (JWT, AES, NextAuth)"
 Write-Host "  Database:     PostgreSQL 15 (Docker Compose)"
 Write-Host "  Redis:        Redis 7 (Docker Compose)"
@@ -602,62 +624,65 @@ Write-Ok "Nora is running!"
 $AGENT_ID = ""
 
 if ($LLM_PROVIDER -and $LLM_API_KEY -and $FIRST_AGENT_NAME) {
-    Write-Header "Deploying First Agent"
-
-    $API_BASE = "http://localhost:8080/api"
-    $MAX_WAIT = 90
-    $waited = 0
-
-    Write-Info "Waiting for API to be ready..."
-    while ($waited -lt $MAX_WAIT) {
-        try {
-            $null = Invoke-RestMethod -Uri "$API_BASE/health" -TimeoutSec 3 -ErrorAction Stop
-            break
-        } catch {
-            Start-Sleep -Seconds 2
-            $waited += 2
-            Write-Host "." -NoNewline
-        }
-    }
-    Write-Host ""
-
-    if ($waited -ge $MAX_WAIT) {
-        Write-Warn "API didn't respond within ${MAX_WAIT}s — skipping auto-deploy"
-        Write-Info "After services start, log in and deploy manually."
+    if (-not $DEFAULT_ADMIN_EMAIL -or -not $DEFAULT_ADMIN_PASSWORD) {
+        Write-Info "Skipping auto-deploy because no bootstrap admin was configured. Create an operator account first, then add your LLM key and deploy manually."
     } else {
-        Write-Ok "API is ready"
+        Write-Header "Deploying First Agent"
 
-        # Login as admin — retry since DB migration and admin seeding
-        # run asynchronously after the health endpoint is already responding
-        Write-Info "Logging in as $DEFAULT_ADMIN_EMAIL..."
-        $TOKEN = ""
-        $loginAttempts = 0
-        $loginMax = 10
-        while ($loginAttempts -lt $loginMax -and -not $TOKEN) {
+        $API_BASE = "http://localhost:8080/api"
+        $MAX_WAIT = 90
+        $waited = 0
+
+        Write-Info "Waiting for API to be ready..."
+        while ($waited -lt $MAX_WAIT) {
             try {
-                $loginBody = @{ email = $DEFAULT_ADMIN_EMAIL; password = $DEFAULT_ADMIN_PASSWORD } | ConvertTo-Json
-                $loginResp = Invoke-RestMethod -Uri "$API_BASE/auth/login" -Method POST -ContentType "application/json" -Body $loginBody -ErrorAction Stop
-                $TOKEN = $loginResp.token
+                $null = Invoke-RestMethod -Uri "$API_BASE/health" -TimeoutSec 3 -ErrorAction Stop
+                break
             } catch {
-                $TOKEN = ""
-                $loginAttempts++
-                Start-Sleep -Seconds 3
+                Start-Sleep -Seconds 2
+                $waited += 2
                 Write-Host "." -NoNewline
             }
         }
-        if (-not $TOKEN) { Write-Host "" }
+        Write-Host ""
 
-        if (-not $TOKEN) {
-            Write-Warn "Could not authenticate after $loginMax attempts."
-            Write-Info "Log in manually at http://localhost:8080 and deploy your agent."
+        if ($waited -ge $MAX_WAIT) {
+            Write-Warn "API didn't respond within ${MAX_WAIT}s — skipping auto-deploy"
+            Write-Info "After services start, log in and deploy manually."
         } else {
-            Write-Ok "Authenticated"
-            $headers = @{ Authorization = "Bearer $TOKEN" }
+            Write-Ok "API is ready"
 
-            # Save LLM key
-            Write-Info "Saving $LLM_PROVIDER API key..."
-            try {
-                $providerBody = @{ provider = $LLM_PROVIDER; apiKey = $LLM_API_KEY; model = $LLM_MODEL } | ConvertTo-Json
+            # Login as admin — retry since DB migration and admin seeding
+            # run asynchronously after the health endpoint is already responding
+            Write-Info "Logging in as $DEFAULT_ADMIN_EMAIL..."
+            $TOKEN = ""
+            $loginAttempts = 0
+            $loginMax = 10
+            while ($loginAttempts -lt $loginMax -and -not $TOKEN) {
+                try {
+                    $loginBody = @{ email = $DEFAULT_ADMIN_EMAIL; password = $DEFAULT_ADMIN_PASSWORD } | ConvertTo-Json
+                    $loginResp = Invoke-RestMethod -Uri "$API_BASE/auth/login" -Method POST -ContentType "application/json" -Body $loginBody -ErrorAction Stop
+                    $TOKEN = $loginResp.token
+                } catch {
+                    $TOKEN = ""
+                    $loginAttempts++
+                    Start-Sleep -Seconds 3
+                    Write-Host "." -NoNewline
+                }
+            }
+            if (-not $TOKEN) { Write-Host "" }
+
+            if (-not $TOKEN) {
+                Write-Warn "Could not authenticate after $loginMax attempts."
+                Write-Info "Log in manually at http://localhost:8080 and deploy your agent."
+            } else {
+                Write-Ok "Authenticated"
+                $headers = @{ Authorization = "Bearer $TOKEN" }
+
+                # Save LLM key
+                Write-Info "Saving $LLM_PROVIDER API key..."
+                try {
+                    $providerBody = @{ provider = $LLM_PROVIDER; apiKey = $LLM_API_KEY; model = $LLM_MODEL } | ConvertTo-Json
                 $providerResp = Invoke-RestMethod -Uri "$API_BASE/llm-providers" -Method POST -ContentType "application/json" -Headers $headers -Body $providerBody -ErrorAction Stop
                 Write-Ok "$LLM_PROVIDER key stored (encrypted, AES-256-GCM)"
             } catch {
@@ -742,7 +767,11 @@ Write-Host ""
 Write-Header "Nora is live!"
 
 Write-Host "  Open your browser:  http://localhost:8080"
-Write-Host "  Login:              $DEFAULT_ADMIN_EMAIL"
+if ($DEFAULT_ADMIN_EMAIL) {
+    Write-Host "  Login:              $DEFAULT_ADMIN_EMAIL"
+} else {
+    Write-Host "  Login:              create an account at /signup"
+}
 Write-Host ""
 
 if ($FIRST_AGENT_NAME -and $AGENT_ID) {
