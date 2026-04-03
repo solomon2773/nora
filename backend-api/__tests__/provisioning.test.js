@@ -2,7 +2,10 @@ const {
   AGENT_RUNTIME_PORT,
   OPENCLAW_GATEWAY_PORT,
 } = require("../../agent-runtime/lib/contracts");
-const { waitForAgentReadiness } = require("../../workers/provisioner/healthChecks");
+const {
+  waitForHttpReady,
+  waitForAgentReadiness,
+} = require("../../workers/provisioner/healthChecks");
 
 const mockReadNamespace = jest.fn();
 const mockCreateNamespace = jest.fn();
@@ -45,6 +48,24 @@ describe("provisioning runtime/gateway contracts", () => {
     delete process.env.GATEWAY_HOST;
     delete process.env.KUBECONFIG;
     delete process.env.K8S_NAMESPACE;
+  });
+
+  it("clears the abort timer even when a readiness fetch fails", async () => {
+    const clearTimeoutSpy = jest.spyOn(global, "clearTimeout");
+    const fetchImpl = jest.fn().mockRejectedValueOnce(new Error("connection refused"));
+
+    const result = await waitForHttpReady("http://agent.internal:9090/health", {
+      attempts: 1,
+      intervalMs: 1,
+      timeoutMs: 25,
+      fetchImpl,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/connection refused/i);
+    expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+
+    clearTimeoutSpy.mockRestore();
   });
 
   it("checks runtime on 9090 and gateway on the published control-plane port", async () => {

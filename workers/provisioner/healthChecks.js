@@ -17,11 +17,11 @@ async function waitForHttpReady(url, options = {}) {
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
       const response = await fetchImpl(url, { signal: controller.signal });
-      clearTimeout(timer);
 
       lastStatus = response.status;
       if (acceptStatuses.includes(response.status)) {
@@ -30,6 +30,8 @@ async function waitForHttpReady(url, options = {}) {
       lastError = new Error(`unexpected HTTP ${response.status}`);
     } catch (error) {
       lastError = error;
+    } finally {
+      clearTimeout(timer);
     }
 
     if (attempt < attempts) {
