@@ -89,7 +89,7 @@ Nora should keep the open-source repo as the trust anchor. After that, the curre
 3. **Use hosted evaluation / managed scoping** if you want less self-managed infrastructure work.
 
 See also:
-- [Commercial paths](COMMERCIAL_PATHS.md)
+- [Pricing + support + enterprise/custom](COMMERCIAL_PATHS.md)
 - [Paid rollout help / support](../SUPPORT.md)
 
 ## Security note
