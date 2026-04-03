@@ -130,7 +130,7 @@ describe("gateway control-plane embed", () => {
     );
     expect(res.text).toContain("ws://nora.test/api/ws/gateway/agent-1?token=");
     expect(res.text).toContain("window.location.hash='password='+encodeURIComponent(P)");
-    expect(res.text).toContain("localStorage.setItem('oc-gateway-url',R)");
+    expect(res.text).not.toContain("localStorage.setItem('oc-gateway-url',R)");
     expect(res.headers["referrer-policy"]).toBe("no-referrer");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
     expect(res.headers["x-frame-options"]).toBe("SAMEORIGIN");

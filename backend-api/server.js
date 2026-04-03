@@ -178,8 +178,8 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
   window.WebSocket.OPEN=_WS.OPEN;
   window.WebSocket.CLOSING=_WS.CLOSING;
   window.WebSocket.CLOSED=_WS.CLOSED;
-  // Override stored WebSocket URL so the gateway UI uses our relay
-  try{localStorage.setItem('oc-gateway-url',R);localStorage.setItem('openclaw-ws-url',R);}catch(e){}
+  // Do not persist the JWT-bearing relay URL into browser storage.
+  // The WebSocket constructor override is enough for this embedded session.
   // Set token in URL hash for gateway UI auto-login
   window.location.hash='password='+encodeURIComponent(P);
 })();
