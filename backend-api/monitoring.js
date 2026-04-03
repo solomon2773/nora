@@ -27,6 +27,8 @@ async function getMetrics() {
 
   return {
     activeAgents: statusMap.running || 0,
+    warningAgents: statusMap.warning || 0,
+    errorAgents: statusMap.error || 0,
     totalAgents: Object.values(statusMap).reduce((a, b) => a + b, 0),
     queuedAgents: statusMap.queued || 0,
     stoppedAgents: statusMap.stopped || 0,
