@@ -111,8 +111,9 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
 
   if (!hostPort) return res.status(409).json({ error: "Gateway port not published" });
 
+  const gatewayHost = process.env.GATEWAY_HOST || "localhost";
   res.json({
-    url: `http://localhost:${hostPort}`,
+    url: `http://${gatewayHost}:${hostPort}`,
     port: parseInt(hostPort),
     token: agent.gateway_token,
   });

@@ -189,6 +189,32 @@ describe("GET /agents/:id", () => {
   });
 });
 
+describe("GET /agents/:id/gateway-url", () => {
+  it("uses GATEWAY_HOST when returning a published gateway url", async () => {
+    process.env.GATEWAY_HOST = "gateway.external";
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        id: "a-gateway",
+        container_id: "container-gateway",
+        gateway_token: "gateway-token",
+        gateway_host_port: 19123,
+        user_id: "user-1",
+      }],
+    });
+
+    const res = await auth(request(app).get("/agents/a-gateway/gateway-url"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      url: "http://gateway.external:19123",
+      port: 19123,
+      token: "gateway-token",
+    });
+
+    delete process.env.GATEWAY_HOST;
+  });
+});
+
 describe("POST /agents/deploy", () => {
   it("rejects unauthenticated request", async () => {
     const res = await request(app).post("/agents/deploy").send({});
