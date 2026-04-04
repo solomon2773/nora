@@ -55,6 +55,7 @@ Public-facing docs and pages should emphasize:
 - repo-native install scripts and Docker Compose setup
 - operator workflows like signup, deploy, chat, logs, terminal, and settings
 - screenshot proof from the real product
+- the core positioning pillars: security built in, easy to use, expandable, self-hostable, and enterprise-capable
 - enterprise-capable self-hosting in the practical operator sense
 - a clear deployment continuum from single-host to Proxmox, private cloud, and AWS/Azure/GCP
 - OpenClaw as the best-supported example today
@@ -80,10 +81,11 @@ A short public answer is:
 Use these repo-native proof resources when you need to show the OSS story clearly:
 
 - `README.md`
+- `docs/PROOF_PACK.md`
 - `docs/IMPLEMENTATION_PROOF.md`
 - `docs/ADOPTION_CHECKLIST.md`
 - `docs/DEPLOYMENT_FOOTPRINTS.md`
-- `docs/README_SCREENSHOT_PLAN.md`
+- `docs/RUNTIME_DIRECTION.md`
 - `docs/assets/proof-landing-open-source-funnel.png`
 - `docs/assets/proof-usage-rights-apache.png`
 - `docs/assets/proof-signup-operator-account.png`
@@ -97,4 +99,5 @@ The README should make these points obvious:
 - self-hosting is the primary trust path
 - OpenClaw is the strongest runtime example today
 - Nora should stay open to broader runtime integration over time
+- the core positioning pillars should be obvious: security built in, easy to use, expandable, self-hostable, and enterprise-capable
 - screenshots should prove operator reality, not just marketing polish

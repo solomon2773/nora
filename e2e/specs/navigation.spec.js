@@ -66,7 +66,7 @@ test.describe("Open-source usage page", () => {
     await expect(page.getByRole("heading", { name: /what apache 2\.0 means here/i })).toBeVisible();
     await expect(page.getByText(/use the product commercially under apache 2\.0/i)).toBeVisible();
     await expect(page.getByText(/teams can self-host it, use it commercially, and inspect real proof in the repo first/i)).toBeVisible();
-    await expect(page.locator('a[href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh"]').first()).toBeVisible();
+    await expect(page.locator('a[href="https://storage.solomontsao.com/setup.sh"]').first()).toBeVisible();
   });
 });
 

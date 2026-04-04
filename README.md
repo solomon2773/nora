@@ -17,13 +17,13 @@
   ·
   <a href="https://nora.solomontsao.com">Hosted eval / managed PaaS</a>
   ·
-  <a href="https://nora.solomontsao.com/pricing">Pricing / rollout help / enterprise</a>
+  <a href="https://nora.solomontsao.com/pricing">Deployment / support / enterprise paths</a>
   ·
   <a href="https://github.com/solomon2773/nora/discussions">Rollout help / paid support</a>
   ·
-  <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh">Install script (bash)</a>
+  <a href="https://storage.solomontsao.com/setup.sh">Install script (bash)</a>
   ·
-  <a href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1">Install script (PowerShell)</a>
+  <a href="https://storage.solomontsao.com/setup.ps1">Install script (PowerShell)</a>
   ·
   <a href="#open-source-proof-pack">Open-source proof pack</a>
   ·
@@ -57,6 +57,18 @@ Nora gives technical teams a single place to:
 - monitor operator activity and runtime workflows
 
 The core value proposition is simple: **if you care about infrastructure, observability, repeatable operations, and a trustworthy operator surface, Nora helps you get to a usable control plane faster.**
+
+## Positioning pillars
+
+Nora should be easy to describe in one pass:
+
+- **Security built in** — the product should feel trustworthy for real operator environments, not like an afterthought wrapper around secrets and infrastructure.
+- **Easy to use** — teams should be able to reach first proof quickly: install, create an operator account, add one provider, deploy one runtime, and validate the workflow.
+- **Expandable** — the product should support a clean path from today's best-supported runtime to broader runtime adapters over time.
+- **Self-hostable** — the repo, install scripts, and Docker Compose flow should remain a credible trust path.
+- **Enterprise-capable** — Nora should make sense from single-host evaluation through Proxmox, private cloud / on-prem, and AWS/Azure/GCP rollout footprints.
+
+That combination is the durable positioning: not a toy dashboard, not a vague AI shell, and not a permanently single-runtime wrapper.
 
 ## Open source means open source
 
@@ -149,7 +161,7 @@ Use [nora.solomontsao.com](https://nora.solomontsao.com) and [signup](https://no
 
 ### 4. Enterprise / custom deployment
 
-Use [pricing](https://nora.solomontsao.com/pricing) when you need scoped help around deployment footprint, infrastructure ownership, rollout depth, or larger-team requirements.
+Use [deployment paths](https://nora.solomontsao.com/pricing) when you need scoped help around deployment footprint, infrastructure ownership, rollout depth, or larger-team requirements.
 
 See [Commercial paths](docs/COMMERCIAL_PATHS.md) for the full public-path positioning guide.
 
@@ -159,18 +171,31 @@ Nora should ask people to trust the product itself, the install path, and the op
 
 Use these resources when you need to prove that the repo is real and usable:
 
+- [Repo proof pack](docs/PROOF_PACK.md) — the public proof map for installability, operator workflow, screenshot evidence, and paid-path credibility
 - [Open-source implementation proof](docs/IMPLEMENTATION_PROOF.md) — code-backed evidence for self-hosting, operator flows, proof assets, and runtime direction
 - [Adoption checklist](docs/ADOPTION_CHECKLIST.md) — practical paths for self-hosting, Apache 2.0 commercial use, rollout help, hosted evaluation, and runtime expansion
 - [Open-source usage guide](docs/OPEN_SOURCE_USAGE.md) — Apache 2.0 usage rights and public repo framing
 - [Commercial paths](docs/COMMERCIAL_PATHS.md) — self-hosted OSS, rollout help / paid support, managed PaaS, and enterprise/custom entry points
 - [Deployment footprints](docs/DEPLOYMENT_FOOTPRINTS.md) — how Nora should scale from single-host through Proxmox, private cloud, and AWS/Azure/GCP
-- [README screenshot plan](docs/README_SCREENSHOT_PLAN.md)
-- [Marketing proof asset plan](docs/MARKETING_PROOF_ASSET_PLAN.md)
+- [Runtime direction guide](docs/RUNTIME_DIRECTION.md) — how to describe Nora as OpenClaw-first today while keeping the product future-runtime-friendly
 - [Operator screenshot capture script](e2e/scripts/capture-operator-screenshots.mjs) — regenerates the operator screenshots from a local self-hosted stack
 
 ## Screenshots
 
 The repo now includes real operator-side screenshots alongside the marketing and OSS-proof images. They show Nora as a working self-hosted control plane, with OpenClaw as the current best-supported runtime example rather than the forever-only frame.
+
+## What each proof asset demonstrates
+
+| Proof asset | What it demonstrates |
+|---|---|
+| `proof-landing-open-source-funnel.png` | Nora leads with an OSS-first trust path rather than a sales-first gate |
+| `proof-usage-rights-apache.png` | Apache 2.0 commercial-use rights and path clarity are visible publicly |
+| `proof-signup-operator-account.png` | A real operator account entry flow exists |
+| `proof-operator-dashboard.png` | Nora has a working operator overview beyond marketing copy |
+| `proof-operator-fleet.png` | Operators can manage and validate multiple runtimes |
+| `proof-operator-deploy-flow.png` | The first runtime deployment flow is concrete and inspectable |
+| `proof-operator-agent-detail.png` | Ongoing operations include validation, logs, and terminal surfaces |
+| `proof-operator-settings-provider-setup.png` | Provider setup is part of the current product path |
 
 ### Landing and OSS proof
 
@@ -223,6 +248,8 @@ Nora should be described as:
 
 That framing is more durable than treating Nora as a permanently single-runtime dashboard or centering the repo around sales packaging.
 
+See [Runtime direction guide](docs/RUNTIME_DIRECTION.md) for the durable wording and guardrails behind that positioning.
+
 ## Quick Start
 
 ### Prerequisites
@@ -237,13 +264,13 @@ That framing is more durable than treating Nora as a permanently single-runtime 
 **macOS / Linux / WSL2**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh | bash
+curl -fsSL https://storage.solomontsao.com/setup.sh | bash
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1 | iex
+iwr -useb https://storage.solomontsao.com/setup.ps1 | iex
 ```
 
 The installer will:
@@ -257,7 +284,7 @@ The installer will:
 7. start the Nora stack
 8. take you to the dashboard so you can deploy the first agent
 
-The public install links intentionally use `raw.githubusercontent.com` so the setup path stays aligned with the open-source repo and current trust model.
+The public install links intentionally use `storage.solomontsao.com` as the canonical installer host while keeping the open-source repo and install docs as the primary trust anchor.
 
 ### Manual setup
 
@@ -387,7 +414,7 @@ Track agent health, queue state, logs, metrics, and runtime activity.
 
 ### Core components
 
-- `frontend-marketing/` — landing, login, signup, pricing/deployment-path page
+- `frontend-marketing/` — landing, login, signup, and deployment/support-path page
 - `frontend-dashboard/` — operator dashboard for agents and settings
 - `backend-api/` — APIs, auth, key management, provisioning, monitoring
 - `admin-dashboard/` — admin/operator surfaces
