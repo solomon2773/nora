@@ -68,6 +68,28 @@ describe("provisioning runtime/gateway contracts", () => {
     clearTimeoutSpy.mockRestore();
   });
 
+  it("reports explicit timeout errors for readiness probes", async () => {
+    const fetchImpl = jest.fn().mockImplementationOnce(async (_url, { signal }) => {
+      return await new Promise((_, reject) => {
+        signal.addEventListener("abort", () => {
+          const err = new Error("This operation was aborted");
+          err.name = "AbortError";
+          reject(err);
+        }, { once: true });
+      });
+    });
+
+    const result = await waitForHttpReady("http://agent.internal:9090/health", {
+      attempts: 1,
+      intervalMs: 1,
+      timeoutMs: 5,
+      fetchImpl,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("timeout after 5ms");
+  });
+
   it("checks runtime on 9090 and gateway on the published control-plane port", async () => {
     const fetchImpl = jest
       .fn()

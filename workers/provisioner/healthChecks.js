@@ -29,7 +29,11 @@ async function waitForHttpReady(url, options = {}) {
       }
       lastError = new Error(`unexpected HTTP ${response.status}`);
     } catch (error) {
-      lastError = error;
+      if (controller.signal.aborted) {
+        lastError = new Error(`timeout after ${timeoutMs}ms`);
+      } else {
+        lastError = error;
+      }
     } finally {
       clearTimeout(timer);
     }
