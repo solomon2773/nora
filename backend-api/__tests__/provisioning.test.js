@@ -109,6 +109,26 @@ describe("provisioning runtime/gateway contracts", () => {
     expect(fetchImpl.mock.calls[1][0]).toBe("http://host.docker.internal:19123/");
   });
 
+  it("uses GATEWAY_HOST for published control-plane ports when provided", async () => {
+    process.env.GATEWAY_HOST = "gateway.external";
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce({ status: 200 })
+      .mockResolvedValueOnce({ status: 403 });
+
+    const readiness = await waitForAgentReadiness(
+      { host: "agent.internal", gatewayHostPort: 19123 },
+      {
+        runtime: { attempts: 1, intervalMs: 1, timeoutMs: 1, fetchImpl },
+        gateway: { attempts: 1, intervalMs: 1, timeoutMs: 1, fetchImpl },
+      }
+    );
+
+    expect(readiness.ok).toBe(true);
+    expect(readiness.gateway.host).toBe("gateway.external");
+    expect(fetchImpl.mock.calls[1][0]).toBe("http://gateway.external:19123/");
+  });
+
   it("honors explicit runtime and gateway host overrides", async () => {
     const fetchImpl = jest
       .fn()
