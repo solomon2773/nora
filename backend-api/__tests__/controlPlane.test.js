@@ -252,6 +252,33 @@ describe("gateway control-plane embed", () => {
     );
   });
 
+  it("uses GATEWAY_HOST for asset proxy access when a published gateway port is recorded", async () => {
+    process.env.GATEWAY_HOST = "gateway.external";
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_host_port: 19123,
+        status: "running",
+      }],
+    });
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/javascript" }),
+      arrayBuffer: async () => new TextEncoder().encode("console.log('proxy')").buffer,
+    });
+
+    const res = await request(app)
+      .get("/agents/agent-1/gateway/assets/app.js")
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://gateway.external:19123/assets/app.js",
+      expect.any(Object)
+    );
+  });
+
   it("uses the default 18789 gateway contract for asset proxy access when no host port is published", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
