@@ -3,6 +3,7 @@ const IORedis = require('ioredis');
 const { Pool } = require('pg');
 const { agentRuntimeUrl } = require('../../agent-runtime/lib/contracts');
 const { waitForAgentReadiness } = require('./healthChecks');
+const { buildReadinessWarningDetail } = require('./readinessWarning');
 
 // ── Connections ──────────────────────────────────────────
 const connection = new IORedis({
@@ -383,14 +384,7 @@ const worker = new Worker('deployments', async (job) => {
       gatewayPort,
     });
     if (!readiness.ok) {
-      const problems = [];
-      if (!readiness.runtime.ok) {
-        problems.push(`runtime unavailable at ${readiness.runtime.url} (${readiness.runtime.error || readiness.runtime.status || 'unreachable'})`);
-      }
-      if (!readiness.gateway.ok) {
-        problems.push(`gateway unavailable at ${readiness.gateway.url} (${readiness.gateway.error || readiness.gateway.status || 'unreachable'})`);
-      }
-      const detail = problems.join('; ');
+      const detail = buildReadinessWarningDetail(readiness);
       console.warn(`[provisioner] Readiness check failed for agent ${id}: ${detail}`);
       await db.query("UPDATE agents SET status = 'warning' WHERE id = $1", [id]);
       await db.query("UPDATE deployments SET status = 'warning' WHERE agent_id = $1", [id]);
