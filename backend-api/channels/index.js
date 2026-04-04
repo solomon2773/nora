@@ -6,6 +6,40 @@ const db = require("../db");
 const { agentRuntimeUrl } = require("../../agent-runtime/lib/contracts");
 const { getAdapter, listAdapterTypes } = require("./adapters");
 
+const REDACTED_SECRET = "[REDACTED]";
+const SECRET_CONFIG_KEY_RE = /(token|secret|password|webhook_url|smtp_pass|auth_token)/i;
+
+function parseConfig(config) {
+  return typeof config === "string" ? JSON.parse(config) : (config || {});
+}
+
+function redactChannelConfig(type, config = {}) {
+  const adapter = getAdapter(type);
+  const parsed = parseConfig(config);
+  const redacted = { ...parsed };
+  const passwordKeys = new Set(
+    (adapter.configFields || [])
+      .filter((field) => field?.type === "password")
+      .map((field) => field.key)
+  );
+
+  for (const key of Object.keys(redacted)) {
+    if ((passwordKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) && redacted[key]) {
+      redacted[key] = REDACTED_SECRET;
+    }
+  }
+
+  return redacted;
+}
+
+function sanitizeChannel(channel) {
+  if (!channel) return channel;
+  return {
+    ...channel,
+    config: redactChannelConfig(channel.type, channel.config),
+  };
+}
+
 // ── Channel CRUD ─────────────────────────────────────────
 
 async function listChannels(agentId) {
@@ -13,7 +47,7 @@ async function listChannels(agentId) {
     "SELECT * FROM channels WHERE agent_id = $1 ORDER BY created_at DESC",
     [agentId]
   );
-  return result.rows;
+  return result.rows.map(sanitizeChannel);
 }
 
 async function createChannel(agentId, type, name, config = {}) {
@@ -23,7 +57,7 @@ async function createChannel(agentId, type, name, config = {}) {
     "INSERT INTO channels(agent_id, type, name, config) VALUES($1, $2, $3, $4) RETURNING *",
     [agentId, type, name, JSON.stringify(config)]
   );
-  return result.rows[0];
+  return sanitizeChannel(result.rows[0]);
 }
 
 async function updateChannel(channelId, agentId, updates) {
@@ -52,7 +86,7 @@ async function updateChannel(channelId, agentId, updates) {
     params
   );
   if (!result.rows[0]) throw new Error("Channel not found");
-  return result.rows[0];
+  return sanitizeChannel(result.rows[0]);
 }
 
 async function deleteChannel(channelId, agentId) {
@@ -181,4 +215,6 @@ module.exports = {
   testChannel,
   handleInboundWebhook,
   getChannelTypes,
+  redactChannelConfig,
+  sanitizeChannel,
 };
