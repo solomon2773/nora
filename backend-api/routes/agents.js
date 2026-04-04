@@ -5,7 +5,7 @@ const billing = require("../billing");
 const scheduler = require("../scheduler");
 const containerManager = require("../containerManager");
 const monitoring = require("../monitoring");
-const { reconcileAgentStatus } = require("../agentStatus");
+const { isGatewayAvailableStatus, reconcileAgentStatus } = require("../agentStatus");
 const { OPENCLAW_GATEWAY_PORT } = require("../../agent-runtime/lib/contracts");
 const { asyncHandler } = require("../middleware/errorHandler");
 
@@ -93,7 +93,7 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
   );
   const agent = result.rows[0];
   if (!agent) return res.status(404).json({ error: "Agent not found" });
-  if (!["running", "warning"].includes(agent.status)) {
+  if (!isGatewayAvailableStatus(agent.status)) {
     return res.status(409).json({ error: "Agent gateway is only available while running" });
   }
   if (!agent.container_id) return res.status(409).json({ error: "No container" });

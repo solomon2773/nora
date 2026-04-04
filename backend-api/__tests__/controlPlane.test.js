@@ -109,6 +109,7 @@ describe("gateway control-plane embed", () => {
         host: "10.0.0.10",
         gateway_token: "gateway-password",
         gateway_host_port: null,
+        status: "running",
       }],
     });
     global.fetch.mockResolvedValue({
@@ -143,6 +144,7 @@ describe("gateway control-plane embed", () => {
         host: "10.0.0.10",
         gateway_token: "gateway-password",
         gateway_host_port: 19123,
+        status: "running",
       }],
     });
     global.fetch.mockResolvedValue({
@@ -160,5 +162,23 @@ describe("gateway control-plane embed", () => {
       "http://gateway.internal:19123/",
       expect.any(Object)
     );
+  });
+
+  it("rejects embed for error agents so failed control-plane state stays closed", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_token: "gateway-password",
+        gateway_host_port: 19123,
+        status: "error",
+      }],
+    });
+
+    const res = await request(app)
+      .get(`/agents/agent-1/gateway/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(404);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

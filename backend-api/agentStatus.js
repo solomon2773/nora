@@ -1,3 +1,7 @@
+function isGatewayAvailableStatus(status) {
+  return ["running", "warning"].includes(status);
+}
+
 function reconcileAgentStatus(currentStatus, liveRunning) {
   if (currentStatus === "queued" || currentStatus === "deploying") {
     return currentStatus;
@@ -16,4 +20,4 @@ function reconcileAgentStatus(currentStatus, liveRunning) {
   return currentStatus;
 }
 
-module.exports = { reconcileAgentStatus };
+module.exports = { isGatewayAvailableStatus, reconcileAgentStatus };
