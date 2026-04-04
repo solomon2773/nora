@@ -300,6 +300,11 @@ describe("POST /agents/:id/redeploy", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true, status: "queued" });
+    expect(mockDb.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("gateway_host_port = NULL, gateway_token = NULL"),
+      ["a-warning"]
+    );
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
       id: "a-warning",
       name: "Warning Agent",
