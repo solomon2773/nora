@@ -386,8 +386,9 @@ async function connectIntegration(agentId, provider, token, config = {}) {
     "INSERT INTO integrations(agent_id, provider, catalog_id, access_token, config) VALUES($1, $2, $3, $4, $5) RETURNING *",
     [agentId, provider, provider, encryptedToken, JSON.stringify(securedConfig)]
   );
+  const { access_token, ...safeRow } = result.rows[0] || {};
   return {
-    ...result.rows[0],
+    ...safeRow,
     config: redactSensitiveConfig(provider, securedConfig),
   };
 }
