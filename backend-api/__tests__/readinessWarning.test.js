@@ -1,4 +1,4 @@
-const { buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState } = require("../../workers/provisioner/readinessWarning");
+const { buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState, persistReadinessWarning } = require("../../workers/provisioner/readinessWarning");
 
 describe("buildReadinessWarningDetail", () => {
   it("formats a runtime-only readiness warning", () => {
@@ -113,5 +113,55 @@ describe("buildReadinessWarningState", () => {
         },
       },
     });
+  });
+});
+
+describe("persistReadinessWarning", () => {
+  it("writes warning agent status, warning deployment status, and the runtime warning event in order", async () => {
+    const db = { query: jest.fn().mockResolvedValue({}) };
+    const readiness = {
+      runtime: {
+        ok: false,
+        url: "http://agent.internal:9090/health",
+        error: "connection refused",
+      },
+      gateway: { ok: true },
+    };
+
+    const result = await persistReadinessWarning(db, {
+      agentId: "agent-123",
+      name: "Nora QA",
+      host: "agent.internal",
+      readiness,
+    });
+
+    expect(db.query).toHaveBeenNthCalledWith(
+      1,
+      "UPDATE agents SET status = 'warning' WHERE id = $1",
+      ["agent-123"]
+    );
+    expect(db.query).toHaveBeenNthCalledWith(
+      2,
+      "UPDATE deployments SET status = 'warning' WHERE agent_id = $1",
+      ["agent-123"]
+    );
+    expect(db.query).toHaveBeenNthCalledWith(
+      3,
+      "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
+      [
+        "agent_runtime_warning",
+        "Agent \"Nora QA\" deployed with readiness warning: runtime unavailable at http://agent.internal:9090/health (connection refused)",
+        JSON.stringify({
+          agentId: "agent-123",
+          host: "agent.internal",
+          detail: "runtime unavailable at http://agent.internal:9090/health (connection refused)",
+          readiness,
+        }),
+      ]
+    );
+    expect(result).toEqual(expect.objectContaining({
+      agentStatus: "warning",
+      deploymentStatus: "warning",
+    }));
   });
 });

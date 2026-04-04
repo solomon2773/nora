@@ -38,4 +38,17 @@ function buildReadinessWarningState({ agentId, name, host, readiness }) {
   };
 }
 
-module.exports = { buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState };
+async function persistReadinessWarning(db, { agentId, name, host, readiness }) {
+  const warningState = buildReadinessWarningState({ agentId, name, host, readiness });
+
+  await db.query(`UPDATE agents SET status = '${warningState.agentStatus}' WHERE id = $1`, [agentId]);
+  await db.query(`UPDATE deployments SET status = '${warningState.deploymentStatus}' WHERE agent_id = $1`, [agentId]);
+  await db.query(
+    "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
+    [warningState.event.type, warningState.event.message, JSON.stringify(warningState.event.metadata)]
+  );
+
+  return warningState;
+}
+
+module.exports = { buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState, persistReadinessWarning };

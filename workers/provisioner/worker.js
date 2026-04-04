@@ -3,7 +3,7 @@ const IORedis = require('ioredis');
 const { Pool } = require('pg');
 const { agentRuntimeUrl } = require('../../agent-runtime/lib/contracts');
 const { waitForAgentReadiness } = require('./healthChecks');
-const { buildReadinessWarningDetail, buildReadinessWarningState } = require('./readinessWarning');
+const { buildReadinessWarningDetail, persistReadinessWarning } = require('./readinessWarning');
 
 // ── Connections ──────────────────────────────────────────
 const connection = new IORedis({
@@ -385,14 +385,8 @@ const worker = new Worker('deployments', async (job) => {
     });
     if (!readiness.ok) {
       const detail = buildReadinessWarningDetail(readiness);
-      const warningState = buildReadinessWarningState({ agentId: id, name, host, readiness });
       console.warn(`[provisioner] Readiness check failed for agent ${id}: ${detail}`);
-      await db.query(`UPDATE agents SET status = '${warningState.agentStatus}' WHERE id = $1`, [id]);
-      await db.query(`UPDATE deployments SET status = '${warningState.deploymentStatus}' WHERE agent_id = $1`, [id]);
-      await db.query(
-        "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
-        [warningState.event.type, warningState.event.message, JSON.stringify(warningState.event.metadata)]
-      );
+      await persistReadinessWarning(db, { agentId: id, name, host, readiness });
     }
 
     // Sync integrations to newly deployed agent container
