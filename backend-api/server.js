@@ -14,6 +14,7 @@ const { getBootstrapAdminSeedConfig } = require("./bootstrapAdmin");
 const { authenticateToken } = require("./middleware/auth");
 const { correlationId, errorHandler } = require("./middleware/errorHandler");
 const { createGatewayRouter, attachGatewayWS } = require("./gatewayProxy");
+const { reconcileAgentStatus } = require("./agentStatus");
 const { OPENCLAW_GATEWAY_PORT } = require("../agent-runtime/lib/contracts");
 
 // ─── JWT Secret ───────────────────────────────────────────────────
@@ -467,14 +468,15 @@ if (require.main === module) {
         for (const agent of agents.rows) {
           try {
             const info = await docker.getContainer(agent.container_id).inspect();
-            const liveStatus = info.State?.Running ? "running" : "stopped";
-            if (liveStatus !== agent.status && agent.status !== "queued" && agent.status !== "deploying") {
-              await db.query("UPDATE agents SET status = $1 WHERE id = $2", [liveStatus, agent.id]);
+            const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(info.State?.Running));
+            if (reconciledStatus !== agent.status) {
+              await db.query("UPDATE agents SET status = $1 WHERE id = $2", [reconciledStatus, agent.id]);
             }
           } catch (e) {
-            // Container removed or unreachable — mark as stopped if it was running
-            if (agent.status === "running" || agent.status === "warning") {
-              await db.query("UPDATE agents SET status = 'stopped' WHERE id = $1", [agent.id]);
+            // Container removed or unreachable — mark any previously live/degraded agent as stopped.
+            const reconciledStatus = reconcileAgentStatus(agent.status, false);
+            if (reconciledStatus !== agent.status) {
+              await db.query("UPDATE agents SET status = $1 WHERE id = $2", [reconciledStatus, agent.id]);
             }
           }
         }
