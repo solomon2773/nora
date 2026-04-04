@@ -364,8 +364,8 @@ router.post("/:id/redeploy", async (req, res) => {
     );
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
-    if (agent.status !== "error" && agent.status !== "stopped") {
-      return res.status(400).json({ error: "Agent must be in error or stopped state to redeploy" });
+    if (!["warning", "error", "stopped"].includes(agent.status)) {
+      return res.status(400).json({ error: "Agent must be in warning, error, or stopped state to redeploy" });
     }
 
     await db.query(

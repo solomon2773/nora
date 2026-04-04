@@ -209,6 +209,51 @@ describe("POST /agents/:id/stop", () => {
   });
 });
 
+describe("POST /agents/:id/redeploy", () => {
+  it("allows redeploy when an agent is in warning state", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "a-warning",
+          name: "Warning Agent",
+          status: "warning",
+          sandbox_type: "standard",
+          vcpu: 2,
+          ram_mb: 2048,
+          disk_gb: 20,
+          container_name: "oclaw-agent-warning",
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await auth(request(app).post("/agents/a-warning/redeploy"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, status: "queued" });
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
+      id: "a-warning",
+      name: "Warning Agent",
+      userId: "user-1",
+      sandbox: "standard",
+      specs: { vcpu: 2, ram_mb: 2048, disk_gb: 20 },
+      container_name: "oclaw-agent-warning",
+    }));
+  });
+
+  it("rejects redeploy when the agent is still actively running", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{ id: "a-running", name: "Running Agent", status: "running" }],
+    });
+
+    const res = await auth(request(app).post("/agents/a-running/redeploy"));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/warning, error, or stopped/i);
+    expect(mockAddDeploymentJob).not.toHaveBeenCalled();
+  });
+});
+
 describe("POST /agents/:id/delete", () => {
   it("deletes an agent", async () => {
     // db.query calls: SELECT agent, DELETE
