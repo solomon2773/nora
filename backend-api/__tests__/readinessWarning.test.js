@@ -8,6 +8,14 @@ describe("shouldPersistReadinessWarning", () => {
   it("returns false for healthy readiness", () => {
     expect(shouldPersistReadinessWarning({ ok: true })).toBe(false);
   });
+
+  it("returns false when runtime and gateway are both healthy", () => {
+    expect(shouldPersistReadinessWarning({
+      ok: true,
+      runtime: { ok: true },
+      gateway: { ok: true },
+    })).toBe(false);
+  });
 });
 
 describe("buildReadinessWarningDetail", () => {
@@ -129,12 +137,17 @@ describe("buildReadinessWarningState", () => {
 describe("persistReadinessWarning", () => {
   it("returns null and performs no writes for healthy readiness", async () => {
     const db = { query: jest.fn().mockResolvedValue({}) };
+    const readiness = {
+      ok: true,
+      runtime: { ok: true, url: "http://agent.internal:9090/health" },
+      gateway: { ok: true, url: "http://host.docker.internal:19123/" },
+    };
 
     const result = await persistReadinessWarning(db, {
       agentId: "agent-healthy",
       name: "Healthy Nora",
       host: "agent.internal",
-      readiness: { ok: true },
+      readiness,
     });
 
     expect(result).toBeNull();
