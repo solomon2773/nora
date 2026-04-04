@@ -371,7 +371,7 @@ router.post("/:id/redeploy", async (req, res) => {
     }
 
     await db.query(
-      "UPDATE agents SET status = 'queued', container_id = NULL, host = NULL WHERE id = $1",
+      "UPDATE agents SET status = 'queued', container_id = NULL, host = NULL, gateway_host_port = NULL, gateway_token = NULL WHERE id = $1",
       [agent.id]
     );
 
