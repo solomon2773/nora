@@ -21,13 +21,13 @@ If those steps work cleanly, Nora has already proven the core self-hosted value.
 **macOS / Linux / WSL2**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh | bash
+curl -fsSL https://storage.solomontsao.com/setup.sh | bash
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1 | iex
+iwr -useb https://storage.solomontsao.com/setup.ps1 | iex
 ```
 
 Use this path if you want Nora to:
@@ -79,7 +79,7 @@ Open the agent detail page and confirm:
 | You want to keep self-hosting and just need the docs | [README Quick Start](../README.md#quick-start) |
 | You hit a bug or broken instruction | [GitHub Issues](https://github.com/solomon2773/nora/issues) |
 | You want rollout help or paid support without giving up self-hosting | [GitHub Discussions](https://github.com/solomon2773/nora/discussions) |
-| You do not want a pure DIY path anymore | [Pricing / deployment paths](https://nora.solomontsao.com/pricing) |
+| You do not want a pure DIY path anymore | [Deployment / support paths](https://nora.solomontsao.com/pricing) |
 | You want a hosted evaluation, managed PaaS, or custom deployment conversation | [Hosted evaluation signup](https://nora.solomontsao.com/signup) |
 
 ## Upgrade paths from self-hosted evaluation

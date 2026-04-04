@@ -47,7 +47,7 @@ Best fit:
 
 Use the public deployment paths when self-hosting is not the preferred first step.
 
-- [Pricing / deployment paths](https://nora.solomontsao.com/pricing)
+- [Deployment / support paths](https://nora.solomontsao.com/pricing)
 - [Hosted evaluation signup](https://nora.solomontsao.com/signup)
 
 Best fit:
@@ -73,4 +73,4 @@ Do **not** post secrets, API keys, `.env` files, or private credentials in Issue
 If you are unsure where to start:
 - choose [Install guide](docs/INSTALL.md) if you want to self-host
 - choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want rollout help or paid support
-- choose [pricing](https://nora.solomontsao.com/pricing) or [signup](https://nora.solomontsao.com/signup) if you want a hosted, managed, or custom-deployment path
+- choose [deployment paths](https://nora.solomontsao.com/pricing) or [signup](https://nora.solomontsao.com/signup) if you want a hosted, managed, or custom-deployment path

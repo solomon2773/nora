@@ -89,17 +89,17 @@ const PROOF_LINKS = [
   {
     eyebrow: "Commercial paths",
     title: "Paid outcomes are explicit",
-    desc: "The pricing page explains self-hosting, rollout help / paid support, managed evaluation, and enterprise / custom paths without unsupported claims.",
+    desc: "The deployment-path page explains self-hosting, rollout help / paid support, managed evaluation, and enterprise / custom paths without unsupported claims.",
     href: "/pricing",
-    cta: "Review pricing + deployment paths",
+    cta: "Review deployment paths",
     external: false,
   },
   {
     eyebrow: "Proof assets",
-    title: "Operators can inspect real screenshots",
-    desc: "README screenshots show the landing flow, signup, dashboard, deploy flow, agent detail, and provider setup in the repo today.",
-    href: "https://github.com/solomon2773/nora#screenshots",
-    cta: "Inspect screenshot proof",
+    title: "Operators can inspect a full repo proof pack",
+    desc: "The proof pack maps installability, screenshot evidence, operator workflow, and non-DIY path credibility without unsupported claims.",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/PROOF_PACK.md",
+    cta: "Open repo proof pack",
     external: true,
   },
   {
@@ -188,7 +188,7 @@ export default function Home() {
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
             <a href="#paths" className="hover:text-white transition-colors">Paths</a>
             <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="/pricing" className="hover:text-white transition-colors">Pricing</a>
+            <a href="/pricing" className="hover:text-white transition-colors">Deployment Paths</a>
           </div>
 
           <div className="hidden md:flex items-center gap-4">
@@ -201,7 +201,7 @@ export default function Home() {
               GitHub
             </a>
             <Link href="/pricing" className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-semibold transition-all shadow-lg shadow-blue-500/20">
-              Pricing
+              Deployment Paths
             </Link>
           </div>
 
@@ -214,7 +214,7 @@ export default function Home() {
           <div className="md:hidden bg-[#0f172a] border-b border-white/5 px-4 pt-2 pb-6 flex flex-col gap-4 animate-in slide-in-from-top duration-300">
             <a href="#paths" className="text-sm font-medium text-slate-400 py-2" onClick={() => setMobileMenuOpen(false)}>Paths</a>
             <a href="#features" className="text-sm font-medium text-slate-400 py-2" onClick={() => setMobileMenuOpen(false)}>Features</a>
-            <a href="/pricing" className="text-sm font-medium text-slate-400 py-2" onClick={() => setMobileMenuOpen(false)}>Pricing</a>
+            <a href="/pricing" className="text-sm font-medium text-slate-400 py-2" onClick={() => setMobileMenuOpen(false)}>Deployment Paths</a>
             <hr className="border-white/5" />
             <a
               href="https://github.com/solomon2773/nora"
@@ -261,7 +261,7 @@ export default function Home() {
               href="/pricing"
               className="w-full sm:w-auto bg-blue-600 px-8 py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
             >
-              Pricing & deployment paths <ArrowRight size={18} />
+              Deployment & support paths <ArrowRight size={18} />
             </Link>
             <a
               href="https://nora.solomontsao.com/signup"
@@ -402,7 +402,7 @@ export default function Home() {
               <ul className="space-y-2 text-slate-400">
                 <li><a href="https://github.com/solomon2773/nora" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">GitHub</a></li>
                 <li><a href="https://github.com/solomon2773/nora#quick-start" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Quick Start</a></li>
-                <li><a href="/pricing" className="hover:text-white transition-colors">Pricing</a></li>
+                <li><a href="/pricing" className="hover:text-white transition-colors">Deployment Paths</a></li>
               </ul>
             </div>
             <div>

@@ -23,8 +23,8 @@ Start here:
 - Repo: `https://github.com/solomon2773/nora`
 - Quick start: `README.md#quick-start`
 - Install guide: `docs/INSTALL.md`
-- Bash install: `https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh`
-- PowerShell install: `https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1`
+- Bash install: `https://storage.solomontsao.com/setup.sh`
+- PowerShell install: `https://storage.solomontsao.com/setup.ps1`
 
 Best fit:
 
@@ -59,7 +59,7 @@ Current public entry points:
 
 - Hosted app: `https://nora.solomontsao.com`
 - Hosted signup: `https://nora.solomontsao.com/signup`
-- Pricing / deployment paths page: `https://nora.solomontsao.com/pricing`
+- Deployment / support paths page: `https://nora.solomontsao.com/pricing`
 
 Best fit:
 
@@ -74,7 +74,7 @@ Best for teams that expect larger-team requirements, more complex infrastructure
 
 Current public entry point:
 
-- Pricing / deployment paths page: `https://nora.solomontsao.com/pricing`
+- Deployment / support paths page: `https://nora.solomontsao.com/pricing`
 
 Best fit:
 
@@ -90,10 +90,10 @@ Best fit:
 |---|---|---|---|
 | Self-hosted open source | `README#Quick Start` + install docs | Team wants full infra control and transparent proof | Account → provider key → first runtime on their own stack |
 | Rollout help / paid support | GitHub Discussions | Team wants faster rollout without giving up self-hosting | Scoped help around setup, onboarding, and first-value delivery |
-| Hosted evaluation / managed PaaS | Signup + pricing page | Team wants less ops overhead for the first evaluation | Faster evaluation start, then managed-path qualification |
-| Enterprise / custom deployment | Pricing page | Team needs a more tailored environment or rollout scope | Deployment footprint, requirements, and commercial scoping |
+| Hosted evaluation / managed PaaS | Signup + deployment-path page | Team wants less ops overhead for the first evaluation | Faster evaluation start, then managed-path qualification |
+| Enterprise / custom deployment | Deployment-path page | Team needs a more tailored environment or rollout scope | Deployment footprint, requirements, and commercial scoping |
 
-## How pricing should be framed today
+## How public commercial scoping should be framed today
 
 Nora does **not** need the repo to lead with invented fixed-plan sales language.
 
@@ -101,9 +101,9 @@ Instead, public messaging should make these points clear:
 
 1. which path to choose — self-hosted, rollout help / paid support, hosted evaluation / managed PaaS, or enterprise/custom
 2. what changes scope — infra ownership, rollout depth, support level, deployment complexity, and operator requirements
-3. what the next step is — install docs, GitHub Discussions, hosted signup, or pricing-page qualification
+3. what the next step is — install docs, GitHub Discussions, hosted signup, or deployment-path qualification
 
-A short honest pricing summary is:
+A short honest public scoping summary is:
 
 - **Self-hosted OSS:** free under Apache 2.0
 - **Rollout help / paid support:** scoped based on setup and support needs
@@ -139,7 +139,7 @@ Whether the conversation starts in GitHub Discussions or after hosted signup, it
 
 ## Domain consistency rules
 
-- Use the GitHub repo and install scripts as the trust anchor for self-hosted evaluation.
+- Use the GitHub repo plus the canonical public installer URLs as the trust anchor for self-hosted evaluation.
 - Use `nora.solomontsao.com` for the live app, signup flow, and deployment/commercial path packaging.
 - Use GitHub Discussions as the current public rollout-help and paid-support intake.
 - Avoid mixing repo-native install CTAs with copy that implies unsupported deployment promises.
