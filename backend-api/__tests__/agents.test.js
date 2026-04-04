@@ -199,6 +199,7 @@ describe("GET /agents/:id/gateway-url", () => {
         gateway_token: "gateway-token",
         gateway_host_port: 19123,
         user_id: "user-1",
+        status: "running",
       }],
     });
 
@@ -211,6 +212,23 @@ describe("GET /agents/:id/gateway-url", () => {
     });
 
     delete process.env.GATEWAY_HOST;
+  });
+
+  it("rejects gateway url lookups for stopped agents so stale ports are not exposed", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        id: "a-stopped-gateway",
+        container_id: "container-gateway",
+        gateway_host_port: 19123,
+        user_id: "user-1",
+        status: "stopped",
+      }],
+    });
+
+    const res = await auth(request(app).get("/agents/a-stopped-gateway/gateway-url"));
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/only available while running/i);
   });
 });
 
