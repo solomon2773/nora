@@ -88,11 +88,14 @@ function parseInterval(pg) {
 // Get the gateway control UI URL (published host port for direct browser access)
 router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
   const result = await db.query(
-    "SELECT id, container_id, gateway_token, gateway_host_port, user_id FROM agents WHERE id = $1 AND user_id = $2",
+    "SELECT id, container_id, gateway_token, gateway_host_port, user_id, status FROM agents WHERE id = $1 AND user_id = $2",
     [req.params.id, req.user.id]
   );
   const agent = result.rows[0];
   if (!agent) return res.status(404).json({ error: "Agent not found" });
+  if (!["running", "warning"].includes(agent.status)) {
+    return res.status(409).json({ error: "Agent gateway is only available while running" });
+  }
   if (!agent.container_id) return res.status(409).json({ error: "No container" });
 
   // Use stored host port if available, otherwise fall back to Docker inspect
