@@ -1,4 +1,18 @@
-const { reconcileAgentStatus } = require("../agentStatus");
+const { isGatewayAvailableStatus, reconcileAgentStatus } = require("../agentStatus");
+
+describe("isGatewayAvailableStatus", () => {
+  it("allows running and warning states", () => {
+    expect(isGatewayAvailableStatus("running")).toBe(true);
+    expect(isGatewayAvailableStatus("warning")).toBe(true);
+  });
+
+  it("blocks stopped, error, queued, and deploying states", () => {
+    expect(isGatewayAvailableStatus("stopped")).toBe(false);
+    expect(isGatewayAvailableStatus("error")).toBe(false);
+    expect(isGatewayAvailableStatus("queued")).toBe(false);
+    expect(isGatewayAvailableStatus("deploying")).toBe(false);
+  });
+});
 
 describe("reconcileAgentStatus", () => {
   it("preserves warning when the container is still running", () => {
