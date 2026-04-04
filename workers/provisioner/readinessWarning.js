@@ -1,3 +1,7 @@
+function shouldPersistReadinessWarning(readiness) {
+  return !readiness?.ok;
+}
+
 function buildReadinessWarningDetail(readiness) {
   const problems = [];
 
@@ -39,6 +43,10 @@ function buildReadinessWarningState({ agentId, name, host, readiness }) {
 }
 
 async function persistReadinessWarning(db, { agentId, name, host, readiness }) {
+  if (!shouldPersistReadinessWarning(readiness)) {
+    return null;
+  }
+
   const warningState = buildReadinessWarningState({ agentId, name, host, readiness });
 
   await db.query(`UPDATE agents SET status = '${warningState.agentStatus}' WHERE id = $1`, [agentId]);
@@ -51,4 +59,4 @@ async function persistReadinessWarning(db, { agentId, name, host, readiness }) {
   return warningState;
 }
 
-module.exports = { buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState, persistReadinessWarning };
+module.exports = { shouldPersistReadinessWarning, buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState, persistReadinessWarning };

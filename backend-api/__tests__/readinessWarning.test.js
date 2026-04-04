@@ -1,4 +1,14 @@
-const { buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState, persistReadinessWarning } = require("../../workers/provisioner/readinessWarning");
+const { shouldPersistReadinessWarning, buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState, persistReadinessWarning } = require("../../workers/provisioner/readinessWarning");
+
+describe("shouldPersistReadinessWarning", () => {
+  it("returns true for degraded readiness", () => {
+    expect(shouldPersistReadinessWarning({ ok: false })).toBe(true);
+  });
+
+  it("returns false for healthy readiness", () => {
+    expect(shouldPersistReadinessWarning({ ok: true })).toBe(false);
+  });
+});
 
 describe("buildReadinessWarningDetail", () => {
   it("formats a runtime-only readiness warning", () => {
@@ -117,6 +127,20 @@ describe("buildReadinessWarningState", () => {
 });
 
 describe("persistReadinessWarning", () => {
+  it("returns null and performs no writes for healthy readiness", async () => {
+    const db = { query: jest.fn().mockResolvedValue({}) };
+
+    const result = await persistReadinessWarning(db, {
+      agentId: "agent-healthy",
+      name: "Healthy Nora",
+      host: "agent.internal",
+      readiness: { ok: true },
+    });
+
+    expect(result).toBeNull();
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
   it("writes warning agent status, warning deployment status, and the runtime warning event in order", async () => {
     const db = { query: jest.fn().mockResolvedValue({}) };
     const readiness = {
