@@ -25,4 +25,17 @@ function buildReadinessWarningMetadata({ agentId, host, readiness }) {
   };
 }
 
-module.exports = { buildReadinessWarningDetail, buildReadinessWarningMetadata };
+function buildReadinessWarningState({ agentId, name, host, readiness }) {
+  const metadata = buildReadinessWarningMetadata({ agentId, host, readiness });
+  return {
+    agentStatus: 'warning',
+    deploymentStatus: 'warning',
+    event: {
+      type: 'agent_runtime_warning',
+      message: `Agent "${name}" deployed with readiness warning: ${metadata.detail}`,
+      metadata,
+    },
+  };
+}
+
+module.exports = { buildReadinessWarningDetail, buildReadinessWarningMetadata, buildReadinessWarningState };

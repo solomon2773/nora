@@ -3,7 +3,7 @@ const IORedis = require('ioredis');
 const { Pool } = require('pg');
 const { agentRuntimeUrl } = require('../../agent-runtime/lib/contracts');
 const { waitForAgentReadiness } = require('./healthChecks');
-const { buildReadinessWarningDetail, buildReadinessWarningMetadata } = require('./readinessWarning');
+const { buildReadinessWarningDetail, buildReadinessWarningState } = require('./readinessWarning');
 
 // ── Connections ──────────────────────────────────────────
 const connection = new IORedis({
@@ -385,12 +385,13 @@ const worker = new Worker('deployments', async (job) => {
     });
     if (!readiness.ok) {
       const detail = buildReadinessWarningDetail(readiness);
+      const warningState = buildReadinessWarningState({ agentId: id, name, host, readiness });
       console.warn(`[provisioner] Readiness check failed for agent ${id}: ${detail}`);
-      await db.query("UPDATE agents SET status = 'warning' WHERE id = $1", [id]);
-      await db.query("UPDATE deployments SET status = 'warning' WHERE agent_id = $1", [id]);
+      await db.query(`UPDATE agents SET status = '${warningState.agentStatus}' WHERE id = $1`, [id]);
+      await db.query(`UPDATE deployments SET status = '${warningState.deploymentStatus}' WHERE agent_id = $1`, [id]);
       await db.query(
         "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
-        ['agent_runtime_warning', `Agent "${name}" deployed with readiness warning: ${detail}`, JSON.stringify(buildReadinessWarningMetadata({ agentId: id, host, readiness }))]
+        [warningState.event.type, warningState.event.message, JSON.stringify(warningState.event.metadata)]
       );
     }
 
