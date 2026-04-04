@@ -10,6 +10,7 @@ const channels = require("./channels");
 const marketplace = require("./marketplace");
 const integrations = require("./integrations");
 const snapshots = require("./snapshots");
+const { getBootstrapAdminSeedConfig } = require("./bootstrapAdmin");
 const { authenticateToken } = require("./middleware/auth");
 const { correlationId, errorHandler } = require("./middleware/errorHandler");
 const { createGatewayRouter, attachGatewayWS } = require("./gatewayProxy");
@@ -373,21 +374,21 @@ if (require.main === module) {
     try {
       const { rows } = await db.query("SELECT id FROM users LIMIT 1");
       if (rows.length === 0) {
-        const adminEmail = (process.env.DEFAULT_ADMIN_EMAIL || "").trim();
-        const adminPass = process.env.DEFAULT_ADMIN_PASSWORD || "";
-        const hasExplicitBootstrapCreds = Boolean(adminEmail) && Boolean(adminPass);
-        const hasSecureBootstrapPassword = adminPass.length >= 12 && adminPass !== "admin123";
+        const bootstrapAdmin = getBootstrapAdminSeedConfig({
+          adminEmail: process.env.DEFAULT_ADMIN_EMAIL,
+          adminPassword: process.env.DEFAULT_ADMIN_PASSWORD,
+        });
 
-        if (!hasExplicitBootstrapCreds || !hasSecureBootstrapPassword) {
+        if (!bootstrapAdmin.shouldSeed) {
           console.warn("Skipping bootstrap admin seed: set explicit DEFAULT_ADMIN_EMAIL and a non-default DEFAULT_ADMIN_PASSWORD with at least 12 characters.");
         } else {
           const bcrypt = require("bcryptjs");
-          const hash = await bcrypt.hash(adminPass, 10);
+          const hash = await bcrypt.hash(bootstrapAdmin.password, 10);
           await db.query(
             "INSERT INTO users(email, password_hash, role, name) VALUES($1, $2, 'admin', 'Admin') ON CONFLICT DO NOTHING",
-            [adminEmail, hash]
+            [bootstrapAdmin.email, hash]
           );
-          console.log(`Bootstrap admin account created: ${adminEmail}`);
+          console.log(`Bootstrap admin account created: ${bootstrapAdmin.email}`);
         }
       }
     } catch (e) { console.error("Failed to seed admin account:", e.message); }
