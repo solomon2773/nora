@@ -120,6 +120,49 @@ describe("GET /agents", () => {
   });
 });
 
+describe("GET /agents/:id", () => {
+  it("preserves warning status without forcing live reconciliation", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        id: "a-warning",
+        name: "Warning Agent",
+        status: "warning",
+        user_id: "user-1",
+        container_id: "container-1",
+      }],
+    });
+
+    const res = await auth(request(app).get("/agents/a-warning"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("status", "warning");
+  });
+
+  it("reconciles stopped agents back to running when the container is live", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "a-stopped",
+          name: "Stopped Agent",
+          status: "stopped",
+          user_id: "user-1",
+          container_id: "container-2",
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "a-stopped",
+          status: "running",
+        }],
+      });
+
+    const res = await auth(request(app).get("/agents/a-stopped"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("status", "running");
+  });
+});
+
 describe("POST /agents/deploy", () => {
   it("rejects unauthenticated request", async () => {
     const res = await request(app).post("/agents/deploy").send({});
