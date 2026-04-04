@@ -164,6 +164,24 @@ describe("gateway control-plane embed", () => {
     );
   });
 
+  it("rejects embed for stopped agents so stale control-plane state stays closed", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_token: "gateway-password",
+        gateway_host_port: 19123,
+        status: "stopped",
+      }],
+    });
+
+    const res = await request(app)
+      .get(`/agents/agent-1/gateway/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(404);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("rejects embed for error agents so failed control-plane state stays closed", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
