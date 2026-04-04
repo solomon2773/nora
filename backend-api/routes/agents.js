@@ -115,7 +115,6 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
   res.json({
     url: `http://${gatewayHost}:${hostPort}`,
     port: parseInt(hostPort),
-    token: agent.gateway_token,
   });
 }));
 
