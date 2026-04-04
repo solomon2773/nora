@@ -209,6 +209,43 @@ describe("OAuth hardening", () => {
     expect(res.body.error).toMatch(/oauthAccessToken|oauthIdToken/i);
   });
 
+  it("rejects unsupported OAuth providers before any account lookup", async () => {
+    process.env.OAUTH_LOGIN_ENABLED = "true";
+
+    const res = await request(app)
+      .post("/auth/oauth-login")
+      .send({ email: "user@example.com", provider: "discord", oauthAccessToken: "test-token" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/unsupported oauth provider/i);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects Google id tokens issued for a different client id", async () => {
+    process.env.OAUTH_LOGIN_ENABLED = "true";
+    global.fetch.mockResolvedValueOnce(jsonResponse({
+      sub: "google-sub-123",
+      email: "user@example.com",
+      email_verified: "true",
+      aud: "unexpected-client-id",
+      name: "Google User",
+    }));
+
+    const res = await request(app)
+      .post("/auth/oauth-login")
+      .send({
+        email: "user@example.com",
+        provider: "google",
+        providerId: "google-sub-123",
+        oauthIdToken: "google-id-token",
+      });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toMatch(/audience mismatch/i);
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
   it("verifies Google id tokens server-side before issuing a platform JWT", async () => {
     process.env.OAUTH_LOGIN_ENABLED = "true";
     global.fetch.mockResolvedValueOnce(jsonResponse({
