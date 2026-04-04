@@ -214,6 +214,26 @@ describe("GET /agents/:id/gateway-url", () => {
     delete process.env.GATEWAY_HOST;
   });
 
+  it("allows gateway url lookups for warning agents so degraded control-plane recovery still works", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        id: "a-warning-gateway",
+        container_id: "container-warning-gateway",
+        gateway_host_port: 19123,
+        user_id: "user-1",
+        status: "warning",
+      }],
+    });
+
+    const res = await auth(request(app).get("/agents/a-warning-gateway/gateway-url"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      url: "http://localhost:19123",
+      port: 19123,
+    });
+  });
+
   it("rejects gateway url lookups for stopped agents so stale ports are not exposed", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
@@ -226,6 +246,23 @@ describe("GET /agents/:id/gateway-url", () => {
     });
 
     const res = await auth(request(app).get("/agents/a-stopped-gateway/gateway-url"));
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/only available while running/i);
+  });
+
+  it("rejects gateway url lookups for error agents so failed control-plane state stays closed", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        id: "a-error-gateway",
+        container_id: "container-error-gateway",
+        gateway_host_port: 19123,
+        user_id: "user-1",
+        status: "error",
+      }],
+    });
+
+    const res = await auth(request(app).get("/agents/a-error-gateway/gateway-url"));
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/only available while running/i);
