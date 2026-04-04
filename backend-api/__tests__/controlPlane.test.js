@@ -252,6 +252,32 @@ describe("gateway control-plane embed", () => {
     );
   });
 
+  it("uses the default 18789 gateway contract for asset proxy access when no host port is published", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_host_port: null,
+        status: "running",
+      }],
+    });
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/javascript" }),
+      arrayBuffer: async () => new TextEncoder().encode("console.log('default-port')").buffer,
+    });
+
+    const res = await request(app)
+      .get("/agents/agent-1/gateway/assets/app.js")
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://10.0.0.10:18789/assets/app.js",
+      expect.any(Object)
+    );
+  });
+
   it("rejects asset proxy access for stopped agents so stale control-plane state stays closed", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
