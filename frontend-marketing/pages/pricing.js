@@ -11,7 +11,7 @@ const PATHS = [
     icon: Server,
     features: [
       "Clone, modify, and self-host the full repo",
-      "Install from GitHub + raw setup scripts",
+      "Install from GitHub + canonical public setup scripts",
       "Use the product commercially under Apache 2.0",
       "Best fit for teams that want full infrastructure ownership",
     ],
@@ -64,7 +64,7 @@ const PATHS = [
       "Private cloud / on-prem / AWS / Azure / GCP scoping",
       "Best for larger-team or enterprise-capable environments",
       "Scope depends on deployment footprint and rollout complexity",
-      "Pricing page is the current public qualification entry point",
+      "Deployment-path page is the current public qualification entry point",
     ],
     cta: "Review deployment paths",
     href: "https://nora.solomontsao.com/pricing",
@@ -92,17 +92,22 @@ const ENTRY_POINTS = [
   },
   {
     label: "Bash install",
-    href: "https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh",
-    text: "raw.githubusercontent.com/.../setup.sh",
+    href: "https://storage.solomontsao.com/setup.sh",
+    text: "storage.solomontsao.com/setup.sh",
   },
   {
     label: "PowerShell install",
-    href: "https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1",
-    text: "raw.githubusercontent.com/.../setup.ps1",
+    href: "https://storage.solomontsao.com/setup.ps1",
+    text: "storage.solomontsao.com/setup.ps1",
   },
 ];
 
 const PROOF_RESOURCES = [
+  {
+    title: "Repo proof pack",
+    desc: "One public map of what Nora already proves today: installability, operator workflow, screenshot evidence, and credible non-DIY paths.",
+    href: "https://github.com/solomon2773/nora/blob/master/docs/PROOF_PACK.md",
+  },
   {
     title: "Open-source usage + commercial guide",
     desc: "Repo-native explanation of Apache 2.0 rights, self-hosting, rollout help, managed paths, and runtime direction framing.",
@@ -118,11 +123,6 @@ const PROOF_RESOURCES = [
     desc: "Code-backed proof that install flows, auth, operator UI, and proof assets all exist in-repo today.",
     href: "https://github.com/solomon2773/nora/blob/master/docs/IMPLEMENTATION_PROOF.md",
   },
-  {
-    title: "README screenshots",
-    desc: "Inspect the concrete landing, signup, dashboard, deploy, agent-detail, and provider-setup proof assets in the repo.",
-    href: "https://github.com/solomon2773/nora#screenshots",
-  },
 ];
 
 const PRICING_RULES = [
@@ -130,6 +130,33 @@ const PRICING_RULES = [
   "Rollout help / paid support is scoped based on environment, rollout depth, and support needs.",
   "Hosted evaluation / managed PaaS is scoped based on the evaluation path and environment requirements.",
   "Enterprise / custom deployment is scoped based on deployment footprint, security, identity, networking, and rollout complexity.",
+];
+
+const PATH_COMPARISON = [
+  {
+    path: "Self-host Nora",
+    canVerify: "Repo, install guide, setup scripts, Docker Compose flow, and screenshot proof assets.",
+    bestFit: "Teams that want full infrastructure ownership and the clearest trust path.",
+    nextStep: "Run the quick start and validate the first operator workflow.",
+  },
+  {
+    path: "Rollout help / paid support",
+    canVerify: "The same OSS product plus a public support intake path through GitHub Discussions.",
+    bestFit: "Teams that want self-hosting but less setup friction or faster time to first value.",
+    nextStep: "Share target environment, first proof milestone, and current blocker in a Discussion.",
+  },
+  {
+    path: "Hosted eval / managed PaaS",
+    canVerify: "Public hosted app, signup path, deployment/support page, and repo proof assets.",
+    bestFit: "Teams that want a less DIY evaluation path or lighter operational overhead.",
+    nextStep: "Use signup or the deployment/support path page to start the evaluation path.",
+  },
+  {
+    path: "Enterprise / custom deployment",
+    canVerify: "Deployment-footprint direction, path clarity, and the OSS proof pack in the repo.",
+    bestFit: "Teams with larger-team requirements or more complex security, identity, networking, or infra scope.",
+    nextStep: "Start with deployment footprint, rollout stage, and environment constraints.",
+  },
 ];
 
 export default function Pricing() {
@@ -156,11 +183,11 @@ export default function Pricing() {
       </nav>
 
       <div className="text-center px-6 py-16 md:py-24 max-w-5xl mx-auto">
-        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Pricing, support, and deployment paths</p>
+        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Deployment, support, and commercial paths</p>
         <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight mb-6">
           Open source first.
           <br />
-          <span className="text-blue-400">Clear paths into paid help, managed evaluation, and custom deployment.</span>
+          <span className="text-blue-400">Clear deployment, support, and custom paths.</span>
         </h1>
         <p className="text-lg text-slate-400 max-w-3xl mx-auto">
           Nora is Apache 2.0 licensed. Teams can self-host it, use it commercially, and inspect real proof in the repo first.
@@ -204,7 +231,7 @@ export default function Pricing() {
         <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8">
           <div className="flex items-center gap-3 mb-4">
             <FileText size={18} className="text-blue-400" />
-            <h2 className="text-xl font-black">How pricing works today</h2>
+            <h2 className="text-xl font-black">How commercial scoping works today</h2>
           </div>
           <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300 leading-relaxed">
             {PRICING_RULES.map((item) => (
@@ -216,6 +243,35 @@ export default function Pricing() {
           <p className="text-sm text-slate-500 mt-4">
             The goal is path clarity, not invented fixed-plan promises. Public language should help teams choose the right route and next step.
           </p>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 pb-12">
+        <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8 overflow-x-auto">
+          <div className="mb-4">
+            <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-2">Path comparison</p>
+            <h2 className="text-xl md:text-3xl font-black tracking-tight">What each path already proves before any sales call</h2>
+          </div>
+          <table className="w-full min-w-[920px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-white/10 text-slate-400">
+                <th className="py-3 pr-4 font-black text-white">Path</th>
+                <th className="py-3 px-4 font-black text-white">What you can verify now</th>
+                <th className="py-3 px-4 font-black text-white">Best fit</th>
+                <th className="py-3 pl-4 font-black text-white">Immediate next step</th>
+              </tr>
+            </thead>
+            <tbody>
+              {PATH_COMPARISON.map((row) => (
+                <tr key={row.path} className="border-b border-white/5 align-top last:border-b-0">
+                  <td className="py-4 pr-4 font-semibold text-white">{row.path}</td>
+                  <td className="py-4 px-4 text-slate-300">{row.canVerify}</td>
+                  <td className="py-4 px-4 text-slate-300">{row.bestFit}</td>
+                  <td className="py-4 pl-4 text-slate-300">{row.nextStep}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 

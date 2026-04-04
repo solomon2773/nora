@@ -41,6 +41,13 @@ Use this checklist to evaluate Nora from an OSS-first point of view.
 - [ ] Are security, identity, networking, or compliance constraints known?
 - [ ] Is the first proof milestone concrete enough to scope?
 
+## Positioning checklist
+
+- [ ] Does the public story clearly describe Nora as an open-source AI agent orchestration control panel?
+- [ ] Are the five pillars obvious: security built in, easy to use, expandable, self-hostable, and enterprise-capable?
+- [ ] Is enterprise-capable grounded in deployment footprint reality rather than vague packaging language?
+- [ ] Can someone understand the path from single-host evaluation to Proxmox, private cloud / on-prem, and AWS/Azure/GCP?
+
 ## Runtime-direction checklist
 
 - [ ] Are they starting with OpenClaw as the best-supported runtime today?
@@ -51,9 +58,10 @@ Use this checklist to evaluate Nora from an OSS-first point of view.
 ## Supporting docs
 
 - `README.md`
+- `docs/PROOF_PACK.md`
 - `docs/INSTALL.md`
 - `docs/COMMERCIAL_PATHS.md`
 - `docs/DEPLOYMENT_FOOTPRINTS.md`
+- `docs/RUNTIME_DIRECTION.md`
 - `docs/OPEN_SOURCE_USAGE.md`
 - `docs/IMPLEMENTATION_PROOF.md`
-- `docs/README_SCREENSHOT_PLAN.md`
