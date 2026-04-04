@@ -14,7 +14,7 @@ const { getBootstrapAdminSeedConfig } = require("./bootstrapAdmin");
 const { authenticateToken } = require("./middleware/auth");
 const { correlationId, errorHandler } = require("./middleware/errorHandler");
 const { createGatewayRouter, attachGatewayWS } = require("./gatewayProxy");
-const { reconcileAgentStatus } = require("./agentStatus");
+const { isGatewayAvailableStatus, reconcileAgentStatus } = require("./agentStatus");
 const { OPENCLAW_GATEWAY_PORT } = require("../agent-runtime/lib/contracts");
 
 // ─── JWT Secret ───────────────────────────────────────────────────
@@ -138,10 +138,12 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
 
     const agentId = req.params.agentId;
     const result = await db.query(
-      "SELECT host, gateway_token, gateway_host_port FROM agents WHERE id = $1 AND user_id = $2 AND status IN ('running','warning') AND host IS NOT NULL",
+      "SELECT host, gateway_token, gateway_host_port, status FROM agents WHERE id = $1 AND user_id = $2 AND host IS NOT NULL",
       [agentId, payload.id]
     );
-    if (!result.rows[0]) return res.status(404).send("agent not found or not running");
+    if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status)) {
+      return res.status(404).send("agent not found or not running");
+    }
 
     const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
     const gwPort = result.rows[0].gateway_host_port || OPENCLAW_GATEWAY_PORT;
@@ -205,10 +207,10 @@ async function proxyGatewayAsset(req, res) {
     const db = require("./db");
     const agentId = req.params.agentId;
     const result = await db.query(
-      "SELECT host, gateway_host_port FROM agents WHERE id = $1 AND status IN ('running','warning') AND host IS NOT NULL",
+      "SELECT host, gateway_host_port, status FROM agents WHERE id = $1 AND host IS NOT NULL",
       [agentId]
     );
-    if (!result.rows[0]) return res.status(404).end();
+    if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status)) return res.status(404).end();
     const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
     const gwPort = result.rows[0].gateway_host_port || OPENCLAW_GATEWAY_PORT;
     const gatewayPath = req.path.split("/gateway/")[1] || "";
