@@ -17,16 +17,27 @@ router.get("/monitoring/metrics", asyncHandler(async (req, res) => {
 
 router.get("/monitoring/events", asyncHandler(async (req, res) => {
   const { agentId, limit } = req.query;
+  const parsedLimit = parseInt(limit) || 50;
   if (agentId) {
     const agent = await findOwnedAgent(agentId, req.user.id);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
     const result = await db.query(
       "SELECT * FROM events WHERE metadata->>'agentId' = $1 ORDER BY created_at DESC LIMIT $2",
-      [agentId, parseInt(limit) || 20]
+      [agentId, parsedLimit]
     );
     return res.json(result.rows);
   }
-  res.json(await monitoring.getRecentEvents(parseInt(limit) || 50));
+  const result = await db.query(
+    `SELECT e.*
+       FROM events e
+      WHERE e.metadata->>'agentId' IN (
+        SELECT id::text FROM agents WHERE user_id = $1
+      )
+      ORDER BY e.created_at DESC
+      LIMIT $2`,
+    [req.user.id, parsedLimit]
+  );
+  res.json(result.rows);
 }));
 
 router.get("/monitoring/performance", asyncHandler(async (req, res) => {
