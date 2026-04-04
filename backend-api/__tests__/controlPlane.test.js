@@ -164,6 +164,32 @@ describe("gateway control-plane embed", () => {
     );
   });
 
+  it("allows embed for warning agents so degraded control-plane recovery still works", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_token: "gateway-password",
+        gateway_host_port: 19123,
+        status: "warning",
+      }],
+    });
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => "<html><head></head><body>warning</body></html>",
+    });
+
+    const res = await request(app)
+      .get(`/agents/agent-1/gateway/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://host.docker.internal:19123/",
+      expect.any(Object)
+    );
+  });
+
   it("rejects embed for stopped agents so stale control-plane state stays closed", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
