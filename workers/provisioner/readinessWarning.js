@@ -16,4 +16,13 @@ function buildReadinessWarningDetail(readiness) {
   return problems.join('; ') || 'readiness checks failed';
 }
 
-module.exports = { buildReadinessWarningDetail };
+function buildReadinessWarningMetadata({ agentId, host, readiness }) {
+  return {
+    agentId,
+    host,
+    detail: buildReadinessWarningDetail(readiness),
+    readiness,
+  };
+}
+
+module.exports = { buildReadinessWarningDetail, buildReadinessWarningMetadata };

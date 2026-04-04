@@ -3,7 +3,7 @@ const IORedis = require('ioredis');
 const { Pool } = require('pg');
 const { agentRuntimeUrl } = require('../../agent-runtime/lib/contracts');
 const { waitForAgentReadiness } = require('./healthChecks');
-const { buildReadinessWarningDetail } = require('./readinessWarning');
+const { buildReadinessWarningDetail, buildReadinessWarningMetadata } = require('./readinessWarning');
 
 // ── Connections ──────────────────────────────────────────
 const connection = new IORedis({
@@ -390,7 +390,7 @@ const worker = new Worker('deployments', async (job) => {
       await db.query("UPDATE deployments SET status = 'warning' WHERE agent_id = $1", [id]);
       await db.query(
         "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
-        ['agent_runtime_warning', `Agent "${name}" deployed with readiness warning: ${detail}`, JSON.stringify({ agentId: id, host, readiness })]
+        ['agent_runtime_warning', `Agent "${name}" deployed with readiness warning: ${detail}`, JSON.stringify(buildReadinessWarningMetadata({ agentId: id, host, readiness }))]
       );
     }
 
