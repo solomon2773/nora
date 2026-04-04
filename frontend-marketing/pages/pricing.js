@@ -105,23 +105,23 @@ const ENTRY_POINTS = [
 const PROOF_RESOURCES = [
   {
     title: "Repo proof pack",
-    desc: "One public map of what Nora already proves today: installability, operator workflow, screenshot evidence, and credible non-DIY paths.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/PROOF_PACK.md",
+    desc: "Public entry point for what Nora is, what it does, and how to evaluate it from the OSS repo.",
+    href: "https://github.com/solomon2773/nora#what-is-nora",
   },
   {
     title: "Open-source usage + commercial guide",
-    desc: "Repo-native explanation of Apache 2.0 rights, self-hosting, rollout help, managed paths, and runtime direction framing.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/OPEN_SOURCE_USAGE.md",
+    desc: "Public explanation of Apache 2.0 rights, self-hosting, and Nora's OSS-first framing.",
+    href: "https://github.com/solomon2773/nora#open-source-means-open-source",
   },
   {
     title: "Commercial paths",
-    desc: "Public path map covering self-hosted OSS, rollout help / paid support, hosted evaluation / managed PaaS, and enterprise/custom deployment.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/COMMERCIAL_PATHS.md",
+    desc: "Public pricing/deployment page covering self-hosted OSS, support, hosted evaluation, and custom deployment paths.",
+    href: "https://nora.solomontsao.com/pricing",
   },
   {
     title: "Implementation proof",
-    desc: "Code-backed proof that install flows, auth, operator UI, and proof assets all exist in-repo today.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/IMPLEMENTATION_PROOF.md",
+    desc: "Public quick-start entry for evaluating the product from the source repo and install flow.",
+    href: "https://github.com/solomon2773/nora#quick-start",
   },
 ];
 
@@ -135,7 +135,7 @@ const PRICING_RULES = [
 const PATH_COMPARISON = [
   {
     path: "Self-host Nora",
-    canVerify: "Repo, install guide, setup scripts, Docker Compose flow, and screenshot proof assets.",
+    canVerify: "Repo, setup scripts, Docker Compose flow, and the public OSS product surface.",
     bestFit: "Teams that want full infrastructure ownership and the clearest trust path.",
     nextStep: "Run the quick start and validate the first operator workflow.",
   },
@@ -147,7 +147,7 @@ const PATH_COMPARISON = [
   },
   {
     path: "Hosted eval / managed PaaS",
-    canVerify: "Public hosted app, signup path, deployment/support page, and repo proof assets.",
+    canVerify: "Public hosted app, signup path, deployment/support page, and the OSS repo entry point.",
     bestFit: "Teams that want a less DIY evaluation path or lighter operational overhead.",
     nextStep: "Use signup or the deployment/support path page to start the evaluation path.",
   },

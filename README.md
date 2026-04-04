@@ -27,16 +27,11 @@
   ·
   <a href="#open-source-proof-pack">Open-source proof pack</a>
   ·
-  <a href="#screenshots">Screenshots</a>
-  ·
   <a href="#runtime-direction">Runtime direction</a>
   ·
   <a href="#deployment-footprint">Deployment footprint</a>
 </p>
 
-<p align="center">
-  <img src="docs/assets/proof-landing-open-source-funnel.png" alt="Nora landing page proof" width="90%" />
-</p>
 
 ---
 
@@ -116,7 +111,7 @@ It should make sense across this deployment range:
 
 That footprint matters because Nora is not just trying to be a one-box dashboard. It should stay credible as an operator surface that starts small and expands into more serious infrastructure.
 
-See [Deployment footprints](docs/DEPLOYMENT_FOOTPRINTS.md) for the full positioning guide.
+Public deployment framing lives in this README and on the pricing page: https://nora.solomontsao.com/pricing
 
 ## Who Nora is for
 
@@ -163,79 +158,15 @@ Use [nora.solomontsao.com](https://nora.solomontsao.com) and [signup](https://no
 
 Use [deployment paths](https://nora.solomontsao.com/pricing) when you need scoped help around deployment footprint, infrastructure ownership, rollout depth, or larger-team requirements.
 
-See [Commercial paths](docs/COMMERCIAL_PATHS.md) for the full public-path positioning guide.
+See the public pricing/deployment paths here: https://nora.solomontsao.com/pricing
 
-## Open-source proof pack
+## Public repo scope
 
-Nora should ask people to trust the product itself, the install path, and the operator workflow.
+The public OSS repo is intentionally focused on the product code, install path, and core open-source narrative.
 
-Use these resources when you need to prove that the repo is real and usable:
+Docs, internal proof packs, and E2E testing assets now live in the private companion repository so the public repo stays leaner and source-first.
 
-- [Repo proof pack](docs/PROOF_PACK.md) — the public proof map for installability, operator workflow, screenshot evidence, and paid-path credibility
-- [Open-source implementation proof](docs/IMPLEMENTATION_PROOF.md) — code-backed evidence for self-hosting, operator flows, proof assets, and runtime direction
-- [Adoption checklist](docs/ADOPTION_CHECKLIST.md) — practical paths for self-hosting, Apache 2.0 commercial use, rollout help, hosted evaluation, and runtime expansion
-- [Open-source usage guide](docs/OPEN_SOURCE_USAGE.md) — Apache 2.0 usage rights and public repo framing
-- [Commercial paths](docs/COMMERCIAL_PATHS.md) — self-hosted OSS, rollout help / paid support, managed PaaS, and enterprise/custom entry points
-- [Deployment footprints](docs/DEPLOYMENT_FOOTPRINTS.md) — how Nora should scale from single-host through Proxmox, private cloud, and AWS/Azure/GCP
-- [Runtime direction guide](docs/RUNTIME_DIRECTION.md) — how to describe Nora as OpenClaw-first today while keeping the product future-runtime-friendly
-- [Operator screenshot capture script](e2e/scripts/capture-operator-screenshots.mjs) — regenerates the operator screenshots from a local self-hosted stack
-
-## Screenshots
-
-The repo now includes real operator-side screenshots alongside the marketing and OSS-proof images. They show Nora as a working self-hosted control plane, with OpenClaw as the current best-supported runtime example rather than the forever-only frame.
-
-## What each proof asset demonstrates
-
-| Proof asset | What it demonstrates |
-|---|---|
-| `proof-landing-open-source-funnel.png` | Nora leads with an OSS-first trust path rather than a sales-first gate |
-| `proof-usage-rights-apache.png` | Apache 2.0 commercial-use rights and path clarity are visible publicly |
-| `proof-signup-operator-account.png` | A real operator account entry flow exists |
-| `proof-operator-dashboard.png` | Nora has a working operator overview beyond marketing copy |
-| `proof-operator-fleet.png` | Operators can manage and validate multiple runtimes |
-| `proof-operator-deploy-flow.png` | The first runtime deployment flow is concrete and inspectable |
-| `proof-operator-agent-detail.png` | Ongoing operations include validation, logs, and terminal surfaces |
-| `proof-operator-settings-provider-setup.png` | Provider setup is part of the current product path |
-
-### Landing and OSS proof
-
-<p align="center">
-  <img src="docs/assets/proof-landing-open-source-funnel.png" alt="Nora landing page screenshot" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-usage-rights-apache.png" alt="Nora usage-rights and deployment-path screenshot" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-signup-operator-account.png" alt="Nora signup screenshot" width="90%" />
-</p>
-
-### Operator overview and fleet
-
-<p align="center">
-  <img src="docs/assets/proof-operator-dashboard.png" alt="Nora dashboard screenshot showing fleet overview and recent deployments" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-operator-fleet.png" alt="Nora fleet management screenshot showing multiple agents and validation actions" width="90%" />
-</p>
-
-### Deploy and validate
-
-<p align="center">
-  <img src="docs/assets/proof-operator-deploy-flow.png" alt="Nora deploy flow screenshot for provisioning an OpenClaw agent" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-operator-agent-detail.png" alt="Nora agent detail screenshot showing the validation view, OpenClaw badge, logs, and terminal tabs" width="90%" />
-</p>
-
-### Provider setup
-
-<p align="center">
-  <img src="docs/assets/proof-operator-settings-provider-setup.png" alt="Nora settings screenshot showing configured LLM providers and provider setup options" width="90%" />
-</p>
+Public readers should use this README, the install flow, GitHub Issues/Discussions, and the public pricing page as the primary entry points.
 
 ## Runtime direction
 
@@ -248,7 +179,7 @@ Nora should be described as:
 
 That framing is more durable than treating Nora as a permanently single-runtime dashboard or centering the repo around sales packaging.
 
-See [Runtime direction guide](docs/RUNTIME_DIRECTION.md) for the durable wording and guardrails behind that positioning.
+See the Runtime direction section in this README for the current public framing.
 
 ## Quick Start
 
@@ -284,7 +215,7 @@ The installer will:
 7. start the Nora stack
 8. take you to the dashboard so you can deploy the first agent
 
-The public install links intentionally use `storage.solomontsao.com` as the canonical installer host while keeping the open-source repo and install docs as the primary trust anchor.
+The public install links intentionally use `storage.solomontsao.com` as the canonical installer host while keeping the open-source repo and setup flow as the primary trust anchor.
 
 ### Manual setup
 
@@ -418,7 +349,6 @@ Track agent health, queue state, logs, metrics, and runtime activity.
 - `frontend-dashboard/` — operator dashboard for agents and settings
 - `backend-api/` — APIs, auth, key management, provisioning, monitoring
 - `admin-dashboard/` — admin/operator surfaces
-- `e2e/` — Playwright end-to-end tests
 - `infra/` — backup and TLS helpers
 
 ---
@@ -474,7 +404,7 @@ cd backend-api && npx jest --no-watchman
 docker compose exec postgres psql -U platform -d platform
 ```
 
-For HTTPS/TLS setup, see [docs/HTTPS_SETUP.md](docs/HTTPS_SETUP.md).
+For HTTPS/TLS setup, use your preferred reverse-proxy/TLS workflow and open an issue if you want public-facing setup guidance restored to the OSS repo.
 
 ---
 

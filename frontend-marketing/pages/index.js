@@ -96,10 +96,10 @@ const PROOF_LINKS = [
   },
   {
     eyebrow: "Proof assets",
-    title: "Operators can inspect a full repo proof pack",
-    desc: "The proof pack maps installability, screenshot evidence, operator workflow, and non-DIY path credibility without unsupported claims.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/PROOF_PACK.md",
-    cta: "Open repo proof pack",
+    title: "Operators can inspect the OSS repo directly",
+    desc: "The public repo focuses on installability, source visibility, and a clean OSS entry path without requiring a separate docs bundle.",
+    href: "https://github.com/solomon2773/nora#quick-start",
+    cta: "Open public repo",
     external: true,
   },
   {
