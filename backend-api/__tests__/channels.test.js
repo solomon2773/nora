@@ -1,6 +1,14 @@
 const mockDb = { query: jest.fn() };
+const mockEncrypt = jest.fn((value) => `enc(${value})`);
+const mockDecrypt = jest.fn((value) => value.startsWith("enc(") ? value.slice(4, -1) : value);
+const mockEnsureEncryptionConfigured = jest.fn();
 
 jest.mock("../db", () => mockDb);
+jest.mock("../crypto", () => ({
+  encrypt: mockEncrypt,
+  decrypt: mockDecrypt,
+  ensureEncryptionConfigured: mockEnsureEncryptionConfigured,
+}));
 jest.mock("../../agent-runtime/lib/contracts", () => ({
   agentRuntimeUrl: jest.fn(() => "http://runtime.test"),
 }));
@@ -10,6 +18,9 @@ const channels = require("../channels");
 describe("channel secret redaction", () => {
   beforeEach(() => {
     mockDb.query.mockReset();
+    mockEncrypt.mockClear();
+    mockDecrypt.mockClear();
+    mockEnsureEncryptionConfigured.mockClear();
   });
 
   it("redacts password and secret-like fields when creating a channel", async () => {
@@ -62,20 +73,35 @@ describe("channel secret redaction", () => {
   });
 
   it("redacts webhook URLs and password fields when updating a channel", async () => {
-    mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "ch-3",
-        agent_id: "agent-1",
-        type: "slack",
-        name: "Ops Slack",
-        config: {
-          webhook_url: "https://hooks.slack.test/secret",
-          bot_token: "xoxb-secret",
-          channel: "#ops",
-        },
-        enabled: true,
-      }],
-    });
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "ch-3",
+          agent_id: "agent-1",
+          type: "slack",
+          name: "Ops Slack",
+          config: {
+            webhook_url: "enc(https://hooks.slack.test/secret)",
+            bot_token: "enc(xoxb-secret)",
+            channel: "#ops",
+          },
+          enabled: true,
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "ch-3",
+          agent_id: "agent-1",
+          type: "slack",
+          name: "Ops Slack",
+          config: {
+            webhook_url: "enc(https://hooks.slack.test/secret)",
+            bot_token: "enc(xoxb-secret)",
+            channel: "#ops",
+          },
+          enabled: true,
+        }],
+      });
 
     const result = await channels.updateChannel("ch-3", "agent-1", {
       config: {

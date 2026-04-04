@@ -3,6 +3,7 @@
  */
 
 const db = require("../db");
+const { encrypt, decrypt, ensureEncryptionConfigured } = require("../crypto");
 const { agentRuntimeUrl } = require("../../agent-runtime/lib/contracts");
 const { getAdapter, listAdapterTypes } = require("./adapters");
 
@@ -13,18 +14,56 @@ function parseConfig(config) {
   return typeof config === "string" ? JSON.parse(config) : (config || {});
 }
 
-function redactChannelConfig(type, config = {}) {
+function getSensitiveChannelKeys(type) {
   const adapter = getAdapter(type);
-  const parsed = parseConfig(config);
-  const redacted = { ...parsed };
-  const passwordKeys = new Set(
+  return new Set(
     (adapter.configFields || [])
-      .filter((field) => field?.type === "password")
+      .filter((field) => field?.type === "password" || SECRET_CONFIG_KEY_RE.test(field?.key || ""))
       .map((field) => field.key)
   );
+}
+
+function protectChannelConfig(type, config = {}) {
+  const parsed = parseConfig(config);
+  const sensitiveKeys = getSensitiveChannelKeys(type);
+  const secured = { ...parsed };
+  let hasSensitiveMaterial = false;
+
+  for (const key of Object.keys(secured)) {
+    const value = secured[key];
+    if (!value) continue;
+    if (sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) {
+      hasSensitiveMaterial = true;
+      secured[key] = encrypt(String(value));
+    }
+  }
+
+  return { secured, hasSensitiveMaterial };
+}
+
+function revealChannelConfig(type, config = {}) {
+  const parsed = parseConfig(config);
+  const sensitiveKeys = getSensitiveChannelKeys(type);
+  const revealed = { ...parsed };
+
+  for (const key of Object.keys(revealed)) {
+    const value = revealed[key];
+    if (!value) continue;
+    if (sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) {
+      revealed[key] = decrypt(String(value));
+    }
+  }
+
+  return revealed;
+}
+
+function redactChannelConfig(type, config = {}) {
+  const parsed = parseConfig(config);
+  const redacted = { ...parsed };
+  const sensitiveKeys = getSensitiveChannelKeys(type);
 
   for (const key of Object.keys(redacted)) {
-    if ((passwordKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) && redacted[key]) {
+    if ((sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) && redacted[key]) {
       redacted[key] = REDACTED_SECRET;
     }
   }
@@ -37,6 +76,14 @@ function sanitizeChannel(channel) {
   return {
     ...channel,
     config: redactChannelConfig(channel.type, channel.config),
+  };
+}
+
+function hydrateChannel(channel) {
+  if (!channel) return channel;
+  return {
+    ...channel,
+    config: revealChannelConfig(channel.type, channel.config),
   };
 }
 
@@ -53,14 +100,25 @@ async function listChannels(agentId) {
 async function createChannel(agentId, type, name, config = {}) {
   // Verify the adapter type exists
   getAdapter(type);
+  const { secured, hasSensitiveMaterial } = protectChannelConfig(type, config);
+  if (hasSensitiveMaterial) {
+    ensureEncryptionConfigured("Channel credential storage");
+  }
   const result = await db.query(
     "INSERT INTO channels(agent_id, type, name, config) VALUES($1, $2, $3, $4) RETURNING *",
-    [agentId, type, name, JSON.stringify(config)]
+    [agentId, type, name, JSON.stringify(secured)]
   );
   return sanitizeChannel(result.rows[0]);
 }
 
 async function updateChannel(channelId, agentId, updates) {
+  const existingResult = await db.query(
+    "SELECT * FROM channels WHERE id = $1 AND agent_id = $2",
+    [channelId, agentId]
+  );
+  const existing = existingResult.rows[0];
+  if (!existing) throw new Error("Channel not found");
+
   const sets = [];
   const params = [];
   let idx = 1;
@@ -70,8 +128,12 @@ async function updateChannel(channelId, agentId, updates) {
     params.push(updates.name);
   }
   if (updates.config !== undefined) {
+    const { secured, hasSensitiveMaterial } = protectChannelConfig(existing.type, updates.config);
     sets.push(`config = $${idx++}`);
-    params.push(JSON.stringify(updates.config));
+    params.push(JSON.stringify(secured));
+    if (hasSensitiveMaterial) {
+      ensureEncryptionConfigured("Channel credential storage");
+    }
   }
   if (updates.enabled !== undefined) {
     sets.push(`enabled = $${idx++}`);
@@ -101,7 +163,7 @@ async function deleteChannel(channelId, agentId) {
 
 async function sendMessage(channelId, content, metadata = {}) {
   const chResult = await db.query("SELECT * FROM channels WHERE id = $1", [channelId]);
-  const channel = chResult.rows[0];
+  const channel = hydrateChannel(chResult.rows[0]);
   if (!channel) throw new Error("Channel not found");
   if (!channel.enabled) throw new Error("Channel is disabled");
 
@@ -137,7 +199,7 @@ async function testChannel(channelId, agentId) {
     "SELECT * FROM channels WHERE id = $1 AND agent_id = $2",
     [channelId, agentId]
   );
-  const channel = chResult.rows[0];
+  const channel = hydrateChannel(chResult.rows[0]);
   if (!channel) throw new Error("Channel not found");
 
   const adapter = getAdapter(channel.type);
@@ -159,7 +221,7 @@ async function testChannel(channelId, agentId) {
 
 async function handleInboundWebhook(channelId, payload, headers) {
   const chResult = await db.query("SELECT * FROM channels WHERE id = $1", [channelId]);
-  const channel = chResult.rows[0];
+  const channel = hydrateChannel(chResult.rows[0]);
   if (!channel) throw new Error("Channel not found");
   if (!channel.enabled) throw new Error("Channel is disabled");
 
@@ -217,4 +279,7 @@ module.exports = {
   getChannelTypes,
   redactChannelConfig,
   sanitizeChannel,
+  protectChannelConfig,
+  revealChannelConfig,
+  hydrateChannel,
 };
