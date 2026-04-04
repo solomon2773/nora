@@ -181,4 +181,21 @@ describe("gateway control-plane embed", () => {
     expect(res.status).toBe(404);
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  it("rejects asset proxy access for error agents so failed control-plane state stays closed", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_host_port: 19123,
+        status: "error",
+      }],
+    });
+
+    const res = await request(app)
+      .get("/agents/agent-1/gateway/assets/app.js")
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(404);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });
