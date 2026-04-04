@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2, AlertTriangle, RefreshCw, Maximize2, Copy, Check } from "lucide-react";
+import { Loader2, AlertTriangle, RefreshCw, Maximize2 } from "lucide-react";
 import { fetchWithAuth } from "../../../lib/api";
 
 export default function OpenClawUIPanel({ agentId }) {
@@ -7,16 +7,7 @@ export default function OpenClawUIPanel({ agentId }) {
   const [error, setError] = useState(null);
   const [gatewayInfo, setGatewayInfo] = useState(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
-  const [copied, setCopied] = useState(false);
   const iframeRef = useRef(null);
-
-  function copyPassword() {
-    if (!gatewayInfo?.token) return;
-    navigator.clipboard.writeText(gatewayInfo.token).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }
 
   function fetchInfo() {
     setLoading(true);
@@ -38,10 +29,10 @@ export default function OpenClawUIPanel({ agentId }) {
     return `/api/agents/${agentId}/gateway/embed?token=${encodeURIComponent(jwt)}`;
   }
 
-  // Direct host port URL for opening in a new window (no iframe restrictions)
+  // Open the same-origin embedded gateway UI in a new window without exposing the gateway password.
   function openInNewWindow() {
-    if (!gatewayInfo) return;
-    const url = `${gatewayInfo.url}#password=${encodeURIComponent(gatewayInfo.token)}`;
+    const url = getEmbedUrl();
+    if (!url) return;
     // Use _blank and noopener to avoid popup blocker issues
     const w = window.open(url, "_blank", "noopener");
     // Fallback: if popup was blocked, navigate via a temporary anchor
@@ -89,14 +80,6 @@ export default function OpenClawUIPanel({ agentId }) {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={copyPassword}
-            className="px-2.5 py-1.5 text-slate-400 hover:text-white transition-colors rounded-lg hover:bg-slate-700 text-xs flex items-center gap-1.5"
-            title="Copy gateway password"
-          >
-            {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-            {copied ? "Copied" : "Password"}
-          </button>
-          <button
             onClick={fetchInfo}
             className="p-1.5 text-slate-400 hover:text-white transition-colors rounded-lg hover:bg-slate-700"
             title="Reload"
@@ -106,7 +89,7 @@ export default function OpenClawUIPanel({ agentId }) {
           <button
             onClick={openInNewWindow}
             className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-lg shadow-blue-600/20"
-            title="Open in new window"
+            title="Open embedded gateway UI in a new window"
           >
             <Maximize2 size={12} />
             New Window

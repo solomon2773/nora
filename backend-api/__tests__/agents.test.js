@@ -208,7 +208,6 @@ describe("GET /agents/:id/gateway-url", () => {
     expect(res.body).toEqual({
       url: "http://gateway.external:19123",
       port: 19123,
-      token: "gateway-token",
     });
 
     delete process.env.GATEWAY_HOST;
