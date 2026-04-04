@@ -182,6 +182,32 @@ describe("gateway control-plane embed", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it("allows asset proxy access for warning agents so degraded control-plane recovery still works", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_host_port: 19123,
+        status: "warning",
+      }],
+    });
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "application/javascript" }),
+      arrayBuffer: async () => new TextEncoder().encode("console.log('ok')").buffer,
+    });
+
+    const res = await request(app)
+      .get("/agents/agent-1/gateway/assets/app.js")
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://host.docker.internal:19123/assets/app.js",
+      expect.any(Object)
+    );
+  });
+
   it("rejects asset proxy access for error agents so failed control-plane state stays closed", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
