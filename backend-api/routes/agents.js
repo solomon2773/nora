@@ -5,6 +5,7 @@ const billing = require("../billing");
 const scheduler = require("../scheduler");
 const containerManager = require("../containerManager");
 const monitoring = require("../monitoring");
+const { reconcileAgentStatus } = require("../agentStatus");
 const { OPENCLAW_GATEWAY_PORT } = require("../../agent-runtime/lib/contracts");
 const { asyncHandler } = require("../middleware/errorHandler");
 
@@ -27,14 +28,15 @@ router.get("/:id", asyncHandler(async (req, res) => {
 
   const agent = result.rows[0];
 
-  // Live status reconciliation — check actual container state
-  if (agent.container_id && (agent.status === "running" || agent.status === "error" || agent.status === "stopped")) {
+  // Live status reconciliation — check actual container state while preserving
+  // warning as a first-class degraded state until the container actually stops.
+  if (agent.container_id && ["running", "warning", "error", "stopped"].includes(agent.status)) {
     try {
       const live = await containerManager.status(agent);
-      const liveStatus = live.running ? "running" : "stopped";
-      if (liveStatus !== agent.status && agent.status !== "queued" && agent.status !== "deploying") {
-        await db.query("UPDATE agents SET status = $1 WHERE id = $2", [liveStatus, agent.id]);
-        agent.status = liveStatus;
+      const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live.running));
+      if (reconciledStatus !== agent.status) {
+        await db.query("UPDATE agents SET status = $1 WHERE id = $2", [reconciledStatus, agent.id]);
+        agent.status = reconciledStatus;
       }
     } catch {
       // Can't reach container runtime — leave DB status as-is

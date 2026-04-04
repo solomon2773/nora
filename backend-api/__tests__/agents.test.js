@@ -121,7 +121,7 @@ describe("GET /agents", () => {
 });
 
 describe("GET /agents/:id", () => {
-  it("preserves warning status without forcing live reconciliation", async () => {
+  it("preserves warning status when the container is still live", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
         id: "a-warning",
@@ -136,6 +136,32 @@ describe("GET /agents/:id", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("status", "warning");
+  });
+
+  it("reconciles warning agents to stopped when the container is no longer live", async () => {
+    const containerManager = require("../containerManager");
+    containerManager.status.mockResolvedValueOnce({ running: false });
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "a-warning-down",
+          name: "Warning Down Agent",
+          status: "warning",
+          user_id: "user-1",
+          container_id: "container-warning-down",
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "a-warning-down",
+          status: "stopped",
+        }],
+      });
+
+    const res = await auth(request(app).get("/agents/a-warning-down"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("status", "stopped");
   });
 
   it("reconciles stopped agents back to running when the container is live", async () => {
