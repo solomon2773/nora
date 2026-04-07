@@ -11,6 +11,7 @@ const mockReadNamespace = jest.fn();
 const mockCreateNamespace = jest.fn();
 const mockCreateNamespacedDeployment = jest.fn();
 const mockCreateNamespacedService = jest.fn();
+const mockReadNamespacedService = jest.fn();
 
 jest.mock("@kubernetes/client-node", () => {
   class KubeConfig {
@@ -22,6 +23,7 @@ jest.mock("@kubernetes/client-node", () => {
           readNamespace: mockReadNamespace,
           createNamespace: mockCreateNamespace,
           createNamespacedService: mockCreateNamespacedService,
+          readNamespacedService: mockReadNamespacedService,
         };
       }
       if (api === AppsV1Api) {
@@ -45,9 +47,14 @@ describe("provisioning runtime/gateway contracts", () => {
     mockCreateNamespace.mockReset().mockResolvedValue({});
     mockCreateNamespacedDeployment.mockReset().mockResolvedValue({});
     mockCreateNamespacedService.mockReset().mockResolvedValue({});
+    mockReadNamespacedService.mockReset().mockResolvedValue({});
     delete process.env.GATEWAY_HOST;
     delete process.env.KUBECONFIG;
     delete process.env.K8S_NAMESPACE;
+    delete process.env.K8S_EXPOSURE_MODE;
+    delete process.env.K8S_RUNTIME_NODE_PORT;
+    delete process.env.K8S_GATEWAY_NODE_PORT;
+    delete process.env.K8S_RUNTIME_HOST;
   });
 
   it("clears the abort timer even when a readiness fetch fails", async () => {
@@ -191,6 +198,47 @@ describe("provisioning runtime/gateway contracts", () => {
       runtimePort: AGENT_RUNTIME_PORT,
       gatewayHost: "oclaw-agent-123.openclaw-agents.svc.cluster.local",
       gatewayPort: OPENCLAW_GATEWAY_PORT,
+    }));
+  });
+
+  it("returns node-port endpoints for docker-hosted kind verification", async () => {
+    process.env.K8S_EXPOSURE_MODE = "node-port";
+    process.env.K8S_RUNTIME_NODE_PORT = "30909";
+    process.env.K8S_GATEWAY_NODE_PORT = "31879";
+    mockCreateNamespacedService.mockResolvedValueOnce({
+      body: {
+        spec: {
+          ports: [
+            { name: "gateway", nodePort: 31879 },
+            { name: "runtime", nodePort: 30909 },
+          ],
+        },
+      },
+    });
+
+    const K8sBackend = require("../../workers/provisioner/backends/k8s");
+    const backend = new K8sBackend();
+
+    const result = await backend.create({
+      id: "321",
+      name: "NodePort QA",
+      vcpu: 2,
+      ram_mb: 2048,
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+
+    const service = mockCreateNamespacedService.mock.calls[0][1];
+
+    expect(service.spec.type).toBe("NodePort");
+    expect(service.spec.ports).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "gateway", nodePort: 31879 }),
+      expect.objectContaining({ name: "runtime", nodePort: 30909 }),
+    ]));
+    expect(result).toEqual(expect.objectContaining({
+      host: "oclaw-agent-321.openclaw-agents.svc.cluster.local",
+      runtimeHost: "host.docker.internal",
+      runtimePort: 30909,
+      gatewayHostPort: 31879,
     }));
   });
 });

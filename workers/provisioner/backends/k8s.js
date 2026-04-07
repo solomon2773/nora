@@ -16,6 +16,39 @@ class K8sBackend extends ProvisionerBackend {
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api);
     this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api);
     this.namespace = process.env.K8S_NAMESPACE || "openclaw-agents";
+    this.exposureMode = (process.env.K8S_EXPOSURE_MODE || "cluster-ip").toLowerCase();
+  }
+
+  _normalizePort(value) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  _isNodePortExposure() {
+    return this.exposureMode === "node-port";
+  }
+
+  _servicePorts() {
+    const ports = [
+      { name: "gateway", port: OPENCLAW_GATEWAY_PORT, targetPort: OPENCLAW_GATEWAY_PORT },
+      { name: "runtime", port: AGENT_RUNTIME_PORT, targetPort: AGENT_RUNTIME_PORT },
+    ];
+
+    if (!this._isNodePortExposure()) {
+      return ports;
+    }
+
+    const configuredGatewayNodePort = this._normalizePort(process.env.K8S_GATEWAY_NODE_PORT);
+    const configuredRuntimeNodePort = this._normalizePort(process.env.K8S_RUNTIME_NODE_PORT);
+
+    if (configuredGatewayNodePort) {
+      ports[0].nodePort = configuredGatewayNodePort;
+    }
+    if (configuredRuntimeNodePort) {
+      ports[1].nodePort = configuredRuntimeNodePort;
+    }
+
+    return ports;
   }
 
   async _ensureNamespace() {
@@ -145,10 +178,9 @@ class K8sBackend extends ProvisionerBackend {
 
     await this.appsApi.createNamespacedDeployment(this.namespace, deployment);
 
-    // Create a ClusterIP service that exposes both the control-plane gateway
-    // and the runtime sidecar on their contract ports. Readiness checks and
-    // post-deploy integration sync hit the runtime on 9090, while operator
-    // traffic uses the gateway on 18789.
+    // Create a service that exposes both the control-plane gateway and runtime
+    // sidecar. Default is ClusterIP for in-cluster control planes; local kind
+    // verification uses NodePort so the Docker-hosted backend can reach it.
     const service = {
       apiVersion: "v1",
       kind: "Service",
@@ -158,22 +190,46 @@ class K8sBackend extends ProvisionerBackend {
       },
       spec: {
         selector: { "openclaw.agent.id": String(id) },
-        ports: [
-          { name: "gateway", port: OPENCLAW_GATEWAY_PORT, targetPort: OPENCLAW_GATEWAY_PORT },
-          { name: "runtime", port: AGENT_RUNTIME_PORT, targetPort: AGENT_RUNTIME_PORT },
-        ],
-        type: "ClusterIP",
+        ports: this._servicePorts(),
+        type: this._isNodePortExposure() ? "NodePort" : "ClusterIP",
       },
     };
 
+    let serviceResp = null;
     try {
-      await this.coreApi.createNamespacedService(this.namespace, service);
+      serviceResp = await this.coreApi.createNamespacedService(this.namespace, service);
     } catch {
       // service may already exist
     }
 
     const host = `${deployName}.${this.namespace}.svc.cluster.local`;
-    console.log(`[k8s] Deployment ${deployName} created -> ${host} (gateway ${OPENCLAW_GATEWAY_PORT}, runtime ${AGENT_RUNTIME_PORT})`);
+    const servicePorts = serviceResp?.body?.spec?.ports || service.spec.ports;
+
+    if (this._isNodePortExposure()) {
+      const runtimeNodePort = servicePorts.find((port) => port.name === "runtime")?.nodePort;
+      const gatewayNodePort = servicePorts.find((port) => port.name === "gateway")?.nodePort;
+      if (!runtimeNodePort || !gatewayNodePort) {
+        throw new Error("K8s NodePort exposure requires runtime and gateway node ports");
+      }
+
+      console.log(
+        `[k8s] Deployment ${deployName} created -> ${host} ` +
+        `(runtime nodePort ${runtimeNodePort}, gateway nodePort ${gatewayNodePort})`
+      );
+      return {
+        containerId: deployName,
+        host,
+        gatewayToken,
+        runtimeHost: process.env.K8S_RUNTIME_HOST || process.env.GATEWAY_HOST || "host.docker.internal",
+        runtimePort: runtimeNodePort,
+        gatewayHostPort: gatewayNodePort,
+      };
+    }
+
+    console.log(
+      `[k8s] Deployment ${deployName} created -> ${host} ` +
+      `(gateway ${OPENCLAW_GATEWAY_PORT}, runtime ${AGENT_RUNTIME_PORT})`
+    );
     return {
       containerId: deployName,
       host,

@@ -2,10 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
 const BASE_URL = process.env.NORA_SCREENSHOT_BASE_URL || 'http://127.0.0.1:28080';
-const SCREENSHOT_DIR = process.env.NORA_SCREENSHOT_DIR || path.resolve(process.cwd(), '../docs/assets');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const SCREENSHOT_DIR = process.env.NORA_SCREENSHOT_DIR || path.resolve(__dirname, '../artifacts/operator-screenshots');
 const DB_CONTAINER = process.env.NORA_SCREENSHOT_DB_CONTAINER || 'nora-screens-postgres-1';
 const USER_EMAIL = process.env.NORA_SCREENSHOT_EMAIL || 'operator@example.com';
 const USER_PASSWORD = process.env.NORA_SCREENSHOT_PASSWORD || 'OperatorPass123!';
@@ -111,7 +114,7 @@ async function ensureProviders(token) {
 
   const byProvider = new Set((existing || []).map((row) => row.provider));
   const desired = [
-    { provider: 'openai', apiKey: 'sk-openai-demo-1234567890abcdef', model: 'gpt-5' },
+    { provider: 'openai', apiKey: 'sk-openai-demo-1234567890abcdef', model: 'gpt-5.4' },
     { provider: 'anthropic', apiKey: 'sk-ant-demo-abcdef1234567890', model: 'claude-3-7-sonnet-latest' },
   ];
 

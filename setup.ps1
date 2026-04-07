@@ -14,6 +14,11 @@
 $ErrorActionPreference = "Stop"
 
 $ENV_FILE = ".env"
+$PUBLIC_NGINX_TEMPLATE = "infra/nginx_public.conf.template"
+$TLS_NGINX_TEMPLATE = "infra/nginx_tls.conf"
+$TLS_COMPOSE_OVERRIDE_TEMPLATE = "infra/docker-compose.public-tls.yml"
+$PUBLIC_NGINX_CONF = "nginx.public.conf"
+$COMPOSE_OVERRIDE_FILE = "docker-compose.override.yml"
 
 # ── Color helpers ────────────────────────────────────────────
 
@@ -22,6 +27,18 @@ function Write-Ok    { param($msg) Write-Host "[ok]    $msg" -ForegroundColor Gr
 function Write-Warn  { param($msg) Write-Host "[warn]  $msg" -ForegroundColor Yellow }
 function Write-Err   { param($msg) Write-Host "[error] $msg" -ForegroundColor Red }
 function Write-Header { param($msg) Write-Host "`n── $msg ──`n" -ForegroundColor Cyan }
+
+function Write-PublicNginxConfig {
+    param([string]$TemplatePath, [string]$Domain)
+    $content = Get-Content $TemplatePath -Raw
+    $content = $content.Replace('$' + '{DOMAIN}', $Domain)
+    $content | Out-File -FilePath $PUBLIC_NGINX_CONF -Encoding utf8NoBOM
+}
+
+function Clear-PublicAccessArtifacts {
+    if (Test-Path $PUBLIC_NGINX_CONF) { Remove-Item $PUBLIC_NGINX_CONF -Force }
+    if (Test-Path $COMPOSE_OVERRIDE_FILE) { Remove-Item $COMPOSE_OVERRIDE_FILE -Force }
+}
 
 # ── Helper: generate random hex ─────────────────────────────
 
@@ -310,6 +327,82 @@ switch ($backendAnswer) {
     }
 }
 
+# ── Access mode ──────────────────────────────────────────────
+
+Write-Header "Access Mode"
+
+Write-Host "  How should users reach Nora?"
+Write-Host "    1) Local only (default) — http://localhost:8080"
+Write-Host "    2) Public domain behind HTTPS proxy — nginx listens on port 80"
+Write-Host "    3) Public domain with TLS at nginx — nginx listens on ports 80 and 443"
+$accessAnswer = Read-Host "  Select [1/2/3]"
+
+$ACCESS_MODE = "local"
+$PUBLIC_DOMAIN = ""
+$PUBLIC_SCHEME = "http"
+$NEXTAUTH_URL = "http://localhost:8080"
+$CORS_ORIGINS = "http://localhost:8080"
+$NGINX_CONFIG_FILE = "nginx.conf"
+$NGINX_HTTP_PORT = "8080"
+$CAN_START_NORA = $true
+
+switch ($accessAnswer) {
+    "2" {
+        while ($true) {
+            $PUBLIC_DOMAIN = Read-Host "  Public domain (e.g., stage.orionconnect.io)"
+            if ($PUBLIC_DOMAIN -match '^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$') { break }
+            Write-Warn "Enter a valid hostname without http:// or path segments."
+        }
+
+        $schemeInput = Read-Host "  Public URL scheme [https]"
+        $PUBLIC_SCHEME = if ($schemeInput) { $schemeInput.ToLowerInvariant() } else { "https" }
+        if ($PUBLIC_SCHEME -ne "http" -and $PUBLIC_SCHEME -ne "https") {
+            Write-Warn "Unsupported scheme '$PUBLIC_SCHEME' — using https."
+            $PUBLIC_SCHEME = "https"
+        }
+
+        Write-PublicNginxConfig -TemplatePath $PUBLIC_NGINX_TEMPLATE -Domain $PUBLIC_DOMAIN
+        if (Test-Path $COMPOSE_OVERRIDE_FILE) { Remove-Item $COMPOSE_OVERRIDE_FILE -Force }
+
+        $ACCESS_MODE = "public-proxy"
+        $NEXTAUTH_URL = "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}"
+        $CORS_ORIGINS = $NEXTAUTH_URL
+        $NGINX_CONFIG_FILE = $PUBLIC_NGINX_CONF
+        $NGINX_HTTP_PORT = "80"
+        Write-Ok "Public proxy mode — nginx will serve $PUBLIC_DOMAIN on port 80"
+    }
+    "3" {
+        while ($true) {
+            $PUBLIC_DOMAIN = Read-Host "  Public domain (e.g., stage.orionconnect.io)"
+            if ($PUBLIC_DOMAIN -match '^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$') { break }
+            Write-Warn "Enter a valid hostname without http:// or path segments."
+        }
+
+        Write-PublicNginxConfig -TemplatePath $TLS_NGINX_TEMPLATE -Domain $PUBLIC_DOMAIN
+        Copy-Item $TLS_COMPOSE_OVERRIDE_TEMPLATE $COMPOSE_OVERRIDE_FILE -Force
+
+        $ACCESS_MODE = "public-tls"
+        $PUBLIC_SCHEME = "https"
+        $NEXTAUTH_URL = "https://${PUBLIC_DOMAIN}"
+        $CORS_ORIGINS = $NEXTAUTH_URL
+        $NGINX_CONFIG_FILE = $PUBLIC_NGINX_CONF
+        $NGINX_HTTP_PORT = "80"
+
+        if (-not (Test-Path "/etc/letsencrypt/live/$PUBLIC_DOMAIN/fullchain.pem") -or -not (Test-Path "/etc/letsencrypt/live/$PUBLIC_DOMAIN/privkey.pem")) {
+            $CAN_START_NORA = $false
+            Write-Warn "TLS certs not found for $PUBLIC_DOMAIN."
+            Write-Info "Run: DOMAIN=$PUBLIC_DOMAIN EMAIL=you@example.com ./infra/setup-tls.sh"
+            Write-Info "The stack will be configured, but startup will be skipped until certs are installed."
+        } else {
+            Write-Ok "Public TLS mode — certs found for $PUBLIC_DOMAIN"
+        }
+    }
+    default {
+        Clear-PublicAccessArtifacts
+        Write-Ok "Local mode — Nora will be available at http://localhost:8080"
+    }
+}
+
 # ── Bootstrap Admin Account (Optional) ───────────────────────
 
 Write-Header "Bootstrap Admin Account (Optional)"
@@ -365,7 +458,7 @@ $FIRST_AGENT_NAME = ""
 switch ($llmChoice) {
     "1" { $LLM_PROVIDER = "google";     $LLM_MODEL = "gemini-2.0-flash" }
     "2" { $LLM_PROVIDER = "anthropic";  $LLM_MODEL = "claude-sonnet-4-5-20250514" }
-    "3" { $LLM_PROVIDER = "openai";     $LLM_MODEL = "gpt-4o" }
+    "3" { $LLM_PROVIDER = "openai";     $LLM_MODEL = "gpt-5.4" }
     "4" { $LLM_PROVIDER = "deepseek";   $LLM_MODEL = "deepseek-chat" }
     "5" { $LLM_PROVIDER = "xai";        $LLM_MODEL = "grok-3" }
     "6" { $LLM_PROVIDER = "openrouter"; $LLM_MODEL = "openrouter/auto" }
@@ -477,13 +570,17 @@ REDIS_HOST=redis
 REDIS_PORT=6379
 PORT=4000
 
+# ── Access / URL ─────────────────────────────────────────────
+NGINX_CONFIG_FILE=$NGINX_CONFIG_FILE
+NGINX_HTTP_PORT=$NGINX_HTTP_PORT
+
 # ── OAuth ────────────────────────────────────────────────────
 GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
 GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
 NEXTAUTH_SECRET=$NEXTAUTH_SECRET
-NEXTAUTH_URL=http://localhost:8080
+NEXTAUTH_URL=$NEXTAUTH_URL
 
 # ── Platform Mode ────────────────────────────────────────────
 PLATFORM_MODE=$PLATFORM_MODE
@@ -518,7 +615,7 @@ NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
 NEMOCLAW_SANDBOX_IMAGE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw
 
 # ── Security ─────────────────────────────────────────────────
-CORS_ORIGINS=http://localhost:8080
+CORS_ORIGINS=$CORS_ORIGINS
 
 # ── LLM Key Storage ─────────────────────────────────────────
 KEY_STORAGE=database
@@ -551,6 +648,16 @@ if ($DEFAULT_ADMIN_EMAIL) {
 Write-Host "  Secrets:      auto-generated (JWT, AES, NextAuth)"
 Write-Host "  Database:     PostgreSQL 15 (Docker Compose)"
 Write-Host "  Redis:        Redis 7 (Docker Compose)"
+if ($ACCESS_MODE -eq "local") {
+    Write-Host "  Access:       Local only"
+} else {
+    Write-Host "  Access:       $NEXTAUTH_URL"
+    if ($ACCESS_MODE -eq "public-tls") {
+        Write-Host "  TLS:          Terminated by nginx on this host"
+    } else {
+        Write-Host "  TLS:          Terminated by your upstream proxy"
+    }
+}
 
 if ($PLATFORM_MODE -eq "paas") {
     Write-Host "  Mode:         PaaS (Stripe billing)"
@@ -599,6 +706,14 @@ if ($startAnswer -match '^[Nn]$') {
     exit 0
 }
 
+if (-not $CAN_START_NORA) {
+    Write-Host ""
+    Write-Warn "Startup skipped until the public TLS certificate is installed."
+    Write-Info "After certs exist, run 'docker compose up -d'."
+    Write-Host ""
+    exit 0
+}
+
 # Stop any existing deployment and clean up stale data
 $existingContainers = docker compose ps --quiet 2>$null
 if ($existingContainers) {
@@ -629,7 +744,7 @@ if ($LLM_PROVIDER -and $LLM_API_KEY -and $FIRST_AGENT_NAME) {
     } else {
         Write-Header "Deploying First Agent"
 
-        $API_BASE = "http://localhost:8080/api"
+        $API_BASE = "http://127.0.0.1:4100"
         $MAX_WAIT = 90
         $waited = 0
 
@@ -674,7 +789,7 @@ if ($LLM_PROVIDER -and $LLM_API_KEY -and $FIRST_AGENT_NAME) {
 
             if (-not $TOKEN) {
                 Write-Warn "Could not authenticate after $loginMax attempts."
-                Write-Info "Log in manually at http://localhost:8080 and deploy your agent."
+                Write-Info "Log in manually at $NEXTAUTH_URL and deploy your agent."
             } else {
                 Write-Ok "Authenticated"
                 $headers = @{ Authorization = "Bearer $TOKEN" }
@@ -766,7 +881,7 @@ if ($LLM_PROVIDER -and $LLM_API_KEY -and $FIRST_AGENT_NAME) {
 Write-Host ""
 Write-Header "Nora is live!"
 
-Write-Host "  Open your browser:  http://localhost:8080"
+Write-Host "  Open your browser:  $NEXTAUTH_URL"
 if ($DEFAULT_ADMIN_EMAIL) {
     Write-Host "  Login:              $DEFAULT_ADMIN_EMAIL"
 } else {
@@ -787,7 +902,7 @@ Write-Host "    docker compose logs -f backend-api  # single service"
 Write-Host "    docker compose down                 # stop everything"
 Write-Host ""
 Write-Info "Need a different path?"
-Write-Host "    Install guide:      https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md"
+Write-Host "    Quick start:        https://github.com/solomon2773/nora#quick-start"
 Write-Host "    Support paths:      https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
 Write-Host "    Rollout help:       https://github.com/solomon2773/nora/discussions"
 Write-Host "    Hosted evaluation:  https://nora.solomontsao.com/signup"

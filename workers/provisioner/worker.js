@@ -1,7 +1,7 @@
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const { Pool } = require('pg');
-const { agentRuntimeUrl } = require('../../agent-runtime/lib/contracts');
+const { runtimeUrlForAgent } = require('../../agent-runtime/lib/agentEndpoints');
 const { waitForAgentReadiness } = require('./healthChecks');
 const { buildReadinessWarningDetail, persistReadinessWarning } = require('./readinessWarning');
 
@@ -362,8 +362,32 @@ const worker = new Worker('deployments', async (job) => {
   // Update agent with real container info
   try {
     await db.query(
-      "UPDATE agents SET status = 'running', container_id = $2, host = $3, backend_type = $4, gateway_token = $5, container_name = COALESCE($6, container_name), gateway_host_port = COALESCE($7, gateway_host_port) WHERE id = $1",
-      [id, containerId, host, backendName, gatewayToken, containerName || null, gatewayHostPort ? parseInt(gatewayHostPort) : null]
+      `UPDATE agents
+          SET status = 'running',
+              container_id = $2,
+              host = $3,
+              backend_type = $4,
+              gateway_token = $5,
+              container_name = COALESCE($6, container_name),
+              gateway_host_port = $7,
+              runtime_host = $8,
+              runtime_port = $9,
+              gateway_host = $10,
+              gateway_port = $11
+        WHERE id = $1`,
+      [
+        id,
+        containerId,
+        host,
+        backendName,
+        gatewayToken,
+        containerName || null,
+        gatewayHostPort ? parseInt(gatewayHostPort, 10) : null,
+        runtimeHost || null,
+        runtimePort ? parseInt(runtimePort, 10) : null,
+        gatewayHost || null,
+        gatewayPort ? parseInt(gatewayPort, 10) : null,
+      ]
     );
     await db.query("UPDATE deployments SET status = 'completed' WHERE agent_id = $1", [id]);
     await db.query(
@@ -408,7 +432,12 @@ const worker = new Worker('deployments', async (job) => {
           config: typeof r.config === "string" ? JSON.parse(r.config) : (r.config || {}),
           status: r.status,
         }));
-        await fetch(agentRuntimeUrl(host, "/integrations/sync"), {
+        const runtimeUrl = runtimeUrlForAgent({
+          host,
+          runtime_host: runtimeHost,
+          runtime_port: runtimePort,
+        }, "/integrations/sync");
+        await fetch(runtimeUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(syncData),

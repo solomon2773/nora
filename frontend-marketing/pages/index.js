@@ -83,7 +83,7 @@ const PROOF_LINKS = [
     title: "The repo is the trust anchor",
     desc: "Quick start, raw install scripts, and source code remain the clearest entry point for evaluating Nora.",
     href: "https://github.com/solomon2773/nora#quick-start",
-    cta: "Open install docs",
+    cta: "Open quick start",
     external: true,
   },
   {
@@ -95,11 +95,11 @@ const PROOF_LINKS = [
     external: false,
   },
   {
-    eyebrow: "Proof assets",
-    title: "Operators can inspect a full repo proof pack",
-    desc: "The proof pack maps installability, screenshot evidence, operator workflow, and non-DIY path credibility without unsupported claims.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/PROOF_PACK.md",
-    cta: "Open repo proof pack",
+    eyebrow: "Public codebase",
+    title: "Operators can inspect the actual control plane",
+    desc: "Dashboard code, backend orchestration, provisioning workers, and smoke tests stay in the repo, so public proof comes from product code instead of a separate write-up.",
+    href: "https://github.com/solomon2773/nora",
+    cta: "Browse the repo",
     external: true,
   },
   {
@@ -277,8 +277,8 @@ export default function Home() {
             <a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
               Need rollout help or paid support?
             </a>
-            <a href="https://github.com/solomon2773/nora#screenshots" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
-              Inspect screenshot proof
+            <a href="https://github.com/solomon2773/nora" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
+              Browse the public repo
             </a>
           </div>
         </div>
@@ -410,7 +410,7 @@ export default function Home() {
               <ul className="space-y-2 text-slate-400">
                 <li><a href="https://github.com/solomon2773/nora/discussions" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Rollout Help</a></li>
                 <li><a href="https://nora.solomontsao.com/signup" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Hosted Evaluation</a></li>
-                <li><a href="https://github.com/solomon2773/nora#screenshots" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Screenshots</a></li>
+                <li><a href="https://github.com/solomon2773/nora/blob/master/SUPPORT.md" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Support Paths</a></li>
               </ul>
             </div>
           </div>

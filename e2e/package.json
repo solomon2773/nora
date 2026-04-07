@@ -5,7 +5,8 @@
     "test": "npx playwright test",
     "test:ui": "npx playwright test --ui",
     "test:report": "npx playwright show-report",
-    "capture:operator-readme": "node ./scripts/capture-operator-screenshots.mjs"
+    "capture:operator-readme": "node ./scripts/capture-operator-screenshots.mjs",
+    "smoke:k8s-kind": "bash ./scripts/run-kind-k8s-smoke.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.42.0"

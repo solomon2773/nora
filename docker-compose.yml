@@ -2,9 +2,9 @@ services:
   nginx:
     image: nginx:latest
     ports:
-      - "8080:80"
+      - "${NGINX_HTTP_PORT:-8080}:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./${NGINX_CONFIG_FILE:-nginx.conf}:/etc/nginx/nginx.conf:ro
     depends_on:
       backend-api:
         condition: service_healthy

@@ -234,6 +234,30 @@ describe("GET /agents/:id/gateway-url", () => {
     });
   });
 
+  it("uses explicit gateway host and port when the backend records them", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        id: "a-k8s-gateway",
+        host: "oclaw-agent-a-k8s.openclaw-agents.svc.cluster.local",
+        container_id: "oclaw-agent-a-k8s",
+        backend_type: "k8s",
+        gateway_host_port: null,
+        gateway_host: "nora-kind-control-plane",
+        gateway_port: 31879,
+        user_id: "user-1",
+        status: "running",
+      }],
+    });
+
+    const res = await auth(request(app).get("/agents/a-k8s-gateway/gateway-url"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      url: "http://nora-kind-control-plane:31879",
+      port: 31879,
+    });
+  });
+
   it("rejects gateway url lookups for stopped agents so stale ports are not exposed", async () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{
@@ -382,7 +406,7 @@ describe("POST /agents/:id/redeploy", () => {
     expect(res.body).toEqual({ success: true, status: "queued" });
     expect(mockDb.query).toHaveBeenNthCalledWith(
       2,
-      expect.stringContaining("gateway_host_port = NULL, gateway_token = NULL"),
+      expect.stringContaining("runtime_host = NULL"),
       ["a-warning"]
     );
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({

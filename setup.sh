@@ -15,6 +15,11 @@
 set -euo pipefail
 
 ENV_FILE=".env"
+PUBLIC_NGINX_TEMPLATE="infra/nginx_public.conf.template"
+TLS_NGINX_TEMPLATE="infra/nginx_tls.conf"
+TLS_COMPOSE_OVERRIDE_TEMPLATE="infra/docker-compose.public-tls.yml"
+PUBLIC_NGINX_CONF="nginx.public.conf"
+COMPOSE_OVERRIDE_FILE="docker-compose.override.yml"
 
 # ── Color helpers ────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -29,6 +34,16 @@ ok()    { printf "${GREEN}[ok]${NC}    %s\n" "$1"; }
 warn()  { printf "${YELLOW}[warn]${NC}  %s\n" "$1"; }
 error() { printf "${RED}[error]${NC} %s\n" "$1"; }
 header(){ printf "\n${BOLD}${CYAN}── %s ──${NC}\n\n" "$1"; }
+
+write_public_nginx_conf() {
+  local template="$1"
+  local domain="$2"
+  sed "s/\${DOMAIN}/${domain}/g" "$template" > "$PUBLIC_NGINX_CONF"
+}
+
+clear_public_access_artifacts() {
+  rm -f "$PUBLIC_NGINX_CONF" "$COMPOSE_OVERRIDE_FILE"
+}
 
 # ── OS detection ────────────────────────────────────────────
 
@@ -339,6 +354,74 @@ case "$backend_answer" in
     ;;
 esac
 
+# ── Access mode ──────────────────────────────────────────────
+
+header "Access Mode"
+
+printf "  How should users reach Nora?\n"
+printf "    1) Local only (default) — http://localhost:8080\n"
+printf "    2) Public domain behind HTTPS proxy — nginx listens on port 80\n"
+printf "    3) Public domain with TLS at nginx — nginx listens on ports 80 and 443\n"
+printf "  Select [1/2/3]: "
+read -r access_answer < /dev/tty
+
+ACCESS_MODE="local"
+PUBLIC_DOMAIN=""
+PUBLIC_SCHEME="http"
+NEXTAUTH_URL="http://localhost:8080"
+CORS_ORIGINS="http://localhost:8080"
+NGINX_CONFIG_FILE="nginx.conf"
+NGINX_HTTP_PORT="8080"
+CAN_START_NORA=true
+
+case "$access_answer" in
+  2|3)
+    while true; do
+      printf "  Public domain (e.g., stage.orionconnect.io): "
+      read -r PUBLIC_DOMAIN < /dev/tty
+      if [[ "$PUBLIC_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] && [[ "$PUBLIC_DOMAIN" == *.* ]]; then
+        break
+      fi
+      warn "Enter a valid hostname without http:// or path segments."
+    done
+
+    if [ "$access_answer" = "2" ]; then
+      printf "  Public URL scheme [https]: "
+      read -r input < /dev/tty
+      PUBLIC_SCHEME="${input:-https}"
+      if [ "$PUBLIC_SCHEME" != "http" ] && [ "$PUBLIC_SCHEME" != "https" ]; then
+        warn "Unsupported scheme '$PUBLIC_SCHEME' — using https."
+        PUBLIC_SCHEME="https"
+      fi
+      write_public_nginx_conf "$PUBLIC_NGINX_TEMPLATE" "$PUBLIC_DOMAIN"
+      rm -f "$COMPOSE_OVERRIDE_FILE"
+      ok "Public proxy mode — nginx will serve ${PUBLIC_DOMAIN} on port 80"
+    else
+      PUBLIC_SCHEME="https"
+      write_public_nginx_conf "$TLS_NGINX_TEMPLATE" "$PUBLIC_DOMAIN"
+      cp "$TLS_COMPOSE_OVERRIDE_TEMPLATE" "$COMPOSE_OVERRIDE_FILE"
+      if [ ! -f "/etc/letsencrypt/live/${PUBLIC_DOMAIN}/fullchain.pem" ] || [ ! -f "/etc/letsencrypt/live/${PUBLIC_DOMAIN}/privkey.pem" ]; then
+        CAN_START_NORA=false
+        warn "TLS certs not found for ${PUBLIC_DOMAIN}."
+        info "Run: DOMAIN=${PUBLIC_DOMAIN} EMAIL=you@example.com ./infra/setup-tls.sh"
+        info "The stack will be configured, but startup will be skipped until certs are installed."
+      else
+        ok "Public TLS mode — certs found for ${PUBLIC_DOMAIN}"
+      fi
+    fi
+
+    ACCESS_MODE=$([ "$access_answer" = "3" ] && printf "public-tls" || printf "public-proxy")
+    NEXTAUTH_URL="${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}"
+    CORS_ORIGINS="${NEXTAUTH_URL}"
+    NGINX_CONFIG_FILE="$PUBLIC_NGINX_CONF"
+    NGINX_HTTP_PORT="80"
+    ;;
+  *)
+    clear_public_access_artifacts
+    ok "Local mode — Nora will be available at http://localhost:8080"
+    ;;
+esac
+
 # ── Bootstrap Admin Account (Optional) ───────────────────────
 
 header "Bootstrap Admin Account (Optional)"
@@ -398,7 +481,7 @@ FIRST_AGENT_NAME=""
 case "$llm_choice" in
   1)  LLM_PROVIDER="google";     LLM_MODEL="gemini-2.0-flash" ;;
   2)  LLM_PROVIDER="anthropic";  LLM_MODEL="claude-sonnet-4-5-20250514" ;;
-  3)  LLM_PROVIDER="openai";     LLM_MODEL="gpt-4o" ;;
+  3)  LLM_PROVIDER="openai";     LLM_MODEL="gpt-5.4" ;;
   4)  LLM_PROVIDER="deepseek";   LLM_MODEL="deepseek-chat" ;;
   5)  LLM_PROVIDER="xai";        LLM_MODEL="grok-3" ;;
   6)  LLM_PROVIDER="openrouter"; LLM_MODEL="openrouter/auto" ;;
@@ -522,13 +605,17 @@ REDIS_HOST=redis
 REDIS_PORT=6379
 PORT=4000
 
+# ── Access / URL ─────────────────────────────────────────────
+NGINX_CONFIG_FILE=${NGINX_CONFIG_FILE}
+NGINX_HTTP_PORT=${NGINX_HTTP_PORT}
+
 # ── OAuth ────────────────────────────────────────────────────
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
 GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
 GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
 NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
-NEXTAUTH_URL=http://localhost:8080
+NEXTAUTH_URL=${NEXTAUTH_URL}
 
 # ── Platform Mode ────────────────────────────────────────────
 PLATFORM_MODE=${PLATFORM_MODE}
@@ -563,7 +650,7 @@ NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
 NEMOCLAW_SANDBOX_IMAGE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw
 
 # ── Security ─────────────────────────────────────────────────
-CORS_ORIGINS=http://localhost:8080
+CORS_ORIGINS=${CORS_ORIGINS}
 
 # ── LLM Key Storage ─────────────────────────────────────────
 KEY_STORAGE=database
@@ -593,6 +680,16 @@ fi
 printf "  Secrets:      auto-generated (JWT, AES, NextAuth)\n"
 printf "  Database:     PostgreSQL 15 (Docker Compose)\n"
 printf "  Redis:        Redis 7 (Docker Compose)\n"
+if [ "$ACCESS_MODE" = "local" ]; then
+  printf "  Access:       Local only\n"
+else
+  printf "  Access:       %s\n" "$NEXTAUTH_URL"
+  if [ "$ACCESS_MODE" = "public-tls" ]; then
+    printf "  TLS:          Terminated by nginx on this host\n"
+  else
+    printf "  TLS:          Terminated by your upstream proxy\n"
+  fi
+fi
 
 if [ "$PLATFORM_MODE" = "paas" ]; then
   printf "  Mode:         PaaS (Stripe billing)\n"
@@ -642,6 +739,14 @@ if [[ "$start_answer" =~ ^[Nn]$ ]]; then
   exit 0
 fi
 
+if [ "$CAN_START_NORA" != true ]; then
+  echo ""
+  warn "Startup skipped until the public TLS certificate is installed."
+  info "After certs exist, run 'docker compose up -d'."
+  echo ""
+  exit 0
+fi
+
 # Stop any existing deployment and clean up stale data
 if docker compose ps --quiet 2>/dev/null | grep -q .; then
   info "Stopping existing Nora deployment..."
@@ -666,7 +771,7 @@ if [ -n "$LLM_PROVIDER" ] && [ -n "$LLM_API_KEY" ] && [ -n "$FIRST_AGENT_NAME" ]
   else
     header "Deploying First Agent"
 
-    API_BASE="http://localhost:8080/api"
+    API_BASE="http://127.0.0.1:4100"
     MAX_WAIT=90
     WAITED=0
 
@@ -713,7 +818,7 @@ if [ -n "$LLM_PROVIDER" ] && [ -n "$LLM_API_KEY" ] && [ -n "$FIRST_AGENT_NAME" ]
 
     if [ -z "$TOKEN" ]; then
       warn "Could not authenticate after ${LOGIN_MAX} attempts."
-      info "Log in manually at http://localhost:8080 and deploy your agent."
+      info "Log in manually at ${NEXTAUTH_URL} and deploy your agent."
       echo ""
       exit 0
     fi
@@ -805,7 +910,7 @@ fi
 echo ""
 header "Nora is live!"
 
-printf "  Open your browser:  http://localhost:8080\n"
+printf "  Open your browser:  %s\n" "$NEXTAUTH_URL"
 if [ -n "$DEFAULT_ADMIN_EMAIL" ]; then
   printf "  Login:              %s\n" "$DEFAULT_ADMIN_EMAIL"
 else
@@ -826,7 +931,7 @@ echo "    docker compose logs -f backend-api  # single service"
 echo "    docker compose down                 # stop everything"
 echo ""
 info "Need a different path?"
-echo "    Install guide:      https://github.com/solomon2773/nora/blob/master/docs/INSTALL.md"
+echo "    Quick start:        https://github.com/solomon2773/nora#quick-start"
 echo "    Support paths:      https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
 echo "    Rollout help:       https://github.com/solomon2773/nora/discussions"
 echo "    Hosted evaluation:  https://nora.solomontsao.com/signup"

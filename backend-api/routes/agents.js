@@ -7,6 +7,7 @@ const containerManager = require("../containerManager");
 const monitoring = require("../monitoring");
 const { isGatewayAvailableStatus, reconcileAgentStatus } = require("../agentStatus");
 const { OPENCLAW_GATEWAY_PORT } = require("../../agent-runtime/lib/contracts");
+const { resolveGatewayAddress } = require("../../agent-runtime/lib/agentEndpoints");
 const { asyncHandler } = require("../middleware/errorHandler");
 
 const router = express.Router();
@@ -88,7 +89,10 @@ function parseInterval(pg) {
 // Get the gateway control UI URL (published host port for direct browser access)
 router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
   const result = await db.query(
-    "SELECT id, container_id, gateway_token, gateway_host_port, user_id, status FROM agents WHERE id = $1 AND user_id = $2",
+    `SELECT id, host, container_id, backend_type, gateway_token, gateway_host_port,
+            gateway_host, gateway_port, user_id, status
+       FROM agents
+      WHERE id = $1 AND user_id = $2`,
     [req.params.id, req.user.id]
   );
   const agent = result.rows[0];
@@ -98,9 +102,10 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
   }
   if (!agent.container_id) return res.status(409).json({ error: "No container" });
 
-  // Use stored host port if available, otherwise fall back to Docker inspect
+  // Prefer the stored published port when present. This keeps browser access on
+  // localhost for Docker and local kind NodePort verification.
   let hostPort = agent.gateway_host_port;
-  if (!hostPort) {
+  if (!hostPort && agent.container_id && ["docker", "nemoclaw"].includes(agent.backend_type || "docker")) {
     try {
       const Docker = require("dockerode");
       const docker = new Docker({ socketPath: "/var/run/docker.sock" });
@@ -112,12 +117,22 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
     }
   }
 
-  if (!hostPort) return res.status(409).json({ error: "Gateway port not published" });
+  if (hostPort) {
+    const gatewayHost = process.env.GATEWAY_HOST || "localhost";
+    return res.json({
+      url: `http://${gatewayHost}:${hostPort}`,
+      port: parseInt(hostPort, 10),
+    });
+  }
 
-  const gatewayHost = process.env.GATEWAY_HOST || "localhost";
+  const directAddress = resolveGatewayAddress(agent, {
+    publishedHost: process.env.GATEWAY_HOST || "localhost",
+  });
+  if (!directAddress) return res.status(409).json({ error: "Gateway address not available" });
+
   res.json({
-    url: `http://${gatewayHost}:${hostPort}`,
-    port: parseInt(hostPort),
+    url: `http://${directAddress.host}:${directAddress.port}`,
+    port: parseInt(directAddress.port, 10),
   });
 }));
 
@@ -374,7 +389,17 @@ router.post("/:id/redeploy", async (req, res) => {
     }
 
     await db.query(
-      "UPDATE agents SET status = 'queued', container_id = NULL, host = NULL, gateway_host_port = NULL, gateway_token = NULL WHERE id = $1",
+      `UPDATE agents
+          SET status = 'queued',
+              container_id = NULL,
+              host = NULL,
+              runtime_host = NULL,
+              runtime_port = NULL,
+              gateway_host = NULL,
+              gateway_port = NULL,
+              gateway_host_port = NULL,
+              gateway_token = NULL
+        WHERE id = $1`,
       [agent.id]
     );
 

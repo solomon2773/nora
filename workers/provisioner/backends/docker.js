@@ -248,6 +248,34 @@ class DockerBackend extends ProvisionerBackend {
     // Derive the deterministic host port for this agent to include in allowedOrigins
     const hostPort = 19000 + (parseInt(id.replace(/\D/g, '').slice(0, 4)) || 0) % 1000;
 
+    const allowedOrigins = new Set([
+      "http://localhost:8080",
+      "http://127.0.0.1:8080",
+      "https://localhost:8080",
+      "http://localhost:18789",
+      "http://127.0.0.1:18789",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:4000",
+      "http://127.0.0.1:4000",
+      `http://localhost:${hostPort}`,
+      `http://127.0.0.1:${hostPort}`,
+    ]);
+
+    const addAllowedOrigin = (value) => {
+      if (!value) return;
+      try {
+        allowedOrigins.add(new URL(value).origin);
+      } catch (_) {
+        // Ignore malformed values in optional public URL env vars.
+      }
+    };
+
+    addAllowedOrigin(process.env.NEXTAUTH_URL);
+    for (const origin of (process.env.CORS_ORIGINS || "").split(",").map((entry) => entry.trim()).filter(Boolean)) {
+      addAllowedOrigin(origin);
+    }
+
     const gatewayConfig = {
       gateway: {
         bind: "lan",
@@ -258,13 +286,7 @@ class DockerBackend extends ProvisionerBackend {
         },
         trustedProxies: ["127.0.0.1", "::1"],
         controlUi: {
-          allowedOrigins: [
-            "http://localhost:8080", "http://127.0.0.1:8080", "https://localhost:8080",
-            "http://localhost:18789", "http://127.0.0.1:18789",
-            "http://localhost:3000", "http://127.0.0.1:3000",
-            "http://localhost:4000", "http://127.0.0.1:4000",
-            `http://localhost:${hostPort}`, `http://127.0.0.1:${hostPort}`,
-          ],
+          allowedOrigins: [...allowedOrigins],
         },
       },
     };

@@ -5,8 +5,7 @@ import { chromium } from "playwright";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, "../..");
-const outputDir = path.join(repoRoot, "docs", "assets");
+const outputDir = process.env.NORA_MARKETING_PROOF_DIR || path.resolve(__dirname, "../artifacts/marketing-proof");
 const baseUrl = process.env.BASE_URL || "http://127.0.0.1:18080";
 
 const shots = [

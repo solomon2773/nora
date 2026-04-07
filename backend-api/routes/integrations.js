@@ -4,7 +4,8 @@ const integrations = require("../integrations");
 const { rpcCall } = require("../gatewayProxy");
 const { syncAuthToUserAgents } = require("../authSync");
 const { requireOwnedAgent } = require("../middleware/ownership");
-const { agentRuntimeUrl, AGENT_RUNTIME_PORT } = require("../../agent-runtime/lib/contracts");
+const { AGENT_RUNTIME_PORT } = require("../../agent-runtime/lib/contracts");
+const { runtimeUrlForAgent } = require("../../agent-runtime/lib/agentEndpoints");
 
 const router = express.Router();
 
@@ -12,16 +13,19 @@ router.use("/agents/:id/integrations", requireOwnedAgent("id"));
 
 async function syncIntegrationsToAgent(agentId) {
   const agentResult = await db.query(
-    "SELECT id, host, status, gateway_token FROM agents WHERE id = $1",
+    `SELECT id, host, runtime_host, runtime_port, status, gateway_token,
+            gateway_host_port, gateway_host, gateway_port
+       FROM agents WHERE id = $1`,
     [agentId]
   );
   const agent = agentResult.rows[0];
-  if (!agent || !agent.host) return;
+  const runtimeUrl = runtimeUrlForAgent(agent, "/integrations/sync");
+  if (!agent || !runtimeUrl) return;
 
   // 1. Push integration metadata (non-sensitive) to the agent runtime.
   try {
     const syncData = await integrations.getIntegrationsForSync(agentId);
-    await fetch(agentRuntimeUrl(agent.host, "/integrations/sync"), {
+    await fetch(runtimeUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(syncData),

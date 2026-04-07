@@ -40,6 +40,11 @@ function getBackendInstance(type) {
       backendCache[type] = new DockerBackend();
       break;
     }
+    case "nemoclaw": {
+      const NemoClawBackend = require(resolveBackendPath("nemoclaw"));
+      backendCache[type] = new NemoClawBackend();
+      break;
+    }
     case "proxmox": {
       const ProxmoxBackend = require(resolveBackendPath("proxmox"));
       backendCache[type] = new ProxmoxBackend();

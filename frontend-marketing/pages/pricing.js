@@ -104,24 +104,24 @@ const ENTRY_POINTS = [
 
 const PROOF_RESOURCES = [
   {
-    title: "Repo proof pack",
-    desc: "One public map of what Nora already proves today: installability, operator workflow, screenshot evidence, and credible non-DIY paths.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/PROOF_PACK.md",
+    title: "README quick start",
+    desc: "Public self-host entry point with install scripts, configuration, and first-run flow.",
+    href: "https://github.com/solomon2773/nora#quick-start",
   },
   {
-    title: "Open-source usage + commercial guide",
-    desc: "Repo-native explanation of Apache 2.0 rights, self-hosting, rollout help, managed paths, and runtime direction framing.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/OPEN_SOURCE_USAGE.md",
+    title: "Support paths",
+    desc: "Public routing for self-serve setup, GitHub Discussions, hosted evaluation, and custom deployment.",
+    href: "https://github.com/solomon2773/nora/blob/master/SUPPORT.md",
   },
   {
-    title: "Commercial paths",
-    desc: "Public path map covering self-hosted OSS, rollout help / paid support, hosted evaluation / managed PaaS, and enterprise/custom deployment.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/COMMERCIAL_PATHS.md",
+    title: "Operator dashboard code",
+    desc: "The operator UI, provisioning flow, and settings surfaces live in the public repo.",
+    href: "https://github.com/solomon2773/nora/tree/master/frontend-dashboard",
   },
   {
-    title: "Implementation proof",
-    desc: "Code-backed proof that install flows, auth, operator UI, and proof assets all exist in-repo today.",
-    href: "https://github.com/solomon2773/nora/blob/master/docs/IMPLEMENTATION_PROOF.md",
+    title: "Smoke tests and capture scripts",
+    desc: "End-to-end coverage and screenshot generators stay in-repo for repeatable verification.",
+    href: "https://github.com/solomon2773/nora/tree/master/e2e",
   },
 ];
 
@@ -135,7 +135,7 @@ const PRICING_RULES = [
 const PATH_COMPARISON = [
   {
     path: "Self-host Nora",
-    canVerify: "Repo, install guide, setup scripts, Docker Compose flow, and screenshot proof assets.",
+    canVerify: "Repo, README quick start, setup scripts, Docker Compose flow, and public app surfaces.",
     bestFit: "Teams that want full infrastructure ownership and the clearest trust path.",
     nextStep: "Run the quick start and validate the first operator workflow.",
   },
@@ -147,13 +147,13 @@ const PATH_COMPARISON = [
   },
   {
     path: "Hosted eval / managed PaaS",
-    canVerify: "Public hosted app, signup path, deployment/support page, and repo proof assets.",
+    canVerify: "Public hosted app, signup path, deployment/support page, and repo implementation.",
     bestFit: "Teams that want a less DIY evaluation path or lighter operational overhead.",
     nextStep: "Use signup or the deployment/support path page to start the evaluation path.",
   },
   {
     path: "Enterprise / custom deployment",
-    canVerify: "Deployment-footprint direction, path clarity, and the OSS proof pack in the repo.",
+    canVerify: "Deployment/support page, repo architecture, and the OSS control-plane implementation.",
     bestFit: "Teams with larger-team requirements or more complex security, identity, networking, or infra scope.",
     nextStep: "Start with deployment footprint, rollout stage, and environment constraints.",
   },

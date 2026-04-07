@@ -4,7 +4,7 @@
 
 const db = require("../db");
 const { encrypt, decrypt, ensureEncryptionConfigured } = require("../crypto");
-const { agentRuntimeUrl } = require("../../agent-runtime/lib/contracts");
+const { runtimeUrlForAgent } = require("../../agent-runtime/lib/agentEndpoints");
 const { getAdapter, listAdapterTypes } = require("./adapters");
 
 const REDACTED_SECRET = "[REDACTED]";
@@ -236,13 +236,14 @@ async function handleInboundWebhook(channelId, payload, headers) {
 
   // Forward to agent runtime if agent is running
   const agentResult = await db.query(
-    "SELECT host FROM agents WHERE id = $1",
+    "SELECT host, runtime_host, runtime_port FROM agents WHERE id = $1",
     [channel.agent_id]
   );
   const agent = agentResult.rows[0];
-  if (agent?.host && agent.host !== "pending") {
+  const runtimeUrl = runtimeUrlForAgent(agent, "/channels/receive");
+  if (runtimeUrl && agent?.host !== "pending") {
     try {
-      await fetch(agentRuntimeUrl(agent.host, "/channels/receive"), {
+      await fetch(runtimeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

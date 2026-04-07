@@ -12,3 +12,10 @@ coverage/
 .env
 .env.local
 .env.*.local
+docker-compose.override.yml
+nginx.public.conf
+nginx.conf.tls
+
+# Private docs / generated proof assets
+docs/
+e2e/artifacts/

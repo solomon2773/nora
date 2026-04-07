@@ -7,8 +7,8 @@ Use this page to pick the fastest support route for your situation.
 Start here if you want to self-host Nora and prove value on your own infrastructure.
 
 - [README Quick Start](README.md#quick-start)
-- [Install guide](docs/INSTALL.md)
-- [HTTPS setup](docs/HTTPS_SETUP.md)
+- [README Configuration](README.md#configuration)
+- [`infra/setup-tls.sh`](infra/setup-tls.sh)
 
 Best fit:
 - you want the cleanest trust path
@@ -32,7 +32,7 @@ Best fit:
 Use GitHub Discussions if you want the same open-source product but need a faster path to first value on infrastructure you control.
 
 - [Start a support discussion](https://github.com/solomon2773/nora/discussions)
-- [Commercial paths overview](docs/COMMERCIAL_PATHS.md)
+- [Deployment / support paths](https://nora.solomontsao.com/pricing)
 
 This path is for rollout speed and support around the OSS product, not for unlocking usage rights.
 
@@ -63,6 +63,7 @@ To reduce back-and-forth, include:
 - your deployment mode: self-hosted, rollout-help / paid-support, hosted evaluation / managed PaaS, or enterprise/custom
 - OS and environment details
 - whether you used `setup.sh`, `setup.ps1`, or manual setup
+- whether Nora is running in local mode, public-domain proxy mode, or public-domain TLS mode
 - the step that failed or slowed you down
 - relevant logs or screenshots
 
@@ -71,6 +72,6 @@ To reduce back-and-forth, include:
 Do **not** post secrets, API keys, `.env` files, or private credentials in Issues or Discussions.
 
 If you are unsure where to start:
-- choose [Install guide](docs/INSTALL.md) if you want to self-host
+- choose [README Quick Start](README.md#quick-start) if you want to self-host
 - choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want rollout help or paid support
 - choose [deployment paths](https://nora.solomontsao.com/pricing) or [signup](https://nora.solomontsao.com/signup) if you want a hosted, managed, or custom-deployment path

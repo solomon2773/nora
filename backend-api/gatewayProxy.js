@@ -9,6 +9,10 @@ const db = require("./db");
 
 const metrics = require("./metrics");
 const { OPENCLAW_GATEWAY_PORT } = require("../agent-runtime/lib/contracts");
+const {
+  resolveGatewayAddress,
+  hasGatewayEndpoint,
+} = require("../agent-runtime/lib/agentEndpoints");
 const GATEWAY_PORT = OPENCLAW_GATEWAY_PORT;
 const CONNECT_TIMEOUT = 8000;
 const CALL_TIMEOUT = 30000;
@@ -266,11 +270,12 @@ class GatewayConnection {
   }
 }
 
-// Simple connection pool: one connection per agent host
-const pool = new Map(); // host -> GatewayConnection
+// Simple connection pool: one connection per resolved gateway address
+const pool = new Map(); // host:port -> GatewayConnection
 
 async function getConnection(agent) {
-  const addr = gatewayAddress(agent);
+  const addr = resolveGatewayAddress(agent);
+  if (!addr) throw new Error("Agent gateway not yet provisioned");
   const key = `${addr.host}:${addr.port}`;
   let conn = pool.get(key);
   if (conn?.isAlive) return conn;
@@ -309,25 +314,15 @@ async function getConnection(agent) {
 
 async function resolveAgent(agentId, userId) {
   const result = await db.query(
-    "SELECT id, name, status, container_id, host, backend_type, gateway_token, gateway_host_port, user_id FROM agents WHERE id = $1",
+    `SELECT id, name, status, container_id, host, backend_type, gateway_token,
+            gateway_host_port, gateway_host, gateway_port, runtime_host,
+            runtime_port, user_id
+       FROM agents WHERE id = $1`,
     [agentId]
   );
   const agent = result.rows[0];
   if (!agent || agent.user_id !== userId) return null;
   return agent;
-}
-
-/** Resolve the gateway address (host:port) for an agent.
- *  Prefers the published Docker host port over internal Docker IP.
- *  Uses GATEWAY_HOST env var (default: host.docker.internal) to reach
- *  published ports from inside the backend-api container. */
-const GATEWAY_DOCKER_HOST = process.env.GATEWAY_HOST || "host.docker.internal";
-
-function gatewayAddress(agent) {
-  if (agent.gateway_host_port) {
-    return { host: GATEWAY_DOCKER_HOST, port: agent.gateway_host_port };
-  }
-  return { host: agent.host, port: GATEWAY_PORT };
 }
 
 /** Make an RPC call to an agent's gateway, return the result or throw. */
@@ -359,7 +354,7 @@ function createGatewayRouter() {
       if (agent.status !== "running" && agent.status !== "warning") {
         return res.status(409).json({ error: `Agent is ${agent.status}, not running` });
       }
-      if (!agent.host) {
+      if (!hasGatewayEndpoint(agent)) {
         return res.status(409).json({ error: "Agent gateway not yet provisioned" });
       }
       req.agent = agent;
@@ -657,7 +652,7 @@ function createGatewayRouter() {
       try {
         const subPath = req.params[0] || "";
         const gatewayPath = prefix + subPath;
-        const addr = gatewayAddress(req.agent);
+        const addr = resolveGatewayAddress(req.agent);
         const targetUrl = `http://${addr.host}:${addr.port}/${gatewayPath}${req._parsedUrl?.search || ""}`;
 
         const resp = await fetch(targetUrl, {
@@ -685,7 +680,7 @@ function createGatewayRouter() {
   async function proxyGatewayFavicon(req, res) {
     try {
       const fullPath = req.path.split("/gateway/")[1] || "favicon.svg";
-      const addr = gatewayAddress(req.agent);
+      const addr = resolveGatewayAddress(req.agent);
       const targetUrl = `http://${addr.host}:${addr.port}/${fullPath}`;
       const resp = await fetch(targetUrl, { signal: AbortSignal.timeout(5000) });
       res.status(resp.status);
@@ -735,7 +730,7 @@ function attachGatewayWS(server) {
         ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
         ws.close(); return;
       }
-      if ((agent.status !== "running" && agent.status !== "warning") || !agent.host) {
+      if ((agent.status !== "running" && agent.status !== "warning") || !hasGatewayEndpoint(agent)) {
         ws.send(JSON.stringify({ type: "error", message: `Agent is ${agent.status}` }));
         ws.close(); return;
       }
@@ -746,7 +741,7 @@ function attachGatewayWS(server) {
       let pendingClientConnect = null; // client's connect msg awaiting relay handshake
       const clientQueue = []; // buffer client messages until handshake is done
 
-      const addr = gatewayAddress(agent);
+      const addr = resolveGatewayAddress(agent);
       const gwWs = new WebSocket(`ws://${addr.host}:${addr.port}`, {
         headers: { "Origin": `http://localhost:${addr.port}` }
       });
@@ -857,10 +852,13 @@ function attachGatewayWS(server) {
 
 /** Evict a cached gateway connection so the next request creates a fresh one.
  *  Called after authSync restarts an agent container. */
-function evictConnection(host) {
-  // Pool keys are now "host:port" — evict any key that starts with the given host
+function evictConnection(target) {
+  const address = typeof target === "string" ? { host: target } : resolveGatewayAddress(target || {});
+  if (!address?.host) return;
+
+  const keyPrefix = `${address.host}:`;
   for (const [key, conn] of pool) {
-    if (key === host || key.startsWith(host + ":")) {
+    if (key === address.host || key === `${address.host}:${address.port}` || key.startsWith(keyPrefix)) {
       conn.close();
       pool.delete(key);
       console.log(`[gatewayProxy] Evicted connection for ${key}`);

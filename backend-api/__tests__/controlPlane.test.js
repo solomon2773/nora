@@ -130,7 +130,12 @@ describe("gateway control-plane embed", () => {
       })
     );
     expect(res.text).toContain("ws://nora.test/api/ws/gateway/agent-1?token=");
-    expect(res.text).toContain("window.location.hash='password='+encodeURIComponent(P)");
+    expect(res.text).toContain('var nextHash = "password=" + encodeURIComponent(P)');
+    expect(res.text).toContain('window.location.hash = nextHash');
+    expect(res.text).toContain("window.__NORA_EMBED_AUTO_LOGIN__ = true");
+    expect(res.text).toContain("function startAutoLogin()");
+    expect(res.text).toContain("form.requestSubmit");
+    expect(res.text).toContain("new MutationObserver");
     expect(res.text).not.toContain("localStorage.setItem('oc-gateway-url',R)");
     expect(res.headers["referrer-policy"]).toBe("no-referrer");
     expect(res.headers["x-content-type-options"]).toBe("nosniff");
@@ -160,6 +165,34 @@ describe("gateway control-plane embed", () => {
     expect(res.status).toBe(200);
     expect(global.fetch).toHaveBeenCalledWith(
       "http://gateway.internal:19123/",
+      expect.any(Object)
+    );
+  });
+
+  it("prefers explicit gateway host and port when the backend provides them", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.10",
+        gateway_token: "gateway-password",
+        gateway_host_port: 19123,
+        gateway_host: "gateway.service.internal",
+        gateway_port: 28789,
+        status: "running",
+      }],
+    });
+    global.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => "<html><head></head><body>ok</body></html>",
+    });
+
+    const res = await request(app)
+      .get(`/agents/agent-1/gateway/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://gateway.service.internal:28789/",
       expect.any(Object)
     );
   });

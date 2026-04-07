@@ -25,17 +25,11 @@
   ·
   <a href="https://storage.solomontsao.com/setup.ps1">Install script (PowerShell)</a>
   ·
-  <a href="#open-source-proof-pack">Open-source proof pack</a>
-  ·
-  <a href="#screenshots">Screenshots</a>
+  <a href="SUPPORT.md">Support Paths</a>
   ·
   <a href="#runtime-direction">Runtime direction</a>
   ·
   <a href="#deployment-footprint">Deployment footprint</a>
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-landing-open-source-funnel.png" alt="Nora landing page proof" width="90%" />
 </p>
 
 ---
@@ -116,8 +110,6 @@ It should make sense across this deployment range:
 
 That footprint matters because Nora is not just trying to be a one-box dashboard. It should stay credible as an operator surface that starts small and expands into more serious infrastructure.
 
-See [Deployment footprints](docs/DEPLOYMENT_FOOTPRINTS.md) for the full positioning guide.
-
 ## Who Nora is for
 
 Nora is best for:
@@ -163,79 +155,13 @@ Use [nora.solomontsao.com](https://nora.solomontsao.com) and [signup](https://no
 
 Use [deployment paths](https://nora.solomontsao.com/pricing) when you need scoped help around deployment footprint, infrastructure ownership, rollout depth, or larger-team requirements.
 
-See [Commercial paths](docs/COMMERCIAL_PATHS.md) for the full public-path positioning guide.
+Public entry points stay in [Support Paths](SUPPORT.md) and on [nora.solomontsao.com/pricing](https://nora.solomontsao.com/pricing).
 
-## Open-source proof pack
+## Public repo scope
 
-Nora should ask people to trust the product itself, the install path, and the operator workflow.
+This public repository keeps the product code, quick start, support entry points, and deployment helpers available in the open.
 
-Use these resources when you need to prove that the repo is real and usable:
-
-- [Repo proof pack](docs/PROOF_PACK.md) — the public proof map for installability, operator workflow, screenshot evidence, and paid-path credibility
-- [Open-source implementation proof](docs/IMPLEMENTATION_PROOF.md) — code-backed evidence for self-hosting, operator flows, proof assets, and runtime direction
-- [Adoption checklist](docs/ADOPTION_CHECKLIST.md) — practical paths for self-hosting, Apache 2.0 commercial use, rollout help, hosted evaluation, and runtime expansion
-- [Open-source usage guide](docs/OPEN_SOURCE_USAGE.md) — Apache 2.0 usage rights and public repo framing
-- [Commercial paths](docs/COMMERCIAL_PATHS.md) — self-hosted OSS, rollout help / paid support, managed PaaS, and enterprise/custom entry points
-- [Deployment footprints](docs/DEPLOYMENT_FOOTPRINTS.md) — how Nora should scale from single-host through Proxmox, private cloud, and AWS/Azure/GCP
-- [Runtime direction guide](docs/RUNTIME_DIRECTION.md) — how to describe Nora as OpenClaw-first today while keeping the product future-runtime-friendly
-- [Operator screenshot capture script](e2e/scripts/capture-operator-screenshots.mjs) — regenerates the operator screenshots from a local self-hosted stack
-
-## Screenshots
-
-The repo now includes real operator-side screenshots alongside the marketing and OSS-proof images. They show Nora as a working self-hosted control plane, with OpenClaw as the current best-supported runtime example rather than the forever-only frame.
-
-## What each proof asset demonstrates
-
-| Proof asset | What it demonstrates |
-|---|---|
-| `proof-landing-open-source-funnel.png` | Nora leads with an OSS-first trust path rather than a sales-first gate |
-| `proof-usage-rights-apache.png` | Apache 2.0 commercial-use rights and path clarity are visible publicly |
-| `proof-signup-operator-account.png` | A real operator account entry flow exists |
-| `proof-operator-dashboard.png` | Nora has a working operator overview beyond marketing copy |
-| `proof-operator-fleet.png` | Operators can manage and validate multiple runtimes |
-| `proof-operator-deploy-flow.png` | The first runtime deployment flow is concrete and inspectable |
-| `proof-operator-agent-detail.png` | Ongoing operations include validation, logs, and terminal surfaces |
-| `proof-operator-settings-provider-setup.png` | Provider setup is part of the current product path |
-
-### Landing and OSS proof
-
-<p align="center">
-  <img src="docs/assets/proof-landing-open-source-funnel.png" alt="Nora landing page screenshot" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-usage-rights-apache.png" alt="Nora usage-rights and deployment-path screenshot" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-signup-operator-account.png" alt="Nora signup screenshot" width="90%" />
-</p>
-
-### Operator overview and fleet
-
-<p align="center">
-  <img src="docs/assets/proof-operator-dashboard.png" alt="Nora dashboard screenshot showing fleet overview and recent deployments" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-operator-fleet.png" alt="Nora fleet management screenshot showing multiple agents and validation actions" width="90%" />
-</p>
-
-### Deploy and validate
-
-<p align="center">
-  <img src="docs/assets/proof-operator-deploy-flow.png" alt="Nora deploy flow screenshot for provisioning an OpenClaw agent" width="90%" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/proof-operator-agent-detail.png" alt="Nora agent detail screenshot showing the validation view, OpenClaw badge, logs, and terminal tabs" width="90%" />
-</p>
-
-### Provider setup
-
-<p align="center">
-  <img src="docs/assets/proof-operator-settings-provider-setup.png" alt="Nora settings screenshot showing configured LLM providers and provider setup options" width="90%" />
-</p>
+Long-form rollout notes, proof packs, screenshots, and other internal documentation are maintained separately from the public repo.
 
 ## Runtime direction
 
@@ -247,8 +173,6 @@ Nora should be described as:
 - **credible from single-host through Proxmox, private cloud, and AWS/Azure/GCP deployment footprints**
 
 That framing is more durable than treating Nora as a permanently single-runtime dashboard or centering the repo around sales packaging.
-
-See [Runtime direction guide](docs/RUNTIME_DIRECTION.md) for the durable wording and guardrails behind that positioning.
 
 ## Quick Start
 
@@ -278,13 +202,14 @@ The installer will:
 1. clone the repository
 2. verify Docker, Docker Compose, and OpenSSL
 3. generate platform secrets
-4. configure self-hosted or PaaS mode
-5. create the initial admin account
-6. collect an LLM provider key (optional but recommended)
-7. start the Nora stack
-8. take you to the dashboard so you can deploy the first agent
+4. choose local-only or public-domain access mode
+5. configure self-hosted or PaaS mode
+6. create the initial admin account
+7. collect an LLM provider key (optional but recommended)
+8. generate the matching nginx config and start the Nora stack
+9. take you to the dashboard so you can deploy the first agent
 
-The public install links intentionally use `storage.solomontsao.com` as the canonical installer host while keeping the open-source repo and install docs as the primary trust anchor.
+The public install links intentionally use `storage.solomontsao.com` as the canonical installer host while keeping the open-source repo and README quick start as the primary trust anchor.
 
 ### Manual setup
 
@@ -303,6 +228,10 @@ cp .env.example .env
 Then edit `.env` with your secrets:
 
 ```bash
+# Access / URL
+NGINX_CONFIG_FILE=nginx.conf
+NGINX_HTTP_PORT=8080
+
 # Required — generate with: openssl rand -hex 32
 JWT_SECRET=your-64-char-hex-key
 ENCRYPTION_KEY=your-64-char-hex-key
@@ -317,12 +246,31 @@ GOOGLE_CLIENT_SECRET=
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
 NEXTAUTH_SECRET=your-64-char-hex-key
+NEXTAUTH_URL=http://localhost:8080
+CORS_ORIGINS=http://localhost:8080
 
 # Optional — Stripe billing (PaaS mode)
 STRIPE_SECRET_KEY=
 STRIPE_PRICE_PRO=
 STRIPE_PRICE_ENTERPRISE=
 ```
+
+To make Nora public on a domain, change the access values to your public origin:
+
+```bash
+NGINX_CONFIG_FILE=nginx.public.conf
+NGINX_HTTP_PORT=80
+NEXTAUTH_URL=https://app.example.com
+CORS_ORIGINS=https://app.example.com
+```
+
+Then create `nginx.public.conf` from [`infra/nginx_public.conf.template`](infra/nginx_public.conf.template) for plain HTTP public-domain mode. If nginx should terminate TLS itself on the host, run:
+
+```bash
+DOMAIN=app.example.com EMAIL=admin@example.com ./infra/setup-tls.sh
+```
+
+That command writes the TLS-ready `nginx.public.conf` and `docker-compose.override.yml` files for you.
 
 Start the stack:
 
@@ -336,6 +284,10 @@ docker compose up -d
 
 ### 1) Open the dashboard
 
+The installer prints the base URL it configured.
+
+Local mode uses these defaults:
+
 | URL | What |
 |---|---|
 | [localhost:8080](http://localhost:8080) | Marketing / entry page |
@@ -343,6 +295,8 @@ docker compose up -d
 | [localhost:8080/signup](http://localhost:8080/signup) | Create operator account |
 | [localhost:8080/app/dashboard](http://localhost:8080/app/dashboard) | System overview |
 | [localhost:8080/app/deploy](http://localhost:8080/app/deploy) | Deploy your first agent |
+
+Public-domain mode uses the same paths on your configured origin, for example `https://stage.orionconnect.io/app/dashboard`.
 
 ### 2) Add an LLM provider
 
@@ -447,10 +401,14 @@ Track agent health, queue state, logs, metrics, and runtime activity.
 |---|---|---|
 | `JWT_SECRET` | Yes | Secret for signing JWTs |
 | `ENCRYPTION_KEY` | Yes | 32-byte hex key (`openssl rand -hex 32`) |
+| `NEXTAUTH_URL` | Yes | Base browser URL, for example `http://localhost:8080` or `https://app.example.com` |
+| `NGINX_CONFIG_FILE` | No | `nginx.conf` for local mode or `nginx.public.conf` for public-domain mode |
+| `NGINX_HTTP_PORT` | No | Host port for nginx HTTP (`8080` local, `80` public) |
 | `PLATFORM_MODE` | No | `selfhosted` (default) or `paas` |
 | `PROVISIONER_BACKEND` | No | `docker` (default), `proxmox`, `k8s` |
+| `K8S_EXPOSURE_MODE` | No | `cluster-ip` (default) or `node-port` for local kind verification |
 | `NEMOCLAW_ENABLED` | No | `true` to enable NemoClaw sandbox |
-| `CORS_ORIGINS` | No | Comma-separated allowed origins |
+| `CORS_ORIGINS` | No | Comma-separated allowed origins; include your public origin when exposed on a domain |
 
 ---
 
@@ -472,9 +430,14 @@ cd backend-api && npx jest --no-watchman
 
 # Database
 docker compose exec postgres psql -U platform -d platform
+
+# Docker-hosted Kubernetes smoke (requires docker, kind, kubectl)
+cd e2e && npm run smoke:k8s-kind
 ```
 
-For HTTPS/TLS setup, see [docs/HTTPS_SETUP.md](docs/HTTPS_SETUP.md).
+`NemoClaw` in this repo is a Docker-hosted sandbox backend with OpenShell policy controls, not Docker-in-Docker. For local Kubernetes verification, use `kind` plus [`docker-compose.kind.yml`](docker-compose.kind.yml); the K8s backend switches to `K8S_EXPOSURE_MODE=node-port` so the Compose-hosted control plane can reach the runtime and gateway through Docker-mapped host ports.
+
+For public-domain setup, use [`infra/nginx_public.conf.template`](infra/nginx_public.conf.template) for plain HTTP or [`infra/setup-tls.sh`](infra/setup-tls.sh) for Let's Encrypt-backed TLS.
 
 ---
 

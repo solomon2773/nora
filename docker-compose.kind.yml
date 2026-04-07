@@ -1,0 +1,24 @@
+services:
+  backend-api:
+    environment:
+      PROVISIONER_BACKEND: k8s
+      K8S_NAMESPACE: ${K8S_NAMESPACE:-openclaw-agents}
+      K8S_EXPOSURE_MODE: ${K8S_EXPOSURE_MODE:-node-port}
+      K8S_RUNTIME_NODE_PORT: ${K8S_RUNTIME_NODE_PORT:-30909}
+      K8S_GATEWAY_NODE_PORT: ${K8S_GATEWAY_NODE_PORT:-31879}
+      K8S_RUNTIME_HOST: ${K8S_RUNTIME_HOST:-host.docker.internal}
+      KUBECONFIG: /kubeconfig/config
+    volumes:
+      - ${KUBECONFIG_PATH:-/tmp/nora-kind.kubeconfig}:/kubeconfig/config:ro
+
+  worker-provisioner:
+    environment:
+      PROVISIONER_BACKEND: k8s
+      K8S_NAMESPACE: ${K8S_NAMESPACE:-openclaw-agents}
+      K8S_EXPOSURE_MODE: ${K8S_EXPOSURE_MODE:-node-port}
+      K8S_RUNTIME_NODE_PORT: ${K8S_RUNTIME_NODE_PORT:-30909}
+      K8S_GATEWAY_NODE_PORT: ${K8S_GATEWAY_NODE_PORT:-31879}
+      K8S_RUNTIME_HOST: ${K8S_RUNTIME_HOST:-host.docker.internal}
+      KUBECONFIG: /kubeconfig/config
+    volumes:
+      - ${KUBECONFIG_PATH:-/tmp/nora-kind.kubeconfig}:/kubeconfig/config:ro

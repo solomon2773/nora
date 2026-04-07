@@ -147,8 +147,12 @@ async function syncAuthToUserAgents(userId, agentId = null) {
   const defaultProvider = defaultRow.rows[0] || null;
 
   const agentQuery = agentId
-    ? "SELECT id, container_id, host FROM agents WHERE id = $1 AND user_id = $2 AND status IN ('running', 'warning') AND container_id IS NOT NULL"
-    : "SELECT id, container_id, host FROM agents WHERE user_id = $1 AND status IN ('running', 'warning') AND container_id IS NOT NULL";
+    ? `SELECT id, container_id, host, gateway_host_port, gateway_host, gateway_port
+         FROM agents
+        WHERE id = $1 AND user_id = $2 AND status IN ('running', 'warning') AND container_id IS NOT NULL`
+    : `SELECT id, container_id, host, gateway_host_port, gateway_host, gateway_port
+         FROM agents
+        WHERE user_id = $1 AND status IN ('running', 'warning') AND container_id IS NOT NULL`;
   const agentParams = agentId ? [agentId, userId] : [userId];
   const agents = await db.query(agentQuery, agentParams);
 
@@ -163,8 +167,8 @@ async function syncAuthToUserAgents(userId, agentId = null) {
     try {
       // Evict the cached WS connection before restarting so the proxy
       // creates a fresh one on the next request instead of hitting the circuit breaker
-      if (evictConnection && agent.host) {
-        evictConnection(agent.host);
+      if (evictConnection) {
+        evictConnection(agent);
       }
       const authProfiles = await buildAuthProfilesForAgent(userId, agent.id);
       await writeAuthToContainer(docker, agent.container_id, authProfiles, defaultProvider);

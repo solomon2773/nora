@@ -98,9 +98,9 @@ function attachExecStream(server) {
         return;
       }
 
-      // For Docker backend, use direct dockerode for full TTY exec support
+      // For Docker-backed backends, use direct dockerode for full TTY exec support
       const backendType = agent.backend_type || "docker";
-      if (backendType === "docker") {
+      if (backendType === "docker" || backendType === "nemoclaw") {
         if (!docker) {
           ws.send(JSON.stringify({ type: "error", message: "Docker not available on this host" }));
           ws.close();

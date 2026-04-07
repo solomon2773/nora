@@ -15,7 +15,11 @@ const { authenticateToken } = require("./middleware/auth");
 const { correlationId, errorHandler } = require("./middleware/errorHandler");
 const { createGatewayRouter, attachGatewayWS } = require("./gatewayProxy");
 const { isGatewayAvailableStatus, reconcileAgentStatus } = require("./agentStatus");
-const { OPENCLAW_GATEWAY_PORT } = require("../agent-runtime/lib/contracts");
+const {
+  resolveGatewayAddress,
+  gatewayUrlForAgent,
+  hasGatewayEndpoint,
+} = require("../agent-runtime/lib/agentEndpoints");
 
 // ─── JWT Secret ───────────────────────────────────────────────────
 const IS_TEST_ENV = process.env.NODE_ENV === "test" || !!process.env.JEST_WORKER_ID;
@@ -37,7 +41,10 @@ const app = express();
 app.set("trust proxy", 1);
 app.use(helmet());
 
-const corsOrigins = (process.env.CORS_ORIGINS || "http://localhost:8080").split(",").map(s => s.trim());
+const corsOrigins = (process.env.CORS_ORIGINS || process.env.NEXTAUTH_URL || "http://localhost:8080")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 app.use(cors({ origin: corsOrigins }));
 
 const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false });
@@ -138,26 +145,27 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
 
     const agentId = req.params.agentId;
     const result = await db.query(
-      "SELECT host, gateway_token, gateway_host_port, status FROM agents WHERE id = $1 AND user_id = $2 AND host IS NOT NULL",
+      `SELECT host, gateway_token, gateway_host_port, gateway_host, gateway_port, status
+         FROM agents
+        WHERE id = $1 AND user_id = $2`,
       [agentId, payload.id]
     );
-    if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status)) {
+    if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status) || !hasGatewayEndpoint(result.rows[0])) {
       return res.status(404).send("agent not found or not running");
     }
 
-    const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
-    const gwPort = result.rows[0].gateway_host_port || OPENCLAW_GATEWAY_PORT;
+    const gatewayAddress = resolveGatewayAddress(result.rows[0]);
     const gatewayToken = result.rows[0].gateway_token;
 
     // Fetch the gateway root HTML
     let resp;
     try {
-      resp = await fetch(`http://${gwHost}:${gwPort}/`, {
+      resp = await fetch(gatewayUrlForAgent(result.rows[0]), {
         headers: { "Accept": "text/html", "Accept-Encoding": "identity" },
         signal: AbortSignal.timeout(10000),
       });
     } catch (fetchErr) {
-      return res.status(502).send(`gateway unreachable at ${gwHost}:${gwPort} — ${fetchErr.message}`);
+      return res.status(502).send(`gateway unreachable at ${gatewayAddress.host}:${gatewayAddress.port} — ${fetchErr.message}`);
     }
     if (!resp.ok) return res.status(502).send(`gateway returned ${resp.status}`);
     let html = await resp.text();
@@ -167,14 +175,16 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
     const wsProto = req.protocol === "https" ? "wss" : "ws";
     const wsRelayUrl = `${wsProto}://${req.headers.host}/api/ws/gateway/${agentId}?token=${encodeURIComponent(token)}`;
 
-    // Inject a WebSocket interceptor + auto-connect config before </head>.
+    // Inject a WebSocket interceptor + auto-login helper before </head>.
     // The interceptor redirects all WS connections to the backend relay (which
     // sets Origin: http://localhost:18789 server-side, bypassing origin checks).
-    // Also inject the gateway password into the URL hash so the control UI auto-fills it.
+    // We also set password hash + auto-submit login so iframe interaction does
+    // not depend on click handling inside the embedded control UI.
     const injectScript = `<script>
 (function(){
   var R=${JSON.stringify(wsRelayUrl)};
   var P=${JSON.stringify(gatewayToken)};
+  window.__NORA_EMBED_AUTO_LOGIN__ = true;
   var _WS=window.WebSocket;
   window.WebSocket=function(u,p){return p?new _WS(R,p):new _WS(R)};
   window.WebSocket.prototype=_WS.prototype;
@@ -182,10 +192,98 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", async (req, res) => {
   window.WebSocket.OPEN=_WS.OPEN;
   window.WebSocket.CLOSING=_WS.CLOSING;
   window.WebSocket.CLOSED=_WS.CLOSED;
+
+  function setPasswordHash() {
+    try {
+      var nextHash = "password=" + encodeURIComponent(P);
+      if (window.location.hash !== "#" + nextHash) {
+        window.location.hash = nextHash;
+      }
+    } catch {}
+  }
+
+  function visible(el) {
+    if (!el) return false;
+    var style = window.getComputedStyle(el);
+    if (!style || style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none") return false;
+    return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  }
+
+  function findLoginButton() {
+    var buttons = Array.prototype.slice.call(document.querySelectorAll("button, input[type='submit']"));
+    for (var i = 0; i < buttons.length; i++) {
+      var b = buttons[i];
+      if (!visible(b) || b.disabled) continue;
+      var txt = String((b.innerText || b.textContent || b.value || "")).toLowerCase().trim();
+      if (/^login$|^log in$|^sign in$|connect|unlock/.test(txt)) return b;
+    }
+    return null;
+  }
+
+  function tryAutoLogin() {
+    if (window.__NORA_EMBED_AUTO_LOGIN_DONE__) return true;
+    setPasswordHash();
+
+    var pw = document.querySelector("input[type='password'], input[name='password'], input[id*='password']");
+    if (pw && visible(pw) && pw.value !== P) {
+      pw.focus();
+      pw.value = P;
+      pw.dispatchEvent(new Event("input", { bubbles: true }));
+      pw.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    var form = pw && (pw.form || pw.closest("form"));
+    if (form && visible(form)) {
+      window.__NORA_EMBED_AUTO_LOGIN_DONE__ = true;
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      return true;
+    }
+
+    var loginBtn = findLoginButton();
+    if (loginBtn) {
+      window.__NORA_EMBED_AUTO_LOGIN_DONE__ = true;
+      loginBtn.click();
+      return true;
+    }
+    return false;
+  }
+
+  function startAutoLogin() {
+    if (window.__NORA_EMBED_AUTO_LOGIN_STARTED__) return;
+    window.__NORA_EMBED_AUTO_LOGIN_STARTED__ = true;
+    setPasswordHash();
+
+    var attempts = 0;
+    var maxAttempts = 80; // ~16s
+    var interval = setInterval(function() {
+      attempts++;
+      if (tryAutoLogin() || attempts >= maxAttempts) {
+        clearInterval(interval);
+        if (observer) observer.disconnect();
+      }
+    }, 200);
+
+    var observer = new MutationObserver(function() {
+      if (window.__NORA_EMBED_AUTO_LOGIN_DONE__) {
+        observer.disconnect();
+        clearInterval(interval);
+        return;
+      }
+      tryAutoLogin();
+    });
+    if (document.documentElement) {
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+  }
+
   // Do not persist the JWT-bearing relay URL into browser storage.
   // The WebSocket constructor override is enough for this embedded session.
-  // Set token in URL hash for gateway UI auto-login
-  window.location.hash='password='+encodeURIComponent(P);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startAutoLogin, { once: true });
+  } else {
+    startAutoLogin();
+  }
 })();
 </script>`;
     html = html.replace(/<head[^>]*>/i, (m) => m + injectScript);
@@ -207,14 +305,16 @@ async function proxyGatewayAsset(req, res) {
     const db = require("./db");
     const agentId = req.params.agentId;
     const result = await db.query(
-      "SELECT host, gateway_host_port, status FROM agents WHERE id = $1 AND host IS NOT NULL",
+      `SELECT host, gateway_host_port, gateway_host, gateway_port, status
+         FROM agents
+        WHERE id = $1`,
       [agentId]
     );
-    if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status)) return res.status(404).end();
-    const gwHost = result.rows[0].gateway_host_port ? (process.env.GATEWAY_HOST || "host.docker.internal") : result.rows[0].host;
-    const gwPort = result.rows[0].gateway_host_port || OPENCLAW_GATEWAY_PORT;
+    if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status) || !hasGatewayEndpoint(result.rows[0])) {
+      return res.status(404).end();
+    }
     const gatewayPath = req.path.split("/gateway/")[1] || "";
-    const targetUrl = `http://${gwHost}:${gwPort}/${gatewayPath}`;
+    const targetUrl = gatewayUrlForAgent(result.rows[0], gatewayPath);
     const resp = await fetch(targetUrl, {
       headers: { "Accept": req.headers.accept || "*/*", "Accept-Encoding": "identity" },
       signal: AbortSignal.timeout(10000),
@@ -350,6 +450,10 @@ async function migrateDB() {
      )`,
     `CREATE INDEX IF NOT EXISTS idx_container_stats_agent_time ON container_stats(agent_id, recorded_at DESC)`,
     `DO $$ BEGIN ALTER TABLE agents ADD COLUMN gateway_host_port INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+    `DO $$ BEGIN ALTER TABLE agents ADD COLUMN runtime_host TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+    `DO $$ BEGIN ALTER TABLE agents ADD COLUMN runtime_port INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+    `DO $$ BEGIN ALTER TABLE agents ADD COLUMN gateway_host TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+    `DO $$ BEGIN ALTER TABLE agents ADD COLUMN gateway_port INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
   ];
 
   for (const sql of migrations) {
