@@ -7,6 +7,7 @@ const { authenticateToken } = require("../middleware/auth");
 const { normalizeEmail, normalizeProvider, verifyOAuthIdentity } = require("../oauthProviders");
 
 const router = express.Router();
+const FIRST_USER_ADMIN_LOCK_KEY = 20260408;
 
 function isOAuthLoginEnabled() {
   return process.env.OAUTH_LOGIN_ENABLED === "true";
@@ -34,21 +35,52 @@ function validatePassword(pw) {
   return null;
 }
 
+async function withUserCreationLock(work) {
+  const client = await db.connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [FIRST_USER_ADMIN_LOCK_KEY]);
+    const result = await work(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // Best-effort rollback only.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function nextRegisteredUserRole(client) {
+  const result = await client.query("SELECT EXISTS(SELECT 1 FROM users) AS has_users");
+  return result.rows[0]?.has_users ? "user" : "admin";
+}
+
 // ─── Public routes ────────────────────────────────────────────────
 
 router.post("/signup", authLimiter, async (req, res) => {
   const { email, password } = req.body;
-  const emailErr = validateEmail(email);
+  const normalizedEmail = normalizeEmail(email);
+  const emailErr = validateEmail(normalizedEmail);
   if (emailErr) return res.status(400).json({ error: emailErr });
   const pwErr = validatePassword(password);
   if (pwErr) return res.status(400).json({ error: pwErr });
   try {
     const hash = await bcrypt.hash(password, 10);
-    const result = await db.query(
-      "INSERT INTO users(email, password_hash) VALUES($1, $2) RETURNING id, email",
-      [email, hash]
-    );
-    res.json(result.rows[0]);
+    const user = await withUserCreationLock(async (client) => {
+      const role = await nextRegisteredUserRole(client);
+      const result = await client.query(
+        "INSERT INTO users(email, password_hash, role) VALUES($1, $2, $3) RETURNING id, email, role",
+        [normalizedEmail, hash, role]
+      );
+      return result.rows[0];
+    });
+    res.json(user);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -56,9 +88,10 @@ router.post("/signup", authLimiter, async (req, res) => {
 
 router.post("/login", authLimiter, async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Email and password required" });
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !password) return res.status(400).json({ error: "Email and password required" });
   try {
-    const result = await db.query("SELECT * FROM users WHERE email=$1", [email]);
+    const result = await db.query("SELECT * FROM users WHERE email=$1", [normalizedEmail]);
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: "Invalid email or password" });
     if (!user.password_hash) {
@@ -105,43 +138,76 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
       email,
       providerId,
     });
+    const normalizedVerifiedEmail = normalizeEmail(verified.email);
 
-    const linkedResult = await db.query(
-      "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE provider = $1 AND provider_id = $2",
-      [normalizedProvider, verified.providerId]
-    );
-    const linkedUser = linkedResult.rows[0];
-    if (linkedUser && normalizeEmail(linkedUser.email) !== normalizeEmail(verified.email)) {
-      return res.status(409).json({ error: `This ${normalizedProvider} account is already linked to another Nora user email.` });
-    }
+    const user = await withUserCreationLock(async (client) => {
+      const linkedResult = await client.query(
+        "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE provider = $1 AND provider_id = $2",
+        [normalizedProvider, verified.providerId]
+      );
+      const linkedUser = linkedResult.rows[0];
+      if (
+        linkedUser &&
+        normalizeEmail(linkedUser.email) !== normalizedVerifiedEmail
+      ) {
+        const error = new Error(
+          `This ${normalizedProvider} account is already linked to another Nora user email.`
+        );
+        error.statusCode = 409;
+        throw error;
+      }
 
-    const existingResult = await db.query(
-      "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE email = $1",
-      [verified.email]
-    );
-    const existingUser = existingResult.rows[0];
+      const existingResult = await client.query(
+        "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE email = $1",
+        [normalizedVerifiedEmail]
+      );
+      const existingUser = existingResult.rows[0];
 
-    if (existingUser?.password_hash && !existingUser.provider) {
-      return res.status(409).json({ error: "This email already uses password login. Sign in with password until account linking exists." });
-    }
-    if (existingUser?.provider && existingUser.provider !== normalizedProvider) {
-      return res.status(409).json({ error: `This account is already linked to ${existingUser.provider} login.` });
-    }
-    if (existingUser?.provider_id && String(existingUser.provider_id) !== String(verified.providerId)) {
-      return res.status(409).json({ error: `This ${normalizedProvider} account is linked to a different Nora user.` });
-    }
+      if (existingUser?.password_hash && !existingUser.provider) {
+        const error = new Error(
+          "This email already uses password login. Sign in with password until account linking exists."
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+      if (existingUser?.provider && existingUser.provider !== normalizedProvider) {
+        const error = new Error(
+          `This account is already linked to ${existingUser.provider} login.`
+        );
+        error.statusCode = 409;
+        throw error;
+      }
+      if (
+        existingUser?.provider_id &&
+        String(existingUser.provider_id) !== String(verified.providerId)
+      ) {
+        const error = new Error(
+          `This ${normalizedProvider} account is linked to a different Nora user.`
+        );
+        error.statusCode = 409;
+        throw error;
+      }
 
-    const result = await db.query(
-      `INSERT INTO users(email, name, provider, provider_id)
-       VALUES($1, $2, $3, $4)
-       ON CONFLICT (email) DO UPDATE SET
-         name = COALESCE(EXCLUDED.name, users.name),
-         provider = COALESCE(EXCLUDED.provider, users.provider),
-         provider_id = COALESCE(EXCLUDED.provider_id, users.provider_id)
-       RETURNING id, email, role, name`,
-      [verified.email, verified.name || name || null, normalizedProvider, verified.providerId]
-    );
-    const user = result.rows[0];
+      const role = existingUser?.role || await nextRegisteredUserRole(client);
+      const result = await client.query(
+        `INSERT INTO users(email, name, provider, provider_id, role)
+         VALUES($1, $2, $3, $4, $5)
+         ON CONFLICT (email) DO UPDATE SET
+           name = COALESCE(EXCLUDED.name, users.name),
+           provider = COALESCE(EXCLUDED.provider, users.provider),
+           provider_id = COALESCE(EXCLUDED.provider_id, users.provider_id)
+         RETURNING id, email, role, name`,
+        [
+          normalizedVerifiedEmail,
+          verified.name || name || null,
+          normalizedProvider,
+          verified.providerId,
+          role,
+        ]
+      );
+      return result.rows[0];
+    });
+
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -151,6 +217,9 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
   } catch (e) {
     if (/Unsupported OAuth provider/i.test(e.message)) {
       return res.status(400).json({ error: e.message });
+    }
+    if (e.statusCode === 409) {
+      return res.status(409).json({ error: e.message });
     }
     if (/verification failed|audience mismatch|email is not verified|email is missing or unverified|did not match|required/i.test(e.message)) {
       return res.status(401).json({ error: e.message });
@@ -165,6 +234,8 @@ router.patch("/password", authenticateToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) return res.status(400).json({ error: "Both passwords required" });
+    const pwErr = validatePassword(newPassword);
+    if (pwErr) return res.status(400).json({ error: pwErr });
     const user = (await db.query("SELECT * FROM users WHERE id = $1", [req.user.id])).rows[0];
     if (!user) return res.status(404).json({ error: "User not found" });
     if (!user.password_hash) return res.status(400).json({ error: "OAuth user — no password to change" });

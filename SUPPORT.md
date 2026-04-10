@@ -1,10 +1,10 @@
-# Nora Support Paths
+# Nora Start Paths
 
-Use this page to pick the fastest support route for your situation.
+Use this page to pick the fastest open-source route for your situation.
 
-## 1. Self-serve install and evaluation
+## 1. Self-serve install and launch
 
-Start here if you want to self-host Nora and prove value on your own infrastructure.
+Start here if you want to self-host Nora and bring it online on your own infrastructure.
 
 - [README Quick Start](README.md#quick-start)
 - [README Configuration](README.md#configuration)
@@ -13,7 +13,7 @@ Start here if you want to self-host Nora and prove value on your own infrastruct
 Best fit:
 - you want the cleanest trust path
 - you are comfortable operating Docker / Compose
-- you want to validate account creation, provider setup, and first agent deployment yourself
+- you want to bring account creation, provider setup, and first agent deployment online yourself
 
 ## 2. Bugs and product issues
 
@@ -27,43 +27,54 @@ Best fit:
 - documentation errors
 - install failures with concrete logs or steps to reproduce
 
-## 3. Rollout help / paid support on your own infrastructure
+## 3. Public site, login, and signup
 
-Use GitHub Discussions if you want the same open-source product but need a faster path to first value on infrastructure you control.
+Use the default public browser entry when you want to see the reference deployment or create an operator account quickly.
 
-- [Start a support discussion](https://github.com/solomon2773/nora/discussions)
-- [Deployment / support paths](https://nora.solomontsao.com/pricing)
+- [Public site](https://nora.solomontsao.com)
+- [Log in](https://nora.solomontsao.com/login)
+- [Create account](https://nora.solomontsao.com/signup)
 
-This path is for rollout speed and support around the OSS product, not for unlocking usage rights.
+Best fit:
+- you want the default public browser entry
+- you want to check the login or signup flow
+- you want a quick public reference deployment before self-hosting
+
+## 4. Discussions and implementation questions
+
+Use GitHub Discussions for setup questions, design discussion, product direction, and implementation tradeoffs around the OSS product.
+
+- [GitHub Discussions](https://github.com/solomon2773/nora/discussions)
 
 Best fit:
 - setup guidance
-- onboarding help
+- onboarding questions
 - deployment review
-- rollout planning for a self-hosted Nora environment
-- paid-support qualification tied to a real deployment path
+- architecture discussion
+- runtime or product-direction questions
 
-## 4. Hosted evaluation / managed PaaS / custom deployment
+## 5. Licensing, self-hosting, and PaaS mode
 
-Use the public deployment paths when self-hosting is not the preferred first step.
+Use the public OSS and licensing page when you need the short version of what Apache 2.0 allows or when you want to run Nora in PaaS mode for your own business.
 
-- [Deployment / support paths](https://nora.solomontsao.com/pricing)
-- [Hosted evaluation signup](https://nora.solomontsao.com/signup)
+- [Open source / license / PaaS mode](https://nora.solomontsao.com/pricing)
+- [README Quick Start](README.md#quick-start)
 
 Best fit:
-- you want less self-managed infrastructure work
-- you expect a hosted evaluation first
-- you want to scope a managed PaaS or custom Nora deployment
-- you have larger-team or enterprise-style environment requirements
+- you want to confirm commercial usage rights
+- you want to run Nora as your own hosted product or internal platform
+- you need the difference between `selfhosted` and `paas`
+- you want the public repo and public site entry points in one place
 
 ## What to include when asking for help
 
 To reduce back-and-forth, include:
 
-- your deployment mode: self-hosted, rollout-help / paid-support, hosted evaluation / managed PaaS, or enterprise/custom
+- your deployment mode: self-hosted, public browser entry, or self-run PaaS mode
 - OS and environment details
 - whether you used `setup.sh`, `setup.ps1`, or manual setup
 - whether Nora is running in local mode, public-domain proxy mode, or public-domain TLS mode
+- whether you are using `PLATFORM_MODE=selfhosted` or `PLATFORM_MODE=paas`
 - the step that failed or slowed you down
 - relevant logs or screenshots
 
@@ -73,5 +84,6 @@ Do **not** post secrets, API keys, `.env` files, or private credentials in Issue
 
 If you are unsure where to start:
 - choose [README Quick Start](README.md#quick-start) if you want to self-host
-- choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want rollout help or paid support
-- choose [deployment paths](https://nora.solomontsao.com/pricing) or [signup](https://nora.solomontsao.com/signup) if you want a hosted, managed, or custom-deployment path
+- choose [signup](https://nora.solomontsao.com/signup) or [login](https://nora.solomontsao.com/login) if you want the default public browser entry
+- choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want implementation discussion or setup guidance
+- choose [open source / license / PaaS mode](https://nora.solomontsao.com/pricing) if you want the short public explanation of OSS rights and hosted-user-owned deployment mode

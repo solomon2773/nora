@@ -6,9 +6,8 @@
 #   — or —
 #   .\setup.ps1        (from inside the repo)
 #
-# Clones the repo (if needed), generates secrets, configures
-# the platform, collects an LLM key, starts Nora, deploys
-# the first agent, and injects the key — all in one shot.
+# Clones the repo (if needed), generates secrets and database
+# credentials, configures the platform, and starts Nora.
 # ============================================================
 
 $ErrorActionPreference = "Stop"
@@ -16,6 +15,7 @@ $ErrorActionPreference = "Stop"
 $ENV_FILE = ".env"
 $PUBLIC_NGINX_TEMPLATE = "infra/nginx_public.conf.template"
 $TLS_NGINX_TEMPLATE = "infra/nginx_tls.conf"
+$PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE = "infra/docker-compose.public-prod.yml"
 $TLS_COMPOSE_OVERRIDE_TEMPLATE = "infra/docker-compose.public-tls.yml"
 $PUBLIC_NGINX_CONF = "nginx.public.conf"
 $COMPOSE_OVERRIDE_FILE = "docker-compose.override.yml"
@@ -33,6 +33,11 @@ function Write-PublicNginxConfig {
     $content = Get-Content $TemplatePath -Raw
     $content = $content.Replace('$' + '{DOMAIN}', $Domain)
     $content | Out-File -FilePath $PUBLIC_NGINX_CONF -Encoding utf8NoBOM
+}
+
+function Write-ComposeOverride {
+    param([string]$TemplatePath)
+    Copy-Item $TemplatePath $COMPOSE_OVERRIDE_FILE -Force
 }
 
 function Clear-PublicAccessArtifacts {
@@ -251,10 +256,14 @@ Write-Header "Generating Secrets"
 $JWT_SECRET      = New-HexSecret
 $ENCRYPTION_KEY  = New-HexSecret
 $NEXTAUTH_SECRET = New-HexSecret
+$DB_USER         = "nora"
+$DB_NAME         = "nora"
+$DB_PASSWORD     = New-HexSecret -Bytes 24
 
 Write-Ok "JWT_SECRET      (64-char hex)"
 Write-Ok "ENCRYPTION_KEY  (64-char hex — AES-256-GCM)"
 Write-Ok "NEXTAUTH_SECRET (64-char hex)"
+Write-Ok "DB_PASSWORD     (48-char hex)"
 
 # ── Platform mode ────────────────────────────────────────────
 
@@ -287,45 +296,86 @@ if ($modeAnswer -eq "2") {
     Write-Ok "Self-hosted: ${MAX_VCPU} vCPU, ${MAX_RAM_MB}MB RAM, ${MAX_DISK_GB}GB disk, ${MAX_AGENTS} agents"
 }
 
-# ── Provisioner backend ──────────────────────────────────────
+# ── Deploy backends ──────────────────────────────────────────
 
-Write-Header "Provisioner Backend"
+Write-Header "Deploy Backends"
 
-Write-Host "  How should Nora provision agent containers?"
-Write-Host "    1) Docker (default) — Docker-in-Docker via local socket"
-Write-Host "    2) Proxmox — LXC containers via Proxmox REST API"
-Write-Host "    3) Kubernetes — Pods via Kubernetes API"
-$backendAnswer = Read-Host "  Select [1/2/3]"
-
-$PROVISIONER_BACKEND = "docker"
+$DOCKER_BACKEND_ENABLED = $true
+$K8S_BACKEND_ENABLED = $false
+$PROXMOX_BACKEND_ENABLED = $false
+$NEMOCLAW_BACKEND_ENABLED = $false
+$K8S_NAMESPACE = "openclaw-agents"
+$K8S_EXPOSURE_MODE = "cluster-ip"
+$K8S_RUNTIME_NODE_PORT = ""
+$K8S_GATEWAY_NODE_PORT = ""
+$K8S_RUNTIME_HOST = ""
 $PROXMOX_API_URL = ""
 $PROXMOX_TOKEN_ID = ""
 $PROXMOX_TOKEN_SECRET = ""
 $PROXMOX_NODE = "pve"
 $PROXMOX_TEMPLATE = "ubuntu-22.04-standard"
+$NVIDIA_API_KEY = ""
 
-switch ($backendAnswer) {
-    "2" {
-        $PROVISIONER_BACKEND = "proxmox"
-        Write-Host ""
-        $PROXMOX_API_URL     = Read-Host "  Proxmox API URL (e.g., https://proxmox.local:8006/api2/json)"
-        $PROXMOX_TOKEN_ID    = Read-Host "  Proxmox Token ID (e.g., user@pam!tokenname)"
-        $PROXMOX_TOKEN_SECRET = Read-Host "  Proxmox Token Secret"
-        $input = Read-Host "  Proxmox Node [pve]"
-        if ($input) { $PROXMOX_NODE = $input }
-        $input = Read-Host "  Proxmox Template [ubuntu-22.04-standard]"
-        if ($input) { $PROXMOX_TEMPLATE = $input }
-        Write-Ok "Proxmox backend configured"
-    }
-    "3" {
-        $PROVISIONER_BACKEND = "k8s"
-        Write-Ok "Kubernetes backend — ensure kubeconfig is available in the worker container"
-    }
-    default {
-        $PROVISIONER_BACKEND = "docker"
-        Write-Ok "Docker backend (default)"
-    }
+$dockerBackendAnswer = Read-Host "  Enable Docker backend for local socket provisioning? [Y/n]"
+if ($dockerBackendAnswer -match '^[Nn]$') {
+    $DOCKER_BACKEND_ENABLED = $false
+    Write-Info "Docker backend disabled"
+} else {
+    Write-Ok "Docker backend enabled"
 }
+
+$k8sBackendAnswer = Read-Host "  Enable Kubernetes backend? [y/N]"
+if ($k8sBackendAnswer -match '^[Yy]$') {
+    $K8S_BACKEND_ENABLED = $true
+    Write-Ok "Kubernetes backend enabled — ensure kubeconfig is available in backend-api and worker-provisioner"
+} else {
+    Write-Info "Kubernetes backend disabled"
+}
+
+$proxmoxBackendAnswer = Read-Host "  Enable Proxmox backend? [y/N]"
+if ($proxmoxBackendAnswer -match '^[Yy]$') {
+    $PROXMOX_BACKEND_ENABLED = $true
+    Write-Host ""
+    $PROXMOX_API_URL      = Read-Host "  Proxmox API URL (e.g., https://proxmox.local:8006/api2/json)"
+    $PROXMOX_TOKEN_ID     = Read-Host "  Proxmox Token ID (e.g., user@pam!tokenname)"
+    $PROXMOX_TOKEN_SECRET = Read-Host "  Proxmox Token Secret"
+    $input = Read-Host "  Proxmox Node [pve]"
+    if ($input) { $PROXMOX_NODE = $input }
+    $input = Read-Host "  Proxmox Template [ubuntu-22.04-standard]"
+    if ($input) { $PROXMOX_TEMPLATE = $input }
+    Write-Ok "Proxmox backend configured"
+} else {
+    Write-Info "Proxmox backend disabled"
+}
+
+$nemoclawBackendAnswer = Read-Host "  Enable NemoClaw backend? [y/N]"
+if ($nemoclawBackendAnswer -match '^[Yy]$') {
+    $NEMOCLAW_BACKEND_ENABLED = $true
+    $nvidiaKey = Read-Host "  NVIDIA API key [optional during setup]"
+    if ($nvidiaKey) {
+        $NVIDIA_API_KEY = $nvidiaKey
+        Write-Ok "NemoClaw backend enabled with NVIDIA API key"
+    } else {
+        Write-Warn "NemoClaw enabled without NVIDIA_API_KEY — add it to .env later if needed"
+    }
+} else {
+    Write-Info "NemoClaw backend disabled"
+}
+
+$enabledBackends = @()
+if ($DOCKER_BACKEND_ENABLED) { $enabledBackends += "docker" }
+if ($K8S_BACKEND_ENABLED) { $enabledBackends += "k8s" }
+if ($PROXMOX_BACKEND_ENABLED) { $enabledBackends += "proxmox" }
+if ($NEMOCLAW_BACKEND_ENABLED) { $enabledBackends += "nemoclaw" }
+
+if ($enabledBackends.Count -eq 0) {
+    Write-Warn "No deploy backends selected — enabling Docker so Nora can deploy agents."
+    $DOCKER_BACKEND_ENABLED = $true
+    $enabledBackends = @("docker")
+}
+
+$ENABLED_BACKENDS = $enabledBackends -join ","
+Write-Ok "Enabled backends: $ENABLED_BACKENDS"
 
 # ── Access mode ──────────────────────────────────────────────
 
@@ -349,7 +399,7 @@ $CAN_START_NORA = $true
 switch ($accessAnswer) {
     "2" {
         while ($true) {
-            $PUBLIC_DOMAIN = Read-Host "  Public domain (e.g., stage.orionconnect.io)"
+            $PUBLIC_DOMAIN = Read-Host "  Public domain (hosted default: nora.solomontsao.com; self-hosted: your own domain)"
             if ($PUBLIC_DOMAIN -match '^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$') { break }
             Write-Warn "Enter a valid hostname without http:// or path segments."
         }
@@ -362,7 +412,7 @@ switch ($accessAnswer) {
         }
 
         Write-PublicNginxConfig -TemplatePath $PUBLIC_NGINX_TEMPLATE -Domain $PUBLIC_DOMAIN
-        if (Test-Path $COMPOSE_OVERRIDE_FILE) { Remove-Item $COMPOSE_OVERRIDE_FILE -Force }
+        Write-ComposeOverride -TemplatePath $PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE
 
         $ACCESS_MODE = "public-proxy"
         $NEXTAUTH_URL = "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}"
@@ -373,13 +423,13 @@ switch ($accessAnswer) {
     }
     "3" {
         while ($true) {
-            $PUBLIC_DOMAIN = Read-Host "  Public domain (e.g., stage.orionconnect.io)"
+            $PUBLIC_DOMAIN = Read-Host "  Public domain (hosted default: nora.solomontsao.com; self-hosted: your own domain)"
             if ($PUBLIC_DOMAIN -match '^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$') { break }
             Write-Warn "Enter a valid hostname without http:// or path segments."
         }
 
         Write-PublicNginxConfig -TemplatePath $TLS_NGINX_TEMPLATE -Domain $PUBLIC_DOMAIN
-        Copy-Item $TLS_COMPOSE_OVERRIDE_TEMPLATE $COMPOSE_OVERRIDE_FILE -Force
+        Write-ComposeOverride -TemplatePath $TLS_COMPOSE_OVERRIDE_TEMPLATE
 
         $ACCESS_MODE = "public-tls"
         $PUBLIC_SCHEME = "https"
@@ -437,76 +487,12 @@ while ($true) {
     break
 }
 
-# ── LLM Provider Key ─────────────────────────────────────────
+# ── LLM Provider ─────────────────────────────────────────────
 
-Write-Header "LLM Provider (Required for your first agent)"
+Write-Header "LLM Provider"
 
-Write-Host "  Choose a provider to connect to your first agent:`n"
-Write-Host "    1) Google AI (Gemini)          6) OpenRouter"
-Write-Host "    2) Anthropic (Claude)          7) Together AI"
-Write-Host "    3) OpenAI (GPT)               8) Groq"
-Write-Host "    4) DeepSeek                    9) Mistral"
-Write-Host "    5) xAI (Grok)                10) Skip — I'll add one later"
-Write-Host ""
-$llmChoice = Read-Host "  Select [1-10]"
-
-$LLM_PROVIDER = ""
-$LLM_API_KEY = ""
-$LLM_MODEL = ""
-$FIRST_AGENT_NAME = ""
-
-switch ($llmChoice) {
-    "1" { $LLM_PROVIDER = "google";     $LLM_MODEL = "gemini-2.0-flash" }
-    "2" { $LLM_PROVIDER = "anthropic";  $LLM_MODEL = "claude-sonnet-4-5-20250514" }
-    "3" { $LLM_PROVIDER = "openai";     $LLM_MODEL = "gpt-5.4" }
-    "4" { $LLM_PROVIDER = "deepseek";   $LLM_MODEL = "deepseek-chat" }
-    "5" { $LLM_PROVIDER = "xai";        $LLM_MODEL = "grok-3" }
-    "6" { $LLM_PROVIDER = "openrouter"; $LLM_MODEL = "openrouter/auto" }
-    "7" { $LLM_PROVIDER = "together";   $LLM_MODEL = "meta-llama/Llama-3-70b-chat-hf" }
-    "8" { $LLM_PROVIDER = "groq";       $LLM_MODEL = "llama-3.3-70b-versatile" }
-    "9" { $LLM_PROVIDER = "mistral";    $LLM_MODEL = "mistral-large-latest" }
-    default { $LLM_PROVIDER = "" }
-}
-
-if ($LLM_PROVIDER) {
-    $llmKeyInput = Read-Host "  $LLM_PROVIDER API key"
-    if ($llmKeyInput) {
-        $LLM_API_KEY = $llmKeyInput
-        Write-Ok "$LLM_PROVIDER key saved (model: $LLM_MODEL)"
-
-        $agentNameInput = Read-Host "`n  Name for your first agent [nora]"
-        $FIRST_AGENT_NAME = if ($agentNameInput) { $agentNameInput } else { "nora" }
-        Write-Ok "Will deploy agent '$FIRST_AGENT_NAME' after startup"
-    } else {
-        Write-Warn "No key entered — skipping auto-deploy"
-        $LLM_PROVIDER = ""
-    }
-} else {
-    Write-Info "Skipped — add an LLM key from Settings after login"
-}
-
-# ── NemoClaw / NVIDIA ────────────────────────────────────────
-
-Write-Header "NemoClaw (Optional)"
-
-$NEMOCLAW_ENABLED = "false"
-$NVIDIA_API_KEY = ""
-
-Write-Host "  Enable NVIDIA NemoClaw sandboxed agents?"
-Write-Host "  (Requires NVIDIA API key from build.nvidia.com)"
-$nemoAnswer = Read-Host "  Enable NemoClaw? [y/N]"
-if ($nemoAnswer -match '^[Yy]$') {
-    $NEMOCLAW_ENABLED = "true"
-    $nvidiaKey = Read-Host "  NVIDIA API key"
-    if ($nvidiaKey) {
-        $NVIDIA_API_KEY = $nvidiaKey
-        Write-Ok "NemoClaw enabled with API key"
-    } else {
-        Write-Warn "NemoClaw enabled but no key — add NVIDIA_API_KEY to .env later"
-    }
-} else {
-    Write-Info "NemoClaw disabled (enable later in .env)"
-}
+Write-Info "Setup no longer creates an agent automatically."
+Write-Info "Add your LLM provider key from Settings after login."
 
 # ── OAuth (optional) ─────────────────────────────────────────
 
@@ -535,6 +521,13 @@ if (-not $GOOGLE_CLIENT_ID -and -not $GITHUB_CLIENT_ID) {
     Write-Info "No OAuth configured — users will sign up with email/password"
 }
 
+$OAUTH_LOGIN_ENABLED = "false"
+$NEXT_PUBLIC_OAUTH_LOGIN_ENABLED = "false"
+if ($GOOGLE_CLIENT_ID -or $GITHUB_CLIENT_ID) {
+    $OAUTH_LOGIN_ENABLED = "true"
+    $NEXT_PUBLIC_OAUTH_LOGIN_ENABLED = "true"
+}
+
 # ── Write .env ───────────────────────────────────────────────
 
 Write-Header "Writing Configuration"
@@ -560,9 +553,9 @@ DEFAULT_ADMIN_PASSWORD=$DEFAULT_ADMIN_PASSWORD
 
 # ── Database (defaults work with Docker Compose) ─────────────
 DB_HOST=postgres
-DB_USER=platform
-DB_PASSWORD=platform
-DB_NAME=platform
+DB_USER=$DB_USER
+DB_PASSWORD=$DB_PASSWORD
+DB_NAME=$DB_NAME
 DB_PORT=5432
 
 # ── Redis (defaults work with Docker Compose) ────────────────
@@ -575,6 +568,8 @@ NGINX_CONFIG_FILE=$NGINX_CONFIG_FILE
 NGINX_HTTP_PORT=$NGINX_HTTP_PORT
 
 # ── OAuth ────────────────────────────────────────────────────
+OAUTH_LOGIN_ENABLED=$OAUTH_LOGIN_ENABLED
+NEXT_PUBLIC_OAUTH_LOGIN_ENABLED=$NEXT_PUBLIC_OAUTH_LOGIN_ENABLED
 GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
@@ -598,18 +593,24 @@ STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_PRO=
 STRIPE_PRICE_ENTERPRISE=
 
-# ── Provisioner ──────────────────────────────────────────────
-PROVISIONER_BACKEND=$PROVISIONER_BACKEND
+# ── Deploy backends ──────────────────────────────────────────
+ENABLED_BACKENDS=$ENABLED_BACKENDS
 
-# ── Proxmox (only when PROVISIONER_BACKEND=proxmox) ──────────
+# ── Kubernetes (when ENABLED_BACKENDS includes k8s) ──────────
+K8S_NAMESPACE=$K8S_NAMESPACE
+K8S_EXPOSURE_MODE=$K8S_EXPOSURE_MODE
+K8S_RUNTIME_NODE_PORT=$K8S_RUNTIME_NODE_PORT
+K8S_GATEWAY_NODE_PORT=$K8S_GATEWAY_NODE_PORT
+K8S_RUNTIME_HOST=$K8S_RUNTIME_HOST
+
+# ── Proxmox (when ENABLED_BACKENDS includes proxmox) ─────────
 PROXMOX_API_URL=$PROXMOX_API_URL
 PROXMOX_TOKEN_ID=$PROXMOX_TOKEN_ID
 PROXMOX_TOKEN_SECRET=$PROXMOX_TOKEN_SECRET
 PROXMOX_NODE=$PROXMOX_NODE
 PROXMOX_TEMPLATE=$PROXMOX_TEMPLATE
 
-# ── NemoClaw / NVIDIA ────────────────────────────────────────
-NEMOCLAW_ENABLED=$NEMOCLAW_ENABLED
+# ── NemoClaw / NVIDIA (when ENABLED_BACKENDS includes nemoclaw) ──
 NVIDIA_API_KEY=$NVIDIA_API_KEY
 NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
 NEMOCLAW_SANDBOX_IMAGE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw
@@ -647,11 +648,14 @@ if ($DEFAULT_ADMIN_EMAIL) {
 }
 Write-Host "  Secrets:      auto-generated (JWT, AES, NextAuth)"
 Write-Host "  Database:     PostgreSQL 15 (Docker Compose)"
+Write-Host "  DB Access:    $DB_USER / auto-generated / $DB_NAME (.env)"
 Write-Host "  Redis:        Redis 7 (Docker Compose)"
 if ($ACCESS_MODE -eq "local") {
     Write-Host "  Access:       Local only"
+    Write-Host "  Runtime:      Development services"
 } else {
     Write-Host "  Access:       $NEXTAUTH_URL"
+    Write-Host "  Runtime:      Production services"
     if ($ACCESS_MODE -eq "public-tls") {
         Write-Host "  TLS:          Terminated by nginx on this host"
     } else {
@@ -666,17 +670,7 @@ if ($PLATFORM_MODE -eq "paas") {
     Write-Host ("  Limits:       {0}vCPU / {1}MB / {2}GB / {3} agents" -f $MAX_VCPU, $MAX_RAM_MB, $MAX_DISK_GB, $MAX_AGENTS)
 }
 
-switch ($PROVISIONER_BACKEND) {
-    "proxmox" { Write-Host "  Provisioner:  Proxmox LXC" }
-    "k8s"     { Write-Host "  Provisioner:  Kubernetes" }
-    default   { Write-Host "  Provisioner:  Docker (local socket)" }
-}
-
-if ($NEMOCLAW_ENABLED -eq "true") {
-    Write-Host "  NemoClaw:     Enabled (NVIDIA Nemotron)"
-} else {
-    Write-Host "  NemoClaw:     Disabled"
-}
+Write-Host "  Backends:     $ENABLED_BACKENDS"
 
 if ($GOOGLE_CLIENT_ID -or $GITHUB_CLIENT_ID) {
     $providers = @()
@@ -687,12 +681,7 @@ if ($GOOGLE_CLIENT_ID -or $GITHUB_CLIENT_ID) {
     Write-Host "  OAuth:        Not configured (email/password only)"
 }
 
-if ($LLM_PROVIDER) {
-    Write-Host ("  LLM:          {0} ({1})" -f $LLM_PROVIDER, $LLM_MODEL)
-    Write-Host "  First Agent:  $FIRST_AGENT_NAME"
-} else {
-    Write-Host "  LLM:          Not configured (add from Settings)"
-}
+Write-Host "  LLM:          Configure from Settings after login"
 
 Write-Host ""
 
@@ -701,7 +690,7 @@ Write-Host ""
 $startAnswer = Read-Host "[info]  Start Nora now? [Y/n]"
 if ($startAnswer -match '^[Nn]$') {
     Write-Host ""
-    Write-Info "Run 'docker compose up -d' when you're ready to start."
+    Write-Info "Run 'docker compose up -d --build' when you're ready to start."
     Write-Host ""
     exit 0
 }
@@ -709,7 +698,7 @@ if ($startAnswer -match '^[Nn]$') {
 if (-not $CAN_START_NORA) {
     Write-Host ""
     Write-Warn "Startup skipped until the public TLS certificate is installed."
-    Write-Info "After certs exist, run 'docker compose up -d'."
+    Write-Info "After certs exist, run 'docker compose up -d --build'."
     Write-Host ""
     exit 0
 }
@@ -728,153 +717,11 @@ if ($existingContainers) {
 }
 
 Write-Host ""
-Write-Info "Starting Nora (docker compose up -d)..."
+Write-Info "Starting Nora (docker compose up -d --build)..."
 Write-Host ""
-docker compose up -d
+docker compose up -d --build
 Write-Host ""
 Write-Ok "Nora is running!"
-
-# ── Auto-deploy first agent ─────────────────────────────────
-
-$AGENT_ID = ""
-
-if ($LLM_PROVIDER -and $LLM_API_KEY -and $FIRST_AGENT_NAME) {
-    if (-not $DEFAULT_ADMIN_EMAIL -or -not $DEFAULT_ADMIN_PASSWORD) {
-        Write-Info "Skipping auto-deploy because no bootstrap admin was configured. Create an operator account first, then add your LLM key and deploy manually."
-    } else {
-        Write-Header "Deploying First Agent"
-
-        $API_BASE = "http://127.0.0.1:4100"
-        $MAX_WAIT = 90
-        $waited = 0
-
-        Write-Info "Waiting for API to be ready..."
-        while ($waited -lt $MAX_WAIT) {
-            try {
-                $null = Invoke-RestMethod -Uri "$API_BASE/health" -TimeoutSec 3 -ErrorAction Stop
-                break
-            } catch {
-                Start-Sleep -Seconds 2
-                $waited += 2
-                Write-Host "." -NoNewline
-            }
-        }
-        Write-Host ""
-
-        if ($waited -ge $MAX_WAIT) {
-            Write-Warn "API didn't respond within ${MAX_WAIT}s — skipping auto-deploy"
-            Write-Info "After services start, log in and deploy manually."
-        } else {
-            Write-Ok "API is ready"
-
-            # Login as admin — retry since DB migration and admin seeding
-            # run asynchronously after the health endpoint is already responding
-            Write-Info "Logging in as $DEFAULT_ADMIN_EMAIL..."
-            $TOKEN = ""
-            $loginAttempts = 0
-            $loginMax = 10
-            while ($loginAttempts -lt $loginMax -and -not $TOKEN) {
-                try {
-                    $loginBody = @{ email = $DEFAULT_ADMIN_EMAIL; password = $DEFAULT_ADMIN_PASSWORD } | ConvertTo-Json
-                    $loginResp = Invoke-RestMethod -Uri "$API_BASE/auth/login" -Method POST -ContentType "application/json" -Body $loginBody -ErrorAction Stop
-                    $TOKEN = $loginResp.token
-                } catch {
-                    $TOKEN = ""
-                    $loginAttempts++
-                    Start-Sleep -Seconds 3
-                    Write-Host "." -NoNewline
-                }
-            }
-            if (-not $TOKEN) { Write-Host "" }
-
-            if (-not $TOKEN) {
-                Write-Warn "Could not authenticate after $loginMax attempts."
-                Write-Info "Log in manually at $NEXTAUTH_URL and deploy your agent."
-            } else {
-                Write-Ok "Authenticated"
-                $headers = @{ Authorization = "Bearer $TOKEN" }
-
-                # Save LLM key
-                Write-Info "Saving $LLM_PROVIDER API key..."
-                try {
-                    $providerBody = @{ provider = $LLM_PROVIDER; apiKey = $LLM_API_KEY; model = $LLM_MODEL } | ConvertTo-Json
-                $providerResp = Invoke-RestMethod -Uri "$API_BASE/llm-providers" -Method POST -ContentType "application/json" -Headers $headers -Body $providerBody -ErrorAction Stop
-                Write-Ok "$LLM_PROVIDER key stored (encrypted, AES-256-GCM)"
-            } catch {
-                Write-Warn "Could not save LLM key — add it from Settings > LLM Providers"
-            }
-
-            # Deploy agent
-            Write-Info "Deploying agent '$FIRST_AGENT_NAME'..."
-            try {
-                $deployBody = @{ name = $FIRST_AGENT_NAME } | ConvertTo-Json
-                $deployResp = Invoke-RestMethod -Uri "$API_BASE/agents/deploy" -Method POST -ContentType "application/json" -Headers $headers -Body $deployBody -ErrorAction Stop
-                $AGENT_ID = $deployResp.id
-            } catch {
-                $AGENT_ID = ""
-            }
-
-            if ($AGENT_ID) {
-                $shortId = $AGENT_ID.Substring(0, [Math]::Min(8, $AGENT_ID.Length))
-                Write-Ok "Agent queued for deployment (id: $shortId...)"
-
-                # Wait for agent to come up, then sync key
-                Write-Info "Waiting for agent to start (this may take 30-60s)..."
-                $agentWait = 0
-                $agentMax = 120
-                $agentRunning = $false
-                while ($agentWait -lt $agentMax) {
-                    try {
-                        $agentStatus = Invoke-RestMethod -Uri "$API_BASE/agents/$AGENT_ID" -Headers $headers -ErrorAction Stop
-                        if ($agentStatus.status -eq "running") {
-                            $agentRunning = $true
-                            break
-                        }
-                    } catch {}
-                    Start-Sleep -Seconds 5
-                    $agentWait += 5
-                    Write-Host "." -NoNewline
-                }
-                Write-Host ""
-
-                if ($agentRunning) {
-                    Write-Ok "Agent is running!"
-
-                    # The LLM key was injected as an env var at container creation time.
-                    # The startup CMD writes auth-profiles.json and sets the model automatically.
-                    Write-Info "Waiting for gateway to initialize..."
-                    $gwWait = 0
-                    $gwMax = 60
-                    $gwHealthy = $false
-                    while ($gwWait -lt $gwMax) {
-                        try {
-                            $gwStatus = Invoke-RestMethod -Uri "$API_BASE/agents/$AGENT_ID/gateway/status" -Headers $headers -TimeoutSec 5 -ErrorAction Stop
-                            if ($gwStatus.health.ok -eq $true) {
-                                $gwHealthy = $true
-                                break
-                            }
-                        } catch {}
-                        Start-Sleep -Seconds 5
-                        $gwWait += 5
-                        Write-Host "." -NoNewline
-                    }
-                    Write-Host ""
-
-                    if ($gwHealthy) {
-                        Write-Ok "Gateway is online and model is configured"
-                    } else {
-                        Write-Warn "Gateway may still be starting — refresh the Status tab in a moment"
-                    }
-                } else {
-                    Write-Warn "Agent is still provisioning — it will be ready shortly"
-                    Write-Info "Sync your LLM key from Settings > LLM Providers after it starts"
-                }
-            } else {
-                Write-Warn "Could not deploy agent — deploy from the dashboard"
-            }
-        }
-    }
-}
 
 # ── Done ─────────────────────────────────────────────────────
 
@@ -889,11 +736,7 @@ if ($DEFAULT_ADMIN_EMAIL) {
 }
 Write-Host ""
 
-if ($FIRST_AGENT_NAME -and $AGENT_ID) {
-    Write-Ok "Your agent '$FIRST_AGENT_NAME' is deploying — open the Chat tab to start talking!"
-} else {
-    Write-Info "Go to Deploy to create your first agent."
-}
+Write-Info "Next: sign in, add an LLM provider in Settings, then open Deploy when you're ready to create your first agent."
 
 Write-Host ""
 Write-Info "Useful commands:"
@@ -901,10 +744,12 @@ Write-Host "    docker compose logs -f              # watch logs"
 Write-Host "    docker compose logs -f backend-api  # single service"
 Write-Host "    docker compose down                 # stop everything"
 Write-Host ""
-Write-Info "Need a different path?"
+Write-Info "Useful links:"
 Write-Host "    Quick start:        https://github.com/solomon2773/nora#quick-start"
-Write-Host "    Support paths:      https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
-Write-Host "    Rollout help:       https://github.com/solomon2773/nora/discussions"
-Write-Host "    Hosted evaluation:  https://nora.solomontsao.com/signup"
-Write-Host "    Pricing / paths:    https://nora.solomontsao.com/pricing"
+Write-Host "    GitHub repo:        https://github.com/solomon2773/nora"
+Write-Host "    Public site:        https://nora.solomontsao.com"
+Write-Host "    Log in:             https://nora.solomontsao.com/login"
+Write-Host "    Create account:     https://nora.solomontsao.com/signup"
+Write-Host "    OSS / PaaS mode:    https://nora.solomontsao.com/pricing"
+Write-Host "    Start paths:        https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
 Write-Host ""

@@ -123,8 +123,8 @@ export default function SettingsPage() {
 
   async function handlePasswordChange(e) {
     e.preventDefault();
-    if (passwords.new.length < 6) {
-      setPwMsg("Password must be at least 6 characters");
+    if (passwords.new.length < 8) {
+      setPwMsg("Password must be at least 8 characters");
       return;
     }
     if (passwords.new !== passwords.confirm) {
@@ -190,7 +190,7 @@ export default function SettingsPage() {
         <ActivationChecklist
           compact
           title="Settings-driven activation"
-          subtitle="For self-hosted MVP evaluation, this page is step one: add one provider key here, then move to Deploy and validate the runtime."
+          subtitle="For self-hosted deployments, this page is step one: add one provider key here, then move to Deploy and bring the runtime online."
         />
 
         {/* Profile Card */}

@@ -205,6 +205,7 @@ describe("provisioning runtime/gateway contracts", () => {
     process.env.K8S_EXPOSURE_MODE = "node-port";
     process.env.K8S_RUNTIME_NODE_PORT = "30909";
     process.env.K8S_GATEWAY_NODE_PORT = "31879";
+    process.env.K8S_RUNTIME_HOST = "nora-kind-control-plane";
     mockCreateNamespacedService.mockResolvedValueOnce({
       body: {
         spec: {
@@ -236,8 +237,9 @@ describe("provisioning runtime/gateway contracts", () => {
     ]));
     expect(result).toEqual(expect.objectContaining({
       host: "oclaw-agent-321.openclaw-agents.svc.cluster.local",
-      runtimeHost: "host.docker.internal",
+      runtimeHost: "nora-kind-control-plane",
       runtimePort: 30909,
+      gatewayHost: "nora-kind-control-plane",
       gatewayHostPort: 31879,
     }));
   });

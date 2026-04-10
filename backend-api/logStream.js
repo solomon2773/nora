@@ -22,8 +22,9 @@ function attachLogStream(server) {
     }
 
     const token = url.searchParams.get("token");
+    let payload;
     try {
-      jwt.verify(token, process.env.JWT_SECRET);
+      payload = jwt.verify(token, process.env.JWT_SECRET);
     } catch {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
@@ -31,14 +32,14 @@ function attachLogStream(server) {
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request, match[1]);
+      wss.emit("connection", ws, request, match[1], payload);
     });
   });
 
-  wss.on("connection", async (ws, _req, agentId) => {
+  wss.on("connection", async (ws, _req, agentId, user) => {
     try {
       const result = await db.query(
-        "SELECT id, name, status, container_id, backend_type FROM agents WHERE id = $1",
+        "SELECT id, name, status, container_id, backend_type, user_id FROM agents WHERE id = $1",
         [agentId]
       );
       if (!result.rows[0]) {
@@ -48,6 +49,13 @@ function attachLogStream(server) {
       }
 
       const agent = result.rows[0];
+      const isAdmin = user?.role === "admin";
+      if (!isAdmin && agent.user_id !== user?.id) {
+        ws.send(JSON.stringify({ type: "error", message: "Unauthorized" }));
+        ws.close();
+        return;
+      }
+
       ws.send(
         JSON.stringify({
           type: "system",

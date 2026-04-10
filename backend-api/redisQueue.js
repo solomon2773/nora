@@ -3,6 +3,16 @@
 const { Queue } = require('bullmq')
 const IORedis = require('ioredis')
 
+function parseTimeoutMs(rawValue, fallbackMs) {
+  const parsed = Number.parseInt(rawValue, 10)
+  return Number.isFinite(parsed) && parsed >= 60000 ? parsed : fallbackMs
+}
+
+const DEPLOYMENT_JOB_TIMEOUT_MS = parseTimeoutMs(
+  process.env.DEPLOYMENT_JOB_TIMEOUT_MS || process.env.PROVISION_TIMEOUT_MS,
+  900000
+)
+
 const connection = new IORedis({
   host: process.env.REDIS_HOST || 'redis',
   port: parseInt(process.env.REDIS_PORT || '6379'),
@@ -15,7 +25,7 @@ const deployQueue = new Queue('deployments', {
   defaultJobOptions: {
     attempts: 5,
     backoff: { type: 'exponential', delay: 3000 },
-    timeout: 300000, // 5 min per attempt
+    timeout: DEPLOYMENT_JOB_TIMEOUT_MS,
     removeOnComplete: { count: 200 },
     removeOnFail: false, // keep failed jobs for DLQ inspection
   },

@@ -62,7 +62,7 @@ export default function ActivationChecklist({ compact = false, title = "Activati
         title: hasAgent ? "First agent deployed" : "Deploy your first OpenClaw agent",
         desc: hasAgent
           ? `${agents.length} agent${agents.length === 1 ? " is" : "s are"} now in Nora. The next move is to validate one live runtime end-to-end.`
-          : "Use the default OpenClaw + Docker path for the clearest self-hosted MVP activation loop.",
+          : "Open Deploy and choose one enabled backend for the clearest first-run launch flow.",
         href: "/app/deploy",
         cta: hasAgent ? "Deploy Another Agent" : "Deploy First Agent",
         icon: Rocket,
@@ -99,7 +99,7 @@ export default function ActivationChecklist({ compact = false, title = "Activati
             <p className="text-[10px] font-black uppercase tracking-[0.25em] text-blue-600 mb-2">First-run activation</p>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">{title}</h2>
             <p className="text-sm text-slate-500 mt-2 max-w-2xl">
-              {subtitle || "The fastest self-hosted path to value is simple: connect one provider, deploy one agent, then validate the runtime from Nora itself."}
+              {subtitle || "The fastest self-hosted launch path is simple: connect one provider, deploy one agent, then confirm the runtime from Nora itself."}
             </p>
           </div>
 
@@ -189,9 +189,9 @@ export default function ActivationChecklist({ compact = false, title = "Activati
                   <div className="flex items-center justify-between gap-3 pl-0 sm:pl-[60px]">
                     <div className="text-xs text-slate-500 font-medium">
                       {step.key === "validate"
-                        ? "Proof of value = successful operator workflow from within Nora."
+                        ? "Successful runtime checks happen from inside Nora."
                         : step.key === "deploy"
-                          ? "Default recommendation = OpenClaw + Docker for MVP evaluation."
+                          ? "Choose one enabled backend, then validate a single runtime end to end."
                           : ""}
                     </div>
                     <a
@@ -218,7 +218,7 @@ export default function ActivationChecklist({ compact = false, title = "Activati
 
       {!loading && !compact && (
         <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600 leading-relaxed">
-          <span className="font-bold text-slate-900">Best-fit evaluator:</span> platform teams, technical product teams, and ops-minded technical teams who want a credible self-hosted control plane for OpenClaw agents.
+          <span className="font-bold text-slate-900">Best-fit teams:</span> platform teams, technical product teams, and ops-minded technical teams who want a credible self-hosted platform for OpenClaw agents.
         </div>
       )}
     </div>

@@ -4,26 +4,26 @@ const db = require("./db");
 const { encrypt, decrypt, ensureEncryptionConfigured } = require("./crypto");
 
 // Approved LLM providers and their env var names
-// Models updated per https://docs.openclaw.ai/providers (March 2026)
+// Models updated per https://docs.openclaw.ai/providers (April 2026)
 const PROVIDERS = [
   { id: "anthropic", name: "Anthropic", envVar: "ANTHROPIC_API_KEY", models: ["claude-opus-4-6", "claude-sonnet-4-5"] },
   { id: "openai", name: "OpenAI", envVar: "OPENAI_API_KEY", models: ["gpt-5.4", "gpt-5.4-pro"] },
-  { id: "google", name: "Google AI", envVar: "GEMINI_API_KEY", endpoint: "https://generativelanguage.googleapis.com/v1beta", models: ["gemini-3.1-pro-preview", "gemini-3-flash-preview"] },
+  { id: "google", name: "Google (Gemini)", envVar: "GEMINI_API_KEY", endpoint: "https://generativelanguage.googleapis.com/v1beta", models: ["gemini-3.1-pro-preview", "gemini-3-flash-preview"] },
   { id: "groq", name: "Groq", envVar: "GROQ_API_KEY", models: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"] },
-  { id: "mistral", name: "Mistral AI", envVar: "MISTRAL_API_KEY", models: ["mistral-large-latest"] },
+  { id: "mistral", name: "Mistral", envVar: "MISTRAL_API_KEY", models: ["mistral-large-latest"] },
   { id: "deepseek", name: "DeepSeek", envVar: "DEEPSEEK_API_KEY", models: ["deepseek-chat", "deepseek-reasoner"] },
   { id: "openrouter", name: "OpenRouter", envVar: "OPENROUTER_API_KEY", models: [] },
   { id: "together", name: "Together AI", envVar: "TOGETHER_API_KEY", models: [] },
   { id: "cohere", name: "Cohere", envVar: "COHERE_API_KEY", models: ["command-r-plus", "command-r"] },
-  { id: "xai", name: "xAI", envVar: "XAI_API_KEY", models: ["grok-2", "grok-2-mini"] },
+  { id: "xai", name: "xAI", envVar: "XAI_API_KEY", models: ["grok-4", "grok-4-0709", "grok-3", "grok-3-fast"] },
   { id: "moonshot", name: "Moonshot AI", envVar: "MOONSHOT_API_KEY", models: ["kimi-k2.5"] },
   { id: "zai", name: "Z.AI", envVar: "ZAI_API_KEY", models: ["glm-5"] },
   { id: "ollama", name: "Ollama", envVar: "OLLAMA_API_KEY", models: [] },
-  { id: "minimax", name: "MiniMax", envVar: "MINIMAX_API_KEY", models: [] },
+  { id: "minimax", name: "MiniMax", envVar: "MINIMAX_API_KEY", models: ["MiniMax-M2.7"] },
   { id: "github-copilot", name: "GitHub Copilot", envVar: "COPILOT_GITHUB_TOKEN", models: [] },
-  { id: "huggingface", name: "Hugging Face", envVar: "HF_TOKEN", models: [] },
+  { id: "huggingface", name: "Hugging Face (Inference)", envVar: "HF_TOKEN", models: [] },
   { id: "cerebras", name: "Cerebras", envVar: "CEREBRAS_API_KEY", models: [] },
-  { id: "nvidia", name: "NVIDIA", envVar: "NVIDIA_API_KEY", endpoint: "https://integrate.api.nvidia.com/v1", models: ["nvidia/nemotron-3-super-120b-a12b", "nvidia/llama-3.1-nemotron-ultra-253b-v1", "nvidia/llama-3.3-nemotron-super-49b-v1.5", "nvidia/nemotron-3-nano-30b-a3b"] },
+  { id: "nvidia", name: "NVIDIA", envVar: "NVIDIA_API_KEY", endpoint: "https://integrate.api.nvidia.com/v1", models: ["nvidia/nvidia/nemotron-3-super-120b-a12b", "nvidia/moonshotai/kimi-k2.5", "nvidia/minimaxai/minimax-m2.5", "nvidia/z-ai/glm5"] },
 ];
 
 function getAvailableProviders() {

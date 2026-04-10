@@ -5,6 +5,8 @@
  *                               status(containerId)  -> { running: bool, uptime, cpu, memory }
  */
 
+const { buildUnavailableTelemetry } = require("./telemetry");
+
 class ProvisionerBackend {
   /**
    * Provision a new agent container/VM.
@@ -31,6 +33,23 @@ class ProvisionerBackend {
    */
   async status(containerId) {
     throw new Error("status() not implemented");
+  }
+
+  /**
+   * Get normalized telemetry for a running agent.
+   * Backends that do not support resource metrics fall back to a capability map
+   * with all metrics marked unavailable while still reporting run state.
+   * @param {string} containerId
+   * @param {Object} [agent]
+   * @returns {Promise<{ backend_type: string, capabilities: Object, current: Object }>}
+   */
+  async stats(containerId, agent = null) {
+    const status = await this.status(containerId);
+    return buildUnavailableTelemetry({
+      backendType: agent?.backend_type || "unknown",
+      running: Boolean(status?.running),
+      uptime_seconds: 0,
+    });
   }
 
   /**

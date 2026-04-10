@@ -1,7 +1,12 @@
 const k8s = require("@kubernetes/client-node");
 const crypto = require("crypto");
 const ProvisionerBackend = require("./interface");
-const { buildRuntimeBootstrapCommand, buildRuntimeEnv } = require("../runtimeBootstrap");
+const {
+  buildOpenClawInstallCommand,
+  buildRuntimeBootstrapCommand,
+  buildTemplatePayloadBootstrapCommand,
+  buildRuntimeEnv,
+} = require("../../../agent-runtime/lib/runtimeBootstrap");
 const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
 
 class K8sBackend extends ProvisionerBackend {
@@ -62,7 +67,7 @@ class K8sBackend extends ProvisionerBackend {
   }
 
   async create(config) {
-    const { id, name, image, vcpu, ram_mb, env } = config;
+    const { id, name, image, vcpu, ram_mb, env, templatePayload } = config;
     const deployName = `oclaw-agent-${id}`;
 
     await this._ensureNamespace();
@@ -105,16 +110,18 @@ class K8sBackend extends ProvisionerBackend {
     // runtime sidecar, then launch the gateway.
     const escapedPaired = pairedJson.replace(/'/g, "'\\''");
     const runtimeBootstrapCmd = buildRuntimeBootstrapCommand();
+    const templateBootstrapCmd = buildTemplatePayloadBootstrapCommand(templatePayload);
+    const ensureOpenClawCmd = buildOpenClawInstallCommand(["openclaw@latest"]);
     const gatewayCmd = [
       "sh", "-c",
-      'apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 && ' +
-      'npm install -g openclaw@latest 2>&1 && ' +
+      ensureOpenClawCmd +
       'mkdir -p ~/.openclaw/devices && ' +
       `echo '{"gateway":{"port":${OPENCLAW_GATEWAY_PORT},"bind":"lan","mode":"local"}}' > ~/.openclaw/openclaw.json && ` +
       `echo '${escapedPaired}' > ~/.openclaw/devices/paired.json && ` +
       `echo '{}' > ~/.openclaw/devices/pending.json && ` +
+      templateBootstrapCmd +
       runtimeBootstrapCmd +
-      `openclaw gateway --port ${OPENCLAW_GATEWAY_PORT} --password ${gatewayToken}`
+      '"$OPENCLAW_BIN" gateway --port ' + OPENCLAW_GATEWAY_PORT + ` --password ${gatewayToken}`
     ];
 
     const deployment = {
@@ -212,6 +219,11 @@ class K8sBackend extends ProvisionerBackend {
         throw new Error("K8s NodePort exposure requires runtime and gateway node ports");
       }
 
+      const nodePortHost =
+        process.env.K8S_RUNTIME_HOST ||
+        process.env.GATEWAY_HOST ||
+        "host.docker.internal";
+
       console.log(
         `[k8s] Deployment ${deployName} created -> ${host} ` +
         `(runtime nodePort ${runtimeNodePort}, gateway nodePort ${gatewayNodePort})`
@@ -220,8 +232,9 @@ class K8sBackend extends ProvisionerBackend {
         containerId: deployName,
         host,
         gatewayToken,
-        runtimeHost: process.env.K8S_RUNTIME_HOST || process.env.GATEWAY_HOST || "host.docker.internal",
+        runtimeHost: nodePortHost,
         runtimePort: runtimeNodePort,
+        gatewayHost: nodePortHost,
         gatewayHostPort: gatewayNodePort,
       };
     }

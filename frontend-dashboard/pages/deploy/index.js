@@ -1,8 +1,10 @@
 import Layout from "../../components/layout/Layout";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Rocket,
   Server,
+  Boxes,
+  Network,
   Shield,
   Loader2,
   CheckCircle2,
@@ -33,13 +35,15 @@ export default function Deploy() {
   const [loading, setLoading] = useState(false);
   const [sub, setSub] = useState(null);
   const [agentCount, setAgentCount] = useState(0);
-  const [sandbox, setSandbox] = useState("standard");
-  const [nemoConfig, setNemoConfig] = useState(null);
+  const [selectedBackend, setSelectedBackend] = useState("");
+  const [backendConfig, setBackendConfig] = useState(null);
   const [selectedModel, setSelectedModel] = useState("");
   const [platformConfig, setPlatformConfig] = useState(null);
-  const [selVcpu, setSelVcpu] = useState(2);
-  const [selRam, setSelRam] = useState(2048);
-  const [selDisk, setSelDisk] = useState(20);
+  const [selVcpu, setSelVcpu] = useState(1);
+  const [selRam, setSelRam] = useState(1024);
+  const [selDisk, setSelDisk] = useState(10);
+  const resourceDefaultsInitializedRef = useRef(false);
+  const resourceSelectionDirtyRef = useRef(false);
   const toast = useToast();
 
   useEffect(() => {
@@ -51,12 +55,9 @@ export default function Deploy() {
       .then((r) => r.json())
       .then((data) => setAgentCount(Array.isArray(data) ? data.length : 0))
       .catch((err) => console.error(err));
-    fetch("/api/config/nemoclaw")
+    fetch("/api/config/backends")
       .then((r) => r.json())
-      .then((cfg) => {
-        setNemoConfig(cfg);
-        if (cfg.defaultModel) setSelectedModel(cfg.defaultModel);
-      })
+      .then(setBackendConfig)
       .catch(() => {});
     fetch("/api/config/platform")
       .then((r) => r.json())
@@ -64,11 +65,87 @@ export default function Deploy() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    const backends = backendConfig?.backends || [];
+    if (!backends.length) return;
+
+    const current = backends.find((backend) => backend.id === selectedBackend);
+    const nextBackend =
+      (current && current.enabled ? current : null) ||
+      backends.find((backend) => backend.available && backend.isDefault) ||
+      backends.find((backend) => backend.available) ||
+      backends.find((backend) => backend.enabled) ||
+      null;
+
+    if (nextBackend && nextBackend.id !== selectedBackend) {
+      setSelectedBackend(nextBackend.id);
+    }
+
+    if (
+      nextBackend?.id === "nemoclaw" &&
+      nextBackend.defaultModel &&
+      !selectedModel
+    ) {
+      setSelectedModel(nextBackend.defaultModel);
+    }
+  }, [backendConfig, selectedBackend, selectedModel]);
+
+  const deploymentDefaults = platformConfig?.deploymentDefaults || {
+    vcpu: 1,
+    ram_mb: 1024,
+    disk_gb: 10,
+  };
+
+  useEffect(() => {
+    if (
+      !platformConfig?.deploymentDefaults ||
+      resourceDefaultsInitializedRef.current ||
+      resourceSelectionDirtyRef.current
+    ) {
+      return;
+    }
+
+    setSelVcpu(deploymentDefaults.vcpu);
+    setSelRam(deploymentDefaults.ram_mb);
+    setSelDisk(deploymentDefaults.disk_gb);
+    resourceDefaultsInitializedRef.current = true;
+  }, [deploymentDefaults, platformConfig?.deploymentDefaults]);
+
   const isSelfHosted = platformConfig?.mode !== "paas";
   const plan = sub?.plan || "free";
   const planLabel = isSelfHosted ? "Self-hosted" : plan.charAt(0).toUpperCase() + plan.slice(1);
   const limit = isSelfHosted ? (platformConfig?.selfhosted?.max_agents || 50) : (sub?.agent_limit || 3);
   const atLimit = agentCount >= limit;
+  const enabledBackends = useMemo(
+    () => (backendConfig?.backends || []).filter((backend) => backend.enabled),
+    [backendConfig]
+  );
+  const activeBackend = useMemo(
+    () => enabledBackends.find((backend) => backend.id === selectedBackend) || null,
+    [enabledBackends, selectedBackend]
+  );
+  const ramOptions = useMemo(() => {
+    const maxRam = platformConfig?.selfhosted?.max_ram_mb || 32768;
+    return Array.from(
+      new Set(
+        [selRam, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].filter(
+          (value) => value <= maxRam || value === selRam
+        )
+      )
+    ).sort((left, right) => left - right);
+  }, [platformConfig?.selfhosted?.max_ram_mb, selRam]);
+  const diskOptions = useMemo(() => {
+    const maxDisk = platformConfig?.selfhosted?.max_disk_gb || 500;
+    return Array.from(
+      new Set(
+        [selDisk, 10, 20, 50, 100, 200, 500, 1000].filter(
+          (value) => value <= maxDisk || value === selDisk
+        )
+      )
+    ).sort((left, right) => left - right);
+  }, [platformConfig?.selfhosted?.max_disk_gb, selDisk]);
+  const canDeployBackend = Boolean(activeBackend?.available);
+  const isNemoClaw = activeBackend?.id === "nemoclaw";
   const suggestedContainerName = useMemo(() => {
     const slug = slugifyName(name);
     return slug ? `nora-${slug}` : "nora-my-first-agent";
@@ -83,9 +160,9 @@ export default function Deploy() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name,
-          sandbox,
+          backend: selectedBackend,
           ...(containerName.trim() ? { container_name: containerName.trim() } : {}),
-          ...(sandbox === "nemoclaw" && selectedModel ? { model: selectedModel } : {}),
+          ...(isNemoClaw && selectedModel ? { model: selectedModel } : {}),
           ...(isSelfHosted ? { vcpu: selVcpu, ram_mb: selRam, disk_gb: selDisk } : {}),
         }),
       });
@@ -106,11 +183,24 @@ export default function Deploy() {
 
   const checklist = [
     "Pick a clear operator-friendly agent name.",
-    "Choose the runtime mode that matches your infrastructure.",
+    "Choose the backend that matches your infrastructure.",
     "Size CPU, RAM, and disk for the workload.",
     "After deploy, add or sync your LLM provider key if needed.",
     "Open chat, logs, and terminal to validate the runtime immediately.",
   ];
+
+  function backendIcon(backendId) {
+    switch (backendId) {
+      case "k8s":
+        return Boxes;
+      case "proxmox":
+        return Network;
+      case "nemoclaw":
+        return ShieldCheck;
+      default:
+        return Server;
+    }
+  }
 
   return (
     <Layout>
@@ -189,54 +279,61 @@ export default function Deploy() {
             </div>
 
             <div className="flex flex-col gap-3">
-              <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">Deploy Mode</label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setSandbox("standard")}
-                  className={`p-5 rounded-2xl border-2 text-left transition-all ${
-                    sandbox === "standard"
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-slate-200 bg-slate-50 hover:border-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <Server size={16} className="text-blue-600" />
-                    <span className="text-sm font-bold text-slate-900">OpenClaw + Docker</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    Recommended default for the self-hosted MVP. Containerised runtime with the shortest path to first value.
-                  </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (nemoConfig?.enabled) setSandbox("nemoclaw");
-                  }}
-                  className={`relative p-5 rounded-2xl border-2 text-left transition-all ${
-                    !nemoConfig?.enabled
-                      ? "border-slate-200 bg-slate-100 opacity-60 cursor-not-allowed"
-                      : sandbox === "nemoclaw"
-                        ? "border-green-500 bg-green-50"
-                        : "border-slate-200 bg-slate-50 hover:border-slate-300"
-                  }`}
-                  disabled={!nemoConfig?.enabled}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <ShieldCheck size={16} className={nemoConfig?.enabled ? "text-green-600" : "text-slate-400"} />
-                    <span className="text-sm font-bold text-slate-900">NemoClaw + OpenClaw</span>
-                  </div>
-                  <p className="text-[11px] text-slate-500 leading-relaxed">
-                    NVIDIA secure sandbox path for teams that need stronger runtime restrictions and compatible model routing.
-                  </p>
-                  {!nemoConfig?.enabled && (
-                    <p className="text-[10px] text-amber-600 font-medium mt-2">Enable NemoClaw in .env to use this mode.</p>
-                  )}
-                </button>
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">Deploy Backend</label>
+              <div className={`grid grid-cols-1 ${enabledBackends.length > 2 ? "md:grid-cols-2" : "md:grid-cols-2"} gap-3`}>
+                {enabledBackends.map((backend) => {
+                  const Icon = backendIcon(backend.id);
+                  const isSelected = selectedBackend === backend.id;
+                  const isAvailable = backend.available;
+                  return (
+                    <button
+                      key={backend.id}
+                      type="button"
+                      onClick={() => {
+                        if (isAvailable) setSelectedBackend(backend.id);
+                      }}
+                      className={`relative p-5 rounded-2xl border-2 text-left transition-all ${
+                        !isAvailable
+                          ? "border-slate-200 bg-slate-100 opacity-70 cursor-not-allowed"
+                          : isSelected
+                            ? backend.id === "nemoclaw"
+                              ? "border-green-500 bg-green-50"
+                              : "border-blue-500 bg-blue-50"
+                            : "border-slate-200 bg-slate-50 hover:border-slate-300"
+                      }`}
+                      disabled={!isAvailable}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <Icon
+                          size={16}
+                          className={
+                            !isAvailable
+                              ? "text-slate-400"
+                              : backend.id === "nemoclaw"
+                                ? "text-green-600"
+                                : "text-blue-600"
+                          }
+                        />
+                        <span className="text-sm font-bold text-slate-900">{backend.label}</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">
+                        {backend.summary}
+                      </p>
+                      {!isAvailable && backend.issue ? (
+                        <p className="text-[10px] text-amber-600 font-medium mt-2">{backend.issue}</p>
+                      ) : null}
+                    </button>
+                  );
+                })}
               </div>
+              {enabledBackends.length === 0 ? (
+                <p className="text-xs text-amber-600 ml-2">
+                  No deploy backends are enabled for this Nora control plane.
+                </p>
+              ) : null}
             </div>
 
-            {sandbox === "nemoclaw" && nemoConfig?.models?.length > 0 && (
+            {isNemoClaw && activeBackend?.models?.length > 0 && (
               <div className="flex flex-col gap-3">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">Nemotron Model</label>
                 <div className="flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-2xl">
@@ -246,7 +343,7 @@ export default function Deploy() {
                     onChange={(e) => setSelectedModel(e.target.value)}
                     className="flex-1 bg-transparent text-sm font-bold text-slate-900 outline-none"
                   >
-                    {nemoConfig.models.map((model) => (
+                    {activeBackend.models.map((model) => (
                       <option key={model} value={model}>{model.replace("nvidia/", "")}</option>
                     ))}
                   </select>
@@ -265,13 +362,22 @@ export default function Deploy() {
                   <span className="text-[10px] font-black uppercase tracking-widest">vCPU</span>
                 </div>
                 {isSelfHosted ? (
-                  <select value={selVcpu} onChange={(e) => setSelVcpu(Number(e.target.value))} className="text-xl font-black text-slate-900 bg-transparent outline-none">
+                  <select
+                    value={selVcpu}
+                    onChange={(e) => {
+                      resourceSelectionDirtyRef.current = true;
+                      setSelVcpu(Number(e.target.value));
+                    }}
+                    className="text-xl font-black text-slate-900 bg-transparent outline-none"
+                  >
                     {Array.from({ length: platformConfig?.selfhosted?.max_vcpu || 16 }, (_, i) => i + 1).map((v) => (
                       <option key={v} value={v}>{v}</option>
                     ))}
                   </select>
                 ) : (
-                  <span className="text-xl font-black text-slate-900">{sub?.vcpu || 2}</span>
+                  <span className="text-xl font-black text-slate-900">
+                    {sub?.vcpu || deploymentDefaults.vcpu}
+                  </span>
                 )}
                 <span className="text-[10px] text-slate-400 font-medium">cores</span>
               </div>
@@ -281,15 +387,24 @@ export default function Deploy() {
                   <span className="text-[10px] font-black uppercase tracking-widest">RAM</span>
                 </div>
                 {isSelfHosted ? (
-                  <select value={selRam} onChange={(e) => setSelRam(Number(e.target.value))} className="text-xl font-black text-slate-900 bg-transparent outline-none">
-                    {[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
-                      .filter((v) => v <= (platformConfig?.selfhosted?.max_ram_mb || 32768))
-                      .map((v) => (
-                        <option key={v} value={v}>{v / 1024} GB</option>
-                      ))}
+                  <select
+                    value={selRam}
+                    onChange={(e) => {
+                      resourceSelectionDirtyRef.current = true;
+                      setSelRam(Number(e.target.value));
+                    }}
+                    className="text-xl font-black text-slate-900 bg-transparent outline-none"
+                  >
+                    {ramOptions.map((value) => (
+                      <option key={value} value={value}>
+                        {value >= 1024 ? `${value / 1024} GB` : `${value} MB`}
+                      </option>
+                    ))}
                   </select>
                 ) : (
-                  <span className="text-xl font-black text-slate-900">{(sub?.ram_mb || 2048) / 1024}</span>
+                  <span className="text-xl font-black text-slate-900">
+                    {(sub?.ram_mb || deploymentDefaults.ram_mb) / 1024}
+                  </span>
                 )}
                 <span className="text-[10px] text-slate-400 font-medium">GB</span>
               </div>
@@ -299,15 +414,24 @@ export default function Deploy() {
                   <span className="text-[10px] font-black uppercase tracking-widest">Disk</span>
                 </div>
                 {isSelfHosted ? (
-                  <select value={selDisk} onChange={(e) => setSelDisk(Number(e.target.value))} className="text-xl font-black text-slate-900 bg-transparent outline-none">
-                    {[10, 20, 50, 100, 200, 500, 1000]
-                      .filter((v) => v <= (platformConfig?.selfhosted?.max_disk_gb || 500))
-                      .map((v) => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
+                  <select
+                    value={selDisk}
+                    onChange={(e) => {
+                      resourceSelectionDirtyRef.current = true;
+                      setSelDisk(Number(e.target.value));
+                    }}
+                    className="text-xl font-black text-slate-900 bg-transparent outline-none"
+                  >
+                    {diskOptions.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
                   </select>
                 ) : (
-                  <span className="text-xl font-black text-slate-900">{sub?.disk_gb || 20}</span>
+                  <span className="text-xl font-black text-slate-900">
+                    {sub?.disk_gb || deploymentDefaults.disk_gb}
+                  </span>
                 )}
                 <span className="text-[10px] text-slate-400 font-medium">GB SSD</span>
               </div>
@@ -315,25 +439,23 @@ export default function Deploy() {
 
             <button
               onClick={deploy}
-              disabled={loading || atLimit || !name.trim()}
+              disabled={loading || atLimit || !name.trim() || !canDeployBackend}
               className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 transition-all text-sm font-black text-white px-8 py-5 rounded-2xl shadow-xl shadow-blue-500/30 active:scale-95 disabled:opacity-50 group"
             >
               {loading ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} className="group-hover:scale-125 transition-transform" />}
-              {atLimit ? "Agent Limit Reached" : "Deploy Agent & Open Validation"}
+              {atLimit ? "Agent Limit Reached" : !canDeployBackend ? "Backend Unavailable" : "Deploy Agent & Open Validation"}
             </button>
           </div>
 
           <div className="flex flex-col gap-6">
-            <div className={`flex items-start gap-4 p-6 border rounded-[2rem] ${sandbox === "nemoclaw" ? "bg-green-50 border-green-100" : "bg-blue-50 border-blue-100"}`}>
-              {sandbox === "nemoclaw" ? <ShieldCheck size={24} className="text-green-600 flex-shrink-0" /> : <Server size={24} className="text-blue-600 flex-shrink-0" />}
+            <div className={`flex items-start gap-4 p-6 border rounded-[2rem] ${isNemoClaw ? "bg-green-50 border-green-100" : "bg-blue-50 border-blue-100"}`}>
+              {isNemoClaw ? <ShieldCheck size={24} className="text-green-600 flex-shrink-0" /> : <Server size={24} className="text-blue-600 flex-shrink-0" />}
               <div>
-                <p className={`text-xs font-black uppercase tracking-widest mb-2 ${sandbox === "nemoclaw" ? "text-green-700" : "text-blue-700"}`}>
+                <p className={`text-xs font-black uppercase tracking-widest mb-2 ${isNemoClaw ? "text-green-700" : "text-blue-700"}`}>
                   Runtime summary
                 </p>
-                <p className={`text-sm font-medium leading-relaxed ${sandbox === "nemoclaw" ? "text-green-700" : "text-blue-700"}`}>
-                  {sandbox === "nemoclaw"
-                    ? "NemoClaw + OpenClaw agents run in NVIDIA secure sandboxes with deny-by-default networking and capability-restricted containers. Provisioning includes policy setup and model configuration."
-                    : "OpenClaw + Docker agents are deployed as isolated containers. This is the fastest and clearest path for a self-hosted MVP activation flow."}
+                <p className={`text-sm font-medium leading-relaxed ${isNemoClaw ? "text-green-700" : "text-blue-700"}`}>
+                  {activeBackend?.detail || "Select an enabled backend to see the runtime summary."}
                 </p>
               </div>
             </div>

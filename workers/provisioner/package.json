@@ -1,7 +1,7 @@
 {
   "name": "platform-api",
   "private": true,
-  "scripts": {"start":"node server.js"},
+  "scripts": {"start":"node worker.js"},
   "dependencies": {
     "pg": "^8.11.5",
     "bullmq": "^5.7.0",

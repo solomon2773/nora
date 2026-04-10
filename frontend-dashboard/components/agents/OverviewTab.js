@@ -1,13 +1,51 @@
 import { useState, useEffect } from "react";
 import {
   Bot, Cpu, MemoryStick, HardDrive, Globe, Clock, Activity, Power, RefreshCw, Loader2, Zap, Radio, ShieldCheck, Brain,
+  Copy, Share2,
   AlertTriangle, XCircle, AlertOctagon
 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import { fetchWithAuth } from "../../lib/api";
 
-export default function OverviewTab({ agent, actionLoading, onStart, onStop, onRestart, onRedeploy }) {
+function formatDeployModeLabel(agent) {
+  switch (agent?.backend_type) {
+    case "nemoclaw":
+      return "NemoClaw + OpenClaw";
+    case "k8s":
+    case "kubernetes":
+      return "OpenClaw + Kubernetes";
+    case "proxmox":
+      return "OpenClaw + Proxmox";
+    default:
+      return "OpenClaw + Docker";
+  }
+}
+
+function formatGatewayAddress(agent, browserHostname = "") {
+  if (agent?.gateway_host && agent?.gateway_port) {
+    return `${agent.gateway_host}:${agent.gateway_port}`;
+  }
+
+  if (agent?.gateway_host_port) {
+    const publishedHost = agent.gateway_host || browserHostname;
+    return publishedHost
+      ? `${publishedHost}:${agent.gateway_host_port}`
+      : `Port ${agent.gateway_host_port}`;
+  }
+
+  if (agent?.host) {
+    return `${agent.host}:${agent.gateway_port || 18789}`;
+  }
+
+  return `Port ${agent?.gateway_port || 18789}`;
+}
+
+export default function OverviewTab({ agent, actionLoading, onStart, onStop, onRestart, onRedeploy, onDuplicate, onPublish }) {
   const [lastError, setLastError] = useState(null);
+  const [browserHostname, setBrowserHostname] = useState("");
+  const deployModeLabel = formatDeployModeLabel(agent);
+  const isNemoClawAgent = agent.backend_type === "nemoclaw" || agent.sandbox_type === "nemoclaw";
+  const gatewayAddress = formatGatewayAddress(agent, browserHostname);
 
   // Fetch last error event when agent is in error state
   useEffect(() => {
@@ -17,6 +55,11 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
       .then(events => setLastError(events[0]?.message || null))
       .catch(() => {});
   }, [agent.status, agent.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setBrowserHostname(window.location.hostname || "");
+  }, []);
 
   const isStaleQueued = agent.status === "queued" && agent.created_at &&
     (Date.now() - new Date(agent.created_at).getTime()) > 5 * 60 * 1000;
@@ -74,6 +117,22 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
 
       {/* Quick Actions */}
       <div className="flex items-center gap-3 flex-wrap">
+        <button
+          onClick={onDuplicate}
+          disabled={!!actionLoading}
+          className="flex items-center gap-2 px-4 py-2.5 bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 text-xs font-bold rounded-xl transition-all disabled:opacity-50"
+        >
+          {actionLoading === "duplicate" ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+          Duplicate
+        </button>
+        <button
+          onClick={onPublish}
+          disabled={!!actionLoading}
+          className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 text-blue-700 hover:bg-blue-100 text-xs font-bold rounded-xl transition-all disabled:opacity-50"
+        >
+          {actionLoading === "publish" ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />}
+          Publish to Marketplace
+        </button>
         {agent.status === "running" && (
           <>
             <button
@@ -125,7 +184,7 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
           <div>
             <p className="text-sm font-bold text-slate-800">OpenClaw Gateway Active</p>
             <p className="text-[10px] text-slate-500">
-              {agent.gateway_host_port ? `localhost:${agent.gateway_host_port}` : "Port 18789"} &bull; Chat, Sessions, Cron, Tools available in the OpenClaw tab
+              {gatewayAddress} &bull; Chat, Sessions, Cron, Tools available in the OpenClaw tab
             </p>
           </div>
           <Radio size={14} className="ml-auto text-green-500 animate-pulse" />
@@ -133,7 +192,7 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
       )}
 
       {/* NemoClaw Sandbox Badge */}
-      {agent.sandbox_type === "nemoclaw" && agent.status === "running" && (
+      {isNemoClawAgent && agent.status === "running" && (
         <div className="flex items-center gap-3 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-2xl px-5 py-3">
           <div className="w-8 h-8 bg-green-600 rounded-xl flex items-center justify-center">
             <ShieldCheck size={16} className="text-white" />
@@ -154,7 +213,7 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
           { label: "vCPU", value: agent.vcpu || "2", icon: Cpu, color: "text-blue-600" },
           { label: "RAM", value: `${agent.ram_mb ? agent.ram_mb / 1024 : 2} GB`, icon: MemoryStick, color: "text-emerald-600" },
           { label: "Disk", value: `${agent.disk_gb || 20} GB`, icon: HardDrive, color: "text-purple-600" },
-          { label: "Host", value: agent.gateway_host_port ? `localhost:${agent.gateway_host_port}` : (agent.host || "—"), icon: Globe, color: "text-orange-600" },
+          { label: "Host", value: gatewayAddress || "—", icon: Globe, color: "text-orange-600" },
         ].map((item) => (
           <div key={item.label} className="bg-slate-50 border border-slate-200 rounded-2xl p-5">
             <div className="flex items-center gap-2 mb-2">
@@ -179,7 +238,7 @@ export default function OverviewTab({ agent, actionLoading, onStart, onStop, onR
           </div>
           <div>
             <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Deploy Mode</label>
-            <p className="text-sm text-slate-900 mt-1">{agent.sandbox_type === "nemoclaw" ? "NemoClaw + OpenClaw" : "OpenClaw + Docker"}</p>
+            <p className="text-sm text-slate-900 mt-1">{deployModeLabel}</p>
           </div>
           <div>
             <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Container Name</label>

@@ -1,0 +1,54 @@
+services:
+  nginx:
+    restart: unless-stopped
+
+  frontend-marketing:
+    command: ["npm", "start"]
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+      PLATFORM_MODE: ${PLATFORM_MODE:-selfhosted}
+    restart: unless-stopped
+    volumes: !override []
+
+  frontend-dashboard:
+    command: ["npm", "start"]
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+    restart: unless-stopped
+    volumes: !override []
+
+  admin-dashboard:
+    command: ["npm", "start"]
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+    restart: unless-stopped
+    volumes: !override []
+
+  backend-api:
+    build:
+      context: .
+      dockerfile: backend-api/Dockerfile.prod
+    command: ["node", "server.js"]
+    ports: !override
+      - "127.0.0.1:4100:4000"
+    restart: unless-stopped
+    volumes: !override
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  worker-provisioner:
+    build:
+      context: .
+      dockerfile: workers/provisioner/Dockerfile.prod
+    command: ["node", "worker.js"]
+    restart: unless-stopped
+    volumes: !override
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  postgres:
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped

@@ -155,7 +155,7 @@ function EmptyFleetState() {
       <div className="mt-8 bg-blue-50 border border-blue-100 rounded-3xl p-6 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div>
           <p className="text-sm font-black text-blue-700 uppercase tracking-widest mb-1">Recommended order</p>
-          <p className="text-sm text-blue-700/80">Settings → Deploy → Validate. That is the fastest path to first proof of value.</p>
+          <p className="text-sm text-blue-700/80">Settings → Deploy → Validate. That is the fastest path to a live runtime.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <a href="/app/settings" className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-blue-200 text-blue-700 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">

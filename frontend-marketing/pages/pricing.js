@@ -1,331 +1,308 @@
+import Head from "next/head";
 import Link from "next/link";
-import { Check, Server, LifeBuoy, Building2, Cloud, ArrowRight, Scale, Shield, FileText } from "lucide-react";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  Boxes,
+  Check,
+  Cloud,
+  Globe,
+  Scale,
+  Server,
+  Shield,
+  Zap,
+} from "lucide-react";
 
-const PATHS = [
-  {
-    key: "selfhost",
-    name: "Self-host Nora",
-    price: "Free",
-    period: "Apache 2.0",
-    description: "Run Nora on infrastructure you control and validate the operator workflow directly from the public repo.",
-    icon: Server,
-    features: [
-      "Clone, modify, and self-host the full repo",
-      "Install from GitHub + canonical public setup scripts",
-      "Use the product commercially under Apache 2.0",
-      "Best fit for teams that want full infrastructure ownership",
-    ],
-    cta: "Open self-host quick start",
-    href: "https://github.com/solomon2773/nora#quick-start",
-    external: true,
-  },
-  {
-    key: "rollout-help",
-    name: "Rollout help / paid support",
-    price: "Scoped",
-    period: "Based on rollout needs",
-    description: "Keep Nora on your own infrastructure, but shorten the time to first value with guided rollout help and support.",
-    icon: LifeBuoy,
-    features: [
-      "Best for setup guidance and deployment review",
-      "Support around a real self-hosted Nora environment",
-      "Current public intake path is GitHub Discussions",
-      "Scope depends on environment, rollout depth, and support needs",
-    ],
-    cta: "Start a support discussion",
-    href: "https://github.com/solomon2773/nora/discussions",
-    external: true,
-  },
-  {
-    key: "managed",
-    name: "Hosted eval / managed PaaS",
-    price: "Scoped",
-    period: "Based on environment",
-    description: "Start with a less DIY path when you want a faster hosted evaluation or a managed Nora experience.",
-    icon: Cloud,
-    features: [
-      "Hosted evaluation path",
-      "Managed PaaS qualification",
-      "Best for teams that do not want to start fully self-managed",
-      "Use signup to begin the current public intake path",
-    ],
-    cta: "Start hosted evaluation",
-    href: "https://nora.solomontsao.com/signup",
-    external: true,
-  },
-  {
-    key: "enterprise",
-    name: "Enterprise / custom deployment",
-    price: "Custom",
-    period: "Scoped to requirements",
-    description: "For larger teams, tailored deployment footprints, or more complex security, networking, and rollout requirements.",
-    icon: Building2,
-    features: [
-      "Private cloud / on-prem / AWS / Azure / GCP scoping",
-      "Best for larger-team or enterprise-capable environments",
-      "Scope depends on deployment footprint and rollout complexity",
-      "Deployment-path page is the current public qualification entry point",
-    ],
-    cta: "Review deployment paths",
-    href: "https://nora.solomontsao.com/pricing",
-    external: true,
-  },
-];
+const OSS_REPO_URL = "https://github.com/solomon2773/nora";
+const QUICKSTART_URL = `${OSS_REPO_URL}#quick-start`;
+const PUBLIC_SITE_URL = "https://nora.solomontsao.com";
+const LOGIN_URL = `${PUBLIC_SITE_URL}/login`;
+const SIGNUP_URL = `${PUBLIC_SITE_URL}/signup`;
+const RAW_REPO_BASE_URL =
+  "https://raw.githubusercontent.com/solomon2773/nora/master";
+const SETUP_SH_URL = `${RAW_REPO_BASE_URL}/setup.sh`;
+const SETUP_PS1_URL = `${RAW_REPO_BASE_URL}/setup.ps1`;
 
 const RIGHTS = [
-  "Use Nora privately or inside your company",
-  "Modify the source code and redistribute changes under Apache 2.0 terms",
-  "Offer Nora as a hosted or managed service yourself",
-  "Build runtime integrations and workflow extensions around Nora",
+  "Self-host Nora on infrastructure you control.",
+  "Use Nora commercially inside your own company.",
+  "Run Nora in PaaS mode as your own hosted business or internal platform.",
+  "Modify the codebase and extend it with your own workflows, integrations, and packaging.",
+  "Host Nora for clients or customers on infrastructure you operate.",
 ];
 
-const ENTRY_POINTS = [
+const DEPLOYMENT_MODES = [
   {
-    label: "Repo / self-host source",
-    href: "https://github.com/solomon2773/nora",
-    text: "github.com/solomon2773/nora",
+    icon: Server,
+    eyebrow: "Self-hosted mode",
+    title: "Run Nora as your own agent operations platform.",
+    body: "Use the public repo, install scripts, Docker Compose flow, and your own infrastructure as the trust path.",
+    points: [
+      "Best fit when you want full infrastructure ownership.",
+      "Use the public repo as the source of truth for the OSS product.",
+      "Start with the quick start, then create the first operator account.",
+    ],
   },
   {
-    label: "Hosted eval / managed PaaS",
-    href: "https://nora.solomontsao.com",
-    text: "nora.solomontsao.com",
+    icon: Cloud,
+    eyebrow: "PaaS mode",
+    title: "Operate Nora as your own hosted product or internal platform.",
+    body: "PaaS mode is part of the open product. It is not a locked maintainer-only service path.",
+    points: [
+      "Set `PLATFORM_MODE=paas` for plan-locked resources and hosted-style operation.",
+      "Connect your own Stripe keys, plans, and billing model.",
+      "Customer onboarding, infrastructure, support model, and go-to-market stay under your control.",
+    ],
   },
   {
-    label: "Bash install",
-    href: "https://storage.solomontsao.com/setup.sh",
-    text: "storage.solomontsao.com/setup.sh",
-  },
-  {
-    label: "PowerShell install",
-    href: "https://storage.solomontsao.com/setup.ps1",
-    text: "storage.solomontsao.com/setup.ps1",
+    icon: Globe,
+    eyebrow: "Public browser entry",
+    title: "Use the default public domain as a reference deployment.",
+    body: "The public site is the easiest browser entry, while the public GitHub repo stays the trust anchor.",
+    points: [
+      "Default public site: `nora.solomontsao.com`.",
+      "Use `/login` and `/signup` for fast account entry.",
+      "Use `/pricing` as the public OSS, license, and PaaS-mode explainer.",
+    ],
   },
 ];
 
-const PROOF_RESOURCES = [
+const TRUST_SURFACES = [
+  {
+    title: "Public GitHub repo",
+    copy: "The open-source platform, architecture, and product code live in the public repository.",
+    href: OSS_REPO_URL,
+  },
   {
     title: "README quick start",
-    desc: "Public self-host entry point with install scripts, configuration, and first-run flow.",
-    href: "https://github.com/solomon2773/nora#quick-start",
+    copy: "Clone the repo, run the installer, and bring up Nora on infrastructure you control.",
+    href: QUICKSTART_URL,
   },
   {
-    title: "Support paths",
-    desc: "Public routing for self-serve setup, GitHub Discussions, hosted evaluation, and custom deployment.",
-    href: "https://github.com/solomon2773/nora/blob/master/SUPPORT.md",
+    title: "Bash installer",
+    copy: "Use the public install script for macOS, Linux, or WSL2 when you want a faster first run.",
+    href: SETUP_SH_URL,
   },
   {
-    title: "Operator dashboard code",
-    desc: "The operator UI, provisioning flow, and settings surfaces live in the public repo.",
-    href: "https://github.com/solomon2773/nora/tree/master/frontend-dashboard",
-  },
-  {
-    title: "Smoke tests and capture scripts",
-    desc: "End-to-end coverage and screenshot generators stay in-repo for repeatable verification.",
-    href: "https://github.com/solomon2773/nora/tree/master/e2e",
+    title: "PowerShell installer",
+    copy: "Use the PowerShell installer for Windows-first self-hosted setups.",
+    href: SETUP_PS1_URL,
   },
 ];
 
-const PRICING_RULES = [
-  "Self-hosted OSS is free under Apache 2.0.",
-  "Rollout help / paid support is scoped based on environment, rollout depth, and support needs.",
-  "Hosted evaluation / managed PaaS is scoped based on the evaluation path and environment requirements.",
-  "Enterprise / custom deployment is scoped based on deployment footprint, security, identity, networking, and rollout complexity.",
-];
-
-const PATH_COMPARISON = [
-  {
-    path: "Self-host Nora",
-    canVerify: "Repo, README quick start, setup scripts, Docker Compose flow, and public app surfaces.",
-    bestFit: "Teams that want full infrastructure ownership and the clearest trust path.",
-    nextStep: "Run the quick start and validate the first operator workflow.",
-  },
-  {
-    path: "Rollout help / paid support",
-    canVerify: "The same OSS product plus a public support intake path through GitHub Discussions.",
-    bestFit: "Teams that want self-hosting but less setup friction or faster time to first value.",
-    nextStep: "Share target environment, first proof milestone, and current blocker in a Discussion.",
-  },
-  {
-    path: "Hosted eval / managed PaaS",
-    canVerify: "Public hosted app, signup path, deployment/support page, and repo implementation.",
-    bestFit: "Teams that want a less DIY evaluation path or lighter operational overhead.",
-    nextStep: "Use signup or the deployment/support path page to start the evaluation path.",
-  },
-  {
-    path: "Enterprise / custom deployment",
-    canVerify: "Deployment/support page, repo architecture, and the OSS control-plane implementation.",
-    bestFit: "Teams with larger-team requirements or more complex security, identity, networking, or infra scope.",
-    nextStep: "Start with deployment footprint, rollout stage, and environment constraints.",
-  },
+const ENTRY_LINKS = [
+  { label: "Public site", href: PUBLIC_SITE_URL, text: "nora.solomontsao.com" },
+  { label: "Log in", href: LOGIN_URL, text: "nora.solomontsao.com/login" },
+  { label: "Create account", href: SIGNUP_URL, text: "nora.solomontsao.com/signup" },
+  { label: "GitHub repo", href: OSS_REPO_URL, text: "github.com/solomon2773/nora" },
 ];
 
 export default function Pricing() {
   return (
-    <div className="min-h-screen bg-[#0f172a] text-white font-sans">
-      <nav className="flex items-center justify-between px-6 md:px-12 py-6 max-w-7xl mx-auto">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white">N</div>
-          <span className="text-lg font-black tracking-tight">Nora</span>
-        </Link>
-        <div className="flex items-center gap-4">
-          <Link href="/login" className="text-sm text-slate-400 hover:text-white transition-colors font-medium">
-            Sign In
-          </Link>
-          <a
-            href="https://github.com/solomon2773/nora"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 transition-colors text-sm font-bold rounded-xl"
-          >
-            GitHub
-          </a>
-        </div>
-      </nav>
+    <>
+      <Head>
+        <title>Open Source, License, and PaaS Mode | Nora</title>
+        <meta
+          name="description"
+          content="Nora is fully open source under Apache 2.0. Self-host it, use it commercially, or run Nora in PaaS mode for your own business."
+        />
+      </Head>
 
-      <div className="text-center px-6 py-16 md:py-24 max-w-5xl mx-auto">
-        <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-4">Deployment, support, and commercial paths</p>
-        <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight mb-6">
-          Open source first.
-          <br />
-          <span className="text-blue-400">Clear deployment, support, and custom paths.</span>
-        </h1>
-        <p className="text-lg text-slate-400 max-w-3xl mx-auto">
-          Nora is Apache 2.0 licensed. Teams can self-host it, use it commercially, and inspect real proof in the repo first.
-          When a non-DIY path makes more sense, the public path should stay clear: rollout help / paid support, hosted evaluation /
-          managed PaaS, and enterprise / custom deployment scoping.
-        </p>
-      </div>
-
-      <div className="max-w-6xl mx-auto px-6 pb-12 grid md:grid-cols-2 gap-6">
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <Scale size={18} className="text-blue-400" />
-            <h2 className="text-xl font-black">What Apache 2.0 means here</h2>
-          </div>
-          <ul className="space-y-3 text-slate-300 text-sm leading-relaxed">
-            {RIGHTS.map((item) => (
-              <li key={item} className="flex items-start gap-3">
-                <Check size={16} className="text-emerald-400 mt-0.5" />
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <Shield size={18} className="text-blue-400" />
-            <h2 className="text-xl font-black">Current public entry points</h2>
-          </div>
-          <div className="space-y-3 text-sm">
-            {ENTRY_POINTS.map((item) => (
-              <a key={item.label} href={item.href} target="_blank" rel="noopener noreferrer" className="block rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 hover:bg-white/[0.06] transition-colors">
-                <div className="text-slate-500 text-xs font-black uppercase tracking-widest mb-1">{item.label}</div>
-                <div className="text-white font-semibold">{item.text}</div>
-              </a>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-6xl mx-auto px-6 pb-12">
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8">
-          <div className="flex items-center gap-3 mb-4">
-            <FileText size={18} className="text-blue-400" />
-            <h2 className="text-xl font-black">How commercial scoping works today</h2>
-          </div>
-          <div className="grid md:grid-cols-2 gap-4 text-sm text-slate-300 leading-relaxed">
-            {PRICING_RULES.map((item) => (
-              <div key={item} className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4">
-                {item}
-              </div>
-            ))}
-          </div>
-          <p className="text-sm text-slate-500 mt-4">
-            The goal is path clarity, not invented fixed-plan promises. Public language should help teams choose the right route and next step.
-          </p>
-        </div>
-      </div>
-
-      <div className="max-w-6xl mx-auto px-6 pb-12">
-        <div className="bg-white/5 border border-white/10 rounded-3xl p-6 md:p-8 overflow-x-auto">
-          <div className="mb-4">
-            <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-2">Path comparison</p>
-            <h2 className="text-xl md:text-3xl font-black tracking-tight">What each path already proves before any sales call</h2>
-          </div>
-          <table className="w-full min-w-[920px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-white/10 text-slate-400">
-                <th className="py-3 pr-4 font-black text-white">Path</th>
-                <th className="py-3 px-4 font-black text-white">What you can verify now</th>
-                <th className="py-3 px-4 font-black text-white">Best fit</th>
-                <th className="py-3 pl-4 font-black text-white">Immediate next step</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PATH_COMPARISON.map((row) => (
-                <tr key={row.path} className="border-b border-white/5 align-top last:border-b-0">
-                  <td className="py-4 pr-4 font-semibold text-white">{row.path}</td>
-                  <td className="py-4 px-4 text-slate-300">{row.canVerify}</td>
-                  <td className="py-4 px-4 text-slate-300">{row.bestFit}</td>
-                  <td className="py-4 pl-4 text-slate-300">{row.nextStep}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="max-w-6xl mx-auto px-6 pb-24 grid md:grid-cols-2 xl:grid-cols-4 gap-6">
-        {PATHS.map((path) => {
-          const Icon = path.icon;
-          return (
-            <div key={path.key} className="relative flex flex-col rounded-3xl p-8 bg-white/5 border border-white/10 hover:border-white/20 transition-all">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-white/10">
-                  <Icon size={20} />
-                </div>
-                <h3 className="text-xl font-black">{path.name}</h3>
-              </div>
-
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 mb-2">
-                <span className="text-4xl font-black">{path.price}</span>
-                <span className="text-sm text-slate-400 font-medium">{path.period}</span>
-              </div>
-
-              <p className="text-sm text-slate-400 mb-8">{path.description}</p>
-
-              <ul className="flex flex-col gap-3 mb-8 flex-1">
-                {path.features.map((f) => (
-                  <li key={f} className="flex items-center gap-3 text-sm">
-                    <Check size={16} className="text-green-400" />
-                    <span className="text-slate-300">{f}</span>
-                  </li>
-                ))}
-              </ul>
-
-              <a href={path.href} target={path.external ? "_blank" : undefined} rel={path.external ? "noopener noreferrer" : undefined} className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-sm transition-all active:scale-95 bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/20">
-                {path.cta}
-                <ArrowRight size={16} />
-              </a>
+      <div className="site-shell min-h-screen px-4 pb-10 pt-4 text-white sm:px-6">
+        <header className="mx-auto flex max-w-7xl items-center justify-between rounded-full border border-white/10 bg-black/25 px-4 py-3 backdrop-blur-xl sm:px-5">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-sm font-black text-white">
+              N
             </div>
-          );
-        })}
-      </div>
+            <div>
+              <div className="text-sm font-black uppercase tracking-[0.28em] text-slate-300">Nora</div>
+              <div className="text-xs text-slate-500">Deploy intelligence anywhere.</div>
+            </div>
+          </Link>
 
-      <div className="max-w-6xl mx-auto px-6 pb-24">
-        <div className="text-center mb-8">
-          <p className="text-blue-400 text-sm font-bold uppercase tracking-widest mb-3">Proof resources</p>
-          <h2 className="text-2xl md:text-4xl font-black tracking-tight">Evidence operators can inspect before they buy</h2>
-        </div>
-        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-6">
-          {PROOF_RESOURCES.map((item) => (
-            <a key={item.title} href={item.href} target="_blank" rel="noopener noreferrer" className="rounded-3xl border border-white/10 bg-white/[0.03] p-6 hover:bg-white/[0.05] transition-all">
-              <h3 className="text-lg font-black mb-2">{item.title}</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">{item.desc}</p>
+          <div className="flex items-center gap-3">
+            <a
+              href={OSS_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden rounded-full border border-white/12 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-white/6 sm:inline-flex sm:items-center sm:gap-2"
+            >
+              GitHub <ArrowUpRight size={16} />
             </a>
-          ))}
-        </div>
+            <Link
+              href="/login"
+              className="rounded-full border border-white/12 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-white/6"
+            >
+              Log In
+            </Link>
+            <Link
+              href="/signup"
+              className="rounded-full bg-[#f2e3c5] px-4 py-2 text-sm font-black text-slate-950 transition-transform hover:-translate-y-0.5"
+            >
+              Create Account
+            </Link>
+          </div>
+        </header>
+
+        <main className="mx-auto max-w-7xl pt-10 lg:pt-12">
+          <section className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-end">
+            <div className="max-w-3xl">
+              <div className="eyebrow mb-6">
+                <Scale size={14} />
+                Apache 2.0 rights, self-hosting, and PaaS mode
+              </div>
+              <h1 className="text-5xl font-black leading-[0.95] text-white sm:text-6xl">
+                Nora is open source first, and PaaS mode is yours to run.
+              </h1>
+              <p className="mt-6 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">
+                Public messaging should be direct: Nora is fully open source, the public repo is the trust anchor, commercial use is
+                allowed under Apache 2.0, and `PLATFORM_MODE=paas` exists so operators can run Nora as their own hosted business or
+                internal platform.
+              </p>
+
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <a
+                  href={QUICKSTART_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-full bg-[#f2e3c5] px-6 py-3 text-sm font-black text-slate-950 transition-transform hover:-translate-y-0.5"
+                >
+                  Open Quick Start <ArrowRight size={16} />
+                </a>
+                <Link
+                  href="/signup"
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-white/12 px-6 py-3 text-sm font-bold text-white transition-colors hover:bg-white/6"
+                >
+                  Create Account
+                </Link>
+                <a
+                  href={OSS_REPO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-full border border-[#8ae6ff]/20 bg-[#8ae6ff]/8 px-6 py-3 text-sm font-bold text-[#dff9ff] transition-colors hover:bg-[#8ae6ff]/14"
+                >
+                  View GitHub Repo <ArrowUpRight size={16} />
+                </a>
+              </div>
+            </div>
+
+            <div className="panel-warm rounded-[36px] px-6 py-8 sm:px-8">
+              <div className="eyebrow eyebrow-warm mb-5">
+                <Shield size={14} />
+                Apache 2.0 rights
+              </div>
+              <h2 className="text-3xl font-black leading-tight text-slate-950">
+                What Apache 2.0 means here
+              </h2>
+              <div className="space-y-4">
+                {RIGHTS.map((item) => (
+                  <div key={item} className="flex items-start gap-3 text-sm leading-7 text-slate-800">
+                    <Check size={18} className="mt-1 shrink-0 text-[#b55e18]" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="py-14">
+            <div className="grid gap-6 xl:grid-cols-3">
+              {DEPLOYMENT_MODES.map((mode) => {
+                const Icon = mode.icon;
+                return (
+                  <div key={mode.title} className="panel-shell rounded-[32px] p-6">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05] text-[#8ae6ff]">
+                      <Icon size={20} />
+                    </div>
+                    <div className="mt-5 text-xs font-black uppercase tracking-[0.28em] text-[#f2d7a1]">{mode.eyebrow}</div>
+                    <h2 className="mt-3 text-2xl font-black text-white">{mode.title}</h2>
+                    <p className="mt-4 text-sm leading-7 text-slate-400">{mode.body}</p>
+                    <div className="mt-6 space-y-3">
+                      {mode.points.map((point) => (
+                        <div key={point} className="flex items-start gap-3 text-sm leading-7 text-slate-300">
+                          <Check size={18} className="mt-1 shrink-0 text-[#8ae6ff]" />
+                          <span>{point}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="grid gap-8 pb-14 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+              <div>
+                <div className="eyebrow mb-5">
+                  <Boxes size={14} />
+                  Public trust path
+                </div>
+              <h2 className="max-w-lg text-4xl font-black leading-tight text-white sm:text-5xl">
+                The public repo and public site should explain the product without a service pitch.
+              </h2>
+              <p className="mt-5 max-w-lg text-base leading-8 text-slate-300">
+                What matters publicly is straightforward: the source is open, the install path is public, the login and signup
+                flow are easy to find, and PaaS mode belongs to the operators who choose to run it.
+              </p>
+            </div>
+
+            <div className="panel-shell rounded-[32px] p-5 sm:p-6">
+              {TRUST_SURFACES.map((item, index) => (
+                <a
+                  key={item.title}
+                  href={item.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`block rounded-[26px] px-4 py-5 transition-colors hover:bg-white/[0.04] ${
+                    index !== TRUST_SURFACES.length - 1 ? "border-b border-white/8" : ""
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-lg font-black text-white">{item.title}</div>
+                      <p className="mt-2 max-w-xl text-sm leading-7 text-slate-400">{item.copy}</p>
+                    </div>
+                    <ArrowUpRight size={18} className="mt-1 shrink-0 text-[#8ae6ff]" />
+                  </div>
+                </a>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel-shell rounded-[36px] px-6 py-8 sm:px-8 sm:py-10">
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-start">
+              <div>
+                <div className="eyebrow mb-5">
+                  <Zap size={14} />
+                  Public entry points
+                </div>
+                <h2 className="max-w-2xl text-4xl font-black leading-tight text-white sm:text-5xl">
+                  Keep the public route simple: repo, quick start, login, signup, and OSS rights.
+                </h2>
+                <p className="mt-5 max-w-xl text-base leading-8 text-slate-300">
+                  Users should be able to inspect the code, install Nora, create an account, and understand their commercial rights
+                  without being pushed into a maintainer-run service narrative.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {ENTRY_LINKS.map((item) => (
+                  <a
+                    key={item.label}
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block rounded-[26px] border border-white/10 bg-white/[0.03] px-4 py-4 transition-colors hover:bg-white/[0.06]"
+                  >
+                    <div className="text-xs font-black uppercase tracking-[0.28em] text-slate-500">{item.label}</div>
+                    <div className="mt-2 text-lg font-black text-white">{item.text}</div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          </section>
+        </main>
       </div>
-    </div>
+    </>
   );
 }

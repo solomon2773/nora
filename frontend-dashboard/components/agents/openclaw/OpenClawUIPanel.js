@@ -2,28 +2,111 @@ import { useState, useEffect, useRef } from "react";
 import { Loader2, AlertTriangle, RefreshCw, Maximize2 } from "lucide-react";
 import { fetchWithAuth } from "../../../lib/api";
 
+const GATEWAY_READY_POLL_MS = 5000;
+const GATEWAY_BOOT_MESSAGE =
+  "Fresh deployments can take a couple of minutes while OpenClaw installs and starts.";
+
 export default function OpenClawUIPanel({ agentId }) {
   const [loading, setLoading] = useState(true);
+  const [gatewayReady, setGatewayReady] = useState(false);
+  const [gatewayBootMessage, setGatewayBootMessage] = useState("");
   const [error, setError] = useState(null);
   const [gatewayInfo, setGatewayInfo] = useState(null);
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const iframeRef = useRef(null);
+  const readyPollRef = useRef(null);
+  const cancelledRef = useRef(false);
 
-  function fetchInfo() {
-    setLoading(true);
-    setError(null);
-    setIframeLoaded(false);
-    fetchWithAuth(`/api/agents/${agentId}/gateway-url`)
-      .then((r) => r.ok ? r.json() : r.json().then(e => { throw new Error(e.error); }))
-      .then((info) => { setGatewayInfo(info); setLoading(false); })
-      .catch((e) => { setError(e.message); setLoading(false); });
+  function clearReadyPoll() {
+    if (readyPollRef.current) {
+      clearTimeout(readyPollRef.current);
+      readyPollRef.current = null;
+    }
   }
 
-  useEffect(() => { if (agentId) fetchInfo(); }, [agentId]);
+  function scheduleReadyPoll() {
+    clearReadyPoll();
+    if (typeof window === "undefined") return;
+    readyPollRef.current = window.setTimeout(() => {
+      checkGatewayReady();
+    }, GATEWAY_READY_POLL_MS);
+  }
+
+  async function checkGatewayReady() {
+    try {
+      const res = await fetchWithAuth(`/api/agents/${agentId}/gateway/status`);
+      const raw = await res.text();
+      let data = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        data = { error: raw || `HTTP ${res.status}` };
+      }
+
+      if (cancelledRef.current) return false;
+
+      if (res.ok && data.health?.ok) {
+        setGatewayReady(true);
+        setGatewayBootMessage("");
+        return true;
+      }
+
+      setGatewayReady(false);
+      setGatewayBootMessage(data.error || GATEWAY_BOOT_MESSAGE);
+      scheduleReadyPoll();
+      return false;
+    } catch (e) {
+      if (cancelledRef.current) return false;
+      setGatewayReady(false);
+      setGatewayBootMessage(e.message || GATEWAY_BOOT_MESSAGE);
+      scheduleReadyPoll();
+      return false;
+    }
+  }
+
+  async function fetchInfo() {
+    clearReadyPoll();
+    setLoading(true);
+    setError(null);
+    setGatewayReady(false);
+    setGatewayBootMessage("");
+    setIframeLoaded(false);
+    try {
+      const res = await fetchWithAuth(`/api/agents/${agentId}/gateway-url`);
+      const info = res.ok
+        ? await res.json()
+        : await res.json().then((e) => {
+            throw new Error(e.error);
+          });
+
+      if (cancelledRef.current) return;
+
+      setGatewayInfo(info);
+      await checkGatewayReady();
+    } catch (e) {
+      if (cancelledRef.current) return;
+      setError(e.message);
+    } finally {
+      if (!cancelledRef.current) {
+        setLoading(false);
+      }
+    }
+  }
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    if (agentId) {
+      fetchInfo();
+    }
+    return () => {
+      cancelledRef.current = true;
+      clearReadyPoll();
+    };
+  }, [agentId]);
 
   // Build the same-origin embed URL (proxied through the backend, no cross-origin issues)
   function getEmbedUrl() {
-    if (!gatewayInfo) return "";
+    if (!gatewayInfo || !gatewayReady) return "";
     const jwt = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     if (!jwt) return "";
     return `/api/agents/${agentId}/gateway/embed?token=${encodeURIComponent(jwt)}`;
@@ -73,7 +156,7 @@ export default function OpenClawUIPanel({ agentId }) {
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 rounded-t-xl border border-slate-700 shrink-0">
         <div className="flex items-center gap-3">
-          <div className={`w-2 h-2 rounded-full ${iframeLoaded ? "bg-green-500" : "bg-amber-500 animate-pulse"}`} />
+          <div className={`w-2 h-2 rounded-full ${gatewayReady && iframeLoaded ? "bg-green-500" : "bg-amber-500 animate-pulse"}`} />
           <span className="text-xs font-mono text-slate-400">
             {gatewayInfo?.url || "—"} &middot; Port {gatewayInfo?.port || "—"}
           </span>
@@ -88,7 +171,8 @@ export default function OpenClawUIPanel({ agentId }) {
           </button>
           <button
             onClick={openInNewWindow}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-lg shadow-blue-600/20"
+            disabled={!embedUrl}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-lg shadow-blue-600/20 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-blue-600"
             title="Open embedded gateway UI in a new window"
           >
             <Maximize2 size={12} />
@@ -100,15 +184,24 @@ export default function OpenClawUIPanel({ agentId }) {
       {/* Embedded Gateway UI */}
       <div className="flex-1 relative rounded-b-xl border border-t-0 border-slate-700 overflow-hidden">
         {/* Loading overlay */}
-        {!iframeLoaded && (
+        {(!gatewayReady || !iframeLoaded) && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-900 z-10">
             <div className="flex flex-col items-center gap-3">
               <Loader2 size={24} className="animate-spin text-blue-500" />
-              <p className="text-xs text-slate-400">Connecting to gateway...</p>
+              <div className="space-y-1 text-center px-6">
+                <p className="text-xs text-slate-400">
+                  {gatewayReady ? "Connecting to gateway..." : "Preparing gateway..."}
+                </p>
+                {!gatewayReady && (
+                  <p className="text-[11px] text-slate-500 max-w-md">
+                    {gatewayBootMessage || GATEWAY_BOOT_MESSAGE}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         )}
-        {embedUrl ? (
+        {gatewayReady && embedUrl ? (
           <iframe
             key={agentId}
             ref={iframeRef}
@@ -119,8 +212,10 @@ export default function OpenClawUIPanel({ agentId }) {
             onLoad={() => setIframeLoaded(true)}
           />
         ) : (
-          <div className="flex items-center justify-center h-full bg-slate-900 text-slate-500 text-sm">
-            Unable to build embed URL — please log in again
+          <div className="flex items-center justify-center h-full bg-slate-900 text-slate-500 text-sm px-6 text-center">
+            {gatewayReady
+              ? "Unable to build embed URL — please log in again"
+              : "Waiting for the embedded control UI to become ready."}
           </div>
         )}
       </div>

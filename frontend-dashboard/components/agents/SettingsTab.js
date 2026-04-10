@@ -1,14 +1,28 @@
-import { useState } from "react";
-import { Settings, Trash2, Loader2, Save } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Settings, Trash2, Loader2, Save, Copy, Share2 } from "lucide-react";
 import ConfirmDialog from "../ConfirmDialog";
-import { fetchWithAuth } from "../../lib/api";
 import { useToast } from "../Toast";
 
-export default function SettingsTab({ agent, onDelete, actionLoading }) {
+export default function SettingsTab({ agent, onDelete, onRename, onDuplicate, onPublish, actionLoading }) {
   const [envVars, setEnvVars] = useState("");
   const [agentName, setAgentName] = useState(agent.name || "");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const toast = useToast();
+
+  useEffect(() => {
+    setAgentName(agent.name || "");
+  }, [agent.name]);
+
+  async function handleRenameSubmit(e) {
+    e?.preventDefault();
+    const nextName = agentName.trim();
+    if (!nextName) {
+      toast.error("Agent name is required");
+      return;
+    }
+    if (nextName === agent.name) return;
+    await onRename?.(nextName);
+  }
 
   return (
     <div className="space-y-8">
@@ -30,14 +44,48 @@ export default function SettingsTab({ agent, onDelete, actionLoading }) {
           <Settings size={16} className="text-blue-600" />
           General Settings
         </h3>
+        <form className="space-y-4" onSubmit={handleRenameSubmit}>
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Agent Name</label>
+            <input
+              type="text"
+              value={agentName}
+              onChange={(e) => setAgentName(e.target.value)}
+              className="w-full md:w-1/2 text-sm border border-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={!!actionLoading || agentName.trim() === (agent.name || "")}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-all disabled:opacity-50"
+            >
+              {actionLoading === "rename" ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+              Save Name
+            </button>
+            <button
+              type="button"
+              onClick={onDuplicate}
+              disabled={!!actionLoading}
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-800 text-xs font-bold rounded-xl hover:bg-slate-200 transition-all disabled:opacity-50"
+            >
+              {actionLoading === "duplicate" ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+              Duplicate Agent
+            </button>
+            <button
+              type="button"
+              onClick={onPublish}
+              disabled={!!actionLoading}
+              className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-xl hover:bg-blue-100 transition-all disabled:opacity-50"
+            >
+              {actionLoading === "publish" ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />}
+              Publish to Marketplace
+            </button>
+          </div>
+        </form>
         <div>
-          <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Agent Name</label>
-          <input
-            type="text"
-            value={agentName}
-            onChange={(e) => setAgentName(e.target.value)}
-            className="w-full md:w-1/2 text-sm border border-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+          <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Current Name</label>
+          <p className="text-sm text-slate-900">{agent.name}</p>
         </div>
         <div>
           <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Backend Type</label>

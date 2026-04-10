@@ -23,7 +23,7 @@ jest.mock("../integrations", () => ({
 jest.mock("../gatewayProxy", () => ({
   evictConnection: mockEvictConnection,
 }));
-jest.mock("../../workers/provisioner/healthChecks", () => ({
+jest.mock("../healthChecks", () => ({
   waitForAgentReadiness: mockWaitForAgentReadiness,
 }));
 

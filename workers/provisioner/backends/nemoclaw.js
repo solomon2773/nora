@@ -5,8 +5,19 @@
 const Docker = require("dockerode");
 const ProvisionerBackend = require("./interface");
 const crypto = require("crypto");
-const { buildRuntimeBootstrapCommand, buildRuntimeEnv } = require("../runtimeBootstrap");
+const {
+  buildOpenClawInstallCommand,
+  buildRuntimeBootstrapCommand,
+  buildTemplatePayloadBootstrapCommand,
+  buildRuntimeEnv,
+} = require("../../../agent-runtime/lib/runtimeBootstrap");
 const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
+const {
+  buildDockerTelemetry,
+  buildUnavailableTelemetry,
+  DOCKER_CAPABILITIES,
+  uptimeFromContainerInfo,
+} = require("./telemetry");
 
 const SANDBOX_IMAGE =
   process.env.NEMOCLAW_SANDBOX_IMAGE ||
@@ -14,7 +25,7 @@ const SANDBOX_IMAGE =
 
 const DEFAULT_MODEL =
   process.env.NEMOCLAW_DEFAULT_MODEL ||
-  "nvidia/nemotron-3-super-120b-a12b";
+  "nvidia/nvidia/nemotron-3-super-120b-a12b";
 
 // Baseline network policy — only these endpoints are allowed.
 // Matches NemoClaw's openclaw-sandbox.yaml spec.
@@ -49,19 +60,65 @@ class NemoClawBackend extends ProvisionerBackend {
 
   async _findComposeNetwork() {
     if (this._composeNetwork) return this._composeNetwork;
-    const networks = await this.docker.listNetworks();
-    const net = networks.find(
-      (n) => n.Name.includes("openclaw") && n.Name.includes("default")
-    );
-    if (net) {
-      this._composeNetwork = net.Name;
-      console.log(`[nemoclaw] Using Compose network: ${net.Name}`);
+
+    try {
+      const fs = require("fs");
+      const hostname =
+        (process.env.HOSTNAME || "").trim() ||
+        fs.readFileSync("/etc/hostname", "utf8").trim();
+      if (hostname) {
+        const self = this.docker.getContainer(hostname);
+        const info = await self.inspect();
+        const nets = info.NetworkSettings?.Networks || {};
+        const composeName = Object.keys(nets).find((name) => name.endsWith("_default"));
+        if (composeName) {
+          this._composeNetwork = composeName;
+          console.log(`[nemoclaw] Using Compose network (self-inspect): ${composeName}`);
+          return this._composeNetwork;
+        }
+      }
+    } catch {
+      // Not running inside Docker or can't self-inspect.
     }
+
+    try {
+      const containers = await this.docker.listContainers({
+        filters: { label: ["com.docker.compose.service=worker-provisioner"] },
+      });
+      if (containers.length > 0) {
+        const info = await this.docker.getContainer(containers[0].Id).inspect();
+        const nets = info.NetworkSettings?.Networks || {};
+        const composeName = Object.keys(nets).find((name) => name.endsWith("_default"));
+        if (composeName) {
+          this._composeNetwork = composeName;
+          console.log(`[nemoclaw] Using Compose network (service label): ${composeName}`);
+          return this._composeNetwork;
+        }
+      }
+    } catch {
+      // Docker API error.
+    }
+
+    try {
+      const networks = await this.docker.listNetworks();
+      const net = networks.find(
+        (network) =>
+          network.Name.endsWith("_default") &&
+          network.Labels?.["com.docker.compose.network"] === "default"
+      );
+      if (net) {
+        this._composeNetwork = net.Name;
+        console.log(`[nemoclaw] Using Compose network (label scan): ${net.Name}`);
+      }
+    } catch {
+      console.warn("[nemoclaw] Failed to scan networks");
+    }
+
     return this._composeNetwork;
   }
 
   async create(config) {
-    const { id, name, vcpu, ram_mb, disk_gb, env, container_name } = config;
+    const { id, name, vcpu, ram_mb, disk_gb, env, container_name, templatePayload } = config;
     const containerName = container_name || `oclaw-nemoclaw-${id}`;
     const model = (env && env.NEMOCLAW_MODEL) || DEFAULT_MODEL;
 
@@ -228,14 +285,18 @@ class NemoClawBackend extends ProvisionerBackend {
     const policyCmd = `mkdir -p /opt/openclaw && echo '${JSON.stringify(policyForContainer).replace(/'/g, "'\\''")}' > /opt/openclaw/policy.yaml && `;
 
     const runtimeBootstrapCmd = buildRuntimeBootstrapCommand();
+    const templateBootstrapCmd = buildTemplatePayloadBootstrapCommand(templatePayload);
+    const ensureOpenClawCmd = buildOpenClawInstallCommand([
+      "openclaw@latest",
+      "nemoclaw@latest",
+    ]);
 
     // Startup command: install openclaw + nemoclaw, configure everything, start the
     // runtime sidecar, then launch the gateway.
     const startCmd = [
       "sh",
       "-c",
-      "apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 && " +
-        "npm install -g openclaw@latest nemoclaw@latest 2>&1 && " +
+      ensureOpenClawCmd +
         "mkdir -p ~/.openclaw/devices && " +
         "echo '" +
         JSON.stringify({
@@ -247,9 +308,10 @@ class NemoClawBackend extends ProvisionerBackend {
         "' > ~/.openclaw/devices/paired.json && " +
         "echo '{}' > ~/.openclaw/devices/pending.json && " +
         policyCmd +
+        templateBootstrapCmd +
         runtimeBootstrapCmd +
         authProfilesCmd +
-        `openclaw gateway --port ${OPENCLAW_GATEWAY_PORT} --password ${gatewayToken}`,
+        '"$OPENCLAW_BIN" gateway --port ' + OPENCLAW_GATEWAY_PORT + ` --password ${gatewayToken}`,
     ];
 
     // Resolve compose network
@@ -355,6 +417,34 @@ class NemoClawBackend extends ProvisionerBackend {
       return { running, uptime, cpu: null, memory: null };
     } catch {
       return { running: false, uptime: 0, cpu: null, memory: null };
+    }
+  }
+
+  async stats(containerId) {
+    let info = null;
+
+    try {
+      const container = this.docker.getContainer(containerId);
+      info = await container.inspect();
+
+      if (!info.State?.Running) {
+        return buildUnavailableTelemetry({
+          backendType: "nemoclaw",
+          running: false,
+          uptime_seconds: uptimeFromContainerInfo(info),
+          capabilities: DOCKER_CAPABILITIES,
+        });
+      }
+
+      const stats = await container.stats({ stream: false });
+      return buildDockerTelemetry({ stats, info, backendType: "nemoclaw" });
+    } catch {
+      return buildUnavailableTelemetry({
+        backendType: "nemoclaw",
+        running: Boolean(info?.State?.Running),
+        uptime_seconds: uptimeFromContainerInfo(info),
+        capabilities: DOCKER_CAPABILITIES,
+      });
     }
   }
 

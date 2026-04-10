@@ -44,7 +44,7 @@ function resolveGatewayAddress(
 
   if (agent.gateway_host_port) {
     return {
-      host: publishedHost,
+      host: agent.gateway_host || publishedHost,
       port: normalizePort(agent.gateway_host_port, OPENCLAW_GATEWAY_PORT),
     };
   }

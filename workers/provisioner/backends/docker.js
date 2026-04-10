@@ -1,10 +1,39 @@
 const Docker = require("dockerode");
 const ProvisionerBackend = require("./interface");
-const path = require("path");
-const fs = require("fs");
 const crypto = require("crypto");
-const { buildRuntimeBootstrapCommand, buildRuntimeEnv } = require("../runtimeBootstrap");
+const path = require("path");
+const {
+  buildOpenClawInstallCommand,
+  buildRuntimeBootstrapFiles,
+  buildTemplatePayloadBootstrapFiles,
+  buildRuntimeEnv,
+} = require("../../../agent-runtime/lib/runtimeBootstrap");
 const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
+const {
+  getStandardDockerAgentImage,
+  getStandardDockerPackageSpec,
+} = require("../../../agent-runtime/lib/agentImages");
+const {
+  buildDockerTelemetry,
+  buildUnavailableTelemetry,
+  DOCKER_CAPABILITIES,
+  uptimeFromContainerInfo,
+} = require("./telemetry");
+
+const pendingImageBuilds = new Map();
+
+function throwIfAborted(abortSignal, stage = "docker create") {
+  if (!abortSignal?.aborted) return;
+  const reason =
+    abortSignal.reason instanceof Error
+      ? abortSignal.reason
+      : new Error(
+          typeof abortSignal.reason === "string" && abortSignal.reason
+            ? abortSignal.reason
+            : `${stage} aborted`
+        );
+  throw reason;
+}
 
 class DockerBackend extends ProvisionerBackend {
   constructor() {
@@ -81,30 +110,218 @@ class DockerBackend extends ProvisionerBackend {
     return this._composeNetwork;
   }
 
-  async create(config) {
-    const { id, name, image, vcpu, ram_mb, disk_gb, env, container_name } = config;
-    const containerName = container_name || `oclaw-agent-${id}`;
-
-    const imgName = image || "node:22-slim";
-    console.log(`[docker] Creating container ${containerName} from ${imgName}`);
-
-    // Pull the image if not already available locally
+  async _ensureDefaultAgentImage(imgName, { abortSignal } = {}) {
     try {
       await this.docker.getImage(imgName).inspect();
       console.log(`[docker] Image ${imgName} already present`);
+      return;
     } catch {
-      console.log(`[docker] Pulling image ${imgName}...`);
-      await new Promise((resolve, reject) => {
-        this.docker.pull(imgName, (err, stream) => {
+      // Build the local Nora image on demand the first time a standard Docker
+      // agent is provisioned.
+    }
+
+    if (pendingImageBuilds.has(imgName)) {
+      console.log(`[docker] Awaiting in-progress build for ${imgName}`);
+      await pendingImageBuilds.get(imgName);
+      throwIfAborted(abortSignal, `image build for ${imgName}`);
+      return;
+    }
+
+    console.log(`[docker] Building prebaked Nora agent image ${imgName}...`);
+    const buildPromise = (async () => {
+      const tar = require("tar-stream");
+      const pack = tar.pack();
+      const dockerfile = [
+        "FROM node:22-slim",
+        "RUN apt-get update -qq && apt-get install -y -qq git ca-certificates >/dev/null 2>&1 && \\",
+        `    npm install -g ${getStandardDockerPackageSpec()} >/tmp/openclaw-install.log 2>&1 && \\`,
+        "    /usr/local/bin/openclaw --version >/dev/null 2>&1 && \\",
+        "    rm -f /tmp/openclaw-install.log && \\",
+        "    apt-get clean && rm -rf /var/lib/apt/lists/*",
+        'ENV OPENCLAW_CLI_PATH=/usr/local/bin/openclaw',
+        "WORKDIR /root",
+        'CMD ["openclaw", "--version"]',
+        "",
+      ].join("\n");
+
+      const buildContext = await new Promise((resolve, reject) => {
+        const chunks = [];
+        pack.on("data", (chunk) => chunks.push(chunk));
+        pack.on("end", () => resolve(Buffer.concat(chunks)));
+        pack.on("error", reject);
+        pack.entry({ name: "Dockerfile", mode: 0o644 }, dockerfile, (err) => {
           if (err) return reject(err);
-          this.docker.modem.followProgress(stream, (err) => {
-            if (err) return reject(err);
-            console.log(`[docker] Image ${imgName} pulled successfully`);
-            resolve();
-          });
+          pack.finalize();
         });
       });
+
+      const stream = await this.docker.buildImage(buildContext, {
+        t: imgName,
+        dockerfile: "Dockerfile",
+        pull: true,
+      });
+
+      await new Promise((resolve, reject) => {
+        this.docker.modem.followProgress(
+          stream,
+          (err) => (err ? reject(err) : resolve()),
+          (event) => {
+            if (event?.stream) {
+              const line = String(event.stream).trim();
+              if (line) console.log(`[docker-build] ${line}`);
+            }
+          }
+        );
+      });
+    })();
+
+    pendingImageBuilds.set(imgName, buildPromise);
+    try {
+      await buildPromise;
+      throwIfAborted(abortSignal, `image build for ${imgName}`);
+    } finally {
+      if (pendingImageBuilds.get(imgName) === buildPromise) {
+        pendingImageBuilds.delete(imgName);
+      }
     }
+  }
+
+  _buildBootstrapFiles({ gatewayConfig, pairedJson, buildAuthScript, templatePayload }) {
+    const runtimeFiles = buildRuntimeBootstrapFiles().map(({ relPath, source }) => ({
+      name: `opt/openclaw-runtime/lib/${relPath}`,
+      content: source,
+      mode: 0o644,
+    }));
+    const templateFiles = buildTemplatePayloadBootstrapFiles(templatePayload);
+
+    const startupScript = [
+      "#!/bin/sh",
+      "set -eu",
+      buildOpenClawInstallCommand([getStandardDockerPackageSpec()]),
+      "mkdir -p ~/.openclaw/devices",
+      "cat <<'__NORA_GATEWAY_CONFIG__' > ~/.openclaw/openclaw.json",
+      JSON.stringify(gatewayConfig, null, 2),
+      "__NORA_GATEWAY_CONFIG__",
+      "cat <<'__NORA_PAIRED_DEVICES__' > ~/.openclaw/devices/paired.json",
+      pairedJson,
+      "__NORA_PAIRED_DEVICES__",
+      "printf '{}' > ~/.openclaw/devices/pending.json",
+      "mkdir -p /var/log /root/.openclaw/workspace /root/.openclaw/agents/main/agent",
+      "touch /var/log/openclaw-agent.log",
+      "node /opt/openclaw-runtime/lib/agent.js >> /var/log/openclaw-agent.log 2>&1 &",
+      "if [ ! -f /root/.openclaw/agents/main/agent/auth-profiles.json ]; then",
+      "  node /opt/openclaw-runtime/lib/build-auth.js",
+      "fi",
+      `exec "$OPENCLAW_BIN" gateway --port ${OPENCLAW_GATEWAY_PORT}`,
+      "",
+    ].join("\n");
+
+    return [
+      ...runtimeFiles,
+      ...templateFiles,
+      {
+        name: "opt/openclaw-runtime/lib/build-auth.js",
+        content: buildAuthScript,
+        mode: 0o644,
+      },
+      {
+        name: "opt/openclaw-runtime/start.sh",
+        content: startupScript,
+        mode: 0o755,
+      },
+    ];
+  }
+
+  async _putBootstrapFiles(container, files) {
+    const tar = require("tar-stream");
+    const pack = tar.pack();
+    const directories = new Set([
+      "opt",
+      "opt/openclaw-runtime",
+      "opt/openclaw-runtime/lib",
+    ]);
+
+    for (const file of files) {
+      let currentDir = path.posix.dirname(file.name);
+      while (currentDir && currentDir !== "." && currentDir !== "/") {
+        directories.add(currentDir);
+        currentDir = path.posix.dirname(currentDir);
+        if (currentDir === ".") break;
+      }
+    }
+
+    const chunks = [];
+    const archivePromise = new Promise((resolve, reject) => {
+      pack.on("data", (chunk) => chunks.push(chunk));
+      pack.on("end", () => resolve(Buffer.concat(chunks)));
+      pack.on("error", reject);
+    });
+    const addEntry = (header, content) =>
+      new Promise((resolve, reject) => {
+        const done = (err) => (err ? reject(err) : resolve());
+        if (typeof content === "undefined") {
+          pack.entry(header, done);
+          return;
+        }
+        pack.entry(header, content, done);
+      });
+
+    for (const dir of [...directories].sort((a, b) => a.length - b.length)) {
+      await addEntry({ name: dir, type: "directory", mode: 0o755 });
+    }
+
+    for (const file of files) {
+      await addEntry({ name: file.name, mode: file.mode || 0o644 }, file.content);
+    }
+
+    pack.finalize();
+    const archive = await archivePromise;
+    await container.putArchive(archive, { path: "/" });
+  }
+
+  async create(config) {
+    const {
+      id,
+      name,
+      image,
+      vcpu,
+      ram_mb,
+      disk_gb,
+      env,
+      container_name,
+      templatePayload,
+      abortSignal,
+    } = config;
+    const containerName = container_name || `oclaw-agent-${id}`;
+    let container = null;
+
+    const defaultImage = getStandardDockerAgentImage();
+    const imgName = image || defaultImage;
+    console.log(`[docker] Creating container ${containerName} from ${imgName}`);
+    throwIfAborted(abortSignal, `docker create for ${containerName}`);
+
+    if (imgName === defaultImage) {
+      await this._ensureDefaultAgentImage(imgName, { abortSignal });
+    } else {
+      // Pull explicit images if they are not already present locally.
+      try {
+        await this.docker.getImage(imgName).inspect();
+        console.log(`[docker] Image ${imgName} already present`);
+      } catch {
+        console.log(`[docker] Pulling image ${imgName}...`);
+        await new Promise((resolve, reject) => {
+          this.docker.pull(imgName, (err, stream) => {
+            if (err) return reject(err);
+            this.docker.modem.followProgress(stream, (err) => {
+              if (err) return reject(err);
+              console.log(`[docker] Image ${imgName} pulled successfully`);
+              resolve();
+            });
+          });
+        });
+      }
+    }
+    throwIfAborted(abortSignal, `docker create for ${containerName}`);
 
     // Remove any existing container with the same name (orphaned from prior deploy)
     try {
@@ -202,10 +419,9 @@ class DockerBackend extends ProvisionerBackend {
         }
       }
     }
-    // Dynamic auth-profiles builder: a node script (base64-encoded to avoid shell escaping)
-    // that reads the CURRENT container env vars at startup and writes auth-profiles.json.
-    // Because it reads env vars at runtime (not creation time), it is correct on every
-    // container restart — even after keys were injected post-creation via Docker exec sync.
+    // Dynamic auth-profiles builder: a node script written into the container
+    // before first boot. Because it reads env vars at runtime (not creation time),
+    // it stays correct on every restart — even after keys were injected post-creation.
     const buildAuthScript =
       `var m=${JSON.stringify(llmKeyMap)},p={};` +
       `Object.entries(m).forEach(function(e){` +
@@ -213,29 +429,23 @@ class DockerBackend extends ProvisionerBackend {
       `});` +
       `require("fs").mkdirSync("/root/.openclaw/agents/main/agent",{recursive:true});` +
       `require("fs").writeFileSync("/root/.openclaw/agents/main/agent/auth-profiles.json",JSON.stringify(p));`;
-    const buildAuthScriptB64 = Buffer.from(buildAuthScript).toString("base64");
-    // On first start: no auth-profiles.json exists → node script runs → writes from env vars.
-    // On restart after live sync: auth-profiles.json exists (written by Docker exec) →
-    //   script is skipped → gateway reads the exec-written file with up-to-date keys.
-    // On container recreate: file gone → script runs → writes from creation-time env vars.
-    const authProfilesCmd =
-      `mkdir -p /root/.openclaw/agents/main/agent && ` +
-      `printf '%s' '${buildAuthScriptB64}' | base64 -d > /tmp/_build_auth.js && ` +
-      `(test -f /root/.openclaw/agents/main/agent/auth-profiles.json || node /tmp/_build_auth.js) && `;
 
     // Determine default model from the first auth profile provider
     const providerModelDefaults = {
       anthropic: "anthropic/claude-sonnet-4-5",
       openai: "openai/gpt-5.4",
-      google: "google/gemini-3-flash-preview",
+      google: "google/gemini-3.1-pro-preview",
       groq: "groq/llama-3.3-70b-versatile",
       mistral: "mistral/mistral-large-latest",
       deepseek: "deepseek/deepseek-chat",
+      openrouter: "openrouter/auto",
+      together: "together/moonshotai/Kimi-K2.5",
       cohere: "cohere/command-r-plus",
-      xai: "xai/grok-2",
-      nvidia: "nvidia/nemotron-3-super-120b-a12b",
+      xai: "xai/grok-4",
+      nvidia: "nvidia/nvidia/nemotron-3-super-120b-a12b",
       moonshot: "moonshot/kimi-k2.5",
       zai: "zai/glm-5",
+      minimax: "minimax/MiniMax-M2.7",
     };
     const firstProvider = Object.keys(authProfiles)[0];
     const defaultModel = firstProvider ? providerModelDefaults[firstProvider] : undefined;
@@ -294,23 +504,17 @@ class DockerBackend extends ProvisionerBackend {
       gatewayConfig.agents = { defaults: { model: safeDefaultModel } };
     }
 
-    const runtimeBootstrapCmd = buildRuntimeBootstrapCommand();
+    const bootstrapFiles = this._buildBootstrapFiles({
+      gatewayConfig,
+      pairedJson,
+      buildAuthScript,
+      templatePayload,
+    });
+    const startCmd = ["/bin/sh", "/opt/openclaw-runtime/start.sh"];
 
-    // CMD: install openclaw (only if not already present), configure gateway, start the
-    // agent runtime on port 9090, write auth profiles, and launch the gateway.
-    // The `which openclaw` guard means restarts after a successful first boot skip the slow
-    // apt-get + npm install steps entirely, preventing crash loops when the npm registry is unreachable.
-    const startCmd = [
-      "sh", "-c",
-      '(which openclaw > /dev/null 2>&1 || ((apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1 || true) && npm install -g openclaw@latest 2>&1)) && ' +
-      'mkdir -p ~/.openclaw/devices && ' +
-      'echo \'' + JSON.stringify(gatewayConfig) + '\' > ~/.openclaw/openclaw.json && ' +
-      "echo '" + pairedJson.replace(/'/g, "'\\''") + "' > ~/.openclaw/devices/paired.json && " +
-      'echo \'{}\' > ~/.openclaw/devices/pending.json && ' +
-      runtimeBootstrapCmd +
-      authProfilesCmd +
-      `openclaw gateway --port ${OPENCLAW_GATEWAY_PORT}`
-    ];
+    // Docker agents now boot through an injected startup script instead of a
+    // giant inline shell string. That keeps bootstrap semantics predictable and
+    // avoids losing the install step inside long `sh -c` command payloads.
 
     // Resolve the Compose network for cross-service communication
     const composeNetwork = await this._findComposeNetwork();
@@ -329,64 +533,79 @@ class DockerBackend extends ProvisionerBackend {
       .replace(/^-|-$/g, '')
       .slice(0, 63) || `agent-${id}`;
 
-    const container = await this.docker.createContainer({
-      Image: imgName,
-      name: containerName,
-      Hostname: safeHostname,
-      Env: envArray,
-      Cmd: startCmd,
-      WorkingDir: "/root",
-      ExposedPorts: { "18789/tcp": {}, "9090/tcp": {} },
-      HostConfig: {
-        // CPU: vcpu cores -> NanoCPUs
-        NanoCpus: (vcpu || 2) * 1e9,
-        // Memory in bytes
-        Memory: (ram_mb || 2048) * 1024 * 1024,
-        // Restart policy
-        RestartPolicy: { Name: "unless-stopped" },
-        // Publish gateway port for direct browser access (control UI).
-        // Use a deterministic port based on agent ID to survive container restarts.
-        PortBindings: { "18789/tcp": [{ HostPort: String(hostPort) }] },
-        // DNS servers for internet access from within the container
-        Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
-      },
-      NetworkingConfig: composeNetwork ? {
-        EndpointsConfig: networkingConfig,
-      } : undefined,
-      Labels: {
-        "openclaw.agent.id": String(id),
-        "openclaw.agent.name": name || "",
-        "openclaw.gateway.port": String(OPENCLAW_GATEWAY_PORT),
-        "openclaw.runtime.port": String(AGENT_RUNTIME_PORT),
-      },
-    });
-
-    await container.start();
-
-    // Connect to bridge network for internet access (in addition to compose network)
     try {
-      const bridgeNet = this.docker.getNetwork("bridge");
-      await bridgeNet.connect({ Container: container.id });
-      console.log(`[docker] Connected container to bridge network for internet access`);
-    } catch (e) {
-      console.warn(`[docker] Could not connect to bridge network: ${e.message}`);
+      throwIfAborted(abortSignal, `docker create for ${containerName}`);
+      container = await this.docker.createContainer({
+        Image: imgName,
+        name: containerName,
+        Hostname: safeHostname,
+        Env: envArray,
+        Cmd: startCmd,
+        WorkingDir: "/root",
+        ExposedPorts: { "18789/tcp": {}, "9090/tcp": {} },
+        HostConfig: {
+          // CPU: vcpu cores -> NanoCPUs
+          NanoCpus: (vcpu || 2) * 1e9,
+          // Memory in bytes
+          Memory: (ram_mb || 2048) * 1024 * 1024,
+          // Restart policy
+          RestartPolicy: { Name: "unless-stopped" },
+          // Publish gateway port for direct browser access (control UI).
+          // Use a deterministic port based on agent ID to survive container restarts.
+          PortBindings: { "18789/tcp": [{ HostPort: String(hostPort) }] },
+          // DNS servers for internet access from within the container
+          Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
+        },
+        NetworkingConfig: composeNetwork ? {
+          EndpointsConfig: networkingConfig,
+        } : undefined,
+        Labels: {
+          "openclaw.agent.id": String(id),
+          "openclaw.agent.name": name || "",
+          "openclaw.gateway.port": String(OPENCLAW_GATEWAY_PORT),
+          "openclaw.runtime.port": String(AGENT_RUNTIME_PORT),
+        },
+      });
+
+      throwIfAborted(abortSignal, `docker bootstrap for ${containerName}`);
+      await this._putBootstrapFiles(container, bootstrapFiles);
+      throwIfAborted(abortSignal, `docker start for ${containerName}`);
+      await container.start();
+
+      // Connect to bridge network for internet access (in addition to compose network)
+      try {
+        const bridgeNet = this.docker.getNetwork("bridge");
+        await bridgeNet.connect({ Container: container.id });
+        console.log(`[docker] Connected container to bridge network for internet access`);
+      } catch (e) {
+        console.warn(`[docker] Could not connect to bridge network: ${e.message}`);
+      }
+
+      // Get the IP on the Compose network (preferred) or default bridge
+      const info = await container.inspect();
+      let host = "localhost";
+      if (composeNetwork && info.NetworkSettings?.Networks?.[composeNetwork]) {
+        host = info.NetworkSettings.Networks[composeNetwork].IPAddress || "localhost";
+      } else {
+        host = info.NetworkSettings?.IPAddress || "localhost";
+      }
+
+      // Get the published host port for the gateway (for direct browser access to control UI)
+      const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
+      const gatewayHostPort = portBindings?.[0]?.HostPort || null;
+
+      console.log(`[docker] Container ${container.id} started at ${host} (gateway port 18789, host port ${gatewayHostPort || 'none'})`);
+      return { containerId: container.id, host, gatewayToken, containerName, gatewayHostPort };
+    } catch (error) {
+      if (container) {
+        try {
+          await container.remove({ force: true });
+        } catch {
+          // Best effort cleanup only.
+        }
+      }
+      throw error;
     }
-
-    // Get the IP on the Compose network (preferred) or default bridge
-    const info = await container.inspect();
-    let host = "localhost";
-    if (composeNetwork && info.NetworkSettings?.Networks?.[composeNetwork]) {
-      host = info.NetworkSettings.Networks[composeNetwork].IPAddress || "localhost";
-    } else {
-      host = info.NetworkSettings?.IPAddress || "localhost";
-    }
-
-    // Get the published host port for the gateway (for direct browser access to control UI)
-    const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
-    const gatewayHostPort = portBindings?.[0]?.HostPort || null;
-
-    console.log(`[docker] Container ${container.id} started at ${host} (gateway port 18789, host port ${gatewayHostPort || 'none'})`);
-    return { containerId: container.id, host, gatewayToken, containerName, gatewayHostPort };
   }
 
   async destroy(containerId) {
@@ -414,6 +633,34 @@ class DockerBackend extends ProvisionerBackend {
       return { running, uptime, cpu: null, memory: null };
     } catch {
       return { running: false, uptime: 0, cpu: null, memory: null };
+    }
+  }
+
+  async stats(containerId) {
+    let info = null;
+
+    try {
+      const container = this.docker.getContainer(containerId);
+      info = await container.inspect();
+
+      if (!info.State?.Running) {
+        return buildUnavailableTelemetry({
+          backendType: "docker",
+          running: false,
+          uptime_seconds: uptimeFromContainerInfo(info),
+          capabilities: DOCKER_CAPABILITIES,
+        });
+      }
+
+      const stats = await container.stats({ stream: false });
+      return buildDockerTelemetry({ stats, info, backendType: "docker" });
+    } catch {
+      return buildUnavailableTelemetry({
+        backendType: "docker",
+        running: Boolean(info?.State?.Running),
+        uptime_seconds: uptimeFromContainerInfo(info),
+        capabilities: DOCKER_CAPABILITIES,
+      });
     }
   }
 

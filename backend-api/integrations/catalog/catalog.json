@@ -11,7 +11,100 @@
       { "key": "org", "label": "Organization", "type": "text", "required": false },
       { "key": "repo", "label": "Default Repository", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "toolSpecs": [
+      {
+        "name": "github_list_repositories",
+        "description": "List repositories for the connected GitHub account or configured organization.",
+        "operation": "repos.list",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": {
+              "type": "string",
+              "description": "GitHub user or organization login. Defaults to the configured org or authenticated owner."
+            },
+            "visibility": {
+              "type": "string",
+              "enum": ["all", "public", "private"],
+              "description": "Repository visibility filter."
+            },
+            "per_page": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "description": "Maximum repositories to return."
+            }
+          }
+        }
+      },
+      {
+        "name": "github_get_file_contents",
+        "description": "Fetch file contents from a repository branch, tag, or commit.",
+        "operation": "repos.contents.get",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": { "type": "string", "description": "Repository owner or org login." },
+            "repo": { "type": "string", "description": "Repository name." },
+            "path": { "type": "string", "description": "Path to the file within the repository." },
+            "ref": {
+              "type": "string",
+              "description": "Optional branch, tag, or commit SHA. Defaults to the repository default branch."
+            }
+          },
+          "required": ["owner", "repo", "path"]
+        }
+      },
+      {
+        "name": "github_list_pull_requests",
+        "description": "List pull requests for a repository with optional state filtering.",
+        "operation": "pulls.list",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": { "type": "string", "description": "Repository owner or org login." },
+            "repo": { "type": "string", "description": "Repository name." },
+            "state": {
+              "type": "string",
+              "enum": ["open", "closed", "all"],
+              "description": "Pull request state filter."
+            }
+          },
+          "required": ["owner", "repo"]
+        }
+      },
+      {
+        "name": "github_create_issue",
+        "description": "Create a GitHub issue in the target repository.",
+        "operation": "issues.create",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": { "type": "string", "description": "Repository owner or org login." },
+            "repo": { "type": "string", "description": "Repository name." },
+            "title": { "type": "string", "description": "Issue title." },
+            "body": { "type": "string", "description": "Issue body in markdown." }
+          },
+          "required": ["owner", "repo", "title"]
+        }
+      }
+    ],
+    "api": {
+      "type": "rest",
+      "baseUrl": "https://api.github.com",
+      "docsUrl": "https://docs.github.com/rest",
+      "authEnv": "GITHUB_TOKEN"
+    },
+    "mcp": {
+      "available": false,
+      "notes": "No first-class Nora MCP bridge is wired for GitHub yet."
+    },
+    "usageHints": [
+      "Use GitHub for repository inspection, code review context, pull request workflows, and issue tracking.",
+      "Prefer the configured org and default repo when the operator does not specify a target explicitly.",
+      "Inside a running agent, use the generated nora-integrations skill and nora-integration-tool command to execute connected GitHub tools."
+    ]
   },
   {
     "id": "gitlab",

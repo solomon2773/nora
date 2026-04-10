@@ -11,14 +11,18 @@ const router = express.Router();
 
 router.use("/agents/:id/integrations", requireOwnedAgent("id"));
 
-async function syncIntegrationsToAgent(agentId) {
+async function getAgentIntegrationRuntimeTarget(agentId) {
   const agentResult = await db.query(
     `SELECT id, host, runtime_host, runtime_port, status, gateway_token,
             gateway_host_port, gateway_host, gateway_port
        FROM agents WHERE id = $1`,
     [agentId]
   );
-  const agent = agentResult.rows[0];
+  return agentResult.rows[0] || null;
+}
+
+async function syncIntegrationsToAgent(agentId) {
+  const agent = await getAgentIntegrationRuntimeTarget(agentId);
   const runtimeUrl = runtimeUrlForAgent(agent, "/integrations/sync");
   if (!agent || !runtimeUrl) return;
 
@@ -28,7 +32,7 @@ async function syncIntegrationsToAgent(agentId) {
     await fetch(runtimeUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(syncData),
+      body: JSON.stringify({ integrations: syncData }),
     });
   } catch (e) {
     console.warn(`[sync-integrations] Runtime sync failed for agent ${agentId} on port ${AGENT_RUNTIME_PORT}:`, e.message);
@@ -47,6 +51,43 @@ async function syncIntegrationsToAgent(agentId) {
       console.warn(`[sync-integrations] Gateway env push failed for agent ${agentId}:`, e.message);
     }
   }
+}
+
+async function invokeAgentIntegrationTool(agentId, payload = {}) {
+  const agent = await getAgentIntegrationRuntimeTarget(agentId);
+  if (!agent) {
+    const error = new Error("Agent not found");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!["running", "warning"].includes(agent.status)) {
+    const error = new Error(`Agent is ${agent.status}, not running`);
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const runtimeUrl = runtimeUrlForAgent(agent, "/integrations/tools/invoke");
+  if (!runtimeUrl) {
+    const error = new Error("Agent runtime not yet provisioned");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const response = await fetch(runtimeUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const error = new Error(data.error || `Runtime returned ${response.status}`);
+    error.statusCode = response.status;
+    throw error;
+  }
+
+  return data;
 }
 
 // ─── Agent integrations ──────────────────────────────────────────
@@ -87,6 +128,34 @@ router.delete("/agents/:id/integrations/:iid", async (req, res) => {
 router.post("/agents/:id/integrations/:iid/test", async (req, res) => {
   try {
     const result = await integrations.testIntegration(req.params.iid, req.params.id);
+    res.json(result);
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ error: e.message });
+  }
+});
+
+router.post("/agents/:id/integrations/tools/invoke", async (req, res) => {
+  try {
+    const toolName =
+      typeof req.body.toolName === "string" && req.body.toolName
+        ? req.body.toolName
+        : typeof req.body.name === "string" && req.body.name
+          ? req.body.name
+          : "";
+    if (!toolName) {
+      return res.status(400).json({ error: "toolName required" });
+    }
+
+    const input =
+      req.body.input && typeof req.body.input === "object" && !Array.isArray(req.body.input)
+        ? req.body.input
+        : req.body.arguments && typeof req.body.arguments === "object" && !Array.isArray(req.body.arguments)
+          ? req.body.arguments
+          : {};
+    const result = await invokeAgentIntegrationTool(req.params.id, {
+      toolName,
+      input,
+    });
     res.json(result);
   } catch (e) {
     res.status(e.statusCode || 500).json({ error: e.message });

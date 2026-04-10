@@ -5,6 +5,7 @@ events {
 http {
     include       /etc/nginx/mime.types;
     default_type  application/octet-stream;
+    resolver 127.0.0.11 ipv6=off valid=1s;
 
     # Fix: 400 Bad Request – Request Header Or Cookie Too Large
     large_client_header_buffers 4 32k;
@@ -17,10 +18,11 @@ http {
         ''      close;
     }
 
-    upstream backend_api { server backend-api:4000; }
-    upstream app_dashboard { server frontend-dashboard:3000; }
-    upstream admin_dashboard { server admin-dashboard:3000; }
-    upstream marketing_site { server frontend-marketing:3000; }
+    # Preserve upstream HTTPS proxy information for backend-generated redirects and ws/wss URLs.
+    map $http_x_forwarded_proto $forwarded_proto {
+        default $http_x_forwarded_proto;
+        ''      $scheme;
+    }
 
     server {
         listen 80;
@@ -35,21 +37,25 @@ http {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
+        set $backend_api http://backend-api:4000;
+        set $app_dashboard http://frontend-dashboard:3000;
+        set $admin_dashboard http://admin-dashboard:3000;
+        set $marketing_site http://frontend-marketing:3000;
 
         # 1a. NextAuth routes only → marketing site
         #     (callback, session, providers, signin, signout, csrf, error, _log)
         #     Other /api/auth/* paths (login, register, me, password, oauth-login)
         #     fall through to the backend API via /api/ below.
         location ~ ^/api/auth/(callback|session|providers|signin|signout|csrf|error|_log) {
-            proxy_pass http://marketing_site;
+            proxy_pass $marketing_site;
         }
 
         # 1b. WebSocket streams: logs & terminal (must be above /api/)
-        location /api/ws/ {
-            proxy_pass http://backend_api/ws/;
+        location ~ ^/api/ws/(.*)$ {
+            proxy_pass $backend_api/ws/$1$is_args$args;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";
@@ -60,7 +66,7 @@ http {
 
         # 1c. Gateway SSE streams (chat) — disable buffering for real-time streaming
         location ~ ^/api/(agents/[^/]+/gateway/chat)$ {
-            proxy_pass http://backend_api/$1$is_args$args;
+            proxy_pass $backend_api/$1$is_args$args;
             proxy_buffering off;
             proxy_cache off;
             proxy_read_timeout 300;
@@ -70,29 +76,29 @@ http {
 
         # 1d. Gateway UI proxy — HTML, JS/CSS assets, favicons, internal paths, embed
         location ~ ^/api/(agents/[^/]+/gateway/(ui|assets|favicon|__openclaw__|embed).*)$ {
-            proxy_pass http://backend_api/$1$is_args$args;
+            proxy_pass $backend_api/$1$is_args$args;
             proxy_buffering off;
             proxy_read_timeout 30;
         }
 
         # 1e. Backend API
-        location /api/ {
-            proxy_pass http://backend_api/;
+        location ~ ^/api/(.*)$ {
+            proxy_pass $backend_api/$1$is_args$args;
         }
 
         # 2. Admin Dashboard
         location /admin {
-            proxy_pass http://admin_dashboard;
+            proxy_pass $admin_dashboard;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $forwarded_proto;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
         }
 
         location /admin/_next/ {
-            proxy_pass http://admin_dashboard;
+            proxy_pass $admin_dashboard;
             proxy_set_header Host $host;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
@@ -100,11 +106,11 @@ http {
 
         # 3. App Dashboard (Unified base path)
         location /app {
-            proxy_pass http://app_dashboard;
+            proxy_pass $app_dashboard;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Proto $forwarded_proto;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
         }
@@ -112,7 +118,7 @@ http {
         # 3. Next.js Static Assets & HMR WebSocket
         # Marketing uses root _next (includes webpack-hmr WebSocket)
         location /_next/ {
-            proxy_pass http://marketing_site;
+            proxy_pass $marketing_site;
             proxy_set_header Host $host;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
@@ -120,7 +126,7 @@ http {
 
         # Dashboard uses /app/_next because of its basePath
         location /app/_next/ {
-            proxy_pass http://app_dashboard;
+            proxy_pass $app_dashboard;
             proxy_set_header Host $host;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection $connection_upgrade;
@@ -128,7 +134,7 @@ http {
 
         # 4. Marketing Pages (Root)
         location / {
-            proxy_pass http://marketing_site;
+            proxy_pass $marketing_site;
         }
     }
 }

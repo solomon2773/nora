@@ -52,7 +52,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     command: sh -c "npm install && node server.js"
     ports:
-      - "4100:4000"
+      - "127.0.0.1:${BACKEND_API_PORT:-4100}:4000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -97,14 +97,14 @@ services:
     image: postgres:15
     restart: always
     environment:
-      POSTGRES_USER: platform
-      POSTGRES_PASSWORD: platform
-      POSTGRES_DB: platform
+      POSTGRES_USER: ${DB_USER:-nora}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-nora}
+      POSTGRES_DB: ${DB_NAME:-nora}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend-api/db_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U platform"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -117,7 +117,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # On-demand backup — run with: docker compose run --rm backup
+  # On-demand backup - run with: docker compose run --rm backup
   backup:
     build:
       context: ./infra
@@ -125,9 +125,9 @@ services:
     environment:
       PGHOST: postgres
       PGPORT: "5432"
-      PGUSER: platform
-      PGPASSWORD: platform
-      PGDATABASE: platform
+      PGUSER: ${DB_USER:-nora}
+      PGPASSWORD: ${DB_PASSWORD:-nora}
+      PGDATABASE: ${DB_NAME:-nora}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}

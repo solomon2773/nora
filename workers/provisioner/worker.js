@@ -1,7 +1,15 @@
 const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const { Pool } = require('pg');
+const { getDefaultAgentImage } = require('../../agent-runtime/lib/agentImages');
 const { runtimeUrlForAgent } = require('../../agent-runtime/lib/agentEndpoints');
+const {
+  getDefaultBackend,
+  getEnabledBackends,
+  isKnownBackend,
+  normalizeBackendName,
+  sandboxForBackend,
+} = require('../../agent-runtime/lib/backendCatalog');
 const { waitForAgentReadiness } = require('./healthChecks');
 const { buildReadinessWarningDetail, persistReadinessWarning } = require('./readinessWarning');
 
@@ -13,49 +21,110 @@ const connection = new IORedis({
 });
 
 const db = new Pool({
-  user: process.env.DB_USER || 'platform',
-  password: process.env.DB_PASSWORD || 'platform',
+  user: process.env.DB_USER || 'nora',
+  password: process.env.DB_PASSWORD || 'nora',
   host: process.env.DB_HOST || 'postgres',
-  database: process.env.DB_NAME || 'platform',
+  database: process.env.DB_NAME || 'nora',
   port: parseInt(process.env.DB_PORT || '5432'),
 });
 
-// ── Pluggable Backend ────────────────────────────────────
-function loadBackend(backendId) {
-  const backend = (backendId || process.env.PROVISIONER_BACKEND || 'docker').toLowerCase();
-  switch (backend) {
-    case 'docker':
-      return new (require('./backends/docker'))();
-    case 'nemoclaw':
-      return new (require('./backends/nemoclaw'))();
-    case 'proxmox':
-      return new (require('./backends/proxmox'))();
-    case 'k8s':
-    case 'kubernetes':
-      return new (require('./backends/k8s'))();
-    default:
-      console.warn(`Unknown backend "${backend}", falling back to docker`);
-      return new (require('./backends/docker'))();
-  }
+function parseTimeoutMs(rawValue, fallbackMs) {
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsed) && parsed >= 60000 ? parsed : fallbackMs;
 }
 
-// Default backend from env — individual jobs can override via sandbox field
-const defaultProvisioner = loadBackend();
-const defaultBackendName = process.env.PROVISIONER_BACKEND || 'docker';
-console.log(`Provisioner worker started [default backend=${defaultBackendName}]`);
+function buildIntegrationSyncEntry(row = {}) {
+  let config = row.config || {};
+  if (typeof config === 'string') {
+    try {
+      config = JSON.parse(config);
+    } catch {
+      config = {};
+    }
+  }
+
+  return {
+    id: row.id,
+    provider: row.provider || row.catalog_id || row.id,
+    name: row.catalog_name || row.provider || row.catalog_id || row.id,
+    category: row.catalog_category || 'unknown',
+    config,
+    status: row.status || 'active',
+  };
+}
+
+// ── Pluggable Backend ────────────────────────────────────
+const backendInstances = new Map();
+
+function loadBackend(backendId) {
+  const backend = normalizeBackendName(backendId || 'docker');
+  if (backendInstances.has(backend)) return backendInstances.get(backend);
+
+  let instance;
+  switch (backend) {
+    case 'docker':
+      instance = new (require('./backends/docker'))();
+      break;
+    case 'nemoclaw':
+      instance = new (require('./backends/nemoclaw'))();
+      break;
+    case 'proxmox':
+      instance = new (require('./backends/proxmox'))();
+      break;
+    case 'k8s':
+    case 'kubernetes':
+      instance = new (require('./backends/k8s'))();
+      break;
+    default:
+      console.warn(`Unknown backend "${backend}", falling back to docker`);
+      instance = new (require('./backends/docker'))();
+      break;
+  }
+
+  backendInstances.set(backend, instance);
+  return instance;
+}
+
+const enabledBackends = getEnabledBackends();
+console.log(
+  `Provisioner worker started [enabled backends=${enabledBackends.join(', ') || 'docker'} default backend=${getDefaultBackend()}]`
+);
 
 // ── Worker ───────────────────────────────────────────────
 const worker = new Worker('deployments', async (job) => {
-  const { id, name, image, specs, userId, sandbox, container_name } = job.data;
-  const vcpu = specs?.vcpu || 2;
-  const ram_mb = specs?.ram_mb || 2048;
-  const disk_gb = specs?.disk_gb || 20;
+  const { id, name, image, specs, userId, sandbox, backend, container_name, model } = job.data;
+  const vcpu = specs?.vcpu || 1;
+  const ram_mb = specs?.ram_mb || 1024;
+  const disk_gb = specs?.disk_gb || 10;
 
-  // Select provisioner: per-job sandbox type overrides default backend
-  const provisioner = sandbox === 'nemoclaw' ? loadBackend('nemoclaw') : defaultProvisioner;
-  const backendName = sandbox === 'nemoclaw' ? 'nemoclaw' : defaultBackendName;
+  const agentRowResult = await db.query(
+    "SELECT image, template_payload, sandbox_type, backend_type FROM agents WHERE id = $1",
+    [id]
+  );
+  const agentRow = agentRowResult.rows[0] || {};
+  const resolvedBackend = isKnownBackend(backend)
+    ? normalizeBackendName(backend)
+    : isKnownBackend(agentRow.backend_type)
+      ? normalizeBackendName(agentRow.backend_type)
+      : getDefaultBackend(process.env, {
+          sandbox: sandbox || agentRow.sandbox_type || 'standard',
+        });
+  const resolvedSandbox = sandboxForBackend(resolvedBackend);
+  const provisioner = loadBackend(resolvedBackend);
+  const resolvedImage = image || agentRow.image || getDefaultAgentImage({
+    sandbox: resolvedSandbox,
+    backend: resolvedBackend,
+  });
+  let templatePayload = agentRow.template_payload || {};
+  if (typeof templatePayload === 'string') {
+    try {
+      templatePayload = JSON.parse(templatePayload);
+    } catch {
+      templatePayload = {};
+    }
+  }
 
-  console.log(`Processing deployment job ${job.id}: agent=${id} name=${name} backend=${backendName} (${vcpu}vCPU/${ram_mb}MB/${disk_gb}GB)`);
+  console.log(`Processing deployment job ${job.id}: agent=${id} name=${name} backend=${resolvedBackend} (${vcpu}vCPU/${ram_mb}MB/${disk_gb}GB)`);
 
   // Fetch user's LLM provider keys from DB for injection into container
   let llmEnvVars = {};
@@ -294,25 +363,55 @@ const worker = new Worker('deployments', async (job) => {
     console.warn(`[provisioner] Failed to fetch integration credentials for agent ${id}:`, e.message);
   }
 
-  const PROVISION_TIMEOUT = 240000; // 4 min (leaving 1 min margin for the 5-min job timeout)
+  const configuredProvisionTimeout = parseTimeoutMs(
+    process.env.PROVISION_TIMEOUT_MS,
+    840000
+  );
+  const jobTimeout = parseTimeoutMs(job?.opts?.timeout, 900000);
+  const PROVISION_TIMEOUT = Math.min(
+    configuredProvisionTimeout,
+    Math.max(60000, jobTimeout - 60000)
+  );
 
   let containerId, host, gatewayToken, containerName, gatewayHostPort, runtimeHost, runtimePort, gatewayHost, gatewayPort;
   try {
-    const result = await Promise.race([
-      provisioner.create({
+    const abortController = new AbortController();
+    let provisionTimeoutHandle = null;
+    const createPromise = provisioner.create({
         id,
         name,
-        image: image || 'node:22-slim',
+        image: resolvedImage,
         vcpu,
         ram_mb,
         disk_gb,
         container_name,
-        env: { AGENT_ID: String(id), AGENT_NAME: name || '', ...llmEnvVars, ...integrationEnvVars },
-      }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Provisioner create() timed out after ${PROVISION_TIMEOUT / 1000}s`)), PROVISION_TIMEOUT)
-      ),
-    ]);
+        templatePayload,
+        abortSignal: abortController.signal,
+        env: {
+          AGENT_ID: String(id),
+          AGENT_NAME: name || '',
+          ...(resolvedBackend === 'nemoclaw' && model ? { NEMOCLAW_MODEL: model } : {}),
+          ...llmEnvVars,
+          ...integrationEnvVars,
+        },
+      });
+    const timeoutPromise = new Promise((_, reject) => {
+      provisionTimeoutHandle = setTimeout(() => {
+        const timeoutError = new Error(
+          `Provisioner create() timed out after ${PROVISION_TIMEOUT / 1000}s`
+        );
+        abortController.abort(timeoutError);
+        reject(timeoutError);
+      }, PROVISION_TIMEOUT);
+    });
+    const result = await Promise.race([
+      createPromise,
+      timeoutPromise,
+    ]).finally(() => {
+      if (provisionTimeoutHandle) {
+        clearTimeout(provisionTimeoutHandle);
+      }
+    });
     containerId = result.containerId;
     host = result.host;
     gatewayToken = result.gatewayToken;
@@ -348,7 +447,7 @@ const worker = new Worker('deployments', async (job) => {
       }
     }
   } catch (err) {
-    console.error(`[${backendName}] Provisioning failed for agent ${id} (attempt ${job.attemptsMade + 1}/${job.opts?.attempts || 1}):`, err.message);
+    console.error(`[${resolvedBackend}] Provisioning failed for agent ${id} (attempt ${job.attemptsMade + 1}/${job.opts?.attempts || 1}):`, err.message);
     // Mark as failed in DB
     await db.query("UPDATE agents SET status = 'error' WHERE id = $1", [id]);
     await db.query("UPDATE deployments SET status = 'failed' WHERE agent_id = $1", [id]);
@@ -373,13 +472,14 @@ const worker = new Worker('deployments', async (job) => {
               runtime_host = $8,
               runtime_port = $9,
               gateway_host = $10,
-              gateway_port = $11
+              gateway_port = $11,
+              image = COALESCE($12, image)
         WHERE id = $1`,
       [
         id,
         containerId,
         host,
-        backendName,
+        resolvedBackend,
         gatewayToken,
         containerName || null,
         gatewayHostPort ? parseInt(gatewayHostPort, 10) : null,
@@ -387,12 +487,13 @@ const worker = new Worker('deployments', async (job) => {
         runtimePort ? parseInt(runtimePort, 10) : null,
         gatewayHost || null,
         gatewayPort ? parseInt(gatewayPort, 10) : null,
+        resolvedImage || null,
       ]
     );
     await db.query("UPDATE deployments SET status = 'completed' WHERE agent_id = $1", [id]);
     await db.query(
       "INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)",
-      ['agent_deployed', `Agent "${name}" is now running on ${backendName}`, JSON.stringify({ agentId: id, containerId, host })]
+      ['agent_deployed', `Agent "${name}" is now running on ${resolvedBackend}`, JSON.stringify({ agentId: id, containerId, host })]
     );
     console.log(`Agent ${id} deployed: containerId=${containerId} host=${host}`);
 
@@ -417,21 +518,15 @@ const worker = new Worker('deployments', async (job) => {
     try {
       const intResult = await db.query(
         `SELECT i.id, i.provider, i.catalog_id, i.config, i.status,
-                ic.name as catalog_name, ic.category as catalog_category
+                ic.name as catalog_name, ic.category as catalog_category,
+                ic.auth_type, ic.config_schema
          FROM integrations i
          LEFT JOIN integration_catalog ic ON i.catalog_id = ic.id
          WHERE i.agent_id = $1 AND i.status = 'active'`,
         [id]
       );
       if (intResult.rows.length > 0) {
-        const syncData = intResult.rows.map((r) => ({
-          id: r.id,
-          provider: r.provider,
-          name: r.catalog_name || r.provider,
-          category: r.catalog_category || "unknown",
-          config: typeof r.config === "string" ? JSON.parse(r.config) : (r.config || {}),
-          status: r.status,
-        }));
+        const syncData = intResult.rows.map(buildIntegrationSyncEntry);
         const runtimeUrl = runtimeUrlForAgent({
           host,
           runtime_host: runtimeHost,
@@ -440,7 +535,7 @@ const worker = new Worker('deployments', async (job) => {
         await fetch(runtimeUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(syncData),
+          body: JSON.stringify({ integrations: syncData }),
         });
         console.log(`[provisioner] Synced ${syncData.length} integration(s) to agent ${id}`);
       }

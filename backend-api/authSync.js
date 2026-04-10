@@ -1,11 +1,13 @@
-// Syncs auth-profiles.json to running agent containers via Docker exec.
-// After writing, restarts the container so the openclaw gateway process
+// Syncs auth-profiles.json to running agents via the runtime sidecar.
+// After writing, restarts the backend so the OpenClaw gateway process
 // re-reads the file on startup (it does not hot-reload from disk).
 // Called whenever LLM provider keys or LLM-relevant integrations change.
 
 const db = require('./db');
+const containerManager = require("./containerManager");
 const llmProviders = require('./llmProviders');
-const { OPENCLAW_GATEWAY_PORT } = require('../agent-runtime/lib/contracts');
+const { runtimeUrlForAgent } = require("../agent-runtime/lib/agentEndpoints");
+const { waitForAgentReadiness } = require("./healthChecks");
 
 const providerCatalog = Array.isArray(llmProviders.PROVIDERS)
   ? llmProviders.PROVIDERS
@@ -15,15 +17,18 @@ const LLM_ENV_VARS = new Set(providerCatalog.map((provider) => provider.envVar).
 const PROVIDER_MODEL_DEFAULTS = {
   anthropic: 'claude-sonnet-4-5',
   openai:    'gpt-5.4',
-  google:    'gemini-3-flash-preview',
+  google:    'gemini-3.1-pro-preview',
   groq:      'llama-3.3-70b-versatile',
   mistral:   'mistral-large-latest',
   deepseek:  'deepseek-chat',
+  openrouter:'openrouter/auto',
+  together:  'together/moonshotai/Kimi-K2.5',
   cohere:    'command-r-plus',
-  xai:       'grok-2',
-  nvidia:    'nvidia/nemotron-3-super-120b-a12b',
+  xai:       'grok-4',
+  nvidia:    'nvidia/nvidia/nemotron-3-super-120b-a12b',
   moonshot:  'kimi-k2.5',
   zai:       'glm-5',
+  minimax:   'MiniMax-M2.7',
 };
 
 /**
@@ -51,76 +56,70 @@ async function buildAuthProfilesForAgent(userId, agentId) {
   }
 }
 
-/**
- * Write auth-profiles.json to a running container via Docker exec,
- * then gracefully restart the container so the gateway re-reads the file.
- * The startup CMD (docker.js) skips overwriting auth-profiles.json when
- * the file already exists, so the exec-written version is preserved.
- */
-async function writeAuthToContainer(docker, containerId, authProfiles, defaultProvider = null) {
+function buildAuthProfilesWriteCommand(authProfiles) {
   const authJsonB64 = Buffer.from(JSON.stringify(authProfiles)).toString('base64');
-  const container = docker.getContainer(containerId);
+  return (
+    `mkdir -p /root/.openclaw/agents/main/agent && ` +
+    `printf '%s' '${authJsonB64}' | base64 -d > /root/.openclaw/agents/main/agent/auth-profiles.json`
+  );
+}
 
-  // 1. Write the updated auth-profiles.json into the container filesystem
-  const writeExec = await container.exec({
-    Cmd: ['sh', '-c',
-      `mkdir -p /root/.openclaw/agents/main/agent && ` +
-      `printf '%s' '${authJsonB64}' | base64 -d > /root/.openclaw/agents/main/agent/auth-profiles.json`
-    ],
-    AttachStdout: true,
-    AttachStderr: true,
-  });
-  await writeExec.start({});
+function buildDefaultModelCommand(defaultProvider = null) {
+  if (!defaultProvider) return null;
 
-  // 2. Gracefully restart the container so the gateway re-reads auth-profiles.json.
-  //    Using container.restart() instead of pkill gives a clean Docker lifecycle —
-  //    SIGTERM → wait → SIGKILL → restart. The `which openclaw` guard in the startup
-  //    CMD skips reinstallation since it's already present.
-  try {
-    await container.restart({ t: 5 });
-  } catch { /* container may already be restarting */ }
+  const modelId =
+    defaultProvider.model || PROVIDER_MODEL_DEFAULTS[defaultProvider.provider];
+  if (!modelId) return null;
 
-  // 3. Wait for the gateway to be ready before setting the model.
-  //    Poll the gateway's HTTP endpoint inside the container instead of a blind sleep.
-  if (defaultProvider) {
-    const modelId = defaultProvider.model || PROVIDER_MODEL_DEFAULTS[defaultProvider.provider];
-    if (modelId) {
-      const fullModel = modelId.includes('/') ? modelId : `${defaultProvider.provider}/${modelId}`;
+  const fullModel = modelId.includes('/')
+    ? modelId
+    : `${defaultProvider.provider}/${modelId}`;
 
-      // Poll until gateway is listening (up to 60s)
-      let ready = false;
-      for (let i = 0; i < 30; i++) {
-        try {
-          const checkExec = await container.exec({
-            Cmd: ['sh', '-c', `curl -sf http://localhost:${OPENCLAW_GATEWAY_PORT} >/dev/null 2>&1 || wget -q -O /dev/null http://localhost:${OPENCLAW_GATEWAY_PORT} 2>/dev/null`],
-            AttachStdout: true,
-            AttachStderr: true,
-          });
-          const stream = await checkExec.start({});
-          // Consume stream to completion
-          await new Promise((resolve) => {
-            stream.on('data', () => {});
-            stream.on('end', resolve);
-            stream.on('error', resolve);
-          });
-          const result = await checkExec.inspect();
-          if (result.ExitCode === 0) { ready = true; break; }
-        } catch { /* container may still be restarting */ }
-        await new Promise(r => setTimeout(r, 2000));
-      }
+  return (
+    'OPENCLAW_BIN="${OPENCLAW_CLI_PATH:-/usr/local/bin/openclaw}"; ' +
+    'if [ ! -x "$OPENCLAW_BIN" ]; then OPENCLAW_BIN="$(command -v openclaw 2>/dev/null || true)"; fi; ' +
+    '[ -n "$OPENCLAW_BIN" ] && [ -x "$OPENCLAW_BIN" ] || exit 127; ' +
+    `exec "$OPENCLAW_BIN" ${["models", "set", fullModel]
+      .map((arg) => JSON.stringify(String(arg)))
+      .join(" ")}`
+  );
+}
 
-      if (ready) {
-        try {
-          const modelExec = await container.exec({
-            Cmd: ['openclaw', 'models', 'set', fullModel],
-            AttachStdout: true,
-            AttachStderr: true,
-          });
-          await modelExec.start({});
-        } catch { /* non-critical */ }
-      }
-    }
+async function runRuntimeCommand(agent, command, { timeout = 30000 } = {}) {
+  const runtimeUrl = runtimeUrlForAgent(agent, "/exec");
+  if (!runtimeUrl) {
+    throw new Error("Agent runtime endpoint unavailable");
   }
+
+  const response = await fetch(runtimeUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      command,
+      timeout,
+    }),
+  });
+
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error || `Runtime command failed with HTTP ${response.status}`);
+  }
+
+  if ((payload.exitCode || 0) !== 0) {
+    throw new Error(payload.stderr || payload.stdout || `Runtime command exited with code ${payload.exitCode}`);
+  }
+
+  return payload;
+}
+
+async function writeAuthToContainer(agent, authProfiles) {
+  return runRuntimeCommand(agent, buildAuthProfilesWriteCommand(authProfiles));
 }
 
 /**
@@ -131,26 +130,20 @@ async function writeAuthToContainer(docker, containerId, authProfiles, defaultPr
  * Non-blocking safe: failures per-agent are logged but do not throw.
  */
 async function syncAuthToUserAgents(userId, agentId = null) {
-  let docker;
-  try {
-    const Docker = require('dockerode');
-    docker = new Docker({ socketPath: '/var/run/docker.sock' });
-  } catch {
-    console.warn('[authSync] Docker not available — skipping auth sync');
-    return [];
-  }
-
   const defaultRow = await db.query(
     'SELECT provider, model FROM llm_providers WHERE user_id = $1 AND is_default = true LIMIT 1',
     [userId]
   );
   const defaultProvider = defaultRow.rows[0] || null;
+  const modelCommand = buildDefaultModelCommand(defaultProvider);
 
   const agentQuery = agentId
-    ? `SELECT id, container_id, host, gateway_host_port, gateway_host, gateway_port
+    ? `SELECT id, container_id, backend_type, host, runtime_host, runtime_port,
+              gateway_host_port, gateway_host, gateway_port
          FROM agents
         WHERE id = $1 AND user_id = $2 AND status IN ('running', 'warning') AND container_id IS NOT NULL`
-    : `SELECT id, container_id, host, gateway_host_port, gateway_host, gateway_port
+    : `SELECT id, container_id, backend_type, host, runtime_host, runtime_port,
+              gateway_host_port, gateway_host, gateway_port
          FROM agents
         WHERE user_id = $1 AND status IN ('running', 'warning') AND container_id IS NOT NULL`;
   const agentParams = agentId ? [agentId, userId] : [userId];
@@ -171,8 +164,27 @@ async function syncAuthToUserAgents(userId, agentId = null) {
         evictConnection(agent);
       }
       const authProfiles = await buildAuthProfilesForAgent(userId, agent.id);
-      await writeAuthToContainer(docker, agent.container_id, authProfiles, defaultProvider);
-      console.log(`[authSync] Synced auth-profiles.json to agent ${agent.id} (container restarted)`);
+      await writeAuthToContainer(agent, authProfiles);
+      await containerManager.restart(agent);
+
+      if (modelCommand) {
+        const readiness = await waitForAgentReadiness({
+          host: agent.host,
+          runtimeHost: agent.runtime_host,
+          runtimePort: agent.runtime_port,
+          gatewayHostPort: agent.gateway_host_port,
+          gatewayHost: agent.gateway_host,
+          gatewayPort: agent.gateway_port,
+        });
+        if (!readiness.ok) {
+          throw new Error(
+            `Agent runtime did not recover after auth sync restart (${readiness.runtime?.error || readiness.gateway?.error || "unreachable"})`
+          );
+        }
+        await runRuntimeCommand(agent, modelCommand, { timeout: 60000 });
+      }
+
+      console.log(`[authSync] Synced auth-profiles.json to agent ${agent.id} (backend restarted)`);
       results.push({ agentId: agent.id, status: 'synced' });
     } catch (e) {
       console.warn(`[authSync] Failed for agent ${agent.id}:`, e.message);
@@ -182,4 +194,11 @@ async function syncAuthToUserAgents(userId, agentId = null) {
   return results;
 }
 
-module.exports = { syncAuthToUserAgents, buildAuthProfilesForAgent, writeAuthToContainer };
+module.exports = {
+  syncAuthToUserAgents,
+  buildAuthProfilesForAgent,
+  buildAuthProfilesWriteCommand,
+  buildDefaultModelCommand,
+  runRuntimeCommand,
+  writeAuthToContainer,
+};

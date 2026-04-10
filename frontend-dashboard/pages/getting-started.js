@@ -2,11 +2,11 @@ import Layout from "../components/layout/Layout";
 import ActivationChecklist from "../components/onboarding/ActivationChecklist";
 import { ArrowRight, Bot, CheckCircle2, FolderKanban, KeyRound, Rocket, Shield } from "lucide-react";
 
-const evaluationSignals = [
+const launchSignals = [
   "You can create or sign in to an operator account without friction.",
   "A provider key is stored once and available for agent sync.",
   "The first OpenClaw agent deploys through the default Docker path.",
-  "Chat, logs, and terminal are all reachable from the same control plane.",
+  "Chat, logs, and terminal are all reachable from the same operator surface.",
 ];
 
 const bestFit = [
@@ -35,14 +35,14 @@ export default function GettingStartedPage() {
           <div className="bg-slate-950 text-white rounded-[2rem] p-6 sm:p-8 border border-slate-800 shadow-2xl">
             <p className="text-[10px] font-black uppercase tracking-[0.25em] text-blue-300 mb-3">Getting started</p>
             <h1 className="text-3xl sm:text-4xl font-black tracking-tight leading-tight mb-4">
-              Evaluate Nora the same way you would evaluate a real control plane
+              Bring Nora online like a production operator platform
             </h1>
             <p className="text-slate-300 leading-relaxed max-w-2xl">
-              Nora&apos;s MVP is strongest when the onboarding path is honest and fast: connect one provider, deploy one OpenClaw agent, and prove the operator workflow from inside the product.
+              Nora is designed to move a team from setup to live operations quickly: connect one provider, deploy one OpenClaw agent, and run the operator workflow from inside the product.
             </p>
 
             <div className="grid sm:grid-cols-2 gap-4 mt-8">
-              {evaluationSignals.map((item) => (
+              {launchSignals.map((item) => (
                 <div key={item} className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 flex items-start gap-3">
                   <CheckCircle2 size={18} className="text-emerald-400 mt-0.5 shrink-0" />
                   <p className="text-sm text-slate-300 leading-relaxed">{item}</p>
@@ -52,7 +52,7 @@ export default function GettingStartedPage() {
           </div>
 
           <div className="bg-white border border-slate-200 rounded-[2rem] p-6 sm:p-8 shadow-sm">
-            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 mb-4">Fast self-hosted path</p>
+            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 mb-4">Fast self-hosted launch path</p>
             <div className="space-y-4">
               <div className="flex items-start gap-3">
                 <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -60,7 +60,7 @@ export default function GettingStartedPage() {
                 </div>
                 <div>
                   <p className="text-sm font-black text-slate-900">1. Add one provider key</p>
-                  <p className="text-sm text-slate-500 mt-1">Start in Settings. A single working provider is enough to validate the control-plane story.</p>
+                  <p className="text-sm text-slate-500 mt-1">Start in Settings. A single working provider is enough to bring the deployment workflow online.</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -69,7 +69,7 @@ export default function GettingStartedPage() {
                 </div>
                 <div>
                   <p className="text-sm font-black text-slate-900">2. Deploy your first OpenClaw agent</p>
-                  <p className="text-sm text-slate-500 mt-1">Use OpenClaw + Docker unless you specifically need a different runtime for evaluation.</p>
+                  <p className="text-sm text-slate-500 mt-1">Open Deploy and choose one enabled backend for your first live runtime.</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
@@ -78,7 +78,7 @@ export default function GettingStartedPage() {
                 </div>
                 <div>
                   <p className="text-sm font-black text-slate-900">3. Verify the runtime immediately</p>
-                  <p className="text-sm text-slate-500 mt-1">Open the agent page and prove chat, logs, and terminal access before doing anything more complex.</p>
+                  <p className="text-sm text-slate-500 mt-1">Open the agent page and confirm chat, logs, and terminal access before expanding the deployment.</p>
                 </div>
               </div>
             </div>
@@ -95,8 +95,8 @@ export default function GettingStartedPage() {
         </section>
 
         <ActivationChecklist
-          title="Self-hosted MVP activation"
-          subtitle="The checklist below keeps the product story aligned with the current best-fit motion: operator setup, first deploy, then proof from inside Nora."
+          title="Self-hosted launch checklist"
+          subtitle="The checklist below keeps the product workflow aligned: operator setup, first deploy, then live runtime checks inside Nora."
         />
 
         <section className="grid lg:grid-cols-3 gap-5">

@@ -2,22 +2,157 @@ const express = require("express");
 const db = require("../db");
 const { addDeploymentJob } = require("../redisQueue");
 const billing = require("../billing");
+const {
+  clampDeploymentDefaults,
+  getDeploymentDefaults,
+  normalizeDeploymentDefaults,
+} = require("../platformSettings");
 const scheduler = require("../scheduler");
 const containerManager = require("../containerManager");
 const monitoring = require("../monitoring");
+const {
+  CLONE_MODES,
+  buildContainerName,
+  buildTemplatePayloadFromAgent,
+  createEmptyTemplatePayload,
+  materializeTemplateWiring,
+  sanitizeAgentName,
+  serializeAgent,
+} = require("../agentPayloads");
 const { isGatewayAvailableStatus, reconcileAgentStatus } = require("../agentStatus");
 const { OPENCLAW_GATEWAY_PORT } = require("../../agent-runtime/lib/contracts");
 const { resolveGatewayAddress } = require("../../agent-runtime/lib/agentEndpoints");
+const { getDefaultAgentImage } = require("../../agent-runtime/lib/agentImages");
+const {
+  getBackendStatus,
+  getDefaultBackend,
+  isKnownBackend,
+  normalizeBackendName,
+  sandboxForBackend,
+} = require("../../agent-runtime/lib/backendCatalog");
 const { asyncHandler } = require("../middleware/errorHandler");
+const {
+  buildAgentHistoryResponse,
+  buildAgentStatsResponse,
+} = require("../agentTelemetry");
+const {
+  buildAgentContext,
+  buildAuditMetadata,
+  createMutationFailureAuditMiddleware,
+} = require("../auditLog");
 
 const router = express.Router();
+router.use(createMutationFailureAuditMiddleware("agent"));
+
+function resolveRequestedImage({
+  requestedImage,
+  backend = "docker",
+  fallbackImage = null,
+} = {}) {
+  const normalizedBackend = isKnownBackend(backend)
+    ? normalizeBackendName(backend)
+    : getDefaultBackend(process.env, { sandbox: "standard" });
+
+  return (
+    (typeof requestedImage === "string" && requestedImage.trim()) ||
+    fallbackImage ||
+    getDefaultAgentImage({
+      sandbox: sandboxForBackend(normalizedBackend),
+      backend: normalizedBackend,
+    })
+  );
+}
+
+function resolveRequestedBackend({
+  requestedBackend,
+  fallbackBackend = null,
+  fallbackSandbox = "standard",
+} = {}) {
+  if (isKnownBackend(requestedBackend)) {
+    return normalizeBackendName(requestedBackend);
+  }
+  if (isKnownBackend(fallbackBackend)) {
+    return normalizeBackendName(fallbackBackend);
+  }
+  return getDefaultBackend(process.env, { sandbox: fallbackSandbox });
+}
+
+function normalizeGatewayHost(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = raw.includes("://") ? new URL(raw) : new URL(`http://${raw}`);
+    return parsed.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolvePublishedGatewayHost(req) {
+  const configuredHost = normalizeGatewayHost(process.env.GATEWAY_HOST);
+  if (configuredHost) return configuredHost;
+
+  const nextAuthHost = normalizeGatewayHost(process.env.NEXTAUTH_URL);
+  if (nextAuthHost) return nextAuthHost;
+
+  const forwardedHostHeader = req.headers["x-forwarded-host"];
+  const forwardedHost = Array.isArray(forwardedHostHeader)
+    ? forwardedHostHeader[0]
+    : String(forwardedHostHeader || "").split(",")[0];
+  const normalizedForwardedHost = normalizeGatewayHost(forwardedHost);
+  if (normalizedForwardedHost) return normalizedForwardedHost;
+
+  return normalizeGatewayHost(req.get("host")) || "localhost";
+}
+
+function resolvePublishedGatewayProtocol(req) {
+  const nextAuthUrl = String(process.env.NEXTAUTH_URL || "").trim();
+  if (nextAuthUrl) {
+    try {
+      const parsed = new URL(nextAuthUrl);
+      return parsed.protocol === "https:" ? "https" : "http";
+    } catch {
+      // Fall through to request headers.
+    }
+  }
+
+  const forwardedProtoHeader = req.headers["x-forwarded-proto"];
+  const forwardedProto = Array.isArray(forwardedProtoHeader)
+    ? forwardedProtoHeader[0]
+    : String(forwardedProtoHeader || "").split(",")[0];
+  if (forwardedProto && forwardedProto.trim()) {
+    return forwardedProto.trim() === "https" ? "https" : "http";
+  }
+
+  return req.protocol === "https" ? "https" : "http";
+}
+
+function assertBackendAvailable(backend) {
+  const status = getBackendStatus(backend);
+  if (!status.enabled) {
+    const error = new Error(
+      `${status.label} is not enabled. Add "${status.id}" to ENABLED_BACKENDS to use this backend.`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!status.configured) {
+    const error = new Error(
+      status.issue || `${status.label} is not configured for this Nora control plane.`
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  return status;
+}
 
 router.get("/", asyncHandler(async (req, res) => {
   const result = await db.query(
     "SELECT * FROM agents WHERE user_id = $1 ORDER BY created_at DESC",
     [req.user.id]
   );
-  res.json(result.rows);
+  res.json(result.rows.map(serializeAgent));
 }));
 
 router.get("/:id", asyncHandler(async (req, res) => {
@@ -44,18 +179,28 @@ router.get("/:id", asyncHandler(async (req, res) => {
     }
   }
 
-  res.json(agent);
+  res.json(serializeAgent(agent));
 }));
 
 // Historical container stats with time range
-// Query params: ?range=5m|15m|1h|6h|24h (default 15m) or ?from=ISO&to=ISO
+// Query params: ?range=5m|15m|30m|1h|6h|24h|3d|7d (default 15m) or ?from=ISO&to=ISO
 router.get("/:id/stats/history", asyncHandler(async (req, res) => {
   const agentCheck = await db.query(
-    "SELECT id FROM agents WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]
+    "SELECT * FROM agents WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]
   );
-  if (!agentCheck.rows[0]) return res.status(404).json({ error: "Agent not found" });
+  const agent = agentCheck.rows[0];
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-  const rangeMap = { "5m": "5 minutes", "15m": "15 minutes", "30m": "30 minutes", "1h": "1 hour", "6h": "6 hours", "24h": "24 hours" };
+  const rangeMap = {
+    "5m": "5 minutes",
+    "15m": "15 minutes",
+    "30m": "30 minutes",
+    "1h": "1 hour",
+    "6h": "6 hours",
+    "24h": "24 hours",
+    "3d": "3 days",
+    "7d": "7 days",
+  };
   let fromTime, toTime;
 
   if (req.query.from && req.query.to) {
@@ -67,23 +212,27 @@ router.get("/:id/stats/history", asyncHandler(async (req, res) => {
     fromTime = new Date(Date.now() - parseInterval(range));
   }
 
-  const result = await db.query(
-    `SELECT cpu_percent, memory_usage_mb, memory_limit_mb, memory_percent,
-            network_rx_mb, network_tx_mb, disk_read_mb, disk_write_mb, pids, recorded_at
-     FROM container_stats WHERE agent_id = $1 AND recorded_at BETWEEN $2 AND $3
-     ORDER BY recorded_at ASC LIMIT 2000`,
-    [req.params.id, fromTime, toTime]
-  );
-  res.json(result.rows);
+  res.json(await buildAgentHistoryResponse(agent, fromTime, toTime));
 }));
 
 function parseInterval(pg) {
-  const m = pg.match(/(\d+)\s*(minute|hour|second)/);
+  const m = pg.match(/(\d+)\s*(day|minute|hour|second)/);
   if (!m) return 15 * 60 * 1000;
   const n = parseInt(m[1]);
+  if (m[2] === "day") return n * 86400000;
   if (m[2] === "hour") return n * 3600000;
   if (m[2] === "minute") return n * 60000;
   return n * 1000;
+}
+
+function agentAuditMetadata(req, agent, extra = {}) {
+  return buildAuditMetadata(
+    req,
+    buildAgentContext(agent, {
+      ownerEmail: req?.user?.email || null,
+      ...extra,
+    })
+  );
 }
 
 // Get the gateway control UI URL (published host port for direct browser access)
@@ -97,13 +246,16 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
   );
   const agent = result.rows[0];
   if (!agent) return res.status(404).json({ error: "Agent not found" });
+  res.locals.auditContext = buildAgentContext(agent, {
+    ownerEmail: req.user.email || null,
+  });
   if (!isGatewayAvailableStatus(agent.status)) {
     return res.status(409).json({ error: "Agent gateway is only available while running" });
   }
   if (!agent.container_id) return res.status(409).json({ error: "No container" });
 
   // Prefer the stored published port when present. This keeps browser access on
-  // localhost for Docker and local kind NodePort verification.
+  // the control-plane host for Docker and local kind NodePort verification.
   let hostPort = agent.gateway_host_port;
   if (!hostPort && agent.container_id && ["docker", "nemoclaw"].includes(agent.backend_type || "docker")) {
     try {
@@ -117,21 +269,23 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
     }
   }
 
+  const publishedGatewayHost = resolvePublishedGatewayHost(req);
+  const publishedGatewayProtocol = resolvePublishedGatewayProtocol(req);
+
   if (hostPort) {
-    const gatewayHost = process.env.GATEWAY_HOST || "localhost";
     return res.json({
-      url: `http://${gatewayHost}:${hostPort}`,
+      url: `${publishedGatewayProtocol}://${publishedGatewayHost}:${hostPort}`,
       port: parseInt(hostPort, 10),
     });
   }
 
   const directAddress = resolveGatewayAddress(agent, {
-    publishedHost: process.env.GATEWAY_HOST || "localhost",
+    publishedHost: publishedGatewayHost,
   });
   if (!directAddress) return res.status(409).json({ error: "Gateway address not available" });
 
   res.json({
-    url: `http://${directAddress.host}:${directAddress.port}`,
+    url: `${publishedGatewayProtocol}://${directAddress.host}:${directAddress.port}`,
     port: parseInt(directAddress.port, 10),
   });
 }));
@@ -139,70 +293,12 @@ router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
 // Live container resource stats (CPU, memory, network, PIDs)
 router.get("/:id/stats", asyncHandler(async (req, res) => {
   const result = await db.query(
-    "SELECT id, container_id, backend_type, user_id, status FROM agents WHERE id = $1 AND user_id = $2",
+    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
     [req.params.id, req.user.id]
   );
   const agent = result.rows[0];
   if (!agent) return res.status(404).json({ error: "Agent not found" });
-  if (!agent.container_id) return res.status(409).json({ error: "No container" });
-
-  try {
-    const Docker = require("dockerode");
-    const docker = new Docker({ socketPath: "/var/run/docker.sock" });
-    const container = docker.getContainer(agent.container_id);
-    const stats = await container.stats({ stream: false });
-    const info = await container.inspect();
-
-    // CPU %
-    const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - (stats.precpu_stats.cpu_usage?.total_usage || 0);
-    const systemDelta = stats.cpu_stats.system_cpu_usage - (stats.precpu_stats.system_cpu_usage || 0);
-    const cpuCount = stats.cpu_stats.online_cpus || stats.cpu_stats.cpu_usage?.percpu_usage?.length || 1;
-    const cpuPercent = systemDelta > 0 ? (cpuDelta / systemDelta) * cpuCount * 100 : 0;
-
-    // Memory
-    const memUsage = stats.memory_stats.usage || 0;
-    const memLimit = stats.memory_stats.limit || 0;
-    const memCache = stats.memory_stats.stats?.cache || 0;
-    const memActual = memUsage - memCache;
-
-    // Network I/O (sum all interfaces)
-    let netRx = 0, netTx = 0;
-    if (stats.networks) {
-      for (const iface of Object.values(stats.networks)) {
-        netRx += iface.rx_bytes || 0;
-        netTx += iface.tx_bytes || 0;
-      }
-    }
-
-    // Disk I/O
-    let diskRead = 0, diskWrite = 0;
-    if (stats.blkio_stats?.io_service_bytes_recursive) {
-      for (const entry of stats.blkio_stats.io_service_bytes_recursive) {
-        if (entry.op === "read" || entry.op === "Read") diskRead += entry.value || 0;
-        if (entry.op === "write" || entry.op === "Write") diskWrite += entry.value || 0;
-      }
-    }
-
-    // Uptime
-    const startedAt = info.State?.StartedAt ? new Date(info.State.StartedAt).getTime() : 0;
-    const uptimeSeconds = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
-
-    res.json({
-      cpu_percent: Math.round(cpuPercent * 100) / 100,
-      memory_usage_mb: Math.round(memActual / 1024 / 1024),
-      memory_limit_mb: Math.round(memLimit / 1024 / 1024),
-      memory_percent: memLimit > 0 ? Math.round((memActual / memLimit) * 10000) / 100 : 0,
-      network_rx_mb: Math.round(netRx / 1024 / 1024 * 100) / 100,
-      network_tx_mb: Math.round(netTx / 1024 / 1024 * 100) / 100,
-      disk_read_mb: Math.round(diskRead / 1024 / 1024 * 100) / 100,
-      disk_write_mb: Math.round(diskWrite / 1024 / 1024 * 100) / 100,
-      pids: stats.pids_stats?.current || 0,
-      uptime_seconds: uptimeSeconds,
-      running: info.State?.Running || false,
-    });
-  } catch (e) {
-    res.status(502).json({ error: "Could not fetch container stats", details: e.message });
-  }
+  res.json(await buildAgentStatsResponse(agent));
 }));
 
 router.post("/deploy", async (req, res) => {
@@ -212,39 +308,60 @@ router.post("/deploy", async (req, res) => {
     if (!limits.allowed) return res.status(402).json({ error: limits.error, subscription: limits.subscription });
 
     const sub = limits.subscription;
-    const node = await scheduler.selectNode();
-    const rawName = typeof req.body.name === "string" ? req.body.name : "";
-    // Strip control characters (newlines, tabs, etc.) to prevent log injection
-    const name = (rawName.replace(/[\x00-\x1f\x7f]/g, "") || "OpenClaw-Agent-" + Math.floor(Math.random() * 1000)).trim();
+    const name = sanitizeAgentName(req.body.name, "OpenClaw-Agent");
     if (name.length > 100) return res.status(400).json({ error: "Agent name must be 100 characters or less" });
     const containerNameRaw = (req.body.container_name || "").trim();
-    const containerName = containerNameRaw || `oclaw-agent-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}-${Date.now().toString(36)}`;
-    const nodeName = node ? node.name : "worker-01";
+    const containerName = containerNameRaw || buildContainerName(name);
+    const requestedSandbox = req.body.sandbox === "nemoclaw" ? "nemoclaw" : "standard";
+    const backend = resolveRequestedBackend({
+      requestedBackend: req.body.backend,
+      fallbackSandbox: requestedSandbox,
+    });
+    const backendStatus = assertBackendAvailable(backend);
+    const sandbox = sandboxForBackend(backend);
+    const node = await scheduler.selectNode({ fallback: backend });
+    const nodeName = node ? node.name : backend;
 
-    // NemoClaw sandbox support
-    const sandbox = req.body.sandbox === "nemoclaw" ? "nemoclaw" : "standard";
-    if (sandbox === "nemoclaw" && process.env.NEMOCLAW_ENABLED !== "true") {
-      return res.status(400).json({ error: "NemoClaw is not enabled. Set NEMOCLAW_ENABLED=true in .env" });
-    }
+    const deploymentDefaults = await getDeploymentDefaults();
 
     // Resolve resource specs based on platform mode
     let specs;
     if (!billing.IS_PAAS) {
       // Self-hosted: accept user-chosen values clamped to operator limits
-      const lim = billing.SELFHOSTED_LIMITS;
-      specs = {
-        vcpu:    Math.max(1, Math.min(parseInt(req.body.vcpu)    || 2,    lim.max_vcpu)),
-        ram_mb:  Math.max(512, Math.min(parseInt(req.body.ram_mb)  || 2048, lim.max_ram_mb)),
-        disk_gb: Math.max(1, Math.min(parseInt(req.body.disk_gb) || 20,   lim.max_disk_gb)),
-      };
+      specs = clampDeploymentDefaults(
+        normalizeDeploymentDefaults(req.body, deploymentDefaults),
+        billing.SELFHOSTED_LIMITS
+      );
     } else {
-      // PaaS: resources locked to subscription plan
-      specs = { vcpu: sub.vcpu || 2, ram_mb: sub.ram_mb || 2048, disk_gb: sub.disk_gb || 20 };
+      // PaaS: resources are controlled by the operator-managed deployment defaults.
+      specs = deploymentDefaults;
     }
+    const image = resolveRequestedImage({
+      requestedImage: req.body.image,
+      backend,
+    });
+    const templatePayload = createEmptyTemplatePayload({
+      source: "blank-deploy",
+    });
 
     const result = await db.query(
-      "INSERT INTO agents(user_id, name, status, node, sandbox_type, vcpu, ram_mb, disk_gb, container_name) VALUES($1, $2, 'queued', $3, $4, $5, $6, $7, $8) RETURNING *",
-      [req.user.id, name, nodeName, sandbox, specs.vcpu, specs.ram_mb, specs.disk_gb, containerName]
+      `INSERT INTO agents(
+         user_id, name, status, node, backend_type, sandbox_type, vcpu, ram_mb, disk_gb,
+         container_name, image, template_payload
+       ) VALUES($1, $2, 'queued', $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [
+        req.user.id,
+        name,
+        nodeName,
+        backend,
+        sandbox,
+        specs.vcpu,
+        specs.ram_mb,
+        specs.disk_gb,
+        containerName,
+        image,
+        JSON.stringify(templatePayload),
+      ]
     );
     const agent = result.rows[0];
 
@@ -258,19 +375,173 @@ router.post("/deploy", async (req, res) => {
       name: agent.name,
       userId: req.user.id,
       plan: sub.plan,
+      backend,
       sandbox,
       specs,
       container_name: containerName,
+      image,
+      model: sandbox === "nemoclaw" ? req.body.model || null : null,
     });
 
-    const deployType = sandbox === "nemoclaw" ? "NemoClaw + OpenClaw" : "OpenClaw + Docker";
-    await monitoring.logEvent("agent_deployed", `Agent "${name}" (${deployType}) queued for deployment`, { agentId: agent.id });
+    const deployType = backendStatus.label;
+    await monitoring.logEvent(
+      "agent_deployed",
+      `Agent "${name}" (${deployType}) queued for deployment`,
+      agentAuditMetadata(req, agent, {
+        deploy: {
+          backend,
+          type: deployType,
+          specs,
+          image,
+          containerName,
+        },
+      })
+    );
 
-    res.json(agent);
+    res.json(serializeAgent(agent));
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.statusCode || 500).json({ error: e.message });
   }
 });
+
+router.patch("/:id", asyncHandler(async (req, res) => {
+  const result = await db.query(
+    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
+    [req.params.id, req.user.id]
+  );
+  const agent = result.rows[0];
+  if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+  const name = sanitizeAgentName(req.body.name, agent.name || "OpenClaw-Agent");
+  if (name.length > 100) {
+    return res.status(400).json({ error: "Agent name must be 100 characters or less" });
+  }
+
+  const updated = await db.query(
+    "UPDATE agents SET name = $1 WHERE id = $2 RETURNING *",
+    [name, agent.id]
+  );
+  await monitoring.logEvent(
+    "agent_renamed",
+    `Agent renamed to "${name}"`,
+    agentAuditMetadata(req, updated.rows[0], {
+      result: {
+        previousName: agent.name,
+        nextName: name,
+      },
+    })
+  );
+  res.json(serializeAgent(updated.rows[0]));
+}));
+
+router.post("/:id/duplicate", asyncHandler(async (req, res) => {
+  const limits = await billing.enforceLimits(req.user.id);
+  if (!limits.allowed) {
+    return res.status(402).json({ error: limits.error, subscription: limits.subscription });
+  }
+
+  const sourceResult = await db.query(
+    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
+    [req.params.id, req.user.id]
+  );
+  const sourceAgent = sourceResult.rows[0];
+  if (!sourceAgent) return res.status(404).json({ error: "Agent not found" });
+  res.locals.auditContext = buildAgentContext(sourceAgent, {
+    ownerEmail: req.user.email || null,
+  });
+
+  const cloneMode = CLONE_MODES.has(req.body.clone_mode)
+    ? req.body.clone_mode
+    : "files_only";
+  const name = sanitizeAgentName(
+    req.body.name,
+    `${sourceAgent.name || "OpenClaw-Agent"} Copy`
+  );
+  if (name.length > 100) {
+    return res.status(400).json({ error: "Agent name must be 100 characters or less" });
+  }
+
+  const backend = resolveRequestedBackend({
+    requestedBackend: req.body.backend,
+    fallbackBackend: sourceAgent.backend_type || null,
+    fallbackSandbox: sourceAgent.sandbox_type || "standard",
+  });
+  assertBackendAvailable(backend);
+  const node = await scheduler.selectNode({ fallback: backend });
+  const containerNameRaw = (req.body.container_name || "").trim();
+  const containerName = containerNameRaw || buildContainerName(name);
+  const specs = {
+    vcpu: sourceAgent.vcpu || 2,
+    ram_mb: sourceAgent.ram_mb || 2048,
+    disk_gb: sourceAgent.disk_gb || 20,
+  };
+  const sandbox = sandboxForBackend(backend);
+  const image = resolveRequestedImage({
+    requestedImage: req.body.image,
+    backend,
+    fallbackImage: sourceAgent.image || null,
+  });
+
+  let templatePayload;
+  try {
+    templatePayload = await buildTemplatePayloadFromAgent(sourceAgent, cloneMode);
+  } catch (err) {
+    return res.status(409).json({ error: err.message });
+  }
+
+  const inserted = await db.query(
+    `INSERT INTO agents(
+       user_id, name, status, node, backend_type, sandbox_type, vcpu, ram_mb, disk_gb,
+       container_name, image, template_payload
+     ) VALUES($1, $2, 'queued', $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+    [
+      req.user.id,
+      name,
+      node?.name || backend,
+      backend,
+      sandbox,
+      specs.vcpu,
+      specs.ram_mb,
+      specs.disk_gb,
+      containerName,
+      image,
+      JSON.stringify(templatePayload),
+    ]
+  );
+  const agent = inserted.rows[0];
+
+  await materializeTemplateWiring(agent.id, templatePayload);
+  await db.query(
+    "INSERT INTO deployments(agent_id, status) VALUES($1, 'queued')",
+    [agent.id]
+  );
+  await addDeploymentJob({
+    id: agent.id,
+    name: agent.name,
+    userId: req.user.id,
+    plan: limits.subscription.plan,
+    backend,
+    sandbox,
+    specs,
+    container_name: containerName,
+    image,
+  });
+  await monitoring.logEvent(
+    "agent_duplicated",
+    `Agent "${sourceAgent.name}" duplicated as "${agent.name}"`,
+    agentAuditMetadata(req, agent, {
+      sourceAgent: {
+        id: sourceAgent.id,
+        name: sourceAgent.name,
+      },
+      clone: {
+        mode: cloneMode,
+      },
+    })
+  );
+
+  res.json(serializeAgent(agent));
+}));
 
 router.post("/:id/start", async (req, res) => {
   try {
@@ -280,6 +551,9 @@ router.post("/:id/start", async (req, res) => {
     );
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, {
+      ownerEmail: req.user.email || null,
+    });
     if (!agent.container_id) return res.status(400).json({ error: "No container — redeploy the agent first" });
 
     await containerManager.start(agent);
@@ -287,7 +561,14 @@ router.post("/:id/start", async (req, res) => {
     const updated = await db.query(
       "UPDATE agents SET status = 'running' WHERE id = $1 RETURNING *", [agent.id]
     );
-    res.json(updated.rows[0]);
+    await monitoring.logEvent(
+      "agent_started",
+      `Agent "${agent.name}" started`,
+      agentAuditMetadata(req, updated.rows[0], {
+        result: { status: "running" },
+      })
+    );
+    res.json(serializeAgent(updated.rows[0]));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -301,6 +582,9 @@ router.post("/:id/stop", async (req, res) => {
     );
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, {
+      ownerEmail: req.user.email || null,
+    });
 
     if (agent.container_id) {
       try {
@@ -315,19 +599,29 @@ router.post("/:id/stop", async (req, res) => {
     const updated = await db.query(
       "UPDATE agents SET status = 'stopped' WHERE id = $1 RETURNING *", [agent.id]
     );
-    res.json(updated.rows[0]);
+    await monitoring.logEvent(
+      "agent_stopped",
+      `Agent "${agent.name}" stopped`,
+      agentAuditMetadata(req, updated.rows[0], {
+        result: { status: "stopped" },
+      })
+    );
+    res.json(serializeAgent(updated.rows[0]));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-async function destroyAgent(agentId, userId, res) {
+async function destroyAgent(agentId, userId, req, res) {
   const result = await db.query(
     "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
     [agentId, userId]
   );
   const agent = result.rows[0];
   if (!agent) return res.status(404).json({ error: "Agent not found" });
+  res.locals.auditContext = buildAgentContext(agent, {
+    ownerEmail: req.user.email || null,
+  });
 
   if (agent.container_id) {
     try {
@@ -338,12 +632,19 @@ async function destroyAgent(agentId, userId, res) {
   }
 
   await db.query("DELETE FROM agents WHERE id = $1", [agent.id]);
+  await monitoring.logEvent(
+    "agent_deleted",
+    `Agent "${agent.name}" deleted`,
+    agentAuditMetadata(req, agent, {
+      result: { deleted: true },
+    })
+  );
   res.json({ success: true });
 }
 
 router.post("/:id/delete", async (req, res) => {
   try {
-    await destroyAgent(req.params.id, req.user.id, res);
+    await destroyAgent(req.params.id, req.user.id, req, res);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -351,7 +652,7 @@ router.post("/:id/delete", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    await destroyAgent(req.params.id, req.user.id, res);
+    await destroyAgent(req.params.id, req.user.id, req, res);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -365,11 +666,21 @@ router.post("/:id/restart", async (req, res) => {
     );
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, {
+      ownerEmail: req.user.email || null,
+    });
     if (!agent.container_id) return res.status(400).json({ error: "No container — redeploy the agent first" });
 
     await containerManager.restart(agent);
 
     await db.query("UPDATE agents SET status = 'running' WHERE id = $1", [agent.id]);
+    await monitoring.logEvent(
+      "agent_restarted",
+      `Agent "${agent.name}" restarted`,
+      agentAuditMetadata(req, agent, {
+        result: { status: "running" },
+      })
+    );
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -384,6 +695,9 @@ router.post("/:id/redeploy", async (req, res) => {
     );
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, {
+      ownerEmail: req.user.email || null,
+    });
     if (!["warning", "error", "stopped"].includes(agent.status)) {
       return res.status(400).json({ error: "Agent must be in warning, error, or stopped state to redeploy" });
     }
@@ -408,20 +722,37 @@ router.post("/:id/redeploy", async (req, res) => {
       [agent.id]
     );
 
+    const backend = resolveRequestedBackend({
+      fallbackBackend: agent.backend_type || null,
+      fallbackSandbox: agent.sandbox_type || "standard",
+    });
+    assertBackendAvailable(backend);
+
     await addDeploymentJob({
       id: agent.id,
       name: agent.name,
       userId: req.user.id,
-      sandbox: agent.sandbox_type || "standard",
+      backend,
+      sandbox: sandboxForBackend(backend),
       specs: { vcpu: agent.vcpu || 2, ram_mb: agent.ram_mb || 2048, disk_gb: agent.disk_gb || 20 },
       container_name: agent.container_name,
+      image: agent.image || null,
     });
 
-    await monitoring.logEvent("agent_redeployed", `Agent "${agent.name}" re-queued for deployment`, { agentId: agent.id });
+    await monitoring.logEvent(
+      "agent_redeployed",
+      `Agent "${agent.name}" re-queued for deployment`,
+      agentAuditMetadata(req, agent, {
+        result: {
+          previousStatus: agent.status,
+          nextStatus: "queued",
+        },
+      })
+    );
 
     res.json({ success: true, status: "queued" });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.statusCode || 500).json({ error: e.message });
   }
 });
 

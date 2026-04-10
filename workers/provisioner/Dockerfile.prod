@@ -1,0 +1,10 @@
+FROM node:20-alpine
+WORKDIR /app
+
+COPY workers/provisioner/package.json workers/provisioner/package-lock.json* ./
+RUN npm ci --omit=dev || npm install --omit=dev
+
+COPY workers/provisioner/ ./
+COPY agent-runtime /agent-runtime
+
+CMD ["node", "worker.js"]

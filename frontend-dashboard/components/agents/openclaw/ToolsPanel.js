@@ -77,6 +77,7 @@ export default function ToolsPanel({ agentId }) {
             const name = tool.function?.name || tool.name || `Tool ${idx + 1}`;
             const desc = tool.function?.description || tool.description || "";
             const params = tool.function?.parameters || tool.parameters || null;
+            const noraMeta = tool.nora || null;
             const isExpanded = expandedTool === name;
 
             return (
@@ -93,6 +94,28 @@ export default function ToolsPanel({ agentId }) {
                     <div>
                       <p className="text-sm font-bold text-slate-700">{name}</p>
                       {desc && <p className="text-[10px] text-slate-400 mt-0.5">{desc}</p>}
+                      {noraMeta && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">
+                            Integration Manifest
+                          </span>
+                          {noraMeta.provider && (
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600">
+                              {noraMeta.provider}
+                            </span>
+                          )}
+                          {noraMeta.executionState === "manifest_only" && (
+                            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-blue-700">
+                              Discovery Only
+                            </span>
+                          )}
+                          {noraMeta.executionState === "runtime_skill" && (
+                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
+                              Live Via Skill
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                   {isExpanded ? (
@@ -113,8 +136,46 @@ export default function ToolsPanel({ agentId }) {
                         </pre>
                       </div>
                     )}
+                    {noraMeta?.api && (
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-500 mb-1">Provider API</p>
+                        <pre className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] text-slate-600 font-mono overflow-x-auto max-h-40">
+                          {JSON.stringify(noraMeta.api, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    {noraMeta?.mcp && (
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-500 mb-1">MCP</p>
+                        <pre className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] text-slate-600 font-mono overflow-x-auto max-h-40">
+                          {JSON.stringify(noraMeta.mcp, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                    {Array.isArray(noraMeta?.usageHints) && noraMeta.usageHints.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-500 mb-1">Usage Hints</p>
+                        <ul className="space-y-1 text-[10px] text-slate-500">
+                          {noraMeta.usageHints.map((hint, hintIndex) => (
+                            <li key={`${name}-hint-${hintIndex}`}>- {hint}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {noraMeta?.invokeCommand && (
+                      <div>
+                        <p className="text-[10px] font-bold text-slate-500 mb-1">Agent Command</p>
+                        <pre className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] text-slate-600 font-mono overflow-x-auto max-h-40">
+                          {noraMeta.invokeCommand}
+                        </pre>
+                      </div>
+                    )}
                     <p className="text-[10px] text-slate-400">
-                      Tools are invoked automatically by the AI model during chat conversations.
+                      {noraMeta?.executionState === "runtime_skill"
+                        ? "This tool is connected through Nora and is executable inside the agent via the generated nora-integrations skill and local nora-integration-tool command."
+                        : noraMeta?.executionState === "manifest_only"
+                        ? "This tool comes from the Nora integration manifest. It advertises provider capability and schema, but the current runtime does not execute it yet."
+                        : "Tools are invoked automatically by the AI model during chat conversations."}
                     </p>
                   </div>
                 )}

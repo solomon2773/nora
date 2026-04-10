@@ -21,13 +21,17 @@ const PAGE_META = {
     title: "Deploy",
     subtitle: "Step 2 of 3 — deploy an agent, then validate it immediately.",
   },
+  "/logs": {
+    title: "Logs",
+    subtitle: "Review account activity, request failures, and runtime events.",
+  },
   "/settings": {
     title: "Settings",
     subtitle: "Step 1 of 3 — connect one provider before the first deploy.",
   },
   "/getting-started": {
     title: "Getting Started",
-    subtitle: "Follow the shortest path from setup to proof of value.",
+    subtitle: "Follow the shortest path from setup to live operations.",
   },
 };
 
@@ -50,7 +54,7 @@ export default function Topbar({ onMenuClick }) {
   const role = user?.role || "member";
   const pageMeta = PAGE_META[router.pathname] || {
     title: "Nora",
-    subtitle: "Operate your OpenClaw environment from one control plane.",
+    subtitle: "Operate your agent fleet from one operator surface.",
   };
 
   return (

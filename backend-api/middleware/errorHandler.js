@@ -42,6 +42,14 @@ function errorHandler(err, req, res, _next) {
   console.error(`[${cid}] ${req.method} ${req.originalUrl} -> ${status}: ${err.message}`);
   if (status >= 500) console.error(err.stack);
 
+  res.locals.auditError = {
+    name: err.name || 'Error',
+    message: err.message,
+    code,
+    statusCode: status,
+    stack: err.stack,
+  };
+
   if (res.headersSent) return;
 
   res.status(status).json({

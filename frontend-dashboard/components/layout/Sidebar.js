@@ -1,7 +1,7 @@
 import { useRouter } from "next/router";
 import {
   LayoutDashboard, Bot, Rocket, BarChart3, ListChecks,
-  Settings, ScrollText, PanelLeftClose, PanelLeftOpen, X
+  Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ShoppingBag, X
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -12,6 +12,7 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
     { name: "Dashboard", icon: LayoutDashboard, href: "/app/dashboard" },
     { name: "Getting Started", icon: ListChecks, href: "/app/getting-started" },
     { name: "Agents", icon: Bot, href: "/app/agents" },
+    { name: "Marketplace", icon: ShoppingBag, href: "/app/marketplace" },
     { name: "Deploy", icon: Rocket, href: "/app/deploy" },
     { name: "Monitoring", icon: BarChart3, href: "/app/monitoring" },
     { name: "Logs", icon: ScrollText, href: "/app/logs" },
@@ -34,7 +35,7 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
         {!collapsed && (
           <div className="flex flex-col min-w-0">
             <span className="text-xl font-bold tracking-tight leading-none text-white">Nora</span>
-            <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest mt-1 opacity-80">Self-hosted control plane</span>
+            <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest mt-1 opacity-80">Deploy intelligence anywhere.</span>
           </div>
         )}
         {/* Mobile close button */}

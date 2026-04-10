@@ -71,6 +71,36 @@ function redactChannelConfig(type, config = {}) {
   return redacted;
 }
 
+function stripChannelSecrets(type, config = {}) {
+  const parsed = parseConfig(config);
+  const stripped = { ...parsed };
+  const sensitiveKeys = getSensitiveChannelKeys(type);
+  let removedSensitive = false;
+
+  for (const key of Object.keys(stripped)) {
+    if ((sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) && stripped[key]) {
+      removedSensitive = true;
+      stripped[key] = null;
+    }
+  }
+
+  return { config: stripped, removedSensitive };
+}
+
+function buildCloneableChannel(channel = {}) {
+  const { config, removedSensitive } = stripChannelSecrets(
+    channel.type,
+    channel.config
+  );
+
+  return {
+    type: channel.type,
+    name: channel.name,
+    config,
+    enabled: Boolean(channel.enabled) && !removedSensitive,
+  };
+}
+
 function sanitizeChannel(channel) {
   if (!channel) return channel;
   return {
@@ -278,9 +308,11 @@ module.exports = {
   testChannel,
   handleInboundWebhook,
   getChannelTypes,
+  buildCloneableChannel,
   redactChannelConfig,
   sanitizeChannel,
   protectChannelConfig,
   revealChannelConfig,
   hydrateChannel,
+  stripChannelSecrets,
 };

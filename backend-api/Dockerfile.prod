@@ -1,0 +1,13 @@
+FROM node:20-alpine
+WORKDIR /app
+
+COPY backend-api/package.json backend-api/package-lock.json* ./
+RUN npm ci --omit=dev || npm install --omit=dev
+
+COPY backend-api/ ./
+COPY backend-api/routes ./routes
+COPY agent-runtime /agent-runtime
+COPY workers/provisioner/backends /app/backends
+
+EXPOSE 4000
+CMD ["node", "server.js"]

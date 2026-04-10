@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 const API_BASE_URL = process.env.API_BASE_URL || "http://127.0.0.1:4100";
 const K8S_NAMESPACE = process.env.K8S_NAMESPACE || "openclaw-agents";
 const POLL_INTERVAL_MS = Number.parseInt(process.env.K8S_SMOKE_POLL_MS || "5000", 10);
-const POLL_TIMEOUT_MS = Number.parseInt(process.env.K8S_SMOKE_TIMEOUT_MS || "240000", 10);
+// First boot can spend several minutes installing OpenClaw and bundled plugins.
+const POLL_TIMEOUT_MS = Number.parseInt(process.env.K8S_SMOKE_TIMEOUT_MS || "600000", 10);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

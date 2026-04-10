@@ -1,17 +1,24 @@
-// DB-backed node scheduler — selects least-loaded node
+// DB-backed node scheduler — selects the least-loaded node name.
 //
 // Node names are read from SCHEDULER_NODES env var (comma-separated).
-// Falls back to the provisioner backend name if not set.
-// Agent counts are queried from PostgreSQL for accurate load balancing.
+// If no explicit scheduler nodes are configured, we fall back to the requested
+// backend label so agents still get a stable node identifier in single-host
+// or per-backend deployments.
 
 const db = require("./db");
 
-const NODE_NAMES = (process.env.SCHEDULER_NODES || process.env.PROVISIONER_BACKEND || "docker")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+function configuredNodeNames() {
+  return String(process.env.SCHEDULER_NODES || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
-async function selectNode() {
+async function selectNode(options = {}) {
+  const fallbackName = String(options.fallback || options.backend || "docker").trim() || "docker";
+  const nodeNames = configuredNodeNames();
+  const candidates = nodeNames.length > 0 ? nodeNames : [fallbackName];
+
   // Query current agent distribution across nodes
   const result = await db.query(
     "SELECT node, COUNT(*)::int AS agent_count FROM agents WHERE status NOT IN ('error', 'deleted') GROUP BY node"
@@ -23,8 +30,8 @@ async function selectNode() {
 
   // Pick the node with fewest active agents
   let minCount = Infinity;
-  let selected = NODE_NAMES[0];
-  for (const name of NODE_NAMES) {
+  let selected = candidates[0];
+  for (const name of candidates) {
     const count = counts[name] || 0;
     if (count < minCount) {
       minCount = count;

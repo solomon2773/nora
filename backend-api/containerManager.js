@@ -99,6 +99,14 @@ module.exports = {
     return backendFor(agent).status(agent.container_id);
   },
 
+  async stats(agent) {
+    const backend = backendFor(agent);
+    if (typeof backend.stats === "function") {
+      return backend.stats(agent.container_id, agent);
+    }
+    return null;
+  },
+
   /**
    * Stream container logs.
    * @returns {ReadableStream|null}

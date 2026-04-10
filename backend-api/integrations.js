@@ -4,6 +4,9 @@ const db = require("./db");
 const { encrypt, decrypt, ensureEncryptionConfigured } = require("./crypto");
 const path = require("path");
 const fs = require("fs");
+const {
+  buildIntegrationToolExecutionMetadata,
+} = require("../agent-runtime/lib/integrationTools");
 
 // ── Integration → Env Var Name Map ───────────────────────
 // Maps provider ID → the env var for the primary credential (the access_token column).
@@ -260,9 +263,38 @@ async function seedCatalog() {
   console.log(`Integration catalog seeded: ${catalog.length} items`);
 }
 
+function resolveCatalogSchema(row = {}) {
+  const rawSchema =
+    row.config_schema ??
+    loadCatalog().find(
+      (item) => item.id === row.catalog_id || item.id === row.provider || item.id === row.id
+    );
+
+  if (!rawSchema) return {};
+
+  if (typeof rawSchema === "string") {
+    try {
+      return JSON.parse(rawSchema);
+    } catch {
+      return {};
+    }
+  }
+
+  return rawSchema && typeof rawSchema === "object" ? rawSchema : {};
+}
+
 function hydrateRow(row) {
-  const schema = typeof row.config_schema === "string" ? JSON.parse(row.config_schema) : (row.config_schema || {});
-  return { ...row, configFields: schema.configFields || [], capabilities: schema.capabilities || [], authType: schema.authType || row.auth_type };
+  const schema = resolveCatalogSchema(row);
+  return {
+    ...row,
+    configFields: schema.configFields || [],
+    capabilities: schema.capabilities || [],
+    authType: schema.authType || row.auth_type,
+    toolSpecs: schema.toolSpecs || [],
+    mcp: schema.mcp || null,
+    api: schema.api || null,
+    usageHints: schema.usageHints || [],
+  };
 }
 
 async function getCatalog(category) {
@@ -359,6 +391,150 @@ function redactSensitiveConfig(provider, config = {}) {
   }
 
   return redacted;
+}
+
+function stripSensitiveConfig(provider, config = {}) {
+  const parsed = parseConfig(config);
+  const sensitiveKeys = getSensitiveConfigKeys(provider);
+  const stripped = { ...parsed };
+  let removedSensitive = false;
+
+  for (const key of Object.keys(stripped)) {
+    if (sensitiveKeys.has(key) || SECRET_CONFIG_KEY_RE.test(key)) {
+      if (stripped[key]) removedSensitive = true;
+      stripped[key] = null;
+    }
+  }
+
+  return { config: stripped, removedSensitive };
+}
+
+function buildCloneableIntegration(row = {}) {
+  const { config, removedSensitive } = stripSensitiveConfig(
+    row.provider,
+    row.config
+  );
+  const hasPrimarySecret = Boolean(row.access_token);
+
+  return {
+    provider: row.provider,
+    catalog_id: row.catalog_id || row.provider,
+    config,
+    status:
+      hasPrimarySecret || removedSensitive
+        ? "needs_reconnect"
+        : row.status || "active",
+  };
+}
+
+function buildIntegrationSyncEntry(row = {}) {
+  const hydrated = hydrateRow(row);
+  const provider = row.provider || row.catalog_id || row.id;
+  const config = decryptSensitiveConfig(provider, row.config);
+
+  return {
+    id: row.id,
+    provider,
+    name: row.catalog_name || hydrated.name || provider,
+    category: row.catalog_category || hydrated.category || "unknown",
+    authType: hydrated.authType || null,
+    config,
+    redactedConfig: redactSensitiveConfig(provider, config),
+    status: row.status || "active",
+    capabilities: Array.isArray(hydrated.capabilities) ? hydrated.capabilities : [],
+    toolSpecs: Array.isArray(hydrated.toolSpecs) ? hydrated.toolSpecs : [],
+    mcp: hydrated.mcp || null,
+    api: hydrated.api || null,
+    usageHints: Array.isArray(hydrated.usageHints) ? hydrated.usageHints : [],
+  };
+}
+
+function normalizeToolName(rawName, fallback) {
+  const candidate = String(rawName || fallback || "tool")
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return candidate || "tool";
+}
+
+function ensureUniqueToolName(baseName, reservedNames) {
+  let nextName = baseName;
+  let suffix = 2;
+  while (reservedNames.has(nextName)) {
+    nextName = `${baseName}_${suffix}`;
+    suffix += 1;
+  }
+  reservedNames.add(nextName);
+  return nextName;
+}
+
+function normalizeToolParameterSchema(schema) {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return { type: "object", properties: {} };
+  }
+  return schema;
+}
+
+function buildIntegrationToolCatalogEntries(integrations = [], options = {}) {
+  const reservedNames =
+    options.reservedNames instanceof Set
+      ? new Set(options.reservedNames)
+      : new Set();
+  const tools = [];
+
+  for (const integration of Array.isArray(integrations) ? integrations : []) {
+    const toolSpecs = Array.isArray(integration.toolSpecs)
+      ? integration.toolSpecs
+      : [];
+
+    for (let index = 0; index < toolSpecs.length; index += 1) {
+      const spec = toolSpecs[index] || {};
+      const uniqueName = ensureUniqueToolName(
+        normalizeToolName(spec.name, `${integration.provider}_${index + 1}`),
+        reservedNames
+      );
+      const execution = buildIntegrationToolExecutionMetadata(integration, spec);
+
+      tools.push({
+        type: "function",
+        function: {
+          name: uniqueName,
+          description:
+            String(spec.description || "").trim() ||
+            `Declared ${integration.name || integration.provider} integration capability.`,
+          parameters: normalizeToolParameterSchema(
+            spec.inputSchema || spec.parameters
+          ),
+        },
+        nora: {
+          source: "integration-manifest",
+          executable: execution.executable,
+          executionState: execution.executionState,
+          executionSurface: execution.executionSurface,
+          executor: execution.executor,
+          provider: integration.provider,
+          providerName: integration.name || integration.provider,
+          integrationId: integration.id,
+          operation: spec.operation || null,
+          runtimeToolName: execution.runtimeToolName,
+          invokeCommand: execution.invokeCommand,
+          exampleInput: execution.exampleInput,
+          authType: integration.authType || null,
+          capabilities: Array.isArray(integration.capabilities)
+            ? integration.capabilities
+            : [],
+          api: integration.api || null,
+          mcp: integration.mcp || null,
+          usageHints: Array.isArray(integration.usageHints)
+            ? integration.usageHints
+            : [],
+          config: integration.redactedConfig || {},
+        },
+      });
+    }
+  }
+
+  return tools;
 }
 
 // ── Agent Integrations (CRUD) ────────────────────────────
@@ -860,20 +1036,14 @@ async function testIntegration(integrationId, agentId) {
 async function getIntegrationsForSync(agentId) {
   const result = await db.query(
     `SELECT i.id, i.provider, i.catalog_id, i.config, i.status,
-            ic.name as catalog_name, ic.category as catalog_category
+            ic.name as catalog_name, ic.category as catalog_category,
+            ic.auth_type, ic.config_schema
      FROM integrations i
      LEFT JOIN integration_catalog ic ON i.catalog_id = ic.id
      WHERE i.agent_id = $1 AND i.status = 'active'`,
     [agentId]
   );
-  return result.rows.map((r) => ({
-    id: r.id,
-    provider: r.provider,
-    name: r.catalog_name || r.provider,
-    category: r.catalog_category || "unknown",
-    config: decryptSensitiveConfig(r.provider, r.config),
-    status: r.status,
-  }));
+  return result.rows.map(buildIntegrationSyncEntry);
 }
 
 /**
@@ -909,6 +1079,9 @@ async function getIntegrationEnvVars(agentId) {
 }
 
 module.exports = {
+  buildCloneableIntegration,
+  buildIntegrationSyncEntry,
+  buildIntegrationToolCatalogEntries,
   seedCatalog,
   getCatalog,
   getCatalogItem,
@@ -920,4 +1093,5 @@ module.exports = {
   getIntegrationEnvVars,
   INTEGRATION_ENV_MAP,
   INTEGRATION_CONFIG_ENV_MAP,
+  stripSensitiveConfig,
 };

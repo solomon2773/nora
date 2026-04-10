@@ -12,7 +12,7 @@ const shots = [
   {
     path: "/",
     file: "proof-landing-open-source-funnel.png",
-    readyText: /The open-source control plane/i,
+    readyText: /Deploy intelligence anywhere\./i,
   },
   {
     path: "/pricing",

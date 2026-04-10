@@ -8,10 +8,11 @@ Runs on `/admin/*` behind nginx. Provides platform-wide visibility into users, a
 
 ## Features
 
-- **User Management** — view registered users, roles, and account status
-- **Agent Monitoring** — platform-wide agent fleet overview
-- **Node Capacity** — provisioner backend health and resource usage
-- **System Logs** — centralized log viewer
+- **Ops Overview** — platform-wide metrics, queue health, recent audit activity, and DLQ awareness
+- **Fleet Management** — global agent list, lifecycle actions, runtime metadata, telemetry samples, and live logs
+- **Queue Recovery** — dead-letter inspection and retry flows for failed deployment jobs
+- **User Management** — role changes, agent counts, and account deletion with agent cleanup
+- **Marketplace Moderation** — review and remove published marketplace listings
 
 ## Development
 
@@ -22,5 +23,5 @@ docker compose logs -f admin-dashboard
 # Local development (outside Docker)
 cd admin-dashboard
 npm install
-npm run dev   # Starts on port 3002
+npm run dev   # Starts on port 3000 by default (use PORT=3002 to override)
 ```

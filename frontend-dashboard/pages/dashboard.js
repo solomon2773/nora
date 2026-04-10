@@ -39,7 +39,7 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 md:gap-8">
           <StatCard title="Active Agents" value={metrics?.activeAgents ?? agents.filter((a) => a.status === "running").length} icon={Zap} color="blue" />
           <StatCard title="Total Agents" value={metrics?.totalAgents ?? agents.length} icon={Bot} color="emerald" />
-          <StatCard title="Queued Jobs" value={metrics?.queue?.waiting ?? 0} icon={Cpu} color="purple" />
+          <StatCard title="Queued Agents" value={metrics?.queue?.waiting ?? 0} icon={Cpu} color="purple" />
         </div>
 
         <div className="flex flex-col gap-6">
@@ -109,14 +109,14 @@ function EmptyState() {
         </div>
         <h3 className="text-2xl font-black text-slate-900">No agents deployed yet</h3>
         <p className="text-sm sm:text-base text-slate-500 leading-relaxed">
-          Nora is most valuable once you complete the first-run loop: add a provider key, deploy an OpenClaw agent, then verify chat, logs, and terminal from one control plane.
+          Nora comes online fastest when you add a provider key, deploy an OpenClaw agent, then confirm chat, logs, and terminal from one operator surface.
         </p>
       </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-3xl p-6 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
         <div>
           <p className="text-sm font-black text-blue-700 uppercase tracking-widest mb-1">Recommended order</p>
-          <p className="text-sm text-blue-700/80">Settings → Deploy → Validate. That is the fastest path to first proof of value.</p>
+          <p className="text-sm text-blue-700/80">Settings → Deploy → Validate. That is the fastest path to a live runtime.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <a href="/app/getting-started" className="inline-flex items-center gap-2 px-4 py-2.5 bg-white border border-blue-200 text-blue-700 rounded-xl text-sm font-bold hover:bg-blue-50 transition-all">
@@ -129,7 +129,7 @@ function EmptyState() {
         </div>
       </div>
 
-      <ActivationChecklist compact title="Activate Nora" subtitle="Use this first-run checklist to move from setup to proof of value without guessing the next step." />
+      <ActivationChecklist compact title="Activate Nora" subtitle="Use this first-run checklist to move from setup to a live runtime without guessing the next step." />
     </div>
   );
 }

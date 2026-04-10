@@ -1,4 +1,5 @@
 const db = require("./db");
+const { getDeploymentDefaults } = require("./platformSettings");
 
 // Conditionally load Stripe — if no key, functions gracefully degrade
 const stripeKey = process.env.STRIPE_SECRET_KEY;
@@ -8,9 +9,9 @@ const PLATFORM_MODE = (process.env.PLATFORM_MODE || "selfhosted").toLowerCase();
 const IS_PAAS = PLATFORM_MODE === "paas";
 
 const PLANS = {
-  free:       { agent_limit: 3,   vcpu: 2,  ram_mb: 2048,  disk_gb: 20  },
-  pro:        { agent_limit: 10,  vcpu: 8,  ram_mb: 16384, disk_gb: 200 },
-  enterprise: { agent_limit: 100, vcpu: 16, ram_mb: 32768, disk_gb: 500 },
+  free: { agent_limit: 3 },
+  pro: { agent_limit: 10 },
+  enterprise: { agent_limit: 100 },
 };
 
 const SELFHOSTED_LIMITS = {
@@ -19,6 +20,17 @@ const SELFHOSTED_LIMITS = {
   max_disk_gb:parseInt(process.env.MAX_DISK_GB|| "500",   10),
   max_agents: parseInt(process.env.MAX_AGENTS || "50",    10),
 };
+
+function buildPlanSubscription(plan, defaults = {}) {
+  const basePlan = PLANS[plan] || PLANS.free;
+  return {
+    plan,
+    agent_limit: basePlan.agent_limit,
+    vcpu: defaults.vcpu,
+    ram_mb: defaults.ram_mb,
+    disk_gb: defaults.disk_gb,
+  };
+}
 
 // ── Get or create a free subscription for a user ──────────────────
 
@@ -35,20 +47,30 @@ async function getSubscription(userId) {
     };
   }
 
+  const deploymentDefaults = await getDeploymentDefaults();
   const result = await db.query(
     "SELECT * FROM subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1",
     [userId]
   );
-  if (result.rows[0]) return result.rows[0];
+  if (result.rows[0]) {
+    const existing = result.rows[0];
+    return {
+      ...existing,
+      ...buildPlanSubscription(existing.plan || "free", deploymentDefaults),
+    };
+  }
 
   // Auto-create a free-tier subscription
-  const free = PLANS.free;
+  const free = buildPlanSubscription("free", deploymentDefaults);
   const insert = await db.query(
     `INSERT INTO subscriptions(user_id, plan, status, agent_limit, vcpu, ram_mb, disk_gb)
      VALUES($1, 'free', 'active', $2, $3, $4, $5) RETURNING *`,
     [userId, free.agent_limit, free.vcpu, free.ram_mb, free.disk_gb]
   );
-  return insert.rows[0];
+  return {
+    ...insert.rows[0],
+    ...buildPlanSubscription("free", deploymentDefaults),
+  };
 }
 
 // ── Enforce agent deployment limits ──────────────────────────────
@@ -144,7 +166,10 @@ async function handleWebhookEvent(event) {
       const session = event.data.object;
       const userId = session.metadata?.userId;
       const plan = session.metadata?.plan || "pro";
-      const specs = PLANS[plan] || PLANS.free;
+      const specs = buildPlanSubscription(
+        plan,
+        await getDeploymentDefaults()
+      );
 
       await db.query(
         `INSERT INTO subscriptions(user_id, stripe_customer_id, stripe_subscription_id, plan, status, agent_limit, vcpu, ram_mb, disk_gb, current_period_end)
@@ -181,7 +206,10 @@ async function handleWebhookEvent(event) {
     case "customer.subscription.deleted": {
       const sub = event.data.object;
       // Downgrade to free
-      const freePlan = PLANS.free;
+      const freePlan = buildPlanSubscription(
+        "free",
+        await getDeploymentDefaults()
+      );
       await db.query(
         `UPDATE subscriptions SET plan = 'free', status = 'canceled', agent_limit = $1, vcpu = $2, ram_mb = $3, disk_gb = $4, updated_at = NOW()
          WHERE stripe_subscription_id = $5`,

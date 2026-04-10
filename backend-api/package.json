@@ -1,20 +1,24 @@
 {
   "name": "platform-api",
   "private": true,
-  "scripts": {"start":"node server.js","test":"jest --forceExit --detectOpenHandles"},
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest --forceExit --detectOpenHandles"
+  },
   "dependencies": {
-    "express": "^4.19.2",
-    "cors": "^2.8.5",
-    "pg": "^8.11.5",
+    "@kubernetes/client-node": "^0.21.0",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
     "bullmq": "^5.7.0",
-    "ioredis": "^5.4.1",
-    "stripe": "^14.21.0",
-    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "dockerode": "^4.0.2",
+    "express": "^4.19.2",
     "express-rate-limit": "^7.2.0",
-    "ws": "^8.16.0",
-    "dockerode": "^4.0.2"
+    "helmet": "^7.1.0",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.5",
+    "stripe": "^14.21.0",
+    "ws": "^8.16.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",

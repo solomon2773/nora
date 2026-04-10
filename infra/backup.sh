@@ -16,9 +16,9 @@ RETENTION_DAYS="${RETENTION_DAYS:-14}"
 # PostgreSQL connection (defaults match docker-compose.yml)
 PGHOST="${PGHOST:-postgres}"
 PGPORT="${PGPORT:-5432}"
-PGUSER="${PGUSER:-platform}"
-PGPASSWORD="${PGPASSWORD:-platform}"
-PGDATABASE="${PGDATABASE:-platform}"
+PGUSER="${PGUSER:-nora}"
+PGPASSWORD="${PGPASSWORD:-nora}"
+PGDATABASE="${PGDATABASE:-nora}"
 
 export PGPASSWORD
 

@@ -6,6 +6,7 @@ const { WebSocketServer, WebSocket } = require("ws");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const db = require("./db");
+const integrations = require("./integrations");
 
 const metrics = require("./metrics");
 const { OPENCLAW_GATEWAY_PORT } = require("../agent-runtime/lib/contracts");
@@ -17,6 +18,7 @@ const GATEWAY_PORT = OPENCLAW_GATEWAY_PORT;
 const CONNECT_TIMEOUT = 8000;
 const CALL_TIMEOUT = 30000;
 const CHAT_TIMEOUT = 120000;
+const RELAY_CONNECT_DELAY_MS = 750;
 
 // ─── Device Identity (Ed25519 keypair for Gateway auth) ──────────
 
@@ -337,6 +339,32 @@ async function rpcCall(agent, method, params = {}, timeout) {
   return msg.result !== undefined ? msg.result : msg.payload || {};
 }
 
+function extractToolList(result) {
+  if (Array.isArray(result)) return result;
+  if (!result || typeof result !== "object") return [];
+  if (Array.isArray(result.tools)) return result.tools;
+  if (Array.isArray(result.catalog)) return result.catalog;
+  if (Array.isArray(result.items)) return result.items;
+  return [];
+}
+
+function replaceToolList(result, tools) {
+  if (Array.isArray(result)) return tools;
+  if (!result || typeof result !== "object") {
+    return { tools };
+  }
+  if (Array.isArray(result.tools)) return { ...result, tools };
+  if (Array.isArray(result.catalog)) return { ...result, catalog: tools };
+  if (Array.isArray(result.items)) return { ...result, items: tools };
+  return { ...result, tools };
+}
+
+function getToolName(tool, index) {
+  if (tool?.function?.name) return String(tool.function.name);
+  if (tool?.name) return String(tool.name);
+  return `tool_${index + 1}`;
+}
+
 // ─── HTTP Routes ─────────────────────────────────────────────────
 
 function createGatewayRouter() {
@@ -371,6 +399,9 @@ function createGatewayRouter() {
         rpcCall(req.agent, "health").catch(() => null),
         rpcCall(req.agent, "status").catch(() => null),
       ]);
+      if (!health && !status) {
+        throw new Error("Gateway returned no health or status response");
+      }
       // If we got a successful health response and the agent is in 'warning' state,
       // auto-promote to 'running' — the gateway proved itself healthy.
       if (health && req.agent.status === "warning") {
@@ -595,7 +626,18 @@ function createGatewayRouter() {
   router.get("/agents/:agentId/gateway/tools", async (req, res) => {
     try {
       const result = await rpcCall(req.agent, "tools.catalog");
-      res.json(result);
+      const gatewayTools = extractToolList(result);
+      const reservedNames = new Set(
+        gatewayTools.map((tool, index) => getToolName(tool, index))
+      );
+      const syncedIntegrations = await integrations
+        .getIntegrationsForSync(req.agent.id)
+        .catch(() => []);
+      const integrationTools = integrations.buildIntegrationToolCatalogEntries(
+        syncedIntegrations,
+        { reservedNames }
+      );
+      res.json(replaceToolList(result, [...gatewayTools, ...integrationTools]));
     } catch (err) {
       res.status(502).json({ error: err.message });
     }
@@ -737,13 +779,63 @@ function attachGatewayWS(server) {
 
       const identity = deriveDeviceIdentity(agent.gateway_token);
       let handshakeComplete = false;
-      let connectResult = null; // stored relay handshake result
+      let connectPayload = null; // stored relay handshake payload
       let pendingClientConnect = null; // client's connect msg awaiting relay handshake
       const clientQueue = []; // buffer client messages until handshake is done
+      let relayConnectNonce = "";
+      let relayConnectSent = false;
+      let relayConnectTimer = null;
 
       const addr = resolveGatewayAddress(agent);
-      const gwWs = new WebSocket(`ws://${addr.host}:${addr.port}`, {
-        headers: { "Origin": `http://localhost:${addr.port}` }
+      const gwWs = new WebSocket(`ws://${addr.host}:${addr.port}`);
+      const role = "operator";
+      const scopes = ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing"];
+
+      function clearRelayConnectTimer() {
+        if (relayConnectTimer) {
+          clearTimeout(relayConnectTimer);
+          relayConnectTimer = null;
+        }
+      }
+
+      function sendRelayConnect() {
+        if (relayConnectSent || gwWs.readyState !== WebSocket.OPEN) return;
+        relayConnectSent = true;
+        clearRelayConnectTimer();
+        const { device } = buildConnectDevice(identity, role, scopes, relayConnectNonce);
+        gwWs.send(JSON.stringify({
+          type: "req", id: "__relay_connect__", method: "connect",
+          params: {
+            minProtocol: 3, maxProtocol: 3,
+            client: { id: "gateway-client", version: "1.0.0", platform: "linux", mode: "backend" },
+            role, scopes,
+            caps: ["thinking-events"], commands: [],
+            auth: agent.gateway_token ? { password: agent.gateway_token } : {},
+            device
+          }
+        }));
+      }
+
+      function queueRelayConnect() {
+        if (relayConnectSent) return;
+        clearRelayConnectTimer();
+        relayConnectTimer = setTimeout(() => {
+          sendRelayConnect();
+        }, RELAY_CONNECT_DELAY_MS);
+      }
+
+      function respondToClientConnect(connectRequestId) {
+        if (!connectRequestId || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({
+          type: "res",
+          id: connectRequestId,
+          ok: true,
+          payload: connectPayload || {},
+        }));
+      }
+
+      gwWs.on("open", () => {
+        queueRelayConnect();
       });
 
       gwWs.on("message", (raw) => {
@@ -755,32 +847,20 @@ function attachGatewayWS(server) {
           if (msg.type === "event" && msg.event === "connect.challenge") {
             // Forward challenge to client so its UI can go through the normal auth flow
             if (ws.readyState === WebSocket.OPEN) ws.send(str);
-            // Complete handshake on relay side with password + device identity
-            const nonce = msg.payload?.nonce || "";
-            const role = "operator";
-            const scopes = ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing"];
-            const { device } = buildConnectDevice(identity, role, scopes, nonce);
-            gwWs.send(JSON.stringify({
-              type: "req", id: "__relay_connect__", method: "connect",
-              params: {
-                minProtocol: 3, maxProtocol: 3,
-                client: { id: "gateway-client", version: "1.0.0", platform: "linux", mode: "backend" },
-                role, scopes,
-                caps: ["thinking-events"], commands: [],
-                auth: agent.gateway_token ? { password: agent.gateway_token } : {},
-                device
-              }
-            }));
+            if (!relayConnectSent && typeof msg.payload?.nonce === "string" && msg.payload.nonce) {
+              relayConnectNonce = msg.payload.nonce;
+              sendRelayConnect();
+            }
             return;
           }
 
           if (msg.id === "__relay_connect__") {
             if (msg.ok) {
               handshakeComplete = true;
-              connectResult = msg.result || {};
+              connectPayload = msg.payload !== undefined ? msg.payload : (msg.result || {});
               // If client already sent connect while we were handshaking, respond now
               if (pendingClientConnect) {
-                ws.send(JSON.stringify({ id: pendingClientConnect.id, ok: true, result: connectResult }));
+                respondToClientConnect(pendingClientConnect.id);
                 pendingClientConnect = null;
               }
               // Flush any buffered non-connect client messages
@@ -808,8 +888,8 @@ function attachGatewayWS(server) {
           if (msg.method === "connect") {
             // Relay already authenticated (or is authenticating) — don't forward to gateway.
             // Respond with the relay's stored result so the client UI completes its auth flow.
-            if (handshakeComplete && connectResult) {
-              ws.send(JSON.stringify({ id: msg.id, ok: true, result: connectResult }));
+            if (handshakeComplete) {
+              respondToClientConnect(msg.id);
             } else {
               // Relay still handshaking — respond when ready
               pendingClientConnect = msg;
@@ -825,18 +905,22 @@ function attachGatewayWS(server) {
       });
 
       gwWs.on("close", (code, reason) => {
+        clearRelayConnectTimer();
         const reasonStr = reason ? reason.toString() : "";
-        console.error(`[gatewayProxy] WS relay gateway closed for ${agentId}: code=${code} reason=${reasonStr}`);
+        const phase = handshakeComplete ? "after auth" : "before auth";
+        console.error(`[gatewayProxy] WS relay gateway closed for ${agentId} ${phase}: code=${code} reason=${reasonStr}`);
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "system", message: `Gateway closed (${code}${reasonStr ? ": " + reasonStr : ""})` }));
           ws.close();
         }
       });
       gwWs.on("error", (err) => {
+        clearRelayConnectTimer();
         console.error(`[gatewayProxy] WS relay error for agent ${agentId}:`, err.message);
         if (ws.readyState === WebSocket.OPEN) ws.close();
       });
       ws.on("close", () => {
+        clearRelayConnectTimer();
         if (gwWs.readyState === WebSocket.OPEN || gwWs.readyState === WebSocket.CONNECTING) gwWs.close();
       });
 

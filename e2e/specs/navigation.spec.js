@@ -4,18 +4,18 @@ const { test, expect } = require("@playwright/test");
 test.describe("Marketing site navigation", () => {
   test("landing page loads with hero section", async ({ page }) => {
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: /open-source control plane/i })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /agent operations/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /deploy intelligence anywhere\./i })).toBeVisible();
+    await expect(page.getByText(/Fully open source\. Commercial self-hosting allowed\./i)).toBeVisible();
   });
 
-  test("features section is present", async ({ page }) => {
+  test("platform section is present", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator("#features")).toBeVisible();
+    await expect(page.locator("#platform")).toBeVisible();
   });
 
-  test("how-it-works section is present", async ({ page }) => {
+  test("workflow section is present", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator("#how-it-works")).toBeVisible();
+    await expect(page.locator("#workflow")).toBeVisible();
   });
 
   test("footer is present", async ({ page }) => {
@@ -37,11 +37,11 @@ test.describe("Marketing site navigation", () => {
     await expect(repoLink).toHaveAttribute("href", "https://github.com/solomon2773/nora");
   });
 
-  test("nav links to features scrolls", async ({ page }) => {
+  test("nav links to platform scrolls", async ({ page }) => {
     await page.goto("/");
-    await page.click('a[href="#features"]');
+    await page.click('a[href="#platform"]');
     await page.waitForTimeout(500);
-    await expect(page.locator("#features")).toBeInViewport();
+    await expect(page.locator("#platform")).toBeInViewport();
   });
 
   test("homepage exposes open-source usage page", async ({ page }) => {
@@ -64,9 +64,9 @@ test.describe("Open-source usage page", () => {
     await page.goto("/pricing");
     await expect(page.getByRole("heading", { name: /open source first/i })).toBeVisible();
     await expect(page.getByRole("heading", { name: /what apache 2\.0 means here/i })).toBeVisible();
-    await expect(page.getByText(/use the product commercially under apache 2\.0/i)).toBeVisible();
-    await expect(page.getByText(/teams can self-host it, use it commercially, and inspect real proof in the repo first/i)).toBeVisible();
-    await expect(page.locator('a[href="https://storage.solomontsao.com/setup.sh"]').first()).toBeVisible();
+    await expect(page.getByText(/use nora commercially inside your own company\./i)).toBeVisible();
+    await expect(page.getByText(/run nora in paas mode as your own hosted business or internal platform\./i)).toBeVisible();
+    await expect(page.locator('a[href="https://raw.githubusercontent.com/solomon2773/nora/master/setup.sh"]').first()).toBeVisible();
   });
 });
 
@@ -74,7 +74,7 @@ test.describe("Auth entry points", () => {
   test("login page is accessible", async ({ page }) => {
     await page.goto("/login");
     await expect(page).toHaveURL(/\/login/);
-    await expect(page.getByText(/agent operator console/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /log in to your operator account/i })).toBeVisible();
   });
 
   test("signup page is accessible", async ({ page }) => {
@@ -83,4 +83,3 @@ test.describe("Auth entry points", () => {
     await expect(page.getByRole("heading", { name: /create operator account/i })).toBeVisible();
   });
 });
-

@@ -1,28 +1,8 @@
 import { useState, useEffect } from "react";
-import { Key, Plus, Trash2, Loader2, Check, ChevronRight, Sparkles, AlertTriangle, RefreshCw } from "lucide-react";
+import { Key, Plus, Trash2, Loader2, Check, ChevronRight, AlertTriangle, RefreshCw } from "lucide-react";
 import { fetchWithAuth } from "../../lib/api";
 import { useToast } from "../Toast";
-
-const PROVIDER_META = {
-  anthropic: { name: "Anthropic", color: "bg-orange-100 text-orange-700 border-orange-200", icon: "🧠" },
-  openai: { name: "OpenAI", color: "bg-green-100 text-green-700 border-green-200", icon: "🤖" },
-  google: { name: "Google AI", color: "bg-blue-100 text-blue-700 border-blue-200", icon: "🔵" },
-  groq: { name: "Groq", color: "bg-purple-100 text-purple-700 border-purple-200", icon: "⚡" },
-  mistral: { name: "Mistral AI", color: "bg-indigo-100 text-indigo-700 border-indigo-200", icon: "🌀" },
-  deepseek: { name: "DeepSeek", color: "bg-cyan-100 text-cyan-700 border-cyan-200", icon: "🔍" },
-  openrouter: { name: "OpenRouter", color: "bg-pink-100 text-pink-700 border-pink-200", icon: "🔀" },
-  together: { name: "Together AI", color: "bg-yellow-100 text-yellow-700 border-yellow-200", icon: "🤝" },
-  cohere: { name: "Cohere", color: "bg-teal-100 text-teal-700 border-teal-200", icon: "💎" },
-  xai: { name: "xAI", color: "bg-gray-100 text-gray-700 border-gray-200", icon: "✖️" },
-  moonshot: { name: "Moonshot AI", color: "bg-violet-100 text-violet-700 border-violet-200", icon: "🌙" },
-  zai: { name: "Z.AI", color: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: "🇿" },
-  ollama: { name: "Ollama", color: "bg-slate-100 text-slate-700 border-slate-200", icon: "🦙" },
-  minimax: { name: "MiniMax", color: "bg-amber-100 text-amber-700 border-amber-200", icon: "🔶" },
-  "github-copilot": { name: "GitHub Copilot", color: "bg-gray-100 text-gray-700 border-gray-200", icon: "🐙" },
-  huggingface: { name: "Hugging Face", color: "bg-yellow-100 text-yellow-700 border-yellow-200", icon: "🤗" },
-  cerebras: { name: "Cerebras", color: "bg-red-100 text-red-700 border-red-200", icon: "🧬" },
-  nvidia: { name: "NVIDIA", color: "bg-lime-100 text-lime-700 border-lime-200", icon: "💚" },
-};
+import { ProviderLogo, formatModelLabel, getProviderMeta } from "./providerLogos";
 
 export default function LLMSetupWizard({ onComplete, compact = false }) {
   const [step, setStep] = useState(0); // 0 = select provider, 1 = enter key, 2 = done
@@ -166,13 +146,14 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
 
   // Step 1: Enter API key
   if (step === 1 && selectedProvider) {
-    const meta = PROVIDER_META[selectedProvider.id] || { name: selectedProvider.name, color: "bg-slate-100 text-slate-700", icon: "🔑" };
+    const meta = getProviderMeta(selectedProvider.id, selectedProvider.name);
     return (
       <div className="bg-white border border-slate-200 rounded-2xl p-6 sm:p-8 space-y-6">
         <div className="flex items-center gap-3">
           <button onClick={() => { setStep(0); setSelectedProvider(null); }} className="text-slate-400 hover:text-slate-600 transition-colors text-sm">← Back</button>
-          <div className={`px-3 py-1.5 rounded-lg text-sm font-bold border ${meta.color}`}>
-            {meta.icon} {meta.name}
+          <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold border ${meta.color}`}>
+            <ProviderLogo providerId={selectedProvider.id} className="h-4 w-4 shrink-0" />
+            <span>{meta.name}</span>
           </div>
         </div>
         <div className="space-y-4">
@@ -197,7 +178,7 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
               >
                 <option value="">Auto (latest)</option>
                 {selectedProvider.models.map((m) => (
-                  <option key={m} value={m}>{m}</option>
+                  <option key={m} value={m}>{formatModelLabel(m)}</option>
                 ))}
               </select>
             </div>
@@ -237,14 +218,16 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
           </div>
           <div className="space-y-2">
             {existing.map((p) => {
-              const meta = PROVIDER_META[p.provider] || { name: p.provider, color: "bg-slate-100 text-slate-700", icon: "🔑" };
+              const meta = getProviderMeta(p.provider, p.provider);
               return (
                 <div key={p.id} className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-50 border border-slate-100">
                   <div className="flex items-center gap-3">
-                    <span className="text-lg">{meta.icon}</span>
+                    <span className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center shrink-0">
+                      <ProviderLogo providerId={p.provider} className="h-[18px] w-[18px]" />
+                    </span>
                     <div>
                       <span className="text-sm font-bold text-slate-700">{meta.name}</span>
-                      {p.model && <span className="text-[10px] text-slate-400 ml-2">{p.model}</span>}
+                      {p.model && <span className="text-[10px] text-slate-400 ml-2">{formatModelLabel(p.model)}</span>}
                     </div>
                     <span className="text-[10px] font-mono text-slate-400">{p.api_key_masked}</span>
                     {p.is_default && (
@@ -279,7 +262,7 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
         </h4>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
           {available.map((p) => {
-            const meta = PROVIDER_META[p.id] || { name: p.name, color: "bg-slate-100 text-slate-700 border-slate-200", icon: "🔑" };
+            const meta = getProviderMeta(p.id, p.name);
             const isConfigured = configuredIds.has(p.id);
             return (
               <button
@@ -289,7 +272,9 @@ export default function LLMSetupWizard({ onComplete, compact = false }) {
                   isConfigured ? "opacity-50 border-green-200 bg-green-50" : "border-slate-200 bg-white hover:border-blue-300"
                 }`}
               >
-                <span className="text-lg">{meta.icon}</span>
+                <span className="w-8 h-8 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center shrink-0">
+                  <ProviderLogo providerId={p.id} className="h-[18px] w-[18px]" />
+                </span>
                 <div className="min-w-0">
                   <span className="text-xs font-bold text-slate-700 block truncate">{meta.name}</span>
                   {isConfigured && <span className="text-[9px] text-green-600 font-bold">Connected</span>}

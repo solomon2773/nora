@@ -13,7 +13,7 @@ import StatusBadge from "../../components/agents/StatusBadge";
 import { useToast } from "../../components/Toast";
 import { fetchWithAuth } from "../../lib/api";
 import {
-  Bot, Loader2, ArrowLeft, Terminal, MessagesSquare, ScrollText, Zap
+  Bot, Loader2, ArrowLeft, Terminal, MessagesSquare, ScrollText, Zap, X, Copy, Share2
 } from "lucide-react";
 
 const AgentTerminal = dynamic(() => import("../../components/AgentTerminal"), { ssr: false });
@@ -25,6 +25,14 @@ export default function AgentDetail() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+  const [showPublishDialog, setShowPublishDialog] = useState(false);
+  const [duplicateName, setDuplicateName] = useState("");
+  const [duplicateCloneMode, setDuplicateCloneMode] = useState("files_only");
+  const [publishName, setPublishName] = useState("");
+  const [publishDescription, setPublishDescription] = useState("");
+  const [publishCategory, setPublishCategory] = useState("General");
+  const [publishIssues, setPublishIssues] = useState([]);
   const toast = useToast();
 
   // Persistent history refs — survive tab switches
@@ -70,6 +78,33 @@ export default function AgentDetail() {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [id]);
 
+  useEffect(() => {
+    if (agent?.name) {
+      setDuplicateName(`${agent.name} Copy`);
+      setPublishName(agent.name);
+      setPublishDescription(
+        `Shared template built from ${agent.name}. Review the included instructions before installing.`
+      );
+      setPublishCategory("General");
+    }
+  }, [agent?.name]);
+
+  function openDuplicateDialog() {
+    setDuplicateCloneMode("files_only");
+    setDuplicateName(`${agent?.name || "OpenClaw Agent"} Copy`);
+    setShowDuplicateDialog(true);
+  }
+
+  function openPublishDialog() {
+    setPublishIssues([]);
+    setPublishName(agent?.name || "Untitled Template");
+    setPublishDescription(
+      `Shared template built from ${agent?.name || "this agent"}. Review the included instructions before installing.`
+    );
+    setPublishCategory("General");
+    setShowPublishDialog(true);
+  }
+
   async function handleAction(action) {
     setActionLoading(action);
     try {
@@ -99,6 +134,81 @@ export default function AgentDetail() {
     setActionLoading("");
   }
 
+  async function handleRename(nextName) {
+    const trimmedName = typeof nextName === "string" ? nextName.trim() : "";
+    if (!trimmedName) {
+      toast.error("Agent name is required");
+      return false;
+    }
+
+    setActionLoading("rename");
+    try {
+      const res = await fetchWithAuth(`/api/agents/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmedName }),
+      });
+
+      if (res.ok) {
+        const updated = await res.json();
+        setAgent((current) => ({ ...current, ...updated }));
+        setDuplicateName(`${updated.name} Copy`);
+        toast.success("Agent renamed");
+        return true;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      toast.error(data.error || "Failed to rename agent");
+      return false;
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to rename agent");
+      return false;
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function handleDuplicate() {
+    const trimmedName = duplicateName.trim();
+    if (!trimmedName) {
+      toast.error("Duplicate name is required");
+      return;
+    }
+
+    setActionLoading("duplicate");
+    try {
+      const res = await fetchWithAuth(`/api/agents/${id}/duplicate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          clone_mode: duplicateCloneMode,
+        }),
+      });
+
+      if (res.ok) {
+        const duplicated = await res.json();
+        setShowDuplicateDialog(false);
+        toast.success("Duplicate queued");
+        if (duplicated?.id) {
+          router.push(`/app/agents/${duplicated.id}`);
+        } else {
+          router.push("/app/agents");
+        }
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      toast.error(data.error || "Failed to duplicate agent");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to duplicate agent");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
   async function handleDelete() {
     setActionLoading("delete");
     try {
@@ -114,6 +224,54 @@ export default function AgentDetail() {
       toast.error("Failed to delete agent");
     }
     setActionLoading("");
+  }
+
+  async function handlePublish() {
+    const trimmedName = publishName.trim();
+    const trimmedDescription = publishDescription.trim();
+    const trimmedCategory = publishCategory.trim();
+    if (!trimmedName) {
+      toast.error("Template name is required");
+      return;
+    }
+    if (!trimmedDescription) {
+      toast.error("Description is required");
+      return;
+    }
+
+    setActionLoading("publish");
+    setPublishIssues([]);
+    try {
+      const res = await fetchWithAuth("/api/marketplace/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: id,
+          name: trimmedName,
+          description: trimmedDescription,
+          category: trimmedCategory || "General",
+          price: "Free",
+        }),
+      });
+
+      if (res.ok) {
+        setShowPublishDialog(false);
+        toast.success("Marketplace listing submitted for review");
+        router.push("/app/marketplace?tab=my");
+        return;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      if (Array.isArray(data.issues) && data.issues.length > 0) {
+        setPublishIssues(data.issues);
+      }
+      toast.error(data.error || "Failed to publish marketplace listing");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to publish marketplace listing");
+    } finally {
+      setActionLoading("");
+    }
   }
 
   if (loading) {
@@ -210,6 +368,8 @@ export default function AgentDetail() {
             <OverviewTab
               agent={agent}
               actionLoading={actionLoading}
+              onDuplicate={openDuplicateDialog}
+              onPublish={openPublishDialog}
               onStart={() => handleAction("start")}
               onStop={() => handleAction("stop")}
               onRestart={() => handleAction("restart")}
@@ -278,10 +438,236 @@ export default function AgentDetail() {
               agent={agent}
               actionLoading={actionLoading}
               onDelete={handleDelete}
+              onDuplicate={openDuplicateDialog}
+              onPublish={openPublishDialog}
+              onRename={handleRename}
             />
           )}
         </div>
       </div>
+
+      <DuplicateAgentDialog
+        open={showDuplicateDialog}
+        name={duplicateName}
+        cloneMode={duplicateCloneMode}
+        loading={actionLoading === "duplicate"}
+        sourceName={agent.name}
+        onNameChange={setDuplicateName}
+        onCloneModeChange={setDuplicateCloneMode}
+        onCancel={() => {
+          if (actionLoading === "duplicate") return;
+          setShowDuplicateDialog(false);
+        }}
+        onConfirm={handleDuplicate}
+      />
+
+      <PublishMarketplaceDialog
+        open={showPublishDialog}
+        name={publishName}
+        description={publishDescription}
+        category={publishCategory}
+        issues={publishIssues}
+        loading={actionLoading === "publish"}
+        sourceName={agent.name}
+        onNameChange={setPublishName}
+        onDescriptionChange={setPublishDescription}
+        onCategoryChange={setPublishCategory}
+        onCancel={() => {
+          if (actionLoading === "publish") return;
+          setShowPublishDialog(false);
+          setPublishIssues([]);
+        }}
+        onConfirm={handlePublish}
+      />
     </Layout>
+  );
+}
+
+const CLONE_MODE_COPY = {
+  files_only: "Copies only the OpenClaw agent files.",
+  files_plus_memory: "Copies the agent files plus OpenClaw workspace and session memory.",
+  full_clone: "Copies files, memory, and Nora wiring structure. Secrets are stripped and must be reconnected.",
+};
+
+function DuplicateAgentDialog({
+  open,
+  name,
+  cloneMode,
+  loading,
+  sourceName,
+  onNameChange,
+  onCloneModeChange,
+  onCancel,
+  onConfirm,
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full p-6 space-y-5">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 bg-slate-100 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Copy size={18} className="text-slate-700" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-bold text-slate-900">Duplicate Agent</h3>
+            <p className="text-sm text-slate-500 mt-1 leading-relaxed">
+              Create a new agent from <span className="font-semibold text-slate-700">{sourceName}</span>. Wiring structure can be copied, but secrets stay disconnected.
+            </p>
+          </div>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors" disabled={loading}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">New Agent Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => onNameChange(e.target.value)}
+              className="w-full text-sm border border-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Clone Depth</label>
+            <select
+              value={cloneMode}
+              onChange={(e) => onCloneModeChange(e.target.value)}
+              className="w-full text-sm border border-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="files_only">Files Only</option>
+              <option value="files_plus_memory">Files + Memory</option>
+              <option value="full_clone">Full Clone</option>
+            </select>
+            <p className="text-xs text-slate-500 mt-2">{CLONE_MODE_COPY[cloneMode]}</p>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 pt-2">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-sm font-bold text-slate-700 rounded-xl transition-all disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading || !name.trim()}
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-sm font-bold text-white rounded-xl transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50 inline-flex items-center gap-2"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
+            Duplicate
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PublishMarketplaceDialog({
+  open,
+  name,
+  description,
+  category,
+  issues,
+  loading,
+  sourceName,
+  onNameChange,
+  onDescriptionChange,
+  onCategoryChange,
+  onCancel,
+  onConfirm,
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
+      <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-xl w-full p-6 space-y-5">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Share2 size={18} className="text-blue-600" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-bold text-slate-900">Publish to Marketplace</h3>
+            <p className="text-sm text-slate-500 mt-1 leading-relaxed">
+              Share <span className="font-semibold text-slate-700">{sourceName}</span> as a community template. Nora publishes only the template files and runs a secret scan before submission.
+            </p>
+          </div>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors" disabled={loading}>
+            <X size={18} />
+          </button>
+        </div>
+
+        {issues.length > 0 && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
+            <p className="text-xs font-black uppercase tracking-widest text-red-700">Publish blocked</p>
+            <div className="mt-2 space-y-2">
+              {issues.map((issue, index) => (
+                <div key={`${issue.path}-${index}`} className="text-sm text-red-700">
+                  <span className="font-semibold">{issue.path}</span>: {issue.message}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-4">
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Template Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => onNameChange(e.target.value)}
+              className="w-full text-sm border border-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Category</label>
+            <input
+              type="text"
+              value={category}
+              onChange={(e) => onCategoryChange(e.target.value)}
+              className="w-full text-sm border border-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => onDescriptionChange(e.target.value)}
+              rows={5}
+              className="w-full text-sm border border-slate-200 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+          Credentials, session memory, integrations, and channels are not published. If Nora detects `.env`, token-like values, or private keys, the submission is blocked until you remove them.
+        </div>
+
+        <div className="flex items-center justify-end gap-3 pt-2">
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-sm font-bold text-slate-700 rounded-xl transition-all disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading || !name.trim() || !description.trim()}
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-sm font-bold text-white rounded-xl transition-all shadow-lg shadow-blue-500/20 disabled:opacity-50 inline-flex items-center gap-2"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />}
+            Submit for Review
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

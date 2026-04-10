@@ -7,9 +7,8 @@
 #   — or —
 #   bash setup.sh        (from inside the repo)
 #
-# Clones the repo (if needed), generates secrets, configures
-# the platform, collects an LLM key, starts Nora, deploys
-# the first agent, and injects the key — all in one shot.
+# Clones the repo (if needed), generates secrets and database
+# credentials, configures the platform, and starts Nora.
 # ============================================================
 
 set -euo pipefail
@@ -17,6 +16,7 @@ set -euo pipefail
 ENV_FILE=".env"
 PUBLIC_NGINX_TEMPLATE="infra/nginx_public.conf.template"
 TLS_NGINX_TEMPLATE="infra/nginx_tls.conf"
+PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE="infra/docker-compose.public-prod.yml"
 TLS_COMPOSE_OVERRIDE_TEMPLATE="infra/docker-compose.public-tls.yml"
 PUBLIC_NGINX_CONF="nginx.public.conf"
 COMPOSE_OVERRIDE_FILE="docker-compose.override.yml"
@@ -39,6 +39,11 @@ write_public_nginx_conf() {
   local template="$1"
   local domain="$2"
   sed "s/\${DOMAIN}/${domain}/g" "$template" > "$PUBLIC_NGINX_CONF"
+}
+
+write_compose_override() {
+  local template="$1"
+  cp "$template" "$COMPOSE_OVERRIDE_FILE"
 }
 
 clear_public_access_artifacts() {
@@ -235,8 +240,6 @@ ok "Docker daemon is running"
 install_openssl
 ok "openssl found"
 
-HAS_CURL=true
-
 # ── Clone repo if running via curl pipe ──────────────────────
 
 if [ ! -f "docker-compose.yml" ] && [ ! -f "compose.yml" ] && [ ! -f "compose.yaml" ]; then
@@ -273,10 +276,14 @@ header "Generating Secrets"
 JWT_SECRET=$(openssl rand -hex 32)
 ENCRYPTION_KEY=$(openssl rand -hex 32)
 NEXTAUTH_SECRET=$(openssl rand -hex 32)
+DB_USER="nora"
+DB_NAME="nora"
+DB_PASSWORD=$(openssl rand -hex 24)
 
 ok "JWT_SECRET      (64-char hex)"
 ok "ENCRYPTION_KEY  (64-char hex — AES-256-GCM)"
 ok "NEXTAUTH_SECRET (64-char hex)"
+ok "DB_PASSWORD     (48-char hex)"
 
 # ── Platform mode ────────────────────────────────────────────
 
@@ -310,49 +317,94 @@ else
   ok "Self-hosted: ${MAX_VCPU} vCPU, ${MAX_RAM_MB}MB RAM, ${MAX_DISK_GB}GB disk, ${MAX_AGENTS} agents"
 fi
 
-# ── Provisioner backend ──────────────────────────────────────
+# ── Deploy backends ──────────────────────────────────────────
 
-header "Provisioner Backend"
+header "Deploy Backends"
 
-printf "  How should Nora provision agent containers?\n"
-printf "    1) Docker (default) — Docker-in-Docker via local socket\n"
-printf "    2) Proxmox — LXC containers via Proxmox REST API\n"
-printf "    3) Kubernetes — Pods via Kubernetes API\n"
-printf "  Select [1/2/3]: "
-read -r backend_answer < /dev/tty
-
-PROVISIONER_BACKEND="docker"
+DOCKER_BACKEND_ENABLED="true"
+K8S_BACKEND_ENABLED="false"
+PROXMOX_BACKEND_ENABLED="false"
+NEMOCLAW_BACKEND_ENABLED="false"
+K8S_NAMESPACE="openclaw-agents"
+K8S_EXPOSURE_MODE="cluster-ip"
+K8S_RUNTIME_NODE_PORT=""
+K8S_GATEWAY_NODE_PORT=""
+K8S_RUNTIME_HOST=""
 PROXMOX_API_URL=""
 PROXMOX_TOKEN_ID=""
 PROXMOX_TOKEN_SECRET=""
 PROXMOX_NODE="pve"
 PROXMOX_TEMPLATE="ubuntu-22.04-standard"
+NVIDIA_API_KEY=""
 
-case "$backend_answer" in
-  2)
-    PROVISIONER_BACKEND="proxmox"
-    echo ""
-    printf "  Proxmox API URL (e.g., https://proxmox.local:8006/api2/json): "
-    read -r PROXMOX_API_URL < /dev/tty
-    printf "  Proxmox Token ID (e.g., user@pam!tokenname): "
-    read -r PROXMOX_TOKEN_ID < /dev/tty
-    printf "  Proxmox Token Secret: "
-    read -r PROXMOX_TOKEN_SECRET < /dev/tty
-    printf "  Proxmox Node [pve]: "
-    read -r input < /dev/tty; PROXMOX_NODE="${input:-pve}"
-    printf "  Proxmox Template [ubuntu-22.04-standard]: "
-    read -r input < /dev/tty; PROXMOX_TEMPLATE="${input:-ubuntu-22.04-standard}"
-    ok "Proxmox backend configured"
-    ;;
-  3)
-    PROVISIONER_BACKEND="k8s"
-    ok "Kubernetes backend — ensure kubeconfig is available in the worker container"
-    ;;
-  *)
-    PROVISIONER_BACKEND="docker"
-    ok "Docker backend (default)"
-    ;;
-esac
+printf "  Enable Docker backend for local socket provisioning? [Y/n] "
+read -r docker_backend_answer < /dev/tty
+if [[ "$docker_backend_answer" =~ ^[Nn]$ ]]; then
+  DOCKER_BACKEND_ENABLED="false"
+  info "Docker backend disabled"
+else
+  ok "Docker backend enabled"
+fi
+
+printf "  Enable Kubernetes backend? [y/N] "
+read -r k8s_backend_answer < /dev/tty
+if [[ "$k8s_backend_answer" =~ ^[Yy]$ ]]; then
+  K8S_BACKEND_ENABLED="true"
+  ok "Kubernetes backend enabled — ensure kubeconfig is available in backend-api and worker-provisioner"
+else
+  info "Kubernetes backend disabled"
+fi
+
+printf "  Enable Proxmox backend? [y/N] "
+read -r proxmox_backend_answer < /dev/tty
+if [[ "$proxmox_backend_answer" =~ ^[Yy]$ ]]; then
+  PROXMOX_BACKEND_ENABLED="true"
+  echo ""
+  printf "  Proxmox API URL (e.g., https://proxmox.local:8006/api2/json): "
+  read -r PROXMOX_API_URL < /dev/tty
+  printf "  Proxmox Token ID (e.g., user@pam!tokenname): "
+  read -r PROXMOX_TOKEN_ID < /dev/tty
+  printf "  Proxmox Token Secret: "
+  read -r PROXMOX_TOKEN_SECRET < /dev/tty
+  printf "  Proxmox Node [pve]: "
+  read -r input < /dev/tty; PROXMOX_NODE="${input:-pve}"
+  printf "  Proxmox Template [ubuntu-22.04-standard]: "
+  read -r input < /dev/tty; PROXMOX_TEMPLATE="${input:-ubuntu-22.04-standard}"
+  ok "Proxmox backend configured"
+else
+  info "Proxmox backend disabled"
+fi
+
+printf "  Enable NemoClaw backend? [y/N] "
+read -r nemoclaw_backend_answer < /dev/tty
+if [[ "$nemoclaw_backend_answer" =~ ^[Yy]$ ]]; then
+  NEMOCLAW_BACKEND_ENABLED="true"
+  printf "  NVIDIA API key [optional during setup]: "
+  read -r nvidia_key < /dev/tty
+  if [ -n "$nvidia_key" ]; then
+    NVIDIA_API_KEY="$nvidia_key"
+    ok "NemoClaw backend enabled with NVIDIA API key"
+  else
+    warn "NemoClaw enabled without NVIDIA_API_KEY — add it to .env later if needed"
+  fi
+else
+  info "NemoClaw backend disabled"
+fi
+
+enabled_backends=()
+[ "$DOCKER_BACKEND_ENABLED" = "true" ] && enabled_backends+=("docker")
+[ "$K8S_BACKEND_ENABLED" = "true" ] && enabled_backends+=("k8s")
+[ "$PROXMOX_BACKEND_ENABLED" = "true" ] && enabled_backends+=("proxmox")
+[ "$NEMOCLAW_BACKEND_ENABLED" = "true" ] && enabled_backends+=("nemoclaw")
+
+if [ ${#enabled_backends[@]} -eq 0 ]; then
+  warn "No deploy backends selected — enabling Docker so Nora can deploy agents."
+  DOCKER_BACKEND_ENABLED="true"
+  enabled_backends=("docker")
+fi
+
+ENABLED_BACKENDS="$(IFS=,; echo "${enabled_backends[*]}")"
+ok "Enabled backends: ${ENABLED_BACKENDS}"
 
 # ── Access mode ──────────────────────────────────────────────
 
@@ -377,7 +429,7 @@ CAN_START_NORA=true
 case "$access_answer" in
   2|3)
     while true; do
-      printf "  Public domain (e.g., stage.orionconnect.io): "
+      printf "  Public domain (hosted default: nora.solomontsao.com; self-hosted: your own domain): "
       read -r PUBLIC_DOMAIN < /dev/tty
       if [[ "$PUBLIC_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] && [[ "$PUBLIC_DOMAIN" == *.* ]]; then
         break
@@ -394,12 +446,12 @@ case "$access_answer" in
         PUBLIC_SCHEME="https"
       fi
       write_public_nginx_conf "$PUBLIC_NGINX_TEMPLATE" "$PUBLIC_DOMAIN"
-      rm -f "$COMPOSE_OVERRIDE_FILE"
+      write_compose_override "$PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE"
       ok "Public proxy mode — nginx will serve ${PUBLIC_DOMAIN} on port 80"
     else
       PUBLIC_SCHEME="https"
       write_public_nginx_conf "$TLS_NGINX_TEMPLATE" "$PUBLIC_DOMAIN"
-      cp "$TLS_COMPOSE_OVERRIDE_TEMPLATE" "$COMPOSE_OVERRIDE_FILE"
+      write_compose_override "$TLS_COMPOSE_OVERRIDE_TEMPLATE"
       if [ ! -f "/etc/letsencrypt/live/${PUBLIC_DOMAIN}/fullchain.pem" ] || [ ! -f "/etc/letsencrypt/live/${PUBLIC_DOMAIN}/privkey.pem" ]; then
         CAN_START_NORA=false
         warn "TLS certs not found for ${PUBLIC_DOMAIN}."
@@ -460,80 +512,12 @@ while true; do
   break
 done
 
-# ── LLM Provider Key ─────────────────────────────────────────
+# ── LLM Provider ─────────────────────────────────────────────
 
-header "LLM Provider (Required for your first agent)"
+header "LLM Provider"
 
-printf "  Choose a provider to connect to your first agent:\n\n"
-printf "    1) Google AI (Gemini)          6) OpenRouter\n"
-printf "    2) Anthropic (Claude)          7) Together AI\n"
-printf "    3) OpenAI (GPT)               8) Groq\n"
-printf "    4) DeepSeek                    9) Mistral\n"
-printf "    5) xAI (Grok)                10) Skip — I'll add one later\n"
-printf "\n  Select [1-10]: "
-read -r llm_choice < /dev/tty
-
-LLM_PROVIDER=""
-LLM_API_KEY=""
-LLM_MODEL=""
-FIRST_AGENT_NAME=""
-
-case "$llm_choice" in
-  1)  LLM_PROVIDER="google";     LLM_MODEL="gemini-2.0-flash" ;;
-  2)  LLM_PROVIDER="anthropic";  LLM_MODEL="claude-sonnet-4-5-20250514" ;;
-  3)  LLM_PROVIDER="openai";     LLM_MODEL="gpt-5.4" ;;
-  4)  LLM_PROVIDER="deepseek";   LLM_MODEL="deepseek-chat" ;;
-  5)  LLM_PROVIDER="xai";        LLM_MODEL="grok-3" ;;
-  6)  LLM_PROVIDER="openrouter"; LLM_MODEL="openrouter/auto" ;;
-  7)  LLM_PROVIDER="together";   LLM_MODEL="meta-llama/Llama-3-70b-chat-hf" ;;
-  8)  LLM_PROVIDER="groq";       LLM_MODEL="llama-3.3-70b-versatile" ;;
-  9)  LLM_PROVIDER="mistral";    LLM_MODEL="mistral-large-latest" ;;
-  *)  LLM_PROVIDER="" ;;
-esac
-
-if [ -n "$LLM_PROVIDER" ]; then
-  printf "  %s API key: " "$LLM_PROVIDER"
-  read -r llm_key_input < /dev/tty
-  if [ -n "$llm_key_input" ]; then
-    LLM_API_KEY="$llm_key_input"
-    ok "$LLM_PROVIDER key saved (model: $LLM_MODEL)"
-
-    printf "\n  Name for your first agent [nora]: "
-    read -r agent_name_input < /dev/tty
-    FIRST_AGENT_NAME="${agent_name_input:-nora}"
-    ok "Will deploy agent '$FIRST_AGENT_NAME' after startup"
-  else
-    warn "No key entered — skipping auto-deploy"
-    LLM_PROVIDER=""
-  fi
-else
-  info "Skipped — add an LLM key from Settings after login"
-fi
-
-# ── NemoClaw / NVIDIA ────────────────────────────────────────
-
-header "NemoClaw (Optional)"
-
-NEMOCLAW_ENABLED="false"
-NVIDIA_API_KEY=""
-
-printf "  Enable NVIDIA NemoClaw sandboxed agents?\n"
-printf "  (Requires NVIDIA API key from build.nvidia.com)\n"
-printf "  Enable NemoClaw? [y/N] "
-read -r nemoclaw_answer < /dev/tty
-if [[ "$nemoclaw_answer" =~ ^[Yy]$ ]]; then
-  NEMOCLAW_ENABLED="true"
-  printf "  NVIDIA API key: "
-  read -r nvidia_key < /dev/tty
-  if [ -n "$nvidia_key" ]; then
-    NVIDIA_API_KEY="$nvidia_key"
-    ok "NemoClaw enabled with API key"
-  else
-    warn "NemoClaw enabled but no key — add NVIDIA_API_KEY to .env later"
-  fi
-else
-  info "NemoClaw disabled (enable later in .env)"
-fi
+info "Setup no longer creates an agent automatically."
+info "Add your LLM provider key from Settings after login."
 
 # ── OAuth (optional) ─────────────────────────────────────────
 
@@ -572,6 +556,13 @@ if [ -z "$GOOGLE_CLIENT_ID" ] && [ -z "$GITHUB_CLIENT_ID" ]; then
   info "No OAuth configured — users will sign up with email/password"
 fi
 
+OAUTH_LOGIN_ENABLED="false"
+NEXT_PUBLIC_OAUTH_LOGIN_ENABLED="false"
+if [ -n "$GOOGLE_CLIENT_ID" ] || [ -n "$GITHUB_CLIENT_ID" ]; then
+  OAUTH_LOGIN_ENABLED="true"
+  NEXT_PUBLIC_OAUTH_LOGIN_ENABLED="true"
+fi
+
 # ── Write .env ───────────────────────────────────────────────
 
 header "Writing Configuration"
@@ -595,9 +586,9 @@ DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
 
 # ── Database (defaults work with Docker Compose) ─────────────
 DB_HOST=postgres
-DB_USER=platform
-DB_PASSWORD=platform
-DB_NAME=platform
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+DB_NAME=${DB_NAME}
 DB_PORT=5432
 
 # ── Redis (defaults work with Docker Compose) ────────────────
@@ -610,6 +601,8 @@ NGINX_CONFIG_FILE=${NGINX_CONFIG_FILE}
 NGINX_HTTP_PORT=${NGINX_HTTP_PORT}
 
 # ── OAuth ────────────────────────────────────────────────────
+OAUTH_LOGIN_ENABLED=${OAUTH_LOGIN_ENABLED}
+NEXT_PUBLIC_OAUTH_LOGIN_ENABLED=${NEXT_PUBLIC_OAUTH_LOGIN_ENABLED}
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
 GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
@@ -633,18 +626,24 @@ STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_PRO=
 STRIPE_PRICE_ENTERPRISE=
 
-# ── Provisioner ──────────────────────────────────────────────
-PROVISIONER_BACKEND=${PROVISIONER_BACKEND}
+# ── Deploy backends ──────────────────────────────────────────
+ENABLED_BACKENDS=${ENABLED_BACKENDS}
 
-# ── Proxmox (only when PROVISIONER_BACKEND=proxmox) ──────────
+# ── Kubernetes (when ENABLED_BACKENDS includes k8s) ──────────
+K8S_NAMESPACE=${K8S_NAMESPACE}
+K8S_EXPOSURE_MODE=${K8S_EXPOSURE_MODE}
+K8S_RUNTIME_NODE_PORT=${K8S_RUNTIME_NODE_PORT}
+K8S_GATEWAY_NODE_PORT=${K8S_GATEWAY_NODE_PORT}
+K8S_RUNTIME_HOST=${K8S_RUNTIME_HOST}
+
+# ── Proxmox (when ENABLED_BACKENDS includes proxmox) ─────────
 PROXMOX_API_URL=${PROXMOX_API_URL}
 PROXMOX_TOKEN_ID=${PROXMOX_TOKEN_ID}
 PROXMOX_TOKEN_SECRET=${PROXMOX_TOKEN_SECRET}
 PROXMOX_NODE=${PROXMOX_NODE}
 PROXMOX_TEMPLATE=${PROXMOX_TEMPLATE}
 
-# ── NemoClaw / NVIDIA ────────────────────────────────────────
-NEMOCLAW_ENABLED=${NEMOCLAW_ENABLED}
+# ── NemoClaw / NVIDIA (when ENABLED_BACKENDS includes nemoclaw) ──
 NVIDIA_API_KEY=${NVIDIA_API_KEY}
 NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
 NEMOCLAW_SANDBOX_IMAGE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw
@@ -679,11 +678,14 @@ else
 fi
 printf "  Secrets:      auto-generated (JWT, AES, NextAuth)\n"
 printf "  Database:     PostgreSQL 15 (Docker Compose)\n"
+printf "  DB Access:    %s / auto-generated / %s (.env)\n" "$DB_USER" "$DB_NAME"
 printf "  Redis:        Redis 7 (Docker Compose)\n"
 if [ "$ACCESS_MODE" = "local" ]; then
   printf "  Access:       Local only\n"
+  printf "  Runtime:      Development services\n"
 else
   printf "  Access:       %s\n" "$NEXTAUTH_URL"
+  printf "  Runtime:      Production services\n"
   if [ "$ACCESS_MODE" = "public-tls" ]; then
     printf "  TLS:          Terminated by nginx on this host\n"
   else
@@ -698,17 +700,7 @@ else
   printf "  Limits:       %svCPU / %sMB / %sGB / %s agents\n" "$MAX_VCPU" "$MAX_RAM_MB" "$MAX_DISK_GB" "$MAX_AGENTS"
 fi
 
-case "$PROVISIONER_BACKEND" in
-  proxmox)  printf "  Provisioner:  Proxmox LXC\n" ;;
-  k8s)      printf "  Provisioner:  Kubernetes\n" ;;
-  *)        printf "  Provisioner:  Docker (local socket)\n" ;;
-esac
-
-if [ "$NEMOCLAW_ENABLED" = "true" ]; then
-  printf "  NemoClaw:     Enabled (NVIDIA Nemotron)\n"
-else
-  printf "  NemoClaw:     Disabled\n"
-fi
+printf "  Backends:     %s\n" "$ENABLED_BACKENDS"
 
 if [ -n "$GOOGLE_CLIENT_ID" ] || [ -n "$GITHUB_CLIENT_ID" ]; then
   providers=""
@@ -719,12 +711,7 @@ else
   printf "  OAuth:        Not configured (email/password only)\n"
 fi
 
-if [ -n "$LLM_PROVIDER" ]; then
-  printf "  LLM:          %s (%s)\n" "$LLM_PROVIDER" "$LLM_MODEL"
-  printf "  First Agent:  %s\n" "$FIRST_AGENT_NAME"
-else
-  printf "  LLM:          Not configured (add from Settings)\n"
-fi
+printf "  LLM:          Configure from Settings after login\n"
 
 echo ""
 
@@ -734,7 +721,7 @@ printf "${CYAN}[info]${NC}  Start Nora now? [Y/n] "
 read -r start_answer < /dev/tty
 if [[ "$start_answer" =~ ^[Nn]$ ]]; then
   echo ""
-  info "Run 'docker compose up -d' when you're ready to start."
+  info "Run 'docker compose up -d --build' when you're ready to start."
   echo ""
   exit 0
 fi
@@ -742,7 +729,7 @@ fi
 if [ "$CAN_START_NORA" != true ]; then
   echo ""
   warn "Startup skipped until the public TLS certificate is installed."
-  info "After certs exist, run 'docker compose up -d'."
+  info "After certs exist, run 'docker compose up -d --build'."
   echo ""
   exit 0
 fi
@@ -757,153 +744,11 @@ if docker compose ps --quiet 2>/dev/null | grep -q .; then
 fi
 
 echo ""
-info "Starting Nora (docker compose up -d)..."
+info "Starting Nora (docker compose up -d --build)..."
 echo ""
-docker compose up -d
+docker compose up -d --build
 echo ""
 ok "Nora is running!"
-
-# ── Auto-deploy first agent ─────────────────────────────────
-
-if [ -n "$LLM_PROVIDER" ] && [ -n "$LLM_API_KEY" ] && [ -n "$FIRST_AGENT_NAME" ] && [ "$HAS_CURL" = true ]; then
-  if [ -z "$DEFAULT_ADMIN_EMAIL" ] || [ -z "$DEFAULT_ADMIN_PASSWORD" ]; then
-    info "Skipping auto-deploy because no bootstrap admin was configured. Create an operator account first, then add your LLM key and deploy manually."
-  else
-    header "Deploying First Agent"
-
-    API_BASE="http://127.0.0.1:4100"
-    MAX_WAIT=90
-    WAITED=0
-
-    info "Waiting for API to be ready..."
-    while [ $WAITED -lt $MAX_WAIT ]; do
-      if curl -sf "${API_BASE}/health" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 2
-      WAITED=$((WAITED + 2))
-      printf "."
-    done
-    echo ""
-
-    if [ $WAITED -ge $MAX_WAIT ]; then
-      warn "API didn't respond within ${MAX_WAIT}s — skipping auto-deploy"
-      info "After services start, log in and deploy manually."
-      echo ""
-      exit 0
-    fi
-
-    ok "API is ready"
-
-    # Login as admin — retry a few times since DB migration and admin seeding
-    # run asynchronously after the health endpoint is already responding
-    info "Logging in as $DEFAULT_ADMIN_EMAIL..."
-    TOKEN=""
-    LOGIN_ATTEMPTS=0
-    LOGIN_MAX=10
-    while [ $LOGIN_ATTEMPTS -lt $LOGIN_MAX ] && [ -z "$TOKEN" ]; do
-      LOGIN_RESPONSE=$(curl -sf -X POST "${API_BASE}/auth/login" \
-        -H "Content-Type: application/json" \
-        -d "{\"email\":\"${DEFAULT_ADMIN_EMAIL}\",\"password\":\"${DEFAULT_ADMIN_PASSWORD}\"}" 2>&1) || true
-
-      TOKEN=$(echo "$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | head -1 | cut -d'"' -f4)
-
-      if [ -z "$TOKEN" ]; then
-        LOGIN_ATTEMPTS=$((LOGIN_ATTEMPTS + 1))
-        sleep 3
-        printf "."
-      fi
-    done
-    if [ -z "$TOKEN" ]; then echo ""; fi
-
-    if [ -z "$TOKEN" ]; then
-      warn "Could not authenticate after ${LOGIN_MAX} attempts."
-      info "Log in manually at ${NEXTAUTH_URL} and deploy your agent."
-      echo ""
-      exit 0
-    fi
-    ok "Authenticated"
-
-    # Save LLM key
-    info "Saving $LLM_PROVIDER API key..."
-    PROVIDER_RESPONSE=$(curl -sf -X POST "${API_BASE}/llm-providers" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer ${TOKEN}" \
-      -d "{\"provider\":\"${LLM_PROVIDER}\",\"apiKey\":\"${LLM_API_KEY}\",\"model\":\"${LLM_MODEL}\"}" 2>&1) || true
-
-  if echo "$PROVIDER_RESPONSE" | grep -q '"id"'; then
-    ok "$LLM_PROVIDER key stored (encrypted, AES-256-GCM)"
-  else
-    warn "Could not save LLM key — add it from Settings > LLM Providers"
-  fi
-
-  # Deploy agent
-  info "Deploying agent '$FIRST_AGENT_NAME'..."
-  DEPLOY_RESPONSE=$(curl -sf -X POST "${API_BASE}/agents/deploy" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -d "{\"name\":\"${FIRST_AGENT_NAME}\"}" 2>&1) || true
-
-  AGENT_ID=$(echo "$DEPLOY_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
-
-  if [ -n "$AGENT_ID" ]; then
-    ok "Agent queued for deployment (id: ${AGENT_ID:0:8}...)"
-
-    # Wait for agent to come up, then sync key
-    info "Waiting for agent to start (this may take 30-60s)..."
-    AGENT_WAIT=0
-    AGENT_MAX=120
-    AGENT_RUNNING=false
-    while [ $AGENT_WAIT -lt $AGENT_MAX ]; do
-      AGENT_STATUS=$(curl -sf -X GET "${API_BASE}/agents/${AGENT_ID}" \
-        -H "Authorization: Bearer ${TOKEN}" 2>&1) || true
-      if echo "$AGENT_STATUS" | grep -q '"status":"running"'; then
-        AGENT_RUNNING=true
-        break
-      fi
-      sleep 5
-      AGENT_WAIT=$((AGENT_WAIT + 5))
-      printf "."
-    done
-    echo ""
-
-    if [ "$AGENT_RUNNING" = true ]; then
-      ok "Agent is running!"
-
-      # The LLM key was injected as an env var at container creation time.
-      # The startup CMD writes auth-profiles.json and sets the model automatically.
-      # No explicit sync needed — just wait for the gateway to initialize.
-      info "Waiting for gateway to initialize..."
-      GW_WAIT=0
-      GW_MAX=60
-      GW_HEALTHY=false
-      while [ $GW_WAIT -lt $GW_MAX ]; do
-        GW_STATUS=$(curl -sf "${API_BASE}/agents/${AGENT_ID}/gateway/status" \
-          -H "Authorization: Bearer ${TOKEN}" 2>&1) || true
-        if echo "$GW_STATUS" | grep -q '"ok":true'; then
-          GW_HEALTHY=true
-          break
-        fi
-        sleep 5
-        GW_WAIT=$((GW_WAIT + 5))
-        printf "."
-      done
-      echo ""
-
-      if [ "$GW_HEALTHY" = true ]; then
-        ok "Gateway is online and model is configured"
-      else
-        warn "Gateway may still be starting — refresh the Status tab in a moment"
-      fi
-    else
-      warn "Agent is still provisioning — it will be ready shortly"
-      info "Sync your LLM key from Settings > LLM Providers after it starts"
-    fi
-  else
-    warn "Could not deploy agent — deploy from the dashboard"
-  fi
-  fi
-fi
 
 # ── Done ─────────────────────────────────────────────────────
 
@@ -918,11 +763,7 @@ else
 fi
 echo ""
 
-if [ -n "$FIRST_AGENT_NAME" ] && [ -n "$AGENT_ID" ]; then
-  ok "Your agent '$FIRST_AGENT_NAME' is deploying — open the Chat tab to start talking!"
-else
-  info "Go to Deploy to create your first agent."
-fi
+info "Next: sign in, add an LLM provider in Settings, then open Deploy when you're ready to create your first agent."
 
 echo ""
 info "Useful commands:"
@@ -930,10 +771,12 @@ echo "    docker compose logs -f              # watch logs"
 echo "    docker compose logs -f backend-api  # single service"
 echo "    docker compose down                 # stop everything"
 echo ""
-info "Need a different path?"
+info "Useful links:"
 echo "    Quick start:        https://github.com/solomon2773/nora#quick-start"
-echo "    Support paths:      https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
-echo "    Rollout help:       https://github.com/solomon2773/nora/discussions"
-echo "    Hosted evaluation:  https://nora.solomontsao.com/signup"
-echo "    Pricing / paths:    https://nora.solomontsao.com/pricing"
+echo "    GitHub repo:        https://github.com/solomon2773/nora"
+echo "    Public site:        https://nora.solomontsao.com"
+echo "    Log in:             https://nora.solomontsao.com/login"
+echo "    Create account:     https://nora.solomontsao.com/signup"
+echo "    OSS / PaaS mode:    https://nora.solomontsao.com/pricing"
+echo "    Start paths:        https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
 echo ""

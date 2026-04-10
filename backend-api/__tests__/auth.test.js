@@ -9,7 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "secret";
 process.env.JWT_SECRET = JWT_SECRET;
 process.env.GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "google-client-id";
 
-const mockDb = { query: jest.fn() };
+const mockDb = { query: jest.fn(), connect: jest.fn() };
 jest.mock("../db", () => mockDb);
 jest.mock("../redisQueue", () => ({ addDeploymentJob: jest.fn(), getDLQJobs: jest.fn(), retryDLQJob: jest.fn() }));
 jest.mock("../scheduler", () => ({ selectNode: jest.fn().mockResolvedValue({ name: "worker-01" }) }));
@@ -100,6 +100,11 @@ function jsonResponse(body, ok = true, status = ok ? 200 : 400) {
 
 beforeEach(() => {
   mockDb.query.mockReset();
+  mockDb.connect.mockReset();
+  mockDb.connect.mockResolvedValue({
+    query: mockDb.query,
+    release: jest.fn(),
+  });
   process.env.OAUTH_LOGIN_ENABLED = "false";
   process.env.GOOGLE_CLIENT_ID = "google-client-id";
   global.fetch = jest.fn();
@@ -130,10 +135,15 @@ describe("POST /auth/signup", () => {
     expect(res.body.error).toMatch(/8 characters/i);
   });
 
-  it("creates user and returns id and email on valid signup", async () => {
-    mockDb.query.mockResolvedValueOnce({
-      rows: [{ id: "uuid-1", email: "new@example.com" }],
-    });
+  it("creates the first registered user as admin", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: false }] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "uuid-1", email: "new@example.com", role: "admin" }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
       .post("/auth/signup")
@@ -141,12 +151,36 @@ describe("POST /auth/signup", () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("id", "uuid-1");
     expect(res.body).toHaveProperty("email", "new@example.com");
+    expect(res.body).toHaveProperty("role", "admin");
+  });
+
+  it("creates additional registered users as regular users", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: true }] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "uuid-2", email: "next@example.com", role: "user" }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/auth/signup")
+      .send({ email: "next@example.com", password: "validpassword123" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("role", "user");
   });
 
   it("returns 500 on duplicate email (DB unique constraint)", async () => {
     const err = new Error("duplicate key value violates unique constraint");
     err.code = "23505";
-    mockDb.query.mockRejectedValueOnce(err);
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: true }] })
+      .mockRejectedValueOnce(err)
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
       .post("/auth/signup")
@@ -185,6 +219,38 @@ describe("POST /auth/login", () => {
 
     const decoded = jwt.verify(res.body.token, JWT_SECRET);
     expect(decoded).toHaveProperty("id", "uuid-1");
+  });
+});
+
+describe("Protected auth routes", () => {
+  it("rejects password changes that do not meet the signup password policy", async () => {
+    const token = jwt.sign({ id: "user-1", role: "user" }, JWT_SECRET, { expiresIn: "1h" });
+
+    const res = await request(app)
+      .patch("/auth/password")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ currentPassword: "currentpassword123", newPassword: "short" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/at least 8 characters/i);
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("accepts profile avatar payloads that fit within the documented upload window", async () => {
+    const token = jwt.sign({ id: "user-1", role: "user" }, JWT_SECRET, { expiresIn: "1h" });
+    const avatar = `data:image/png;base64,${"a".repeat(250000)}`;
+
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{ name: "User One", avatar }],
+    });
+
+    const res = await request(app)
+      .patch("/auth/profile")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ avatar });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ name: "User One", avatar });
   });
 });
 
@@ -258,7 +324,11 @@ describe("OAuth hardening", () => {
     mockDb.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: "user-1", email: "user@example.com", role: "user", name: "Google User" }] });
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: true }] })
+      .mockResolvedValueOnce({ rows: [{ id: "user-1", email: "user@example.com", role: "user", name: "Google User" }] })
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
       .post("/auth/oauth-login")
@@ -275,19 +345,49 @@ describe("OAuth hardening", () => {
       expect.stringContaining("https://oauth2.googleapis.com/tokeninfo?id_token=google-id-token"),
       undefined
     );
-    expect(mockDb.query).toHaveBeenNthCalledWith(
-      1,
+    expect(mockDb.query).toHaveBeenNthCalledWith(3,
       "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE provider = $1 AND provider_id = $2",
       ["google", "google-sub-123"]
     );
-    expect(mockDb.query).toHaveBeenNthCalledWith(
-      2,
+    expect(mockDb.query).toHaveBeenNthCalledWith(4,
       "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE email = $1",
       ["user@example.com"]
     );
 
     const decoded = jwt.verify(res.body.token, JWT_SECRET);
     expect(decoded).toMatchObject({ id: "user-1", email: "user@example.com", role: "user" });
+  });
+
+  it("assigns admin role to the first OAuth-created user", async () => {
+    process.env.OAUTH_LOGIN_ENABLED = "true";
+    global.fetch.mockResolvedValueOnce(jsonResponse({
+      sub: "google-sub-123",
+      email: "first@example.com",
+      email_verified: "true",
+      aud: "google-client-id",
+      name: "First Admin",
+    }));
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: false }] })
+      .mockResolvedValueOnce({ rows: [{ id: "user-1", email: "first@example.com", role: "admin", name: "First Admin" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .post("/auth/oauth-login")
+      .send({
+        email: "first@example.com",
+        provider: "google",
+        providerId: "google-sub-123",
+        oauthIdToken: "google-id-token",
+      });
+
+    expect(res.status).toBe(200);
+    const decoded = jwt.verify(res.body.token, JWT_SECRET);
+    expect(decoded).toMatchObject({ role: "admin", email: "first@example.com" });
   });
 
   it("rejects mismatched Google token claims", async () => {
@@ -323,6 +423,9 @@ describe("OAuth hardening", () => {
     mockDb.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: true }] })
       .mockResolvedValueOnce({ rows: [{ id: "user-2", email: "octo@example.com", role: "user", name: "Octo Cat" }] });
 
     const res = await request(app)
@@ -362,9 +465,12 @@ describe("OAuth hardening", () => {
     }));
     mockDb.query
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
         rows: [{ id: "user-1", email: "user@example.com", provider: null, provider_id: null, password_hash: "bcrypt-hash" }],
-      });
+      })
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
       .post("/auth/oauth-login")
@@ -388,9 +494,13 @@ describe("OAuth hardening", () => {
       aud: "google-client-id",
       name: "Google User",
     }));
-    mockDb.query.mockResolvedValueOnce({
-      rows: [{ id: "user-1", email: "old-email@example.com", provider: "google", provider_id: "google-sub-123", password_hash: null }],
-    });
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "user-1", email: "old-email@example.com", provider: "google", provider_id: "google-sub-123", password_hash: null }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
 
     const res = await request(app)
       .post("/auth/oauth-login")
