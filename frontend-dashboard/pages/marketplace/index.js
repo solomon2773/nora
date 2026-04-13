@@ -455,9 +455,11 @@ function MarketplaceCard({
         </div>
 
         <div className="space-y-2">
-          <h3 className="text-xl font-black text-slate-900 leading-tight group-hover:text-blue-600 transition-colors">
-            {item.name}
-          </h3>
+          <a href={`/app/marketplace/${item.id}`} className="block">
+            <h3 className="text-xl font-black text-slate-900 leading-tight group-hover:text-blue-600 transition-colors">
+              {item.name}
+            </h3>
+          </a>
           <p className="text-sm text-slate-500 font-medium leading-relaxed line-clamp-3">
             {item.description}
           </p>
