@@ -1,0 +1,8 @@
+{
+  "templateKey": "communication-intelligence-claw",
+  "name": "Communication Intelligence Claw",
+  "description": "Monitors selected chats, suppresses noise, and escalates only the mentions, direct asks, and topic signals that matter.",
+  "price": "Free",
+  "category": "Communication",
+  "starterType": "communication"
+}

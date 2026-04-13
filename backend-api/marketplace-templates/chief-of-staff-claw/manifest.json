@@ -1,0 +1,8 @@
+{
+  "templateKey": "chief-of-staff-claw",
+  "name": "Chief-of-Staff Claw",
+  "description": "Captures ideas, turns them into owned work, tracks status, and summarizes what is pending, blocked, or waiting on decisions.",
+  "price": "Free",
+  "category": "Operations",
+  "starterType": "operations"
+}
