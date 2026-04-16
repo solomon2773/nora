@@ -941,3 +941,262 @@ describe("gateway control-plane embed", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
+
+describe("Hermes dashboard embed", () => {
+  const token = jwt.sign({ id: "user-1", role: "user" }, JWT_SECRET, {
+    expiresIn: "1h",
+  });
+
+  beforeEach(() => {
+    mockDb.query.mockReset();
+    global.fetch = jest.fn();
+  });
+
+  afterEach(() => {
+    delete global.fetch;
+  });
+
+  it("proxies the official Hermes dashboard, rewrites root-relative assets, and sets an embed session cookie", async () => {
+    const agentClient = request.agent(app);
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{
+          host: "10.0.0.40",
+          runtime_host: "10.0.0.40",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          status: "warning",
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          host: "10.0.0.40",
+          runtime_host: "10.0.0.40",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          status: "warning",
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          host: "10.0.0.40",
+          runtime_host: "10.0.0.40",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          status: "warning",
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          host: "10.0.0.40",
+          runtime_host: "10.0.0.40",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          status: "warning",
+        }],
+      });
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+        text: async () =>
+          '<html><head><script>window.__HERMES_SESSION_TOKEN__="dash-session";</script><link rel="icon" type="image/svg+xml" href="/favicon.ico" /><script type="module" crossorigin src="/assets/index.js"></script><link rel="stylesheet" crossorigin href="/assets/index.css"></head><body>ok</body></html>',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/javascript" }),
+        text: async () =>
+          'const api="/api/status";Ex.createRoot(document.getElementById("root")).render(r.jsx($y,{children:r.jsx(Gb,{children:r.jsx("div",{children:"ok"})})}));',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/css" }),
+        text: async () => '@font-face{src:url(/fonts/Mondwest.woff2)}',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        arrayBuffer: async () => Buffer.from('{"ok":true}'),
+      });
+
+    const htmlRes = await agentClient
+      .get(`/agents/agent-1/hermes-ui/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test")
+      .set("Accept", "text/html");
+
+    expect(htmlRes.status).toBe(200);
+    expect(htmlRes.text).toContain(
+      'src="/api/agents/agent-1/hermes-ui/embed/assets/index.js"'
+    );
+    expect(htmlRes.text).toContain(
+      'href="/api/agents/agent-1/hermes-ui/embed/assets/index.css"'
+    );
+    expect(htmlRes.text).toContain(
+      'href="/api/agents/agent-1/hermes-ui/embed/favicon.ico"'
+    );
+    expect(htmlRes.text).toContain(
+      'window.__HERMES_SESSION_TOKEN__="dash-session"'
+    );
+    expect(htmlRes.headers["set-cookie"]).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("__nora_hermes_embed_agent-1="),
+      ])
+    );
+    expect(htmlRes.headers["content-security-policy"]).toContain(
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      "http://10.0.0.40:9119",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: "text/html",
+          "Accept-Encoding": "identity",
+        }),
+      })
+    );
+
+    const jsRes = await agentClient
+      .get("/agents/agent-1/hermes-ui/embed/assets/index.js")
+      .set("Host", "nora.test");
+
+    expect(jsRes.status).toBe(200);
+    expect(jsRes.text).toContain(
+      '"/api/agents/agent-1/hermes-ui/embed/api/status"'
+    );
+    expect(jsRes.text).toContain(
+      'basename:"/api/agents/agent-1/hermes-ui/embed"'
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://10.0.0.40:9119/assets/index.js",
+      expect.any(Object)
+    );
+
+    const cssRes = await agentClient
+      .get("/agents/agent-1/hermes-ui/embed/assets/index.css")
+      .set("Host", "nora.test");
+
+    expect(cssRes.status).toBe(200);
+    expect(cssRes.text).toContain(
+      "url(/api/agents/agent-1/hermes-ui/embed/fonts/Mondwest.woff2)"
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      3,
+      "http://10.0.0.40:9119/assets/index.css",
+      expect.any(Object)
+    );
+
+    const apiRes = await agentClient
+      .get("/agents/agent-1/hermes-ui/embed/api/env")
+      .set("Host", "nora.test")
+      .set("Authorization", "Bearer hermes-session-token");
+
+    expect(apiRes.status).toBe(200);
+    expect(apiRes.text).toBe('{"ok":true}');
+    expect(apiRes.headers["cache-control"]).toBe("no-store");
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      4,
+      "http://10.0.0.40:9119/api/env",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer hermes-session-token",
+        }),
+      })
+    );
+  });
+
+  it("forwards protected dashboard writes through the embed session cookie", async () => {
+    const agentClient = request.agent(app);
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{
+          host: "10.0.0.41",
+          runtime_host: "10.0.0.41",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          status: "running",
+        }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{
+          host: "10.0.0.41",
+          runtime_host: "10.0.0.41",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          status: "running",
+        }],
+      });
+    global.fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+        text: async () =>
+          '<html><head><script>window.__HERMES_SESSION_TOKEN__="dash-session";</script></head><body>ok</body></html>',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        arrayBuffer: async () => Buffer.from('{"ok":true}'),
+      });
+
+    const htmlRes = await agentClient
+      .get(`/agents/agent-2/hermes-ui/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test");
+
+    expect(htmlRes.status).toBe(200);
+
+    const apiRes = await agentClient
+      .put("/agents/agent-2/hermes-ui/embed/api/config")
+      .set("Host", "nora.test")
+      .set("Authorization", "Bearer hermes-session-token")
+      .send({ config: { model: "gpt-5.4" } });
+
+    expect(apiRes.status).toBe(200);
+    expect(apiRes.text).toBe('{"ok":true}');
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://10.0.0.41:9119/api/config",
+      expect.objectContaining({
+        method: "PUT",
+        headers: expect.objectContaining({
+          Authorization: "Bearer hermes-session-token",
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({ config: { model: "gpt-5.4" } }),
+      })
+    );
+  });
+
+  it("rejects embed requests for stopped Hermes agents", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        host: "10.0.0.40",
+        runtime_host: "10.0.0.40",
+        runtime_port: 8642,
+        runtime_family: "hermes",
+        backend_type: "hermes",
+        status: "stopped",
+      }],
+    });
+
+    const res = await request(app)
+      .get(`/agents/agent-1/hermes-ui/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test");
+
+    expect(res.status).toBe(404);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+});

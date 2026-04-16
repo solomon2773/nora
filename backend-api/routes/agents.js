@@ -23,7 +23,9 @@ const { isGatewayAvailableStatus, reconcileAgentStatus } = require("../agentStat
 const { OPENCLAW_GATEWAY_PORT } = require("../../agent-runtime/lib/contracts");
 const {
   resolveGatewayAddress,
+  resolveHermesDashboardAddress,
   resolveRuntimeAddress,
+  dashboardUrlForAgent,
   runtimeUrlForAgent,
 } = require("../../agent-runtime/lib/agentEndpoints");
 const { getDefaultAgentImage } = require("../../agent-runtime/lib/agentImages");
@@ -58,6 +60,7 @@ const {
   saveHermesChannel,
   testHermesChannel,
 } = require("../hermesUi");
+const { runContainerCommand } = require("../authSync");
 
 const router = express.Router();
 router.use(createMutationFailureAuditMiddleware("agent"));
@@ -422,6 +425,79 @@ function buildHermesGatewaySummary(snapshot = {}) {
   };
 }
 
+function buildHermesDashboardSummary(payload = {}) {
+  return {
+    version:
+      typeof payload?.version === "string" && payload.version.trim()
+        ? payload.version.trim()
+        : null,
+    gatewayRunning: Boolean(payload?.gateway_running),
+    gatewayState:
+      typeof payload?.gateway_state === "string" && payload.gateway_state.trim()
+        ? payload.gateway_state.trim()
+        : null,
+    activeSessions:
+      typeof payload?.active_sessions === "number"
+        ? payload.active_sessions
+        : null,
+  };
+}
+
+function buildHermesDashboardUnsupportedMessage(versionLine = "") {
+  const versionSuffix =
+    typeof versionLine === "string" && versionLine.trim()
+      ? ` (${versionLine.trim()})`
+      : "";
+  return (
+    `This Hermes image${versionSuffix} does not include the official dashboard yet. ` +
+    "Pull a current Hermes image and redeploy this agent."
+  );
+}
+
+function buildHermesDashboardEnsureCommand() {
+  return [
+    'HERMES_BIN="/opt/hermes/.venv/bin/hermes"',
+    'LOG_DIR="/opt/data/logs"',
+    '[ -x "$HERMES_BIN" ] || HERMES_BIN="$(command -v hermes 2>/dev/null || true)"',
+    'if [ -z "$HERMES_BIN" ]; then echo "STATUS=missing-cli"; exit 0; fi',
+    'VERSION="$("$HERMES_BIN" version 2>/dev/null | head -n 1 || true)"',
+    'if ! "$HERMES_BIN" --help 2>/dev/null | grep -q "dashboard"; then echo "STATUS=missing-dashboard"; printf "VERSION=%s\\n" "$VERSION"; exit 0; fi',
+    'if ! python3 -c \'import importlib.util,sys;sys.exit(0 if importlib.util.find_spec("hermes_cli.web_server") else 1)\'; then echo "STATUS=missing-web-server"; printf "VERSION=%s\\n" "$VERSION"; exit 0; fi',
+    'if python3 -c \'import socket,sys;s=socket.socket();s.settimeout(1);rc=s.connect_ex(("127.0.0.1",9119));s.close();sys.exit(0 if rc==0 else 1)\'; then echo "STATUS=already-running"; printf "VERSION=%s\\n" "$VERSION"; exit 0; fi',
+    'if [ -d "$LOG_DIR" ]; then chown -R hermes:hermes "$LOG_DIR" 2>/dev/null || true; else mkdir -p "$LOG_DIR"; chown hermes:hermes "$LOG_DIR" 2>/dev/null || true; fi',
+    'nohup /opt/hermes/docker/entrypoint.sh dashboard --host 0.0.0.0 --insecure --no-open >> /proc/1/fd/1 2>> /proc/1/fd/2 &',
+    "sleep 2",
+    'if python3 -c \'import socket,sys;s=socket.socket();s.settimeout(1);rc=s.connect_ex(("127.0.0.1",9119));s.close();sys.exit(0 if rc==0 else 1)\'; then echo "STATUS=started"; else echo "STATUS=start-failed"; fi',
+    'printf "VERSION=%s\\n" "$VERSION"',
+  ].join("; ");
+}
+
+async function ensureHermesDashboardProcess(agent) {
+  try {
+    const { output } = await runContainerCommand(
+      agent,
+      buildHermesDashboardEnsureCommand(),
+      { timeout: 15000 }
+    );
+    const lines = String(output || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const statusLine = lines.find((line) => line.startsWith("STATUS=")) || "";
+    const versionLine = lines.find((line) => line.startsWith("VERSION=")) || "";
+    return {
+      status: statusLine ? statusLine.slice("STATUS=".length) : "unknown",
+      version: versionLine ? versionLine.slice("VERSION=".length).trim() : "",
+    };
+  } catch (error) {
+    return {
+      status: "probe-failed",
+      version: "",
+      error: error.message || "Dashboard probe failed",
+    };
+  }
+}
+
 function normalizeHermesCronPayload(body = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return {};
@@ -573,11 +649,47 @@ async function fetchHermesApi(agent, path, options = {}) {
   };
 }
 
+async function fetchHermesDashboard(agent, path, options = {}) {
+  const dashboardUrl = dashboardUrlForAgent(agent, path);
+  if (!dashboardUrl) {
+    const error = new Error("Hermes dashboard endpoint not available");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const response = await fetch(dashboardUrl, {
+    method: options.method || "GET",
+    headers: {
+      Accept: "application/json",
+      ...(options.headers || {}),
+    },
+    signal: AbortSignal.timeout(options.timeoutMs || 15000),
+  });
+
+  const raw = await response.text().catch(() => "");
+  let data = {};
+  if (raw) {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = { raw };
+    }
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    headers: response.headers,
+    data,
+  };
+}
+
 // Hermes runtime status and model metadata for the agent-details WebUI tab.
 router.get("/:id/hermes-ui", asyncHandler(async (req, res) => {
   const agent = await loadHermesUiAgent(req);
 
   const runtimeAddress = resolveRuntimeAddress(agent);
+  const dashboardAddress = resolveHermesDashboardAddress(agent);
   if (!runtimeAddress) {
     return res.status(409).json({ error: "Hermes runtime address not available" });
   }
@@ -591,6 +703,19 @@ router.get("/:id/hermes-ui", asyncHandler(async (req, res) => {
   let configuredModel = null;
   let configuredProvider = null;
   let configuredBaseUrl = null;
+  const dashboardBaseUrl = dashboardAddress
+    ? dashboardUrlForAgent(agent, "")
+    : null;
+  let dashboard = {
+    ready: false,
+    url: dashboardBaseUrl,
+    port: dashboardAddress?.port || null,
+    health: null,
+    retryable: true,
+    error: dashboardAddress
+      ? "Hermes dashboard not ready yet"
+      : "Hermes dashboard endpoint not available",
+  };
 
   try {
     const healthResponse = await fetchHermesApi(agent, "/health", {
@@ -629,6 +754,110 @@ router.get("/:id/hermes-ui", asyncHandler(async (req, res) => {
   }
 
   try {
+    const dashboardResponse = await fetchHermesDashboard(agent, "/api/status", {
+      timeoutMs: 5000,
+    });
+    if (dashboardResponse.ok) {
+      dashboard = {
+        ready: true,
+        url: dashboardBaseUrl,
+        port: dashboardAddress?.port || null,
+        health: buildHermesDashboardSummary(dashboardResponse.data),
+        retryable: false,
+        error: null,
+      };
+    } else {
+      dashboard = {
+        ready: false,
+        url: dashboardBaseUrl,
+        port: dashboardAddress?.port || null,
+        health: null,
+        retryable: true,
+        error: extractHermesApiError(
+          dashboardResponse.data,
+          `Hermes dashboard returned ${dashboardResponse.status}`
+        ),
+      };
+    }
+  } catch (error) {
+    const ensuredDashboard = await ensureHermesDashboardProcess(agent);
+
+    if (
+      ensuredDashboard.status === "started" ||
+      ensuredDashboard.status === "already-running"
+    ) {
+      try {
+        const dashboardResponse = await fetchHermesDashboard(agent, "/api/status", {
+          timeoutMs: 5000,
+        });
+        if (dashboardResponse.ok) {
+          dashboard = {
+            ready: true,
+            url: dashboardBaseUrl,
+            port: dashboardAddress?.port || null,
+            health: buildHermesDashboardSummary(dashboardResponse.data),
+            retryable: false,
+            error: null,
+          };
+        } else {
+          dashboard = {
+            ready: false,
+            url: dashboardBaseUrl,
+            port: dashboardAddress?.port || null,
+            health: null,
+            retryable: true,
+            error: extractHermesApiError(
+              dashboardResponse.data,
+              `Hermes dashboard returned ${dashboardResponse.status}`
+            ),
+          };
+        }
+      } catch (retryError) {
+        dashboard = {
+          ready: false,
+          url: dashboardBaseUrl,
+          port: dashboardAddress?.port || null,
+          health: null,
+          retryable: true,
+          error: retryError.message || "Hermes dashboard not reachable",
+        };
+      }
+    } else if (
+      ensuredDashboard.status === "missing-dashboard" ||
+      ensuredDashboard.status === "missing-web-server" ||
+      ensuredDashboard.status === "missing-cli"
+    ) {
+      dashboard = {
+        ready: false,
+        url: dashboardBaseUrl,
+        port: dashboardAddress?.port || null,
+        health: null,
+        retryable: false,
+        error: buildHermesDashboardUnsupportedMessage(ensuredDashboard.version),
+      };
+    } else if (ensuredDashboard.status === "start-failed") {
+      dashboard = {
+        ready: false,
+        url: dashboardBaseUrl,
+        port: dashboardAddress?.port || null,
+        health: null,
+        retryable: true,
+        error:
+          "Hermes dashboard failed to start inside the running agent. Check the container logs or redeploy the agent.",
+      };
+    } else {
+      dashboard = {
+        ready: false,
+        url: dashboardBaseUrl,
+        port: dashboardAddress?.port || null,
+        health: null,
+        retryable: true,
+        error: error.message || "Hermes dashboard not reachable",
+      };
+    }
+  }
+
+  try {
     const snapshot = await readHermesRuntimeSnapshot(agent);
     gateway = buildHermesGatewaySummary(snapshot);
     directoryUpdatedAt = snapshot?.directory?.updated_at || null;
@@ -655,6 +884,7 @@ router.get("/:id/hermes-ui", asyncHandler(async (req, res) => {
     url: runtimeUrlForAgent(agent, "/v1"),
     runtime: runtimeAddress,
     health,
+    dashboard,
     models,
     defaultModel: configuredModel || models[0]?.id || null,
     configuredModel,

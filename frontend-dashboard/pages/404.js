@@ -10,7 +10,7 @@ export default function Custom404() {
         <h1 className="text-6xl font-black text-white mb-2">404</h1>
         <p className="text-lg text-slate-400 mb-8">This page doesn&apos;t exist or has been moved.</p>
         <Link
-          href="/app/dashboard"
+          href="/dashboard"
           className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 text-sm font-bold text-white rounded-xl transition-all"
         >
           <ArrowLeft size={16} />

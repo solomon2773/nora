@@ -12,6 +12,8 @@ services:
         condition: service_started
       frontend-dashboard:
         condition: service_started
+      admin-dashboard:
+        condition: service_started
 
   frontend-marketing:
     build: ./frontend-marketing
@@ -24,6 +26,12 @@ services:
 
   frontend-dashboard:
     build: ./frontend-dashboard
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+
+  admin-dashboard:
+    build: ./admin-dashboard
     environment:
       - PORT=3000
       - NODE_ENV=production

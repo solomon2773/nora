@@ -996,7 +996,12 @@ function InstallTemplateDialog({
   if (!open || !item) return null;
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="install-template-dialog-title"
+    >
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
         <div className="flex items-start gap-4">
@@ -1004,7 +1009,12 @@ function InstallTemplateDialog({
             <Plus size={18} className="text-blue-600" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-bold text-slate-900">Install Template</h3>
+            <h3
+              id="install-template-dialog-title"
+              className="text-lg font-bold text-slate-900"
+            >
+              Install Template
+            </h3>
             <p className="mt-1 text-sm leading-relaxed text-slate-500">
               {item.name} will be turned into a new queued agent in your fleet, including the OpenClaw core markdown files shown on this page.
             </p>
@@ -1021,10 +1031,14 @@ function InstallTemplateDialog({
         </div>
 
         <div className="mt-5">
-          <label className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-400">
+          <label
+            htmlFor="install-template-agent-name"
+            className="mb-1 block text-[10px] font-bold uppercase tracking-widest text-slate-400"
+          >
             New Agent Name
           </label>
           <input
+            id="install-template-agent-name"
             type="text"
             value={name}
             onChange={(e) => onNameChange(e.target.value)}

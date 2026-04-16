@@ -252,9 +252,9 @@ export default function AgentDetail() {
         setShowDuplicateDialog(false);
         toast.success("Duplicate queued");
         if (duplicated?.id) {
-          router.push(`/app/agents/${duplicated.id}`);
+          router.push(`/agents/${duplicated.id}`);
         } else {
-          router.push("/app/agents");
+          router.push("/agents");
         }
         return;
       }
@@ -338,7 +338,7 @@ export default function AgentDetail() {
       const res = await fetchWithAuth(`/api/agents/${id}`, { method: "DELETE" });
       if (res.ok) {
         toast.success("Agent deleted");
-        router.push("/app/agents");
+        router.push("/agents");
       } else {
         toast.error("Failed to delete agent");
       }
@@ -380,7 +380,7 @@ export default function AgentDetail() {
       if (res.ok) {
         setShowPublishDialog(false);
         toast.success("Marketplace listing submitted for review");
-        router.push("/app/marketplace?tab=my");
+        router.push("/marketplace?tab=my");
         return;
       }
 
@@ -743,7 +743,12 @@ function DuplicateAgentDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="duplicate-agent-dialog-title"
+    >
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full p-6 space-y-5">
         <div className="flex items-start gap-4">
@@ -751,7 +756,12 @@ function DuplicateAgentDialog({
             <Copy size={18} className="text-slate-700" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-bold text-slate-900">Duplicate Agent</h3>
+            <h3
+              id="duplicate-agent-dialog-title"
+              className="text-lg font-bold text-slate-900"
+            >
+              Duplicate Agent
+            </h3>
             <p className="text-sm text-slate-500 mt-1 leading-relaxed">
               Create a new agent from <span className="font-semibold text-slate-700">{sourceName}</span>. Wiring structure can be copied, but secrets stay disconnected.
             </p>
@@ -763,8 +773,14 @@ function DuplicateAgentDialog({
 
         <div className="space-y-4">
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">New Agent Name</label>
+            <label
+              htmlFor="duplicate-agent-name"
+              className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1"
+            >
+              New Agent Name
+            </label>
             <input
+              id="duplicate-agent-name"
               type="text"
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
@@ -772,8 +788,14 @@ function DuplicateAgentDialog({
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Clone Depth</label>
+            <label
+              htmlFor="duplicate-agent-clone-depth"
+              className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1"
+            >
+              Clone Depth
+            </label>
             <select
+              id="duplicate-agent-clone-depth"
               value={cloneMode}
               onChange={(e) => onCloneModeChange(e.target.value)}
               className="w-full text-sm border border-slate-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
@@ -908,7 +930,12 @@ function PublishMarketplaceDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="publish-marketplace-dialog-title"
+    >
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
       <div className="relative bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-xl w-full p-6 space-y-5">
         <div className="flex items-start gap-4">
@@ -916,7 +943,12 @@ function PublishMarketplaceDialog({
             <Share2 size={18} className="text-blue-600" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-bold text-slate-900">Publish to Marketplace</h3>
+            <h3
+              id="publish-marketplace-dialog-title"
+              className="text-lg font-bold text-slate-900"
+            >
+              Publish to Marketplace
+            </h3>
             <p className="text-sm text-slate-500 mt-1 leading-relaxed">
               Share <span className="font-semibold text-slate-700">{sourceName}</span> as a community template. Nora publishes only the template files and runs a secret scan before submission.
             </p>
@@ -941,8 +973,14 @@ function PublishMarketplaceDialog({
 
         <div className="grid grid-cols-1 gap-4">
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Template Name</label>
+            <label
+              htmlFor="publish-marketplace-template-name"
+              className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1"
+            >
+              Template Name
+            </label>
             <input
+              id="publish-marketplace-template-name"
               type="text"
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
@@ -950,8 +988,14 @@ function PublishMarketplaceDialog({
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Category</label>
+            <label
+              htmlFor="publish-marketplace-category"
+              className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1"
+            >
+              Category
+            </label>
             <input
+              id="publish-marketplace-category"
               type="text"
               value={category}
               onChange={(e) => onCategoryChange(e.target.value)}
@@ -959,8 +1003,14 @@ function PublishMarketplaceDialog({
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1">Description</label>
+            <label
+              htmlFor="publish-marketplace-description"
+              className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block mb-1"
+            >
+              Description
+            </label>
             <textarea
+              id="publish-marketplace-description"
               value={description}
               onChange={(e) => onDescriptionChange(e.target.value)}
               rows={5}

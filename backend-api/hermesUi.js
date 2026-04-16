@@ -411,7 +411,14 @@ function humanizeHermesChannelType(value) {
 function buildHermesPythonCommand(script) {
   const encoded = Buffer.from(String(script || ""), "utf8").toString("base64");
   return [
-    "python3 - <<'PY'",
+    "set -eu",
+    'HERMES_ROOT="/opt/hermes"',
+    'HERMES_PYTHON="$HERMES_ROOT/.venv/bin/python"',
+    'if [ ! -x "$HERMES_PYTHON" ]; then HERMES_PYTHON="$HERMES_ROOT/.venv/bin/python3"; fi',
+    'if [ ! -x "$HERMES_PYTHON" ]; then HERMES_PYTHON="$(command -v python3 2>/dev/null || true)"; fi',
+    '[ -n "$HERMES_PYTHON" ] || exit 127',
+    'if [ -d "$HERMES_ROOT" ]; then cd "$HERMES_ROOT"; fi',
+    'PYTHONPATH="$HERMES_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "$HERMES_PYTHON" - <<\'PY\'',
     "import base64",
     "__nora_globals = {'__name__': '__main__'}",
     `exec(base64.b64decode(${JSON.stringify(encoded)}).decode('utf-8'), __nora_globals)`,

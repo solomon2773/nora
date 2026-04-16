@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Bot,
   CalendarClock,
+  LayoutDashboard,
   MessageSquare,
   MessagesSquare,
   Puzzle,
@@ -12,11 +13,13 @@ import IntegrationsTab from "./IntegrationsTab";
 import HermesChannelsPanel from "./hermes/ChannelsPanel";
 import HermesChatPanel from "./hermes/ChatPanel";
 import HermesCronPanel from "./hermes/CronPanel";
+import OfficialDashboardPanel from "./hermes/OfficialDashboardPanel";
 import HermesStatusPanel from "./hermes/StatusPanel";
 
 const STATUS_POLL_MS = 5000;
 
 const subTabs = [
+  { id: "official-dashboard", label: "Official Dashboard", icon: LayoutDashboard },
   { id: "status", label: "Status", icon: Radio },
   { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "integrations", label: "Integrations", icon: Puzzle },
@@ -46,7 +49,7 @@ function HermesIntegrationsPanel({ agentId }) {
 }
 
 export default function HermesWebUITab({ agentId, agentStatus }) {
-  const [activeSubTab, setActiveSubTab] = useState("status");
+  const [activeSubTab, setActiveSubTab] = useState("official-dashboard");
   const [loading, setLoading] = useState(true);
   const [runtimeInfo, setRuntimeInfo] = useState(null);
   const [error, setError] = useState("");
@@ -77,7 +80,13 @@ export default function HermesWebUITab({ agentId, agentStatus }) {
       if (cancelledRef.current) return;
       setRuntimeInfo(data);
 
-      if (!data.health?.ok && (agentStatus === "running" || agentStatus === "warning")) {
+      const dashboardStillBooting =
+        data.dashboard?.ready === false && data.dashboard?.retryable !== false;
+
+      if (
+        (!data.health?.ok || dashboardStillBooting) &&
+        (agentStatus === "running" || agentStatus === "warning")
+      ) {
         pollRef.current = window.setTimeout(() => {
           loadRuntimeInfo({ showSpinner: false });
         }, STATUS_POLL_MS);
@@ -98,7 +107,7 @@ export default function HermesWebUITab({ agentId, agentStatus }) {
   }
 
   useEffect(() => {
-    setActiveSubTab("status");
+    setActiveSubTab("official-dashboard");
   }, [agentId]);
 
   useEffect(() => {
@@ -162,6 +171,15 @@ export default function HermesWebUITab({ agentId, agentStatus }) {
       </div>
 
       <div>
+        {activeSubTab === "official-dashboard" && (
+          <OfficialDashboardPanel
+            agentId={agentId}
+            runtimeInfo={runtimeInfo}
+            loadingRuntime={loading}
+            runtimeError={error}
+            onRefreshRuntime={() => loadRuntimeInfo({ showSpinner: false })}
+          />
+        )}
         {activeSubTab === "status" && (
           <HermesStatusPanel
             agentId={agentId}

@@ -1,6 +1,7 @@
 const {
   AGENT_RUNTIME_PORT,
   OPENCLAW_GATEWAY_PORT,
+  HERMES_DASHBOARD_PORT,
 } = require("./contracts");
 
 function normalizePath(path = "/") {
@@ -25,6 +26,20 @@ function runtimeExposesGateway(agent) {
     .trim()
     .toLowerCase();
   return backendType !== "hermes";
+}
+
+function runtimeUsesHermesDashboard(agent) {
+  const runtimeFamily = String(
+    agent?.runtime_family ?? agent?.runtimeFamily ?? ""
+  )
+    .trim()
+    .toLowerCase();
+  if (runtimeFamily) return runtimeFamily === "hermes";
+
+  const backendType = String(agent?.backend_type ?? agent?.backendType ?? "")
+    .trim()
+    .toLowerCase();
+  return backendType === "hermes";
 }
 
 function joinHttpUrl(host, port, path = "/") {
@@ -91,6 +106,25 @@ function gatewayUrlForAgent(agent, path = "/", options = {}) {
   return joinHttpUrl(address.host, address.port, path);
 }
 
+function resolveHermesDashboardAddress(agent) {
+  if (!agent) return null;
+  if (!runtimeUsesHermesDashboard(agent)) return null;
+
+  const host = agent.runtime_host || agent.host || null;
+  if (!host) return null;
+
+  return {
+    host,
+    port: normalizePort(agent.dashboard_port, HERMES_DASHBOARD_PORT),
+  };
+}
+
+function dashboardUrlForAgent(agent, path = "/") {
+  const address = resolveHermesDashboardAddress(agent);
+  if (!address) return null;
+  return joinHttpUrl(address.host, address.port, path);
+}
+
 function hasRuntimeEndpoint(agent) {
   return Boolean(resolveRuntimeAddress(agent));
 }
@@ -99,11 +133,18 @@ function hasGatewayEndpoint(agent, options = {}) {
   return Boolean(resolveGatewayAddress(agent, options));
 }
 
+function hasHermesDashboardEndpoint(agent) {
+  return Boolean(resolveHermesDashboardAddress(agent));
+}
+
 module.exports = {
   resolveRuntimeAddress,
   resolveGatewayAddress,
+  resolveHermesDashboardAddress,
   runtimeUrlForAgent,
   gatewayUrlForAgent,
+  dashboardUrlForAgent,
   hasRuntimeEndpoint,
   hasGatewayEndpoint,
+  hasHermesDashboardEndpoint,
 };

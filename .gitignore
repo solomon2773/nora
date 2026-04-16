@@ -16,6 +16,6 @@ docker-compose.override.yml
 nginx.public.conf
 nginx.conf.tls
 
-# generated proof assets
+# generated proof assets and private-first docs
 docs/
 e2e/artifacts/

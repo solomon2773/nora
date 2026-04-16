@@ -17,7 +17,7 @@
   <a href="#why-nora">Why Nora</a> ·
   <a href="#features">Features</a> ·
   <a href="#runtime-model">Runtime Model</a> ·
-  <a href="#architecture">Architecture</a> ·
+  <a href="./architecture.md">Architecture</a> ·
   <a href="#how-nora-compares">Comparisons</a> ·
   <a href="#roadmap">Roadmap</a> ·
   <a href="#contributing">Contributing</a>
@@ -196,48 +196,19 @@ Nora is an **operator control plane** — it deploys and manages the infrastruct
 
 ## Architecture
 
+Nora is a reverse-proxied control plane with three browser surfaces, one Express API, PostgreSQL for state, Redis and BullMQ for queue-backed orchestration, a dedicated provisioning worker, and shared runtime contracts used across backend adapters.
+
 ```text
-Nginx (:8080)
-├── /           → frontend-marketing   (Next.js)
-├── /app/*      → frontend-dashboard   (Next.js)
-├── /admin/*    → admin-dashboard      (Next.js)
-└── /api/*      → backend-api          (Express.js)
-                      ├── PostgreSQL 15
-                      ├── Redis 7 + BullMQ
-                      └── Runtime adapters
-                            ├── Docker
-                            ├── NemoClaw / OpenShell
-                            ├── Kubernetes
-                            └── Proxmox
+nginx
+├── /        → frontend-marketing
+├── /app     → frontend-dashboard
+├── /admin   → admin-dashboard
+└── /api     → backend-api → PostgreSQL + Redis/BullMQ + worker-provisioner
 ```
 
-### Tech stack
+The full public architecture write-up lives here:
 
-| Layer | Technology |
-|---|---|
-| Reverse proxy | Nginx |
-| Frontend | Next.js 14, React 18, Tailwind CSS |
-| Backend | Express.js 4, Node.js 20 |
-| Auth | NextAuth.js, JWT, bcryptjs |
-| Database | PostgreSQL 15 |
-| Queue | BullMQ + Redis 7 |
-| Agent runtime | OpenClaw Gateway (default), extensible via runtime adapters |
-| Encryption | AES-256-GCM |
-| Provisioning | Docker, Proxmox, Kubernetes, NemoClaw |
-
-### Project structure
-
-```
-nora/
-├── frontend-marketing/      Landing, login, signup, pricing
-├── frontend-dashboard/      Operator workspace
-├── admin-dashboard/         Admin surfaces
-├── backend-api/             APIs, auth, provisioning, marketplace
-├── agent-runtime/           Runtime configuration
-├── workers/provisioner/     Background provisioning jobs
-├── e2e/                     Playwright end-to-end tests
-└── infra/                   Backup, TLS, nginx templates
-```
+- [System Overview](architecture.md)
 
 ---
 
@@ -332,7 +303,7 @@ docker compose exec postgres psql -U platform -d platform
 
 For Kubernetes verification, use [`docker-compose.kind.yml`](docker-compose.kind.yml) which sets `ENABLED_BACKENDS=k8s` and `K8S_EXPOSURE_MODE=node-port`.
 
-For public-domain setup, use [`infra/nginx_public.conf.template`](infra/nginx_public.conf.template) for plain HTTP or [`infra/setup-tls.sh`](infra/setup-tls.sh) for Let's Encrypt TLS.
+For public-domain setup, use [`infra/nginx_public.conf.template`](infra/nginx_public.conf.template) for plain HTTP or [`infra/setup-tls.sh`](infra/setup-tls.sh) for Let's Encrypt TLS. The TLS helper assumes Nora's compose-managed nginx can own host ports `80` and `443`; if you already terminate traffic with a host-level reverse proxy, obtain or renew that certificate there instead of running the repo helper.
 
 ---
 

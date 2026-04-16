@@ -25,9 +25,10 @@ const { correlationId, errorHandler } = require("./middleware/errorHandler");
 const { createGatewayRouter, attachGatewayWS } = require("./gatewayProxy");
 const { isGatewayAvailableStatus } = require("./agentStatus");
 const {
-  resolveGatewayAddress,
   gatewayUrlForAgent,
+  dashboardUrlForAgent,
   hasGatewayEndpoint,
+  hasHermesDashboardEndpoint,
 } = require("../agent-runtime/lib/agentEndpoints");
 const {
   getBackendCatalog,
@@ -62,6 +63,7 @@ if (!process.env.JWT_SECRET) {
 const app = express();
 const EMBED_SESSION_TTL_MS = 15 * 60 * 1000;
 const EMBED_SESSION_COOKIE_PREFIX = "__nora_gateway_embed_";
+const HERMES_EMBED_SESSION_COOKIE_PREFIX = "__nora_hermes_embed_";
 const EMBED_CONTENT_SECURITY_POLICY = [
   "default-src 'self' data: blob: https:",
   "base-uri 'self'",
@@ -90,8 +92,11 @@ function requestProtocol(req) {
   return req.protocol;
 }
 
-function getEmbedSessionCookieName(agentId) {
-  return `${EMBED_SESSION_COOKIE_PREFIX}${agentId}`;
+function getEmbedSessionCookieName(
+  agentId,
+  prefix = EMBED_SESSION_COOKIE_PREFIX
+) {
+  return `${prefix}${agentId}`;
 }
 
 function parseCookieHeader(cookieHeader) {
@@ -114,7 +119,7 @@ function parseCookieHeader(cookieHeader) {
     }, {});
 }
 
-function buildGatewayForwardedSearch(req) {
+function buildForwardedSearch(req) {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(req.query || {})) {
     if (key === "token" || value == null) continue;
@@ -259,6 +264,59 @@ function setEmbedHtmlHeaders(res) {
   res.setHeader("Vary", "Cookie");
 }
 
+function hermesEmbedBasePath(agentId) {
+  return `/api/agents/${encodeURIComponent(agentId)}/hermes-ui/embed`;
+}
+
+function rewriteHermesEmbedHtml(html, agentId) {
+  const embedBase = hermesEmbedBasePath(agentId);
+  return html
+    .replace(/(["'])\/assets\//g, `$1${embedBase}/assets/`)
+    .replace(/(["'])\/fonts\//g, `$1${embedBase}/fonts/`)
+    .replace(
+      /(["'])\/favicon\.ico(["'])/g,
+      `$1${embedBase}/favicon.ico$2`
+    );
+}
+
+function rewriteHermesEmbedCss(css, agentId) {
+  const embedBase = hermesEmbedBasePath(agentId);
+  return css.replace(
+    /url\((['"]?)\/fonts\//g,
+    `url($1${embedBase}/fonts/`
+  );
+}
+
+function rewriteHermesEmbedJavascript(source, agentId) {
+  const embedBase = hermesEmbedBasePath(agentId);
+  let rewritten = source.replace(/(["'`])\/api\//g, `$1${embedBase}/api/`);
+  const routerMarker = "jsx($y,{children:";
+  if (rewritten.includes(routerMarker)) {
+    rewritten = rewritten.replace(
+      routerMarker,
+      `jsx($y,{basename:${JSON.stringify(embedBase)},children:`
+    );
+  }
+  return rewritten;
+}
+
+function setProxyResponseHeaders(res, resp, { cachePolicy = "asset" } = {}) {
+  const contentType = resp.headers.get("content-type");
+  if (contentType) res.setHeader("Content-Type", contentType);
+
+  const cacheControl = resp.headers.get("cache-control");
+  if (cacheControl) {
+    res.setHeader("Cache-Control", cacheControl);
+  } else if (cachePolicy === "no-store") {
+    res.setHeader("Cache-Control", "no-store");
+  } else {
+    res.setHeader("Cache-Control", "public, max-age=3600");
+  }
+
+  res.setHeader("Vary", "Cookie");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+}
+
 async function lookupEmbedAgent(agentId, userId) {
   const result = await db.query(
     `SELECT host, gateway_token, gateway_host_port, gateway_host, gateway_port, status
@@ -272,10 +330,36 @@ async function lookupEmbedAgent(agentId, userId) {
   return result.rows[0];
 }
 
-async function resolveEmbedAccess(req, res, { allowQueryToken = true } = {}) {
+async function lookupHermesEmbedAgent(agentId, userId) {
+  const result = await db.query(
+    `SELECT host, runtime_host, runtime_port, status, runtime_family, backend_type
+       FROM agents
+      WHERE id = $1 AND user_id = $2`,
+    [agentId, userId]
+  );
+  if (
+    !result.rows[0] ||
+    !isGatewayAvailableStatus(result.rows[0].status) ||
+    !hasHermesDashboardEndpoint(result.rows[0])
+  ) {
+    return null;
+  }
+  return result.rows[0];
+}
+
+async function resolveEmbedAccess(
+  req,
+  res,
+  {
+    allowQueryToken = true,
+    lookupAgent = lookupEmbedAgent,
+    cookiePrefix = EMBED_SESSION_COOKIE_PREFIX,
+    scope = "gateway-embed",
+  } = {}
+) {
   const jwt = require("jsonwebtoken");
   const agentId = req.params.agentId;
-  const embedCookieName = getEmbedSessionCookieName(agentId);
+  const embedCookieName = getEmbedSessionCookieName(agentId, cookiePrefix);
   const cookies = parseCookieHeader(req.headers.cookie || "");
   const cookieToken = cookies[embedCookieName];
   const queryToken = allowQueryToken && typeof req.query.token === "string" ? req.query.token : "";
@@ -300,7 +384,7 @@ async function resolveEmbedAccess(req, res, { allowQueryToken = true } = {}) {
       res.status(401).send("invalid embed session");
       return null;
     }
-    if (payload.scope !== "gateway-embed" || payload.agentId !== agentId) {
+    if (payload.scope !== scope || payload.agentId !== agentId) {
       res.status(401).send("invalid embed session");
       return null;
     }
@@ -311,7 +395,7 @@ async function resolveEmbedAccess(req, res, { allowQueryToken = true } = {}) {
     return null;
   }
 
-  const agent = await lookupEmbedAgent(agentId, userId);
+  const agent = await lookupAgent(agentId, userId);
   if (!agent) {
     res.status(404).send("agent not found or not running");
     return null;
@@ -319,7 +403,7 @@ async function resolveEmbedAccess(req, res, { allowQueryToken = true } = {}) {
 
   if (!relayToken) {
     relayToken = jwt.sign(
-      { id: userId, agentId, scope: "gateway-embed" },
+      { id: userId, agentId, scope },
       process.env.JWT_SECRET,
       { expiresIn: Math.floor(EMBED_SESSION_TTL_MS / 1000) }
     );
@@ -337,6 +421,12 @@ async function resolveEmbedAccess(req, res, { allowQueryToken = true } = {}) {
 
 function getEmbeddedGatewayPath(req) {
   const prefix = `/agents/${req.params.agentId}/gateway/embed`;
+  const suffix = req.path.startsWith(prefix) ? req.path.slice(prefix.length) : "";
+  return suffix.replace(/^\/+/, "");
+}
+
+function getEmbeddedHermesPath(req) {
+  const prefix = `/agents/${req.params.agentId}/hermes-ui/embed`;
   const suffix = req.path.startsWith(prefix) ? req.path.slice(prefix.length) : "";
   return suffix.replace(/^\/+/, "");
 }
@@ -511,7 +601,7 @@ async function proxyEmbeddedGateway(req, res) {
     if (!access) return;
 
     const gatewayPath = getEmbeddedGatewayPath(req);
-    const targetUrl = `${gatewayUrlForAgent(access.agent, gatewayPath)}${buildGatewayForwardedSearch(req)}`;
+    const targetUrl = `${gatewayUrlForAgent(access.agent, gatewayPath)}${buildForwardedSearch(req)}`;
     const headers = {
       Accept: req.headers.accept || "*/*",
       "Accept-Encoding": "identity",
@@ -563,6 +653,94 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed", proxyEmbeddedGateway);
 gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed/*", proxyEmbeddedGateway);
 gatewayUIAssetProxy.post("/agents/:agentId/gateway/embed/*", proxyEmbeddedGateway);
 
+async function proxyEmbeddedHermes(req, res) {
+  try {
+    const access = await resolveEmbedAccess(req, res, {
+      lookupAgent: lookupHermesEmbedAgent,
+      cookiePrefix: HERMES_EMBED_SESSION_COOKIE_PREFIX,
+      scope: "hermes-embed",
+    });
+    if (!access) return;
+
+    const hermesPath = getEmbeddedHermesPath(req);
+    const targetUrl = `${dashboardUrlForAgent(access.agent, hermesPath)}${buildForwardedSearch(req)}`;
+    const headers = {
+      Accept: req.headers.accept || "*/*",
+      "Accept-Encoding": "identity",
+    };
+    if (req.headers.authorization) {
+      headers.Authorization = req.headers.authorization;
+    }
+
+    const method = req.method.toUpperCase();
+    let body;
+    if (method !== "GET" && method !== "HEAD" && req.body != null) {
+      if (Buffer.isBuffer(req.body) || typeof req.body === "string") {
+        body = req.body;
+      } else if (Object.keys(req.body).length > 0) {
+        body = JSON.stringify(req.body);
+      }
+      if (req.headers["content-type"]) {
+        headers["Content-Type"] = req.headers["content-type"];
+      }
+    }
+
+    const resp = await fetch(targetUrl, {
+      method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const contentType = resp.headers.get("content-type") || "";
+    const isApiRequest = hermesPath.startsWith("api/");
+    res.status(resp.status);
+
+    if (/text\/html/i.test(contentType)) {
+      const html = rewriteHermesEmbedHtml(await resp.text(), access.agentId);
+      setEmbedHtmlHeaders(res);
+      res.send(html);
+      return;
+    }
+
+    if (
+      /(?:javascript|ecmascript)/i.test(contentType) ||
+      /\.js(?:$|\?)/i.test(hermesPath)
+    ) {
+      const javascript = rewriteHermesEmbedJavascript(
+        await resp.text(),
+        access.agentId
+      );
+      setProxyResponseHeaders(res, resp, {
+        cachePolicy: isApiRequest ? "no-store" : "asset",
+      });
+      res.send(javascript);
+      return;
+    }
+
+    if (/text\/css/i.test(contentType) || /\.css(?:$|\?)/i.test(hermesPath)) {
+      const css = rewriteHermesEmbedCss(await resp.text(), access.agentId);
+      setProxyResponseHeaders(res, resp, {
+        cachePolicy: isApiRequest ? "no-store" : "asset",
+      });
+      res.send(css);
+      return;
+    }
+
+    setProxyResponseHeaders(res, resp, {
+      cachePolicy: isApiRequest ? "no-store" : "asset",
+    });
+    const bodyBuffer = await resp.arrayBuffer();
+    res.send(Buffer.from(bodyBuffer));
+  } catch (err) {
+    console.error("[hermes-embed-proxy] error:", err);
+    if (!res.headersSent) res.status(502).send(`embed proxy error: ${err.message}`);
+  }
+}
+
+gatewayUIAssetProxy.all("/agents/:agentId/hermes-ui/embed", proxyEmbeddedHermes);
+gatewayUIAssetProxy.all("/agents/:agentId/hermes-ui/embed/*", proxyEmbeddedHermes);
+
 async function proxyGatewayAsset(req, res) {
   try {
     const db = require("./db");
@@ -583,11 +761,7 @@ async function proxyGatewayAsset(req, res) {
       signal: AbortSignal.timeout(10000),
     });
     res.status(resp.status);
-    const ct = resp.headers.get("content-type");
-    if (ct) res.setHeader("Content-Type", ct);
-    const cc = resp.headers.get("cache-control");
-    if (cc) res.setHeader("Cache-Control", cc);
-    else res.setHeader("Cache-Control", "public, max-age=3600");
+    setProxyResponseHeaders(res, resp);
     const body = await resp.arrayBuffer();
     res.send(Buffer.from(body));
   } catch {

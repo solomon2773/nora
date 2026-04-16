@@ -117,6 +117,7 @@ export default function Workspaces() {
                   </div>
                   <button
                     onClick={() => remove(w.id)}
+                    aria-label={`Delete workspace ${w.name}`}
                     className="p-2.5 rounded-xl hover:bg-red-50 text-slate-400 hover:text-red-500 transition-all"
                   >
                     <Trash2 size={18} />

@@ -1,6 +1,7 @@
 const {
   AGENT_RUNTIME_PORT,
   OPENCLAW_GATEWAY_PORT,
+  HERMES_DASHBOARD_PORT,
 } = require("../../agent-runtime/lib/contracts");
 const {
   waitForHttpReady,
@@ -321,5 +322,84 @@ describe("provisioning runtime/gateway contracts", () => {
       gatewayHost: "nora-kind-control-plane",
       gatewayHostPort: 32079,
     }));
+  });
+});
+
+describe("Hermes dashboard provisioning", () => {
+  it("starts the official Hermes dashboard alongside the gateway", async () => {
+    const HermesBackend = require("../../workers/provisioner/backends/hermes");
+    const backend = new HermesBackend();
+
+    const createdContainer = {
+      id: "hermes-container-1",
+      start: jest.fn().mockResolvedValue({}),
+      inspect: jest.fn().mockResolvedValue({
+        NetworkSettings: {
+          IPAddress: "10.0.0.50",
+          Networks: {},
+        },
+      }),
+      remove: jest.fn().mockResolvedValue({}),
+    };
+    const existingContainer = {
+      inspect: jest.fn().mockRejectedValue(new Error("not found")),
+    };
+    const bridgeConnect = jest.fn().mockResolvedValue({});
+
+    backend._findComposeNetwork = jest.fn().mockResolvedValue(null);
+    backend.docker = {
+      getImage: jest.fn().mockReturnValue({
+        inspect: jest.fn().mockResolvedValue({}),
+      }),
+      getContainer: jest.fn().mockReturnValue(existingContainer),
+      createContainer: jest.fn().mockResolvedValue(createdContainer),
+      getNetwork: jest.fn().mockReturnValue({
+        connect: bridgeConnect,
+      }),
+    };
+
+    const result = await backend.create({
+      id: "123",
+      name: "Hermes QA",
+      env: {
+        OPENAI_API_KEY: "test-key",
+      },
+    });
+
+    const config = backend.docker.createContainer.mock.calls[0][0];
+
+    expect(config.Env).toEqual(expect.arrayContaining([
+      "GATEWAY_HEALTH_URL=http://127.0.0.1:8642",
+    ]));
+    expect(config.Entrypoint).toEqual(["/bin/bash", "-lc"]);
+    expect(config.Cmd).toEqual([
+      expect.stringContaining(
+        "/opt/hermes/docker/entrypoint.sh dashboard --host 0.0.0.0 --insecure --no-open"
+      ),
+    ]);
+    expect(config.Cmd[0]).toContain("chown -R hermes:hermes /opt/data/logs");
+    expect(config.Cmd[0]).toContain(">> /proc/1/fd/1 2>> /proc/1/fd/2");
+    expect(config.Cmd[0]).not.toContain("dashboard.log");
+    expect(config.Cmd[0]).toContain(
+      "exec /opt/hermes/docker/entrypoint.sh gateway run"
+    );
+    expect(config.ExposedPorts).toEqual({
+      "8642/tcp": {},
+      "9119/tcp": {},
+    });
+    expect(config.Labels).toEqual(
+      expect.objectContaining({
+        "nora.dashboard.port": String(HERMES_DASHBOARD_PORT),
+      })
+    );
+    expect(bridgeConnect).toHaveBeenCalledWith({
+      Container: "hermes-container-1",
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        runtimeHost: "10.0.0.50",
+        runtimePort: 8642,
+      })
+    );
   });
 });

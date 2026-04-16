@@ -11,6 +11,7 @@ const mockDb = { query: jest.fn() };
 const mockAddDeploymentJob = jest.fn();
 const mockStats = jest.fn();
 const mockSyncAuthToUserAgents = jest.fn().mockResolvedValue([]);
+const mockRunContainerCommand = jest.fn();
 const mockListHermesChannels = jest.fn();
 const mockSaveHermesChannel = jest.fn();
 const mockDeleteHermesChannel = jest.fn();
@@ -160,7 +161,7 @@ jest.mock("../platformSettings", () => {
 });
 jest.mock("../authSync", () => ({
   syncAuthToUserAgents: mockSyncAuthToUserAgents,
-  runContainerCommand: jest.fn(),
+  runContainerCommand: mockRunContainerCommand,
 }));
 jest.mock("../hermesUi", () => ({
   listHermesChannels: mockListHermesChannels,
@@ -198,6 +199,7 @@ beforeEach(() => {
   mockDb.query.mockReset();
   mockAddDeploymentJob.mockReset();
   mockSyncAuthToUserAgents.mockReset().mockResolvedValue([]);
+  mockRunContainerCommand.mockReset();
   mockListHermesChannels.mockReset().mockResolvedValue({
     channels: [],
     availableTypes: [],
@@ -532,6 +534,16 @@ describe("Hermes WebUI routes", () => {
             data: [{ id: "desk-bot", object: "model" }],
           },
         })
+      )
+      .mockResolvedValueOnce(
+        createMockFetchResponse({
+          body: {
+            version: "1.0.0",
+            gateway_running: true,
+            gateway_state: "running",
+            active_sessions: 4,
+          },
+        })
       );
 
     const res = await auth(request(app).get("/agents/a-hermes-ui/hermes-ui"));
@@ -542,6 +554,19 @@ describe("Hermes WebUI routes", () => {
         url: "http://10.0.0.40:8642/v1",
         runtime: { host: "10.0.0.40", port: 8642 },
         health: expect.objectContaining({ ok: true, status: "ok" }),
+        dashboard: expect.objectContaining({
+          ready: true,
+          url: "http://10.0.0.40:9119",
+          port: 9119,
+          health: {
+            version: "1.0.0",
+            gatewayRunning: true,
+            gatewayState: "running",
+            activeSessions: 4,
+          },
+          retryable: false,
+          error: null,
+        }),
         defaultModel: "gpt-5.4",
         configuredModel: "gpt-5.4",
         configuredProvider: "custom",
@@ -568,6 +593,16 @@ describe("Hermes WebUI routes", () => {
         }),
       })
     );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      3,
+      "http://10.0.0.40:9119/api/status",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Accept: "application/json",
+        }),
+      })
+    );
     expect(res.body.gateway).toEqual(
       expect.objectContaining({
         state: "running",
@@ -575,6 +610,85 @@ describe("Hermes WebUI routes", () => {
         jobsCount: 0,
       })
     );
+  });
+
+  it("surfaces a redeploy message when the running Hermes image does not include the official dashboard", async () => {
+    mockReadHermesRuntimeSnapshot.mockResolvedValueOnce({
+      runtimeStatus: {
+        gateway_state: "running",
+        active_agents: 1,
+        updated_at: "2026-04-12T12:00:00.000Z",
+        platforms: {},
+      },
+      directory: {
+        updated_at: "2026-04-12T12:00:00.000Z",
+        platforms: {},
+      },
+      platformDetails: {},
+      jobsCount: 0,
+      modelConfig: {
+        defaultModel: "gpt-5.4",
+        provider: "custom",
+        baseUrl: "https://api.openai.com/v1",
+      },
+    });
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{
+        id: "a-hermes-ui-old-image",
+        user_id: "user-1",
+        status: "running",
+        runtime_family: "hermes",
+        backend_type: "hermes",
+        container_id: "hermes-container",
+        runtime_host: "10.0.0.41",
+        runtime_port: 8642,
+        gateway_token: "hermes-token",
+      }],
+    });
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        createMockFetchResponse({
+          body: { status: "ok", platform: "hermes-agent" },
+        })
+      )
+      .mockResolvedValueOnce(
+        createMockFetchResponse({
+          body: {
+            object: "list",
+            data: [{ id: "desk-bot", object: "model" }],
+          },
+        })
+      )
+      .mockRejectedValueOnce(new TypeError("fetch failed"));
+    mockRunContainerCommand.mockResolvedValueOnce({
+      exitCode: 0,
+      output: [
+        "STATUS=missing-dashboard",
+        "VERSION=Hermes Agent v0.8.0 (2026.4.8)",
+        "",
+      ].join("\n"),
+    });
+
+    const res = await auth(
+      request(app).get("/agents/a-hermes-ui-old-image/hermes-ui")
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.dashboard).toEqual({
+      ready: false,
+      url: "http://10.0.0.41:9119",
+      port: 9119,
+      health: null,
+      retryable: false,
+      error:
+        "This Hermes image (Hermes Agent v0.8.0 (2026.4.8)) does not include the official dashboard yet. Pull a current Hermes image and redeploy this agent.",
+    });
+    expect(mockRunContainerCommand).toHaveBeenCalledTimes(1);
+    expect(mockRunContainerCommand.mock.calls[0][1]).toContain(
+      ">> /proc/1/fd/1 2>> /proc/1/fd/2"
+    );
+    expect(mockRunContainerCommand.mock.calls[0][1]).not.toContain("dashboard.log");
   });
 
   it("proxies Hermes chat requests through the runtime API", async () => {

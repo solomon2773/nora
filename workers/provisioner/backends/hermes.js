@@ -9,10 +9,42 @@ const {
 const {
   getHermesDockerAgentImage,
 } = require("../../../agent-runtime/lib/agentImages");
+const {
+  HERMES_DASHBOARD_PORT,
+} = require("../../../agent-runtime/lib/contracts");
 
 const HERMES_RUNTIME_PORT = 8642;
 const HERMES_HOME = "/opt/data";
+const HERMES_LOG_DIR = `${HERMES_HOME}/logs`;
 const HERMES_WORKSPACE = `${HERMES_HOME}/workspace`;
+const HERMES_ENTRYPOINT = "/opt/hermes/docker/entrypoint.sh";
+const CONTAINER_STDOUT_FD = "/proc/1/fd/1";
+const CONTAINER_STDERR_FD = "/proc/1/fd/2";
+
+function isMutableImageReference(imgName) {
+  const ref = String(imgName || "").trim();
+  if (!ref || ref.includes("@sha256:")) return false;
+
+  const lastColon = ref.lastIndexOf(":");
+  const lastSlash = ref.lastIndexOf("/");
+  const tag = lastColon > lastSlash ? ref.slice(lastColon + 1) : "latest";
+
+  return ["latest", "main", "nightly", "edge", "canary"].includes(tag);
+}
+
+function buildHermesStartCommand() {
+  return [
+    "set -eu",
+    `if [ -d ${HERMES_LOG_DIR} ]; then`,
+    `  chown -R hermes:hermes ${HERMES_LOG_DIR} 2>/dev/null || true`,
+    "else",
+    `  mkdir -p ${HERMES_LOG_DIR}`,
+    `  chown hermes:hermes ${HERMES_LOG_DIR} 2>/dev/null || true`,
+    "fi",
+    `nohup ${HERMES_ENTRYPOINT} dashboard --host 0.0.0.0 --insecure --no-open >> ${CONTAINER_STDOUT_FD} 2>> ${CONTAINER_STDERR_FD} &`,
+    `exec ${HERMES_ENTRYPOINT} gateway run`,
+  ].join("\n");
+}
 
 function throwIfAborted(abortSignal, stage = "hermes create") {
   if (!abortSignal?.aborted) return;
@@ -39,15 +71,7 @@ function safeHostname(name, fallback) {
 }
 
 class HermesBackend extends DockerBackend {
-  async _ensureImage(imgName) {
-    try {
-      await this.docker.getImage(imgName).inspect();
-      console.log(`[hermes] Image ${imgName} already present`);
-      return;
-    } catch {
-      // Pull below.
-    }
-
+  async _pullImage(imgName) {
     console.log(`[hermes] Pulling image ${imgName}...`);
     await new Promise((resolve, reject) => {
       this.docker.pull(imgName, (err, stream) => {
@@ -59,6 +83,38 @@ class HermesBackend extends DockerBackend {
         });
       });
     });
+  }
+
+  async _ensureImage(imgName) {
+    const mutableRef = isMutableImageReference(imgName);
+    let hasLocalImage = false;
+
+    try {
+      await this.docker.getImage(imgName).inspect();
+      hasLocalImage = true;
+      console.log(`[hermes] Image ${imgName} already present`);
+    } catch {
+      hasLocalImage = false;
+    }
+
+    if (!mutableRef && hasLocalImage) {
+      return;
+    }
+
+    if (mutableRef && hasLocalImage) {
+      console.log(`[hermes] Refreshing mutable image tag ${imgName}`);
+      try {
+        await this._pullImage(imgName);
+        return;
+      } catch (error) {
+        console.warn(
+          `[hermes] Failed to refresh ${imgName}; using cached image: ${error.message}`
+        );
+        return;
+      }
+    }
+
+    await this._pullImage(imgName);
   }
 
   async create(config) {
@@ -106,6 +162,7 @@ class HermesBackend extends DockerBackend {
       API_SERVER_HOST: "0.0.0.0",
       API_SERVER_PORT: String(HERMES_RUNTIME_PORT),
       API_SERVER_KEY: apiServerKey,
+      GATEWAY_HEALTH_URL: `http://127.0.0.1:${HERMES_RUNTIME_PORT}`,
       MESSAGING_CWD: HERMES_WORKSPACE,
       TERMINAL_CWD: HERMES_WORKSPACE,
     }).map(([key, value]) => `${key}=${value}`);
@@ -123,9 +180,13 @@ class HermesBackend extends DockerBackend {
         name: containerName,
         Hostname: hostname,
         Env: envArray,
-        Cmd: ["gateway", "run"],
+        Entrypoint: ["/bin/bash", "-lc"],
+        Cmd: [buildHermesStartCommand()],
         WorkingDir: HERMES_HOME,
-        ExposedPorts: { [`${HERMES_RUNTIME_PORT}/tcp`]: {} },
+        ExposedPorts: {
+          [`${HERMES_RUNTIME_PORT}/tcp`]: {},
+          [`${HERMES_DASHBOARD_PORT}/tcp`]: {},
+        },
         HostConfig: {
           NanoCpus: (vcpu || 2) * 1e9,
           Memory: (ram_mb || 2048) * 1024 * 1024,
@@ -142,6 +203,7 @@ class HermesBackend extends DockerBackend {
           "nora.agent.name": name || "",
           "nora.runtime.family": "hermes",
           "nora.runtime.port": String(HERMES_RUNTIME_PORT),
+          "nora.dashboard.port": String(HERMES_DASHBOARD_PORT),
         },
       });
 

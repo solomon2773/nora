@@ -153,7 +153,7 @@ jobs:
           export NORA_ENV_FILE="$DEPLOY_ENV_FILE"
           docker compose "${compose_args[@]}" up -d --build
           docker compose "${compose_args[@]}" ps
-REMOTE
+          REMOTE
 
       - name: Deployment summary
         env:

@@ -125,6 +125,13 @@ const HERMES_README_RUNTIME = {
     { id: "hermes-agent-fast" },
   ],
   defaultModel: "anthropic/claude-sonnet-4-5",
+  dashboard: {
+    ready: false,
+    url: "http://hermes-runtime.internal:9119",
+    port: 9119,
+    health: null,
+    error: "Official dashboard disabled for README capture.",
+  },
   gateway: {
     state: "running",
     activeAgents: 1,
@@ -1395,6 +1402,7 @@ async function captureHermesReadmeScreenshot(browser, token) {
       HERMES_README_AGENT.name
     );
     await hermes.page.getByRole("button", { name: "Hermes WebUI" }).first().click();
+    await hermes.page.getByRole("button", { name: "Status" }).first().click();
     await hermes.page.getByText("Hermes Status", { exact: true }).waitFor({
       state: "visible",
       timeout: 15000,
