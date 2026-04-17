@@ -1,0 +1,8 @@
+{
+  "templateKey": "document-data-extractor-claw",
+  "name": "Document Data Extractor Claw",
+  "description": "Extracts structured data from documents, emails, and forms — contracts, invoices, applications, and more — so you stop copying things by hand.",
+  "price": "Free",
+  "category": "Operations",
+  "starterType": "operations"
+}

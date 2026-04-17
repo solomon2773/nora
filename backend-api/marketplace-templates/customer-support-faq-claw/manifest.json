@@ -1,0 +1,8 @@
+{
+  "templateKey": "customer-support-faq-claw",
+  "name": "Customer Support & FAQ Claw",
+  "description": "Answers customer questions from your knowledge base, drafts support responses, and flags issues that need human escalation.",
+  "price": "Free",
+  "category": "Support",
+  "starterType": "support"
+}
