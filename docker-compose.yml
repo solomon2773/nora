@@ -10,10 +10,13 @@ services:
         condition: service_healthy
 
   frontend-marketing:
-    build: ./frontend-marketing
+    build:
+      context: .
+      dockerfile: frontend-marketing/Dockerfile
     working_dir: /app
     volumes:
       - ./frontend-marketing:/app
+      - ./tsconfig.base.json:/tsconfig.base.json:ro
     command: sh -c "npm install && npm run dev"
     environment:
       - PORT=3000
@@ -23,34 +26,43 @@ services:
       - ${NORA_ENV_FILE:-.env}
 
   frontend-dashboard:
-    build: ./frontend-dashboard
+    build:
+      context: .
+      dockerfile: frontend-dashboard/Dockerfile
     working_dir: /app
     volumes:
       - ./frontend-dashboard:/app
+      - ./tsconfig.base.json:/tsconfig.base.json:ro
     command: sh -c "npm install && npm run dev"
     environment:
       - PORT=3000
       - NODE_ENV=development
 
   admin-dashboard:
-    build: ./admin-dashboard
+    build:
+      context: .
+      dockerfile: admin-dashboard/Dockerfile
     working_dir: /app
     volumes:
       - ./admin-dashboard:/app
+      - ./tsconfig.base.json:/tsconfig.base.json:ro
     command: sh -c "npm install && npm run dev"
     environment:
       - PORT=3000
       - NODE_ENV=development
 
   backend-api:
-    build: ./backend-api
+    build:
+      context: .
+      dockerfile: backend-api/Dockerfile
     working_dir: /app
     volumes:
       - ./backend-api:/app
       - ./workers/provisioner/backends:/app/backends
       - ./agent-runtime:/agent-runtime:ro
+      - ./tsconfig.base.json:/tsconfig.base.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
-    command: sh -c "npm install && node server.js"
+    command: sh -c "npm install && npm start"
     ports:
       - "127.0.0.1:${BACKEND_API_PORT:-4100}:4000"
     extra_hosts:
@@ -70,13 +82,19 @@ services:
       start_period: 30s
 
   worker-provisioner:
-    build: ./workers/provisioner
+    build:
+      context: .
+      dockerfile: workers/provisioner/Dockerfile
     working_dir: /app
     volumes:
       - ./workers/provisioner:/app
       - ./agent-runtime:/agent-runtime:ro
+      - ./backend-api:/backend-api:ro
+      - ./tsconfig.base.json:/tsconfig.base.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
-    command: sh -c "npm install && node worker.js"
+    command: sh -c "npm install && npm start"
+    environment:
+      DEPLOYMENT_WORKER_CONCURRENCY: ${DEPLOYMENT_WORKER_CONCURRENCY:-6}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:

@@ -1,6 +1,6 @@
 # Frontend Dashboard
 
-The main application dashboard for Nora. Built with Next.js 14, React 18, and Tailwind CSS.
+The main application dashboard for Nora. Built with Next.js 16, React 19, and Tailwind CSS.
 
 ## Overview
 
@@ -35,14 +35,14 @@ Each agent's `/app/agents/[id]` page has 7 tabs:
 
 | Component | Purpose |
 |---|---|
-| `AgentTerminal.js` | xterm.js terminal with FitAddon, WebSocket |
-| `TabBar.js` | 7-tab navigation bar |
-| `OpenClawTab.js` | 5-panel OpenClaw interface |
-| `ChannelsTab.js` | Channel CRUD with dynamic config forms |
-| `IntegrationsTab.js` | Catalog browser with 17-category filter |
-| `IntegrationCard.js` | Card with config modal for connecting |
-| `LLMSetupWizard.js` | 3-step provider setup (select → configure → done) |
-| `Layout.js` / `Sidebar.js` / `Topbar.js` | App shell layout |
+| `AgentTerminal.tsx` | xterm.js terminal with FitAddon, WebSocket |
+| `TabBar.tsx` | 7-tab navigation bar |
+| `OpenClawTab.tsx` | 5-panel OpenClaw interface |
+| `ChannelsTab.tsx` | Channel CRUD with dynamic config forms |
+| `IntegrationsTab.tsx` | Catalog browser with 17-category filter |
+| `IntegrationCard.tsx` | Card with config modal for connecting |
+| `LLMSetupWizard.tsx` | 3-step provider setup (select → configure → done) |
+| `Layout.tsx` / `Sidebar.tsx` / `Topbar.tsx` | App shell layout |
 
 ## Development
 
@@ -60,4 +60,4 @@ npm run dev   # Starts on port 3001
 
 | Variable | Default | Description |
 |---|---|
-| `basePath` | `/app` | Next.js base path, set in `next.config.js` |
+| `basePath` | `/app` | Next.js base path, set in `next.config.ts` |

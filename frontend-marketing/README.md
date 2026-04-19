@@ -1,6 +1,6 @@
 # Frontend Marketing
 
-Public-facing marketing site for Nora. Built with Next.js 14 and Tailwind CSS.
+Public-facing marketing site for Nora. Built with Next.js 16, React 19, and Tailwind CSS.
 
 ## Overview
 

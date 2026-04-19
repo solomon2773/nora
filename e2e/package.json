@@ -1,16 +1,27 @@
 {
   "name": "openclaw-e2e",
   "private": true,
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "test": "npx playwright test",
     "test:ui": "npx playwright test --ui",
     "test:report": "npx playwright show-report",
-    "capture:operator-readme": "node ./scripts/capture-operator-screenshots.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:real": "BASE_URL=${BASE_URL:-http://localhost:8080} npx playwright test specs/real-deploy-matrix.spec.ts specs/real-integrations.spec.ts specs/real-channels.spec.ts",
+    "test:real:matrix": "BASE_URL=${BASE_URL:-http://localhost:8080} npx playwright test specs/real-deploy-matrix.spec.ts",
+    "test:real:integrations": "BASE_URL=${BASE_URL:-http://localhost:8080} npx playwright test specs/real-integrations.spec.ts",
+    "test:real:channels": "BASE_URL=${BASE_URL:-http://localhost:8080} npx playwright test specs/real-channels.spec.ts",
+    "capture:operator-readme": "tsx ./scripts/capture-operator-screenshots.mts",
     "smoke:k8s-kind": "bash ./scripts/run-kind-k8s-smoke.sh",
-    "smoke:dashboard-runtime": "node ./scripts/dashboard-runtime-smoke.mjs",
-    "smoke:runtime-path": "node ./scripts/runtime-path-smoke.mjs"
+    "smoke:dashboard-runtime": "tsx ./scripts/dashboard-runtime-smoke.mts",
+    "smoke:runtime-path": "tsx ./scripts/runtime-path-smoke.mts"
   },
   "devDependencies": {
-    "@playwright/test": "^1.42.0"
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
   }
 }

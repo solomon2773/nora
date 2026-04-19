@@ -1,5 +1,10 @@
 node_modules
 .next
+**/node_modules
+**/.next
+**/playwright-report
+**/test-results
+**/*.tsbuildinfo
 .env
 .git
 *.md

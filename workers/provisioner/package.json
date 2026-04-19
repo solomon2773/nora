@@ -1,14 +1,25 @@
 {
   "name": "platform-api",
   "private": true,
-  "scripts": {"start":"node worker.js"},
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "start": "tsx worker.ts",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
+    "@kubernetes/client-node": "^1.4.0",
+    "axios": "^1.15.0",
+    "bullmq": "^5.74.1",
+    "dockerode": "^4.0.10",
+    "ioredis": "^5.10.1",
     "pg": "^8.11.5",
-    "bullmq": "^5.7.0",
-    "ioredis": "^5.4.1",
-    "dockerode": "^4.0.2",
     "tar-stream": "^3.1.7",
-    "axios": "^1.7.2",
-    "@kubernetes/client-node": "^0.21.0"
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
   }
 }

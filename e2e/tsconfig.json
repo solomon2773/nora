@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "allowJs": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "isolatedModules": true
+  },
+  "include": ["**/*.ts", "**/*.mts"],
+  "exclude": ["node_modules", "playwright-report", "test-results"]
+}

@@ -16,7 +16,9 @@ services:
         condition: service_started
 
   frontend-marketing:
-    build: ./frontend-marketing
+    build:
+      context: .
+      dockerfile: frontend-marketing/Dockerfile
     environment:
       - PORT=3000
       - NODE_ENV=production
@@ -25,19 +27,25 @@ services:
       - ${NORA_ENV_FILE:-.env}
 
   frontend-dashboard:
-    build: ./frontend-dashboard
+    build:
+      context: .
+      dockerfile: frontend-dashboard/Dockerfile
     environment:
       - PORT=3000
       - NODE_ENV=production
 
   admin-dashboard:
-    build: ./admin-dashboard
+    build:
+      context: .
+      dockerfile: admin-dashboard/Dockerfile
     environment:
       - PORT=3000
       - NODE_ENV=production
 
   backend-api:
-    build: ./backend-api
+    build:
+      context: .
+      dockerfile: backend-api/Dockerfile
     volumes:
       - ./agent-runtime:/agent-runtime:ro
     extra_hosts:

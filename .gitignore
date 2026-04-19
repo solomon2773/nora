@@ -1,17 +1,20 @@
 # Node / Next build artifacts
 **/node_modules/
 **/.next/
+*.tsbuildinfo
 
 # Test / coverage artifacts
 coverage/
 *.log
 **/playwright-report/
 **/test-results/
+*.swp
 
 # Local environment files
 .env
 .env.local
 .env.*.local
+e2e/.env.real
 docker-compose.override.yml
 nginx.public.conf
 nginx.conf.tls

@@ -2,12 +2,22 @@
   "name": "@openclaw/agent-runtime",
   "version": "1.0.0",
   "description": "OpenClaw Agent Runtime — runs inside provisioned agent containers",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "bin": {
-    "openclaw": "./bin/openclaw.js"
+    "openclaw": "./bin/openclaw"
   },
-  "main": "lib/agent.js",
+  "main": "lib/agent.ts",
   "scripts": {
-    "start": "node lib/agent.js"
+    "start": "tsx lib/agent.ts",
+    "typecheck": "tsc --noEmit"
   },
-  "dependencies": {}
+  "dependencies": {
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3"
+  }
 }

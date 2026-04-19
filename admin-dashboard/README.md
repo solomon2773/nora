@@ -1,6 +1,6 @@
 # Admin Dashboard
 
-Internal administration panel for Nora platform operators. Built with Next.js.
+Internal administration panel for Nora platform operators. Built with Next.js 16, React 19, and Tailwind CSS.
 
 ## Overview
 

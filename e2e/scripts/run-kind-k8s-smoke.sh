@@ -76,4 +76,4 @@ for _ in $(seq 1 120); do
 done
 
 curl -fsS "${API_BASE_URL}/health" >/dev/null
-node "$ROOT_DIR/e2e/scripts/k8s-smoke.mjs"
+"$ROOT_DIR/e2e/node_modules/.bin/tsx" "$ROOT_DIR/e2e/scripts/k8s-smoke.mts"

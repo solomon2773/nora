@@ -3,7 +3,7 @@ services:
     restart: unless-stopped
 
   frontend-marketing:
-    command: ["npm", "start"]
+    command: ["node", "server.js"]
     environment:
       PORT: "3000"
       NODE_ENV: production
@@ -12,7 +12,7 @@ services:
     volumes: !override []
 
   frontend-dashboard:
-    command: ["npm", "start"]
+    command: ["node", "server.js"]
     environment:
       PORT: "3000"
       NODE_ENV: production
@@ -20,7 +20,7 @@ services:
     volumes: !override []
 
   admin-dashboard:
-    command: ["npm", "start"]
+    command: ["node", "server.js"]
     environment:
       PORT: "3000"
       NODE_ENV: production
@@ -31,7 +31,7 @@ services:
     build:
       context: .
       dockerfile: backend-api/Dockerfile.prod
-    command: ["node", "server.js"]
+    command: ["npm", "start"]
     ports: !override
       - "127.0.0.1:4100:4000"
     restart: unless-stopped
@@ -42,7 +42,9 @@ services:
     build:
       context: .
       dockerfile: workers/provisioner/Dockerfile.prod
-    command: ["node", "worker.js"]
+    command: ["npm", "start"]
+    environment:
+      DEPLOYMENT_WORKER_CONCURRENCY: ${DEPLOYMENT_WORKER_CONCURRENCY:-6}
     restart: unless-stopped
     volumes: !override
       - /var/run/docker.sock:/var/run/docker.sock

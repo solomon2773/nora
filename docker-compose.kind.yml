@@ -19,6 +19,7 @@ services:
       - default
       - kind
     environment:
+      DEPLOYMENT_WORKER_CONCURRENCY: ${DEPLOYMENT_WORKER_CONCURRENCY:-6}
       ENABLED_BACKENDS: ${KIND_ENABLED_BACKENDS:-k8s}
       K8S_NAMESPACE: ${K8S_NAMESPACE:-openclaw-agents}
       K8S_EXPOSURE_MODE: ${K8S_EXPOSURE_MODE:-node-port}

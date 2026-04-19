@@ -66,6 +66,16 @@ Best fit:
 - you need the difference between `selfhosted` and `paas`
 - you want the public repo and public site entry points in one place
 
+## 6. Security vulnerabilities
+
+Use the private reporting path in [SECURITY.md](SECURITY.md) if you believe you found a vulnerability.
+
+Best fit:
+- security bugs with real impact
+- unsafe defaults or exposure paths
+- credential handling issues
+- auth, session, tenant-isolation, or sandbox escape concerns
+
 ## What to include when asking for help
 
 To reduce back-and-forth, include:
@@ -81,9 +91,11 @@ To reduce back-and-forth, include:
 ## Security note
 
 Do **not** post secrets, API keys, `.env` files, or private credentials in Issues or Discussions.
+If the problem may be a vulnerability, use [SECURITY.md](SECURITY.md) instead of a public thread.
 
 If you are unsure where to start:
 - choose [README Quick Start](README.md#quick-start) if you want to self-host
 - choose [signup](https://nora.solomontsao.com/signup) or [login](https://nora.solomontsao.com/login) if you want the default public browser entry
 - choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want implementation discussion or setup guidance
+- choose [SECURITY.md](SECURITY.md) if the issue could expose systems, credentials, sessions, or users
 - choose [open source / license / PaaS mode](https://nora.solomontsao.com/pricing) if you want the short public explanation of OSS rights and hosted-user-owned deployment mode

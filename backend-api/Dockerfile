@@ -1,7 +1,10 @@
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY backend-api/package.json backend-api/package-lock.json* ./
 RUN npm ci --omit=dev || npm install --omit=dev
-COPY . .
+COPY tsconfig.base.json /tsconfig.base.json
+COPY backend-api/ ./
+COPY agent-runtime /agent-runtime
+COPY workers/provisioner/backends /app/backends
 EXPOSE 4000
-CMD ["node", "server.js"]
+CMD ["npm", "start"]
