@@ -15,6 +15,7 @@ const {
   CLONE_MODES,
   buildTemplatePayloadFromAgent,
   createEmptyTemplatePayload,
+  ensureCoreTemplateFiles,
   materializeTemplateWiring,
   resolveContainerName,
   sanitizeAgentName,
@@ -199,6 +200,61 @@ function assertBackendAvailable(backend) {
     throw error;
   }
   return status;
+}
+
+function normalizeClawhubSkillEntry(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return null;
+  }
+
+  const installSlug =
+    typeof entry.installSlug === "string"
+      ? entry.installSlug.trim()
+      : typeof entry.slug === "string"
+        ? entry.slug.trim()
+        : "";
+  if (!installSlug) return null;
+
+  const author = typeof entry.author === "string" ? entry.author.trim() : "";
+  const pagePath =
+    typeof entry.pagePath === "string" && entry.pagePath.trim()
+      ? entry.pagePath.trim()
+      : author
+        ? `${author}/${installSlug}`
+        : installSlug;
+
+  const installedAtRaw =
+    typeof entry.installedAt === "string" ? entry.installedAt.trim() : "";
+  const installedAt =
+    installedAtRaw && !Number.isNaN(new Date(installedAtRaw).getTime())
+      ? new Date(installedAtRaw).toISOString()
+      : new Date().toISOString();
+
+  return {
+    source: "clawhub",
+    installSlug,
+    author,
+    pagePath,
+    installedAt,
+  };
+}
+
+function normalizeClawhubSkills(entries) {
+  if (!Array.isArray(entries)) return [];
+
+  const seen = new Set();
+  const normalized = [];
+
+  for (const entry of entries) {
+    const skill = normalizeClawhubSkillEntry(entry);
+    if (!skill) continue;
+    const dedupeKey = `${skill.author}::${skill.installSlug}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    normalized.push(skill);
+  }
+
+  return normalized;
 }
 
 router.get("/", asyncHandler(async (req, res) => {
@@ -1162,6 +1218,7 @@ router.get("/:id/stats", asyncHandler(async (req, res) => {
 router.post("/deploy", async (req, res) => {
   try {
     const requestBody = req.body || {};
+    const clawhubSkills = normalizeClawhubSkills(requestBody.clawhub_skills);
     // Enforce billing limits
     const limits = await billing.enforceLimits(req.user.id);
     if (!limits.allowed) return res.status(402).json({ error: limits.error, subscription: limits.subscription });
@@ -1240,23 +1297,41 @@ router.post("/deploy", async (req, res) => {
     });
     const templatePayload = migrationDraft
       ? migrationDraft.manifest.runtimeFamily === "openclaw"
-        ? migrationDraft.manifest.templatePayload || createEmptyTemplatePayload({
-            source: "migration-draft",
-          })
+        ? migrationDraft.manifest.templatePayload || ensureCoreTemplateFiles(
+            createEmptyTemplatePayload({
+              source: "migration-draft",
+            }),
+            {
+              name,
+              sourceType: "platform",
+              includeBootstrap: true,
+            }
+          )
         : createEmptyTemplatePayload({
             source: "migration-draft",
             migrationDraftId: migrationDraft.id,
           })
-      : createEmptyTemplatePayload({
-          source: "blank-deploy",
-        });
+      : runtimeFields.runtime_family === "openclaw"
+        ? ensureCoreTemplateFiles(
+            createEmptyTemplatePayload({
+              source: "blank-deploy",
+            }),
+            {
+              name,
+              sourceType: "platform",
+              includeBootstrap: true,
+            }
+          )
+        : createEmptyTemplatePayload({
+            source: "blank-deploy",
+          });
 
     const result = await db.query(
       `INSERT INTO agents(
          user_id, name, status, node, backend_type, sandbox_type, vcpu, ram_mb, disk_gb,
-         container_name, image, template_payload, runtime_family, deploy_target,
+         container_name, image, template_payload, clawhub_skills, runtime_family, deploy_target,
          sandbox_profile
-       ) VALUES($1, $2, 'queued', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+       ) VALUES($1, $2, 'queued', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15) RETURNING *`,
       [
         req.user.id,
         name,
@@ -1269,6 +1344,7 @@ router.post("/deploy", async (req, res) => {
         containerName,
         image,
         JSON.stringify(templatePayload),
+        JSON.stringify(clawhubSkills),
         runtimeFields.runtime_family,
         runtimeFields.deploy_target,
         runtimeFields.sandbox_profile,
@@ -1311,6 +1387,7 @@ router.post("/deploy", async (req, res) => {
       image,
       model: runtimeFields.sandbox_profile === "nemoclaw" ? req.body.model || null : null,
       migration_draft_id: migrationDraft?.id || null,
+      clawhub_skills: clawhubSkills,
     });
 
     const deployType = backendStatus.label;

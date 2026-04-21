@@ -1905,6 +1905,84 @@ describe("POST /agents/deploy", () => {
     );
   });
 
+  it("persists normalized clawhub skills during deploy without changing the response shape", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{
+          id: "a-clawhub",
+          name: "ClawHub Agent",
+          status: "queued",
+          user_id: "user-1",
+          clawhub_skills: [
+            {
+              source: "clawhub",
+              installSlug: "github",
+              author: "steipete",
+              pagePath: "steipete/github",
+              installedAt: "2026-04-19T12:00:00.000Z",
+            },
+          ],
+        }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await auth(
+      request(app).post("/agents/deploy").send({
+        name: "ClawHub Agent",
+        clawhub_skills: [
+          {
+            source: "clawhub",
+            installSlug: "github",
+            author: "steipete",
+            pagePath: "steipete/github",
+            installedAt: "2026-04-19T12:00:00Z",
+            description: "Should not persist",
+          },
+          {
+            source: "clawhub",
+            installSlug: "github",
+            author: "steipete",
+            pagePath: "steipete/github",
+            installedAt: "2026-04-19T12:05:00Z",
+          },
+        ],
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        id: "a-clawhub",
+        name: "ClawHub Agent",
+        status: "queued",
+      })
+    );
+
+    const insertParams = mockDb.query.mock.calls[0][1];
+    expect(JSON.parse(insertParams[11])).toEqual([
+      {
+        source: "clawhub",
+        installSlug: "github",
+        author: "steipete",
+        pagePath: "steipete/github",
+        installedAt: "2026-04-19T12:00:00.000Z",
+      },
+    ]);
+
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "a-clawhub",
+        clawhub_skills: [
+          expect.objectContaining({
+            installSlug: "github",
+            author: "steipete",
+            pagePath: "steipete/github",
+          }),
+        ],
+      })
+    );
+  });
+
   it("uses operator-managed deployment defaults in PaaS mode", async () => {
     const billing = require("../billing");
     billing.IS_PAAS = true;

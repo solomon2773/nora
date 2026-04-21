@@ -832,6 +832,7 @@ app.use("/agent-migrations", require("./routes/agentMigrations"));
 app.use("/",              require("./routes/integrations"));   // handles /agents/:id/integrations + /integrations/catalog
 app.use("/",              require("./routes/monitoring"));     // handles /monitoring/* + /agents/:id/metrics
 app.use("/llm-providers", require("./routes/llmProviders"));
+app.use("/clawhub",       require("./routes/clawhub"));
 app.use("/marketplace",   require("./routes/marketplace"));
 app.use("/workspaces",    require("./routes/workspaces"));
 app.use("/billing",       require("./routes/billing"));
@@ -1035,6 +1036,8 @@ async function migrateDB() {
     `DO $$ BEGIN ALTER TABLE agents ADD COLUMN image TEXT; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
     `DO $$ BEGIN ALTER TABLE agents ADD COLUMN template_payload JSONB DEFAULT '{}'; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
     `UPDATE agents SET template_payload = '{}'::jsonb WHERE template_payload IS NULL`,
+    `DO $$ BEGIN ALTER TABLE agents ADD COLUMN clawhub_skills JSONB DEFAULT '[]'; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
+    `UPDATE agents SET clawhub_skills = '[]'::jsonb WHERE clawhub_skills IS NULL`,
     `CREATE TABLE IF NOT EXISTS agent_migrations (
        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
        user_id UUID REFERENCES users(id) ON DELETE CASCADE,

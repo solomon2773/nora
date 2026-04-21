@@ -3,6 +3,7 @@ import { MessageSquare, Radio, CalendarClock, Puzzle, MonitorPlay } from "lucide
 import StatusPanel from "./openclaw/StatusPanel";
 import ChatPanel from "./openclaw/ChatPanel";
 import IntegrationsTab from "./IntegrationsTab";
+import ClawHubTab from "./openclaw/ClawHubTab";
 import CronPanel from "./openclaw/CronPanel";
 import OpenClawUIPanel from "./openclaw/OpenClawUIPanel";
 
@@ -10,11 +11,17 @@ const subTabs = [
   { id: "status", label: "Status", icon: Radio },
   { id: "chat", label: "Chat", icon: MessageSquare },
   { id: "integrations", label: "Integrations", icon: Puzzle },
+  { id: "clawhub", label: "ClawHub", icon: Puzzle },
   { id: "cron", label: "Cron", icon: CalendarClock },
   { id: "ui", label: "UI", icon: MonitorPlay },
 ];
 
-export default function OpenClawTab({ agentId, agentStatus }) {
+export default function OpenClawTab({
+  agentId,
+  agentStatus,
+  agentContainerId,
+  onClawhubInstallSuccess,
+}) {
   const [activeSubTab, setActiveSubTab] = useState("status");
 
   if (agentStatus !== "running" && agentStatus !== "warning") {
@@ -61,6 +68,13 @@ export default function OpenClawTab({ agentId, agentStatus }) {
         {activeSubTab === "status" && <StatusPanel agentId={agentId} />}
         {activeSubTab === "chat" && <ChatPanel agentId={agentId} />}
         {activeSubTab === "integrations" && <IntegrationsTab agentId={agentId} />}
+        {activeSubTab === "clawhub" && (
+          <ClawHubTab
+            agentId={agentId}
+            refreshToken={agentContainerId || agentStatus}
+            onInstallSuccess={onClawhubInstallSuccess}
+          />
+        )}
         {activeSubTab === "cron" && <CronPanel agentId={agentId} />}
         {activeSubTab === "ui" && <OpenClawUIPanel agentId={agentId} />}
       </div>

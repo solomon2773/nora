@@ -65,6 +65,7 @@ export default function AgentDetail() {
   const [publishDescription, setPublishDescription] = useState("");
   const [publishCategory, setPublishCategory] = useState("General");
   const [publishIssues, setPublishIssues] = useState([]);
+  const [showRestartBanner, setShowRestartBanner] = useState(false);
   const [backendConfig, setBackendConfig] = useState(null);
   const [viewerRole, setViewerRole] = useState("user");
   const toast = useToast();
@@ -596,6 +597,20 @@ export default function AgentDetail() {
         </div>
 
         {/* Tab Bar */}
+        {showRestartBanner ? (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">
+              ClawHub Install Complete
+            </p>
+            <p className="mt-1 text-sm font-bold text-slate-900">
+              New skills were installed for this agent.
+            </p>
+            <p className="mt-1 text-sm text-emerald-800/90">
+              Restart your agent session to activate them in the next OpenClaw session.
+            </p>
+          </div>
+        ) : null}
+
         <TabBar
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -673,7 +688,12 @@ export default function AgentDetail() {
           </div>
 
           {activeTab === "openclaw" && supportsGateway && (
-            <OpenClawTab agentId={id} agentStatus={agent.status} />
+            <OpenClawTab
+              agentId={id}
+              agentStatus={agent.status}
+              agentContainerId={agent.container_id}
+              onClawhubInstallSuccess={() => setShowRestartBanner(true)}
+            />
           )}
 
           {activeTab === "hermes-webui" && runtimeFamily === "hermes" && (

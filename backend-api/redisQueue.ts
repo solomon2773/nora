@@ -2,6 +2,7 @@
 // Redis based job queue using BullMQ
 
 const { Queue } = require('bullmq')
+const { randomUUID } = require('crypto')
 const IORedis = require('ioredis')
 
 function parseTimeoutMs(rawValue, fallbackMs) {
@@ -12,6 +13,10 @@ function parseTimeoutMs(rawValue, fallbackMs) {
 const DEPLOYMENT_JOB_TIMEOUT_MS = parseTimeoutMs(
   process.env.DEPLOYMENT_JOB_TIMEOUT_MS || process.env.PROVISION_TIMEOUT_MS,
   900000
+)
+const CLAWHUB_INSTALL_JOB_TIMEOUT_MS = parseTimeoutMs(
+  process.env.CLAWHUB_INSTALL_TIMEOUT_MS,
+  300000
 )
 
 const connection = new IORedis({
@@ -32,8 +37,92 @@ const deployQueue = new Queue('deployments', {
   },
 })
 
+const clawhubInstallsQueue = new Queue('clawhub-installs', {
+  connection,
+  defaultJobOptions: {
+    attempts: 1,
+    backoff: { type: 'exponential', delay: 3000 },
+    timeout: CLAWHUB_INSTALL_JOB_TIMEOUT_MS,
+    removeOnComplete: { count: 200 },
+    removeOnFail: false,
+  },
+})
+
 async function addDeploymentJob(agent){
   await deployQueue.add('deploy-agent', agent)
+}
+
+async function addClawhubInstallJob(payload) {
+  const jobId = payload?.jobId || randomUUID()
+  return clawhubInstallsQueue.add('install-skill', { ...payload, jobId }, { jobId })
+}
+
+async function findInFlightClawhubInstallJob(agentId, slug) {
+  if (!agentId || !slug) return null
+
+  const jobs = await clawhubInstallsQueue.getJobs([
+    'active',
+    'waiting',
+    'waiting-children',
+    'delayed',
+    'prioritized',
+  ])
+
+  const normalizedAgentId = String(agentId)
+  const normalizedSlug = String(slug).trim()
+
+  for (const job of jobs) {
+    if (!job) continue
+    const matchesAgent = String(job.data?.agentId || '') === normalizedAgentId
+    const matchesSlug = String(job.data?.slug || '').trim() === normalizedSlug
+    if (matchesAgent && matchesSlug) {
+      return job
+    }
+  }
+
+  return null
+}
+
+function mapClawhubJobState(state) {
+  switch (state) {
+    case 'active':
+      return 'running'
+    case 'completed':
+      return 'success'
+    case 'failed':
+      return 'failed'
+    case 'waiting':
+    case 'waiting-children':
+    case 'delayed':
+    case 'prioritized':
+    default:
+      return 'pending'
+  }
+}
+
+async function getClawhubInstallJob(jobId) {
+  if (!jobId) return null
+  return clawhubInstallsQueue.getJob(jobId)
+}
+
+async function getClawhubInstallJobStatus(jobId) {
+  const job = await getClawhubInstallJob(jobId)
+  if (!job) return null
+
+  const state = await job.getState()
+  const failedReason =
+    typeof job.failedReason === 'string' && job.failedReason.trim()
+      ? job.failedReason.trim()
+      : null
+
+  return {
+    jobId: String(job.id),
+    agentId: job.data?.agentId || null,
+    slug: job.data?.slug || null,
+    status: mapClawhubJobState(state),
+    error: failedReason,
+    completedAt: job.finishedOn ? new Date(job.finishedOn).toISOString() : null,
+  }
 }
 
 /** Retrieve failed jobs (dead letter queue) for inspection. */
@@ -49,4 +138,15 @@ async function retryDLQJob(jobId) {
   return { jobId, status: 'retried' }
 }
 
-module.exports = { deployQueue, addDeploymentJob, getDLQJobs, retryDLQJob, connection }
+module.exports = {
+  deployQueue,
+  clawhubInstallsQueue,
+  addDeploymentJob,
+  addClawhubInstallJob,
+  findInFlightClawhubInstallJob,
+  getClawhubInstallJob,
+  getClawhubInstallJobStatus,
+  getDLQJobs,
+  retryDLQJob,
+  connection,
+}

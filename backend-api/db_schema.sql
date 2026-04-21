@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS agents (
   container_name TEXT,
   image TEXT,
   template_payload JSONB DEFAULT '{}',
+  clawhub_skills JSONB DEFAULT '[]',
   vcpu INTEGER DEFAULT 1,
   ram_mb INTEGER DEFAULT 1024,
   disk_gb INTEGER DEFAULT 10,
