@@ -13,6 +13,10 @@ const {
 const {
   HERMES_DASHBOARD_PORT,
 } = require("../../../agent-runtime/lib/contracts");
+const {
+  buildContainerBootstrap,
+  toDockerLaunch,
+} = require("../../../agent-runtime/lib/containerCommand");
 
 const HERMES_RUNTIME_PORT = 8642;
 const HERMES_HOME = "/opt/data";
@@ -181,8 +185,15 @@ class HermesBackend extends DockerBackend {
         name: containerName,
         Hostname: hostname,
         Env: envArray,
-        Entrypoint: ["/bin/bash", "-lc"],
-        Cmd: [buildHermesStartCommand()],
+        // Hermes needs a login bash so its image's /etc/profile (nvm / python
+        // venv / CUDA env) is sourced; everything else here is identical to
+        // the shared contract in agent-runtime/lib/containerCommand.ts.
+        ...toDockerLaunch(
+          buildContainerBootstrap(buildHermesStartCommand(), {
+            shell: "/bin/bash",
+            login: true,
+          })
+        ),
         WorkingDir: HERMES_HOME,
         ExposedPorts: {
           [`${HERMES_RUNTIME_PORT}/tcp`]: {},

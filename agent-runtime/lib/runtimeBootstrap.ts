@@ -116,9 +116,7 @@ function buildTemplatePayloadBootstrapFiles(templatePayload = {}) {
   }));
 }
 
-function shellSingleQuote(value) {
-  return `'${String(value).replace(/'/g, "'\\''")}'`;
-}
+const { shellSingleQuote } = require("./containerCommand");
 
 function buildTemplatePayloadBootstrapCommand(templatePayload = {}) {
   const entries = normalizeTemplatePayloadEntries(templatePayload);
@@ -213,17 +211,30 @@ function buildOpenClawInstallCommand(packages = ["openclaw@latest"]) {
 }
 
 function buildRuntimeEnv() {
-  return {
+  const env = {
     AGENT_HTTP_PORT: String(AGENT_RUNTIME_PORT),
     OPENCLAW_GATEWAY_PORT: String(OPENCLAW_GATEWAY_PORT),
-    OPENCLAW_CLI_PATH:
-      process.env.OPENCLAW_CLI_PATH ||
-      "/usr/local/bin/openclaw",
     BACKEND_API_URL:
       process.env.AGENT_RUNTIME_BACKEND_API_URL ||
       process.env.BACKEND_API_URL ||
       "http://backend-api:4000",
   };
+  // Only forward OPENCLAW_CLI_PATH / OPENCLAW_TSX_BIN if the worker process
+  // has them explicitly set — do NOT inject a default. The agent base image
+  // sets these via `ENV` (see agent-runtime/Dockerfile.{openclaw,nemoclaw}-agent)
+  // and different images install the binaries in different prefixes (the
+  // OpenShell sandbox uses `/usr/bin`, the Nora OpenClaw image uses
+  // `/usr/local/bin`). Blindly defaulting to `/usr/local/bin/openclaw` makes
+  // the bootstrap fast-path check miss on the NemoClaw sandbox and fall
+  // into the install branch, which then fails under the sandbox's UID-998
+  // Landlock restrictions.
+  if (process.env.OPENCLAW_CLI_PATH) {
+    env.OPENCLAW_CLI_PATH = process.env.OPENCLAW_CLI_PATH;
+  }
+  if (process.env.OPENCLAW_TSX_BIN) {
+    env.OPENCLAW_TSX_BIN = process.env.OPENCLAW_TSX_BIN;
+  }
+  return env;
 }
 
 module.exports = {

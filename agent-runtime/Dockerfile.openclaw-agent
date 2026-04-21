@@ -1,0 +1,56 @@
+# Reproducible build for `nora-openclaw-agent:local` — the base image every
+# OpenClaw Docker/K8s agent container launches from.
+#
+# Why this exists: before it did, the image was built ad-hoc by whichever
+# machine ran `setup.sh` first, was never regenerated, and lacked `tsx`. The
+# runtime bootstrap then fell into its "install from npm" slow path every
+# cold start, taking 5+ minutes (mostly `rm -rf /usr/local/lib/node_modules`
+# stuck in disk-sleep). Baking both `openclaw` and `tsx` into the image makes
+# `buildOpenClawInstallCommand`'s fast-path check succeed on first boot and
+# drops L3 readiness from ~5 min to ~30 s.
+#
+# Build (once per host, or after bumping a pinned version):
+#   docker build \
+#     --build-arg OPENCLAW_VERSION=latest \
+#     --build-arg TSX_VERSION=4.21.0 \
+#     -f agent-runtime/Dockerfile.openclaw-agent \
+#     -t nora-openclaw-agent:local \
+#     agent-runtime/
+#
+# Override tags via the OPENCLAW_DOCKER_IMAGE env var (see
+# agent-runtime/lib/agentImages.ts).
+
+FROM node:24-slim
+
+ARG OPENCLAW_VERSION=latest
+ARG TSX_VERSION=4.21.0
+
+# Git is needed by some openclaw skills that clone templates at runtime;
+# ca-certificates is needed for any outbound HTTPS call.
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Prebake openclaw + tsx so the runtime bootstrap's fast-path check succeeds
+# on first boot. Pins are build-args so operators can lock versions without
+# editing the Dockerfile.
+RUN npm install -g \
+      "openclaw@${OPENCLAW_VERSION}" \
+      "tsx@${TSX_VERSION}" \
+ && /usr/local/bin/openclaw --version \
+ && /usr/local/bin/tsx --version \
+ && npm cache clean --force
+
+# These env vars are read by agent-runtime/lib/runtimeBootstrap.ts:
+# `OPENCLAW_CLI_PATH` short-circuits the binary lookup, `OPENCLAW_TSX_BIN`
+# does the same for tsx. Keeping them in the image (rather than relying on
+# $PATH) means even a narrow `env -i` at runtime still finds the binaries.
+ENV OPENCLAW_CLI_PATH=/usr/local/bin/openclaw \
+    OPENCLAW_TSX_BIN=/usr/local/bin/tsx
+
+WORKDIR /root
+
+# Health-sanity default. The provisioner always overrides both Entrypoint and
+# Cmd via agent-runtime/lib/containerCommand.ts, so this only matters if
+# someone runs the image directly.
+CMD ["openclaw", "--version"]

@@ -82,6 +82,7 @@ const real = {
     (requireEnv("REAL_ENABLE_OPENCLAW_NEMOCLAW") || "0") === "1",
   enableHermesDocker:
     (requireEnv("REAL_ENABLE_HERMES_DOCKER") || "0") === "1",
+  enableHermesK8s: (requireEnv("REAL_ENABLE_HERMES_K8S") || "0") === "1",
 
   // Timeouts (ms)
   provisionTimeoutMs: Number.parseInt(

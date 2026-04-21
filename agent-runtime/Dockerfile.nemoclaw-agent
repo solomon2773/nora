@@ -1,0 +1,87 @@
+# Reproducible build for `nora-nemoclaw-agent:local` — an overlay on top of
+# the upstream NVIDIA OpenShell sandbox that adds `tsx` (already has openclaw
+# preinstalled) so the runtime bootstrap's fast-path check succeeds at the
+# non-root, Landlock-restricted user that the sandbox runs as.
+#
+# Why this is necessary: the OpenShell base image ships with `openclaw`
+# installed globally but NOT `tsx`. Our bootstrap's `ensureOpenClawCmd` tries
+# to install both via `npm install -g` when either is missing — but at
+# runtime the sandbox drops to the `sandbox` (UID 998) user under Landlock
+# filesystem restrictions, which means `/sandbox/.npm` and
+# `/var/lib/apt/lists` are read-only and the install fails with EACCES. By
+# baking `tsx` in at BUILD time as root, the runtime fast-path skips install
+# entirely.
+#
+# Build (once per host, or after bumping upstream):
+#   docker build \
+#     --build-arg NEMOCLAW_SANDBOX_BASE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest \
+#     --build-arg TSX_VERSION=4.21.0 \
+#     -f agent-runtime/Dockerfile.nemoclaw-agent \
+#     -t nora-nemoclaw-agent:local \
+#     agent-runtime/
+#
+# Override the tag the NemoClaw adapter reads via:
+#   NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local
+
+ARG NEMOCLAW_SANDBOX_BASE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest
+FROM ${NEMOCLAW_SANDBOX_BASE}
+
+ARG TSX_VERSION=4.21.0
+
+# Need to install as root; the base image's final layer is `USER sandbox`.
+USER root
+
+# Global install so every user sees the tsx binary. npm on this base image
+# uses `/usr` as its global prefix (not `/usr/local`) — `which openclaw` on
+# the base resolves to `/usr/bin/openclaw` for the same reason.  We inherit
+# that prefix and let the install drop `tsx` alongside.
+RUN npm install -g "tsx@${TSX_VERSION}" \
+ && /usr/bin/tsx --version \
+ && npm cache clean --force \
+ && rm -rf /root/.npm
+
+# Nora's bootstrap script writes runtime-time state to a handful of paths
+# that are root-owned by default (/opt/openclaw-runtime, /opt/openclaw,
+# /var/log/openclaw-agent.log) and to the user HOME (/root/.openclaw).
+# Under this image's `USER sandbox` (UID 998) those writes all get EACCES,
+# even though the *installed* binaries are fine. Pre-create the dirs with
+# sandbox ownership so the bootstrap can write without widening filesystem
+# permissions globally. The provisioner still runs with the sandbox user
+# and all its Landlock + seccomp + netns restrictions — we're just making
+# the four specific targets writable, not relaxing the sandbox itself.
+RUN mkdir -p \
+      /opt/openclaw \
+      /opt/openclaw-runtime/lib \
+      /var/log \
+ && touch /var/log/openclaw-agent.log \
+ && touch /usr/local/bin/nora-integration-tool \
+ && chown -R sandbox:sandbox \
+      /opt/openclaw \
+      /opt/openclaw-runtime \
+      /var/log/openclaw-agent.log \
+ && chown sandbox:sandbox /usr/local/bin/nora-integration-tool \
+ && chmod 0755 /usr/local/bin/nora-integration-tool \
+ # Bootstrap has a handful of hardcoded `/root/.openclaw/...` paths (template
+ # payloads, auth-profiles.json). The nemoclaw adapter mounts a fresh tmpfs
+ # at /sandbox at runtime (see workers/provisioner/backends/nemoclaw.ts
+ # HostConfig.Tmpfs) which wipes any /sandbox state baked here — so we
+ # redirect /root/.openclaw to /sandbox/.openclaw via a symlink, and the
+ # adapter's tmpfs mount uid=998 ensures the sandbox user can mkdir under
+ # /sandbox/.openclaw at container start. /root itself must be 0755 so the
+ # sandbox user can traverse it and dereference the symlink.
+ && rm -rf /root/.openclaw \
+ && ln -s /sandbox/.openclaw /root/.openclaw \
+ && chmod 0755 /root \
+ && chown -R sandbox:sandbox /root
+
+# Set the env vars the bootstrap fast-path check reads so even a narrow
+# `env -i` at runtime finds the binaries without shelling out to
+# `command -v`.  Both paths are the image's npm-global prefix `/usr/bin`.
+ENV OPENCLAW_CLI_PATH=/usr/bin/openclaw \
+    OPENCLAW_TSX_BIN=/usr/bin/tsx
+
+# Restore the sandbox user — everything past here runs at UID 998 under
+# Landlock, matching the upstream image's runtime contract.
+USER sandbox
+WORKDIR /sandbox
+ENTRYPOINT ["/bin/bash"]

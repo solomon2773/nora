@@ -1,0 +1,13 @@
+name: Nora CodeQL
+paths:
+  - backend-api
+  - agent-runtime
+  - workers/provisioner
+paths-ignore:
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/.next/**"
+  - admin-dashboard
+  - frontend-dashboard
+  - frontend-marketing
+  - e2e

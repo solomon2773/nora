@@ -1,0 +1,8 @@
+**/node_modules/**
+**/.next/**
+**/coverage/**
+**/dist/**
+**/playwright-report/**
+**/test-results/**
+**/*.tsbuildinfo
+

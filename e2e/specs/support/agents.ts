@@ -241,17 +241,28 @@ async function waitForAgentStatus(
 }
 
 async function stopAgent(request: APIRequestContext, token: string, agentId: string) {
-  await apiJson(request, `/api/agents/${agentId}/stop`, {
+  // Backend may take >60s on K8s while it waits for the runtime to fully
+  // settle; nginx returns 504 in that window. Either is fine — the actual
+  // stop kicked off, and the test polls status afterwards.
+  const { response, body } = await apiJson(request, `/api/agents/${agentId}/stop`, {
     method: "POST",
     token,
+    failOnStatus: false,
   });
+  if (!response.ok() && response.status() !== 504) {
+    throw new Error(`stopAgent: ${response.status()} ${JSON.stringify(body)}`);
+  }
 }
 
 async function startAgent(request: APIRequestContext, token: string, agentId: string) {
-  await apiJson(request, `/api/agents/${agentId}/start`, {
+  const { response, body } = await apiJson(request, `/api/agents/${agentId}/start`, {
     method: "POST",
     token,
+    failOnStatus: false,
   });
+  if (!response.ok() && response.status() !== 504) {
+    throw new Error(`startAgent: ${response.status()} ${JSON.stringify(body)}`);
+  }
 }
 
 async function deleteAgent(request: APIRequestContext, token: string, agentId: string) {

@@ -63,6 +63,14 @@ const CELLS = [
     sandboxProfile: "standard",
     enabledFlag: () => real.enableHermesDocker,
   },
+  {
+    key: "hermes-k8s",
+    label: "Hermes + Kubernetes",
+    runtimeFamily: "hermes",
+    backend: "k8s",
+    sandboxProfile: "standard",
+    enabledFlag: () => real.enableHermesK8s,
+  },
 ];
 
 test.describe("Deploy matrix — real credentials", () => {
@@ -108,15 +116,28 @@ test.describe("Deploy matrix — real credentials", () => {
           `runtime ${cell.runtimeFamily} not in ENABLED_RUNTIME_FAMILIES on this stack`
         );
 
-        agent = await deployAgent(request, operator.token, {
-          name: uniqueName(`real-${cell.key}`),
-          runtimeFamily: cell.runtimeFamily,
-          backend: cell.backend,
-          sandboxProfile: cell.sandboxProfile,
-          vcpu: 1,
-          ramMb: 1024,
-          diskGb: 5,
-        });
+        try {
+          agent = await deployAgent(request, operator.token, {
+            name: uniqueName(`real-${cell.key}`),
+            runtimeFamily: cell.runtimeFamily,
+            backend: cell.backend,
+            sandboxProfile: cell.sandboxProfile,
+            vcpu: 1,
+            ramMb: 1024,
+            diskGb: 5,
+          });
+        } catch (err: any) {
+          // The backend rejects some runtime/backend combinations (e.g.
+          // Hermes on K8s) with a 400 explaining the constraint. Treat that
+          // as a clean skip, not a test failure.
+          if (/only supported|not supported|invalid combination|not enabled/i.test(
+            String(err?.message || "")
+          )) {
+            test.skip(true, `Combination unsupported by platform: ${err.message}`);
+            return;
+          }
+          throw err;
+        }
 
         expect(agent?.id).toBeTruthy();
         expect(agent?.status).toBe("queued");

@@ -4,28 +4,12 @@
  * (send messages, verify config, format inbound webhooks).
  */
 
-// ── SSRF Protection ──────────────────────────────────────
-// Block user-supplied webhook URLs from targeting internal/private network
-// addresses so that a malicious channel config cannot pivot into cluster-
-// internal services (postgres, redis, worker-provisioner, cloud metadata).
-// Keep in sync with PRIVATE_IP_RE / assertSafeUrl in integrations.ts.
-const PRIVATE_IP_RE = /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1|fc00:|fe80:)/i;
-
-function assertSafeWebhookUrl(rawUrl, label = "Webhook URL") {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`${label} is not a valid URL`);
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`${label} must use http or https`);
-  }
-  if (PRIVATE_IP_RE.test(parsed.hostname)) {
-    throw new Error(`${label} must not target internal or private network addresses`);
-  }
-  return parsed.toString();
-}
+// SSRF guard — shared with integrations.ts via backend-api/networkSafety.ts.
+// The async variant layers DNS resolution on top of the lexical hostname
+// check, so a public-looking DNS name that resolves to an internal IP is
+// still rejected. Every adapter call site below uses `await`.
+const { assertSafeUrlAsync } = require("../networkSafety");
+const assertSafeWebhookUrl = assertSafeUrlAsync;
 
 // Safe header allowlist for the generic outbound webhook adapter. Custom
 // headers supplied in channel config are filtered against this set so an
@@ -69,7 +53,7 @@ const slack = {
   async send(channel, message) {
     const rawUrl = channel.config.webhook_url;
     if (!rawUrl) throw new Error("Slack webhook URL not configured");
-    const url = assertSafeWebhookUrl(rawUrl, "Slack webhook URL");
+    const url = await assertSafeWebhookUrl(rawUrl, "Slack webhook URL");
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -82,7 +66,7 @@ const slack = {
   async verify(config) {
     if (!config.webhook_url) return { valid: false, error: "Webhook URL required" };
     try {
-      assertSafeWebhookUrl(config.webhook_url, "Slack webhook URL");
+      await assertSafeWebhookUrl(config.webhook_url, "Slack webhook URL");
     } catch (e) {
       return { valid: false, error: e.message };
     }
@@ -113,7 +97,7 @@ const discord = {
   async send(channel, message) {
     const rawUrl = channel.config.webhook_url;
     if (!rawUrl) throw new Error("Discord webhook URL not configured");
-    const url = assertSafeWebhookUrl(rawUrl, "Discord webhook URL");
+    const url = await assertSafeWebhookUrl(rawUrl, "Discord webhook URL");
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -126,7 +110,7 @@ const discord = {
   async verify(config) {
     if (!config.webhook_url) return { valid: false, error: "Webhook URL required" };
     try {
-      assertSafeWebhookUrl(config.webhook_url, "Discord webhook URL");
+      await assertSafeWebhookUrl(config.webhook_url, "Discord webhook URL");
     } catch (e) {
       return { valid: false, error: e.message };
     }
@@ -211,7 +195,7 @@ const webhook = {
   async send(channel, message) {
     const rawUrl = channel.config.url;
     if (!rawUrl) throw new Error("Webhook URL not configured");
-    const url = assertSafeWebhookUrl(rawUrl, "Webhook URL");
+    const url = await assertSafeWebhookUrl(rawUrl, "Webhook URL");
     const method = channel.config.method || "POST";
     let headers = { "Content-Type": "application/json" };
     if (channel.config.headers) {
@@ -231,7 +215,7 @@ const webhook = {
   async verify(config) {
     if (!config.url) return { valid: false, error: "URL required" };
     try {
-      assertSafeWebhookUrl(config.url, "Webhook URL");
+      await assertSafeWebhookUrl(config.url, "Webhook URL");
     } catch (e) {
       return { valid: false, error: e.message };
     }
@@ -261,7 +245,7 @@ const teams = {
   async send(channel, message) {
     const rawUrl = channel.config.webhook_url;
     if (!rawUrl) throw new Error("Teams webhook URL not configured");
-    const url = assertSafeWebhookUrl(rawUrl, "Teams webhook URL");
+    const url = await assertSafeWebhookUrl(rawUrl, "Teams webhook URL");
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -274,7 +258,7 @@ const teams = {
   async verify(config) {
     if (!config.webhook_url) return { valid: false, error: "Webhook URL required" };
     try {
-      assertSafeWebhookUrl(config.webhook_url, "Teams webhook URL");
+      await assertSafeWebhookUrl(config.webhook_url, "Teams webhook URL");
     } catch (e) {
       return { valid: false, error: e.message };
     }

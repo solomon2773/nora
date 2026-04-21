@@ -130,7 +130,7 @@ test.describe("Complete platform journey", () => {
     await expect(
       page.getByRole("heading", { name: primaryAgent.name, exact: true })
     ).toBeVisible();
-    await expect(page.getByText(/deploying agent/i)).toBeVisible();
+    await expect(page.getByText(/deployment queued|provisioning in progress/i)).toBeVisible();
 
     await authenticatePage(page, admin.token, "/app/dashboard");
     await expect(

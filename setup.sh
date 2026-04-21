@@ -769,6 +769,30 @@ if docker compose ps --quiet 2>/dev/null | grep -q .; then
 fi
 
 echo ""
+info "Building nora-openclaw-agent:local (prebaked openclaw + tsx)..."
+echo ""
+docker build \
+  -f agent-runtime/Dockerfile.openclaw-agent \
+  -t nora-openclaw-agent:local \
+  agent-runtime/
+ok "OpenClaw agent image ready"
+
+# Only build the NemoClaw variant when the operator actually enables the
+# backend — pulling the 2.4GB OpenShell base on every install is wasteful.
+case ",${ENABLED_BACKENDS:-},${KIND_ENABLED_BACKENDS:-}," in
+  *,nemoclaw,*)
+    echo ""
+    info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
+    echo ""
+    docker build \
+      -f agent-runtime/Dockerfile.nemoclaw-agent \
+      -t nora-nemoclaw-agent:local \
+      agent-runtime/
+    ok "NemoClaw sandbox image ready"
+    ;;
+esac
+
+echo ""
 info "Starting Nora (docker compose up -d --build)..."
 echo ""
 docker compose up -d --build

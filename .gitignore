@@ -1,6 +1,7 @@
 # Node / Next build artifacts
 **/node_modules/
 **/.next/
+.cache/
 *.tsbuildinfo
 
 # Test / coverage artifacts

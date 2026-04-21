@@ -9,6 +9,10 @@ const {
   buildRuntimeEnv,
 } = require("../../../agent-runtime/lib/runtimeBootstrap");
 const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
+const {
+  buildContainerBootstrap,
+  toK8sLaunch,
+} = require("../../../agent-runtime/lib/containerCommand");
 
 class K8sBackend extends ProvisionerBackend {
   constructor() {
@@ -61,28 +65,50 @@ class K8sBackend extends ProvisionerBackend {
     return ports.map(({ nodePort, ...port }) => ({ ...port }));
   }
 
+  _errorBodyText(error) {
+    // v1.x error bodies arrive as strings on `error.body` or `error.responseBody`;
+    // some flows expose them on `error.cause.body`. Stringify whatever we find.
+    return String(
+      error?.body?.message ||
+      error?.body ||
+      error?.responseBody ||
+      error?.cause?.body ||
+      error?.message ||
+      ""
+    );
+  }
+
+  _errorStatus(error) {
+    return error?.statusCode || error?.code || error?.response?.status || null;
+  }
+
   _isAlreadyExistsError(error) {
+    const text = this._errorBodyText(error);
     return (
-      error?.statusCode === 409 ||
-      error?.body?.reason === "AlreadyExists" ||
-      /already exists/i.test(String(error?.message || error?.body?.message || ""))
+      this._errorStatus(error) === 409 ||
+      /\b409\b|already exists|AlreadyExists/i.test(text)
     );
   }
 
   _isNodePortConflictError(error) {
-    const message = String(error?.body?.message || error?.message || "");
+    const text = this._errorBodyText(error);
+    const status = this._errorStatus(error);
     return (
-      (error?.statusCode === 422 || error?.body?.reason === "Invalid") &&
-      /nodeport|provided port is already allocated/i.test(message)
+      (status === 422 || /\b422\b|Invalid/i.test(text)) &&
+      /nodeport|provided port is already allocated/i.test(text)
     );
   }
 
   async _ensureNamespace() {
     try {
-      await this.coreApi.readNamespace(this.namespace);
+      await this.coreApi.readNamespace({ name: this.namespace });
     } catch {
       await this.coreApi.createNamespace({
-        metadata: { name: this.namespace },
+        body: {
+          apiVersion: "v1",
+          kind: "Namespace",
+          metadata: { name: this.namespace },
+        },
       });
     }
   }
@@ -133,8 +159,7 @@ class K8sBackend extends ProvisionerBackend {
     const runtimeBootstrapCmd = buildRuntimeBootstrapCommand();
     const templateBootstrapCmd = buildTemplatePayloadBootstrapCommand(templatePayload);
     const ensureOpenClawCmd = buildOpenClawInstallCommand(["openclaw@latest"]);
-    const gatewayCmd = [
-      "sh", "-c",
+    const gatewayScript =
       ensureOpenClawCmd +
       'mkdir -p ~/.openclaw/devices && ' +
       `echo '{"gateway":{"port":${OPENCLAW_GATEWAY_PORT},"bind":"lan","mode":"local"}}' > ~/.openclaw/openclaw.json && ` +
@@ -142,8 +167,8 @@ class K8sBackend extends ProvisionerBackend {
       `echo '{}' > ~/.openclaw/devices/pending.json && ` +
       templateBootstrapCmd +
       runtimeBootstrapCmd +
-      '"$OPENCLAW_BIN" gateway --port ' + OPENCLAW_GATEWAY_PORT + ` --password ${gatewayToken}`
-    ];
+      '"$OPENCLAW_BIN" gateway --port ' + OPENCLAW_GATEWAY_PORT + ` --password ${gatewayToken}`;
+    const gatewayLaunch = toK8sLaunch(buildContainerBootstrap(gatewayScript));
 
     const deployment = {
       apiVersion: "apps/v1",
@@ -180,8 +205,8 @@ class K8sBackend extends ProvisionerBackend {
               {
                 name: "agent",
                 image: image || "node:24-slim",
-                command: gatewayCmd.slice(0, 2),
-                args: [gatewayCmd[2]],
+                command: gatewayLaunch.command,
+                args: gatewayLaunch.args,
                 env: envVars,
                 ports: [
                   { name: "gateway", containerPort: OPENCLAW_GATEWAY_PORT },
@@ -204,7 +229,12 @@ class K8sBackend extends ProvisionerBackend {
       },
     };
 
-    await this.appsApi.createNamespacedDeployment(this.namespace, deployment);
+    try {
+      await this.appsApi.createNamespacedDeployment({ namespace: this.namespace, body: deployment });
+    } catch (error) {
+      if (!this._isAlreadyExistsError(error)) throw error;
+      console.warn(`[k8s] Deployment ${deployName} already exists; reusing on retry`);
+    }
 
     // Create a service that exposes both the control-plane gateway and runtime
     // sidecar. Default is ClusterIP for in-cluster control planes; local kind
@@ -225,10 +255,10 @@ class K8sBackend extends ProvisionerBackend {
 
     let serviceResp = null;
     try {
-      serviceResp = await this.coreApi.createNamespacedService(this.namespace, service);
+      serviceResp = await this.coreApi.createNamespacedService({ namespace: this.namespace, body: service });
     } catch (error) {
       if (this._isAlreadyExistsError(error)) {
-        serviceResp = await this.coreApi.readNamespacedService(deployName, this.namespace);
+        serviceResp = await this.coreApi.readNamespacedService({ name: deployName, namespace: this.namespace });
       } else if (
         this._isNodePortExposure() &&
         service.spec.ports.some((port) => port.nodePort != null) &&
@@ -244,17 +274,15 @@ class K8sBackend extends ProvisionerBackend {
             ports: this._servicePortsWithoutNodePorts(service.spec.ports),
           },
         };
-        serviceResp = await this.coreApi.createNamespacedService(
-          this.namespace,
-          dynamicService
-        );
+        serviceResp = await this.coreApi.createNamespacedService({ namespace: this.namespace, body: dynamicService });
       } else {
         throw error;
       }
     }
 
     const host = `${deployName}.${this.namespace}.svc.cluster.local`;
-    const servicePorts = serviceResp?.body?.spec?.ports || service.spec.ports;
+    // v1.x returns the object directly; fall back to `.body` for belt-and-braces.
+    const servicePorts = serviceResp?.spec?.ports || serviceResp?.body?.spec?.ports || service.spec.ports;
 
     if (this._isNodePortExposure()) {
       const runtimeNodePort = servicePorts.find((port) => port.name === "runtime")?.nodePort;
@@ -303,15 +331,12 @@ class K8sBackend extends ProvisionerBackend {
     console.log(`[k8s] Destroying deployment ${deployName}`);
 
     try {
-      await this.appsApi.deleteNamespacedDeployment(
-        deployName,
-        this.namespace
-      );
+      await this.appsApi.deleteNamespacedDeployment({ name: deployName, namespace: this.namespace });
     } catch {
       // already gone
     }
     try {
-      await this.coreApi.deleteNamespacedService(deployName, this.namespace);
+      await this.coreApi.deleteNamespacedService({ name: deployName, namespace: this.namespace });
     } catch {
       // already gone
     }
@@ -321,11 +346,9 @@ class K8sBackend extends ProvisionerBackend {
   async status(containerId) {
     const deployName = containerId;
     try {
-      const res = await this.appsApi.readNamespacedDeployment(
-        deployName,
-        this.namespace
-      );
-      const status = res.body.status;
+      const res = await this.appsApi.readNamespacedDeployment({ name: deployName, namespace: this.namespace });
+      // v1.x returns the object directly; fall back to `.body` for belt-and-braces.
+      const status = (res?.status || res?.body?.status) || {};
       const running = (status.availableReplicas || 0) > 0;
       return { running, uptime: null, cpu: null, memory: null };
     } catch {
@@ -336,61 +359,41 @@ class K8sBackend extends ProvisionerBackend {
   async stop(containerId) {
     const deployName = containerId;
     console.log(`[k8s] Stopping deployment ${deployName} (scaling to 0)`);
-    await this.appsApi.patchNamespacedDeployment(
-      deployName,
-      this.namespace,
-      { spec: { replicas: 0 } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/strategic-merge-patch+json" } }
-    );
+    // v1.x's auto-selected Content-Type for patch is application/json-patch+json,
+    // so the body MUST be a JSON Patch ops array (RFC 6902), not a merge object.
+    await this.appsApi.patchNamespacedDeployment({
+      name: deployName,
+      namespace: this.namespace,
+      body: [{ op: "replace", path: "/spec/replicas", value: 0 }],
+    });
     console.log(`[k8s] Deployment ${deployName} scaled to 0`);
   }
 
   async start(containerId) {
     const deployName = containerId;
     console.log(`[k8s] Starting deployment ${deployName} (scaling to 1)`);
-    await this.appsApi.patchNamespacedDeployment(
-      deployName,
-      this.namespace,
-      { spec: { replicas: 1 } },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/strategic-merge-patch+json" } }
-    );
+    await this.appsApi.patchNamespacedDeployment({
+      name: deployName,
+      namespace: this.namespace,
+      body: [{ op: "replace", path: "/spec/replicas", value: 1 }],
+    });
     console.log(`[k8s] Deployment ${deployName} scaled to 1`);
   }
 
   async restart(containerId) {
     const deployName = containerId;
     console.log(`[k8s] Restarting deployment ${deployName}`);
-    await this.appsApi.patchNamespacedDeployment(
-      deployName,
-      this.namespace,
-      {
-        spec: {
-          template: {
-            metadata: {
-              annotations: {
-                "kubectl.kubernetes.io/restartedAt": new Date().toISOString(),
-              },
-            },
-          },
+    await this.appsApi.patchNamespacedDeployment({
+      name: deployName,
+      namespace: this.namespace,
+      body: [
+        {
+          op: "add",
+          path: "/spec/template/metadata/annotations",
+          value: { "kubectl.kubernetes.io/restartedAt": new Date().toISOString() },
         },
-      },
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { headers: { "Content-Type": "application/strategic-merge-patch+json" } }
-    );
+      ],
+    });
     console.log(`[k8s] Deployment ${deployName} rollout restart triggered`);
   }
 
@@ -403,17 +406,10 @@ class K8sBackend extends ProvisionerBackend {
     const exec = new k8s.Exec(this.kc);
 
     // Find a running pod for this deployment
-    const pods = await this.coreApi.listNamespacedPod(
-      this.namespace,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      `openclaw.agent.id=${deployName.replace("oclaw-agent-", "")}`
-    );
-    const runningPod = (pods.body.items || []).find(
-      (p) => p.status?.phase === "Running"
-    );
+    const labelSelector = `openclaw.agent.id=${deployName.replace("oclaw-agent-", "")}`;
+    const pods = await this.coreApi.listNamespacedPod({ namespace: this.namespace, labelSelector });
+    const podItems = pods?.items || pods?.body?.items || [];
+    const runningPod = podItems.find((p) => p.status?.phase === "Running");
     if (!runningPod) return null;
 
     return { podName: runningPod.metadata.name, exec, namespace: this.namespace };
@@ -426,17 +422,10 @@ class K8sBackend extends ProvisionerBackend {
     const deployName = containerId;
     const log = new k8s.Log(this.kc);
 
-    const pods = await this.coreApi.listNamespacedPod(
-      this.namespace,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      `openclaw.agent.id=${deployName.replace("oclaw-agent-", "")}`
-    );
-    const runningPod = (pods.body.items || []).find(
-      (p) => p.status?.phase === "Running"
-    );
+    const labelSelector = `openclaw.agent.id=${deployName.replace("oclaw-agent-", "")}`;
+    const pods = await this.coreApi.listNamespacedPod({ namespace: this.namespace, labelSelector });
+    const podItems = pods?.items || pods?.body?.items || [];
+    const runningPod = podItems.find((p) => p.status?.phase === "Running");
     if (!runningPod) return null;
 
     const stream = new (require("stream").PassThrough)();

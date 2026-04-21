@@ -1,0 +1,42 @@
+name: CodeQL
+
+on:
+  pull_request:
+    paths:
+      - ".github/codeql-config.yml"
+      - ".github/workflows/ci-codeql.yml"
+      - "backend-api/**"
+      - "agent-runtime/**"
+      - "workers/provisioner/**"
+  push:
+    branches:
+      - master
+    paths:
+      - ".github/codeql-config.yml"
+      - ".github/workflows/ci-codeql.yml"
+      - "backend-api/**"
+      - "agent-runtime/**"
+      - "workers/provisioner/**"
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze JavaScript/TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@7fc6561ed893d15cec696e062df840b21db27eb0 # v4.35.2
+        with:
+          languages: javascript-typescript
+          config-file: ./.github/codeql-config.yml
+      - uses: github/codeql-action/analyze@7fc6561ed893d15cec696e062df840b21db27eb0 # v4.35.2
+        with:
+          category: /language:javascript-typescript

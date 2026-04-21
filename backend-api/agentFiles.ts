@@ -1,12 +1,9 @@
 // @ts-nocheck
 const path = require("path");
 const { runContainerCommand } = require("./authSync");
+const { shellSingleQuote } = require("../agent-runtime/lib/containerCommand");
 
 const MAX_INLINE_FILE_BYTES = 5 * 1024 * 1024;
-
-function shellSingleQuote(value) {
-  return `'${String(value || "").replace(/'/g, `'\\''`)}'`;
-}
 
 function normalizeRelativePath(rawValue, { allowEmpty = true } = {}) {
   const raw = String(rawValue || "").replace(/\\/g, "/").trim();

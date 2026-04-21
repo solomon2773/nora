@@ -1,0 +1,152 @@
+name: CI Compose Pipeline
+
+on:
+  pull_request:
+    paths: &compose_paths
+      - ".github/workflows/ci-compose.yml"
+      - "docker-compose.yml"
+      - "docker-compose.e2e.yml"
+      - "nginx.e2e.conf"
+      - "tsconfig.base.json"
+      - "admin-dashboard/**"
+      - "frontend-dashboard/**"
+      - "frontend-marketing/**"
+      - "backend-api/**"
+      - "agent-runtime/**"
+      - "workers/provisioner/**"
+      - "e2e/**"
+  push:
+    branches:
+      - master
+    paths: *compose_paths
+
+permissions:
+  contents: read
+
+jobs:
+  backend-unit-tests:
+    name: backend-api unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-api
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            backend-api/package-lock.json
+            workers/provisioner/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: workers/provisioner
+      - run: npm test
+
+  agent-runtime-unit-tests:
+    name: agent-runtime unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent-runtime
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: agent-runtime/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  docker-build-check:
+    name: "docker build (${{ matrix.name }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: admin-dashboard
+            dockerfile: admin-dashboard/Dockerfile
+            image: nora-admin-dashboard:ci
+          - name: frontend-dashboard
+            dockerfile: frontend-dashboard/Dockerfile
+            image: nora-frontend-dashboard:ci
+          - name: frontend-marketing
+            dockerfile: frontend-marketing/Dockerfile
+            image: nora-frontend-marketing:ci
+          - name: backend-api
+            dockerfile: backend-api/Dockerfile.prod
+            image: nora-backend-api:ci
+          - name: worker-provisioner
+            dockerfile: workers/provisioner/Dockerfile.prod
+            image: nora-worker-provisioner:ci
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - run: docker build --file ${{ matrix.dockerfile }} --tag ${{ matrix.image }} .
+
+  e2e-playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    needs:
+      - backend-unit-tests
+      - agent-runtime-unit-tests
+    timeout-minutes: 30
+    env:
+      BASE_URL: http://127.0.0.1:18080
+      COMPOSE_PROJECT_NAME: nora-e2e-ci
+      NORA_ENV_FILE: .env.test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - run: npm ci
+        working-directory: e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: e2e
+      - name: Start compose stack
+        run: docker compose -f docker-compose.e2e.yml up -d --build
+      - name: Wait for Nora stack
+        run: |
+          for attempt in {1..120}; do
+            if curl -fsS "$BASE_URL/login" >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f docker-compose.e2e.yml ps
+          exit 1
+      - name: Run Playwright
+        run: npm test
+        working-directory: e2e
+      - name: Capture compose diagnostics
+        if: failure()
+        run: |
+          mkdir -p e2e/artifacts
+          docker compose -f docker-compose.e2e.yml ps > e2e/artifacts/compose-ps.txt
+          docker compose -f docker-compose.e2e.yml logs --no-color > e2e/artifacts/compose.log
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-artifacts
+          path: |
+            e2e/artifacts
+            e2e/playwright-report
+            e2e/test-results
+          if-no-files-found: ignore
+      - name: Stop compose stack
+        if: always()
+        run: docker compose -f docker-compose.e2e.yml down -v --remove-orphans

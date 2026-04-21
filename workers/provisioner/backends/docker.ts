@@ -9,7 +9,10 @@ const {
   buildTemplatePayloadBootstrapFiles,
   buildRuntimeEnv,
 } = require("../../../agent-runtime/lib/runtimeBootstrap");
-const { OPENCLAW_GATEWAY_PORT, AGENT_RUNTIME_PORT } = require("../../../agent-runtime/lib/contracts");
+const {
+  OPENCLAW_GATEWAY_PORT,
+  AGENT_RUNTIME_PORT,
+} = require("../../../agent-runtime/lib/contracts");
 const {
   getStandardDockerAgentImage,
   getStandardDockerPackageSpec,
@@ -31,7 +34,7 @@ function throwIfAborted(abortSignal, stage = "docker create") {
       : new Error(
           typeof abortSignal.reason === "string" && abortSignal.reason
             ? abortSignal.reason
-            : `${stage} aborted`
+            : `${stage} aborted`,
         );
   throw reason;
 }
@@ -58,13 +61,13 @@ class DockerBackend extends ProvisionerBackend {
     // Strategy 1: self-inspect via container ID from hostname
     try {
       const fs = require("fs");
-      const hostname = (process.env.HOSTNAME || "").trim() ||
-        fs.readFileSync("/etc/hostname", "utf8").trim();
+      const hostname =
+        (process.env.HOSTNAME || "").trim() || fs.readFileSync("/etc/hostname", "utf8").trim();
       if (hostname) {
         const self = this.docker.getContainer(hostname);
         const info = await self.inspect();
         const nets = info.NetworkSettings?.Networks || {};
-        const composeName = Object.keys(nets).find(n => n.endsWith("_default"));
+        const composeName = Object.keys(nets).find((n) => n.endsWith("_default"));
         if (composeName) {
           this._composeNetwork = composeName;
           console.log(`[docker] Using Compose network (self-inspect): ${composeName}`);
@@ -78,12 +81,12 @@ class DockerBackend extends ProvisionerBackend {
     // Strategy 2: find our own container via Compose service label
     try {
       const containers = await this.docker.listContainers({
-        filters: { label: ["com.docker.compose.service=worker-provisioner"] }
+        filters: { label: ["com.docker.compose.service=worker-provisioner"] },
       });
       if (containers.length > 0) {
         const info = await this.docker.getContainer(containers[0].Id).inspect();
         const nets = info.NetworkSettings?.Networks || {};
-        const composeName = Object.keys(nets).find(n => n.endsWith("_default"));
+        const composeName = Object.keys(nets).find((n) => n.endsWith("_default"));
         if (composeName) {
           this._composeNetwork = composeName;
           console.log(`[docker] Using Compose network (service label): ${composeName}`);
@@ -97,9 +100,9 @@ class DockerBackend extends ProvisionerBackend {
     // Strategy 3: scan all networks for a Compose-labelled *_default network
     try {
       const networks = await this.docker.listNetworks();
-      const net = networks.find(n =>
-        n.Name.endsWith("_default") &&
-        n.Labels?.["com.docker.compose.network"] === "default"
+      const net = networks.find(
+        (n) =>
+          n.Name.endsWith("_default") && n.Labels?.["com.docker.compose.network"] === "default",
       );
       if (net) {
         this._composeNetwork = net.Name;
@@ -139,8 +142,8 @@ class DockerBackend extends ProvisionerBackend {
         "    /usr/local/bin/openclaw --version >/dev/null 2>&1 && \\",
         "    rm -f /tmp/openclaw-install.log && \\",
         "    apt-get clean && rm -rf /var/lib/apt/lists/*",
-        'ENV OPENCLAW_CLI_PATH=/usr/local/bin/openclaw',
-        'ENV OPENCLAW_TSX_BIN=/usr/local/bin/tsx',
+        "ENV OPENCLAW_CLI_PATH=/usr/local/bin/openclaw",
+        "ENV OPENCLAW_TSX_BIN=/usr/local/bin/tsx",
         "WORKDIR /root",
         'CMD ["openclaw", "--version"]',
         "",
@@ -172,7 +175,7 @@ class DockerBackend extends ProvisionerBackend {
               const line = String(event.stream).trim();
               if (line) console.log(`[docker-build] ${line}`);
             }
-          }
+          },
         );
       });
     })();
@@ -237,11 +240,7 @@ class DockerBackend extends ProvisionerBackend {
   async _putBootstrapFiles(container, files) {
     const tar = require("tar-stream");
     const pack = tar.pack();
-    const directories = new Set([
-      "opt",
-      "opt/openclaw-runtime",
-      "opt/openclaw-runtime/lib",
-    ]);
+    const directories = new Set(["opt", "opt/openclaw-runtime", "opt/openclaw-runtime/lib"]);
 
     for (const file of files) {
       let currentDir = path.posix.dirname(file.name);
@@ -329,8 +328,14 @@ class DockerBackend extends ProvisionerBackend {
     try {
       const existing = this.docker.getContainer(containerName);
       const info = await existing.inspect();
-      console.log(`[docker] Removing orphaned container ${info.Id.slice(0, 12)} (${containerName})`);
-      try { await existing.stop({ t: 5 }); } catch { /* already stopped */ }
+      console.log(
+        `[docker] Removing orphaned container ${info.Id.slice(0, 12)} (${containerName})`,
+      );
+      try {
+        await existing.stop({ t: 5 });
+      } catch {
+        /* already stopped */
+      }
       await existing.remove({ force: true });
     } catch {
       // No existing container — expected path
@@ -343,19 +348,32 @@ class DockerBackend extends ProvisionerBackend {
     // same derivation used by gatewayProxy.ts so both sides share the keypair.
     const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
     const PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-    const seed = crypto.createHash("sha256").update("openclaw-device:" + gatewayToken).digest();
+    const seed = crypto
+      .createHash("sha256")
+      .update("openclaw-device:" + gatewayToken)
+      .digest();
     const privateDer = Buffer.concat([PKCS8_PREFIX, seed]);
     const privateKey = crypto.createPrivateKey({ key: privateDer, format: "der", type: "pkcs8" });
     const publicKey = crypto.createPublicKey(privateKey);
     const spki = publicKey.export({ type: "spki", format: "der" });
     const rawPub = spki.subarray(ED25519_SPKI_PREFIX.length);
     const deviceId = crypto.createHash("sha256").update(rawPub).digest("hex");
-    const pubB64 = rawPub.toString("base64").replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
+    const pubB64 = rawPub
+      .toString("base64")
+      .replaceAll("+", "-")
+      .replaceAll("/", "_")
+      .replace(/=+$/g, "");
 
     // Pre-approved device pairing JSON — gateway reads this on startup so the
     // proxy's first connect (using the same deterministic identity) is already
     // paired and receives full operator scopes.
-    const allScopes = ["operator.admin","operator.read","operator.write","operator.approvals","operator.pairing"];
+    const allScopes = [
+      "operator.admin",
+      "operator.read",
+      "operator.write",
+      "operator.approvals",
+      "operator.pairing",
+    ];
     const nowMs = Date.now();
     const pairedJson = JSON.stringify({
       [deviceId]: {
@@ -374,17 +392,23 @@ class DockerBackend extends ProvisionerBackend {
             role: "operator",
             scopes: allScopes,
             createdAtMs: nowMs,
-          }
+          },
         },
         createdAtMs: nowMs,
         approvedAtMs: nowMs,
-      }
+      },
     });
 
     // Convert env object to array of KEY=VALUE + inject runtime/gateway contract vars.
+    // Dockerode's `Env:` replaces the image's ENV rather than merging, so we
+    // always declare the openclaw + tsx binary paths explicitly — the bootstrap
+    // fast-path check won't find them otherwise. The Nora OpenClaw agent image
+    // installs under `/usr/local/bin` (npm global prefix of node:24-slim).
     const envArray = Object.entries({
       ...(env || {}),
       ...buildRuntimeEnv(),
+      OPENCLAW_CLI_PATH: "/usr/local/bin/openclaw",
+      OPENCLAW_TSX_BIN: "/usr/local/bin/tsx",
       OPENCLAW_GATEWAY_TOKEN: gatewayToken,
     }).map(([k, v]) => `${k}=${v}`);
 
@@ -441,12 +465,12 @@ class DockerBackend extends ProvisionerBackend {
     const buildAuthScript =
       `var m=${JSON.stringify(llmKeyMap)},s={version:1,profiles:{},order:{},lastGood:{}};` +
       `Object.entries(m).forEach(function(e){` +
-        `var envKey=e[0],provider=e[1],key=process.env[envKey];` +
-        `if(!key)return;` +
-        `var profileId=provider+":default";` +
-        `s.profiles[profileId]={type:"api_key",provider:provider,key:key};` +
-        `s.order[provider]=[profileId];` +
-        `s.lastGood[provider]=profileId;` +
+      `var envKey=e[0],provider=e[1],key=process.env[envKey];` +
+      `if(!key)return;` +
+      `var profileId=provider+":default";` +
+      `s.profiles[profileId]={type:"api_key",provider:provider,key:key};` +
+      `s.order[provider]=[profileId];` +
+      `s.lastGood[provider]=profileId;` +
       `});` +
       `require("fs").mkdirSync("/root/.openclaw/agents/main/agent",{recursive:true});` +
       `require("fs").writeFileSync("/root/.openclaw/agents/main/agent/auth-profiles.json",JSON.stringify(s));` +
@@ -475,10 +499,11 @@ class DockerBackend extends ProvisionerBackend {
     // Set default model in the config file BEFORE gateway starts (not via background CLI after).
     // Writing it into openclaw.json pre-launch avoids the config-change file watcher triggering
     // a SIGUSR1 restart loop when `openclaw models set` rewrites the config post-boot.
-    const safeDefaultModel = defaultModel && /^[a-zA-Z0-9_\-/.]+$/.test(defaultModel) ? defaultModel : null;
+    const safeDefaultModel =
+      defaultModel && /^[a-zA-Z0-9_\-/.]+$/.test(defaultModel) ? defaultModel : null;
 
     // Derive the deterministic host port for this agent to include in allowedOrigins
-    const hostPort = 19000 + (parseInt(id.replace(/\D/g, '').slice(0, 4)) || 0) % 1000;
+    const hostPort = 19000 + ((parseInt(id.replace(/\D/g, "").slice(0, 4)) || 0) % 1000);
 
     const allowedOrigins = new Set([
       "http://localhost:8080",
@@ -504,7 +529,10 @@ class DockerBackend extends ProvisionerBackend {
     };
 
     addAllowedOrigin(process.env.NEXTAUTH_URL);
-    for (const origin of (process.env.CORS_ORIGINS || "").split(",").map((entry) => entry.trim()).filter(Boolean)) {
+    for (const origin of (process.env.CORS_ORIGINS || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean)) {
       addAllowedOrigin(origin);
     }
 
@@ -532,7 +560,13 @@ class DockerBackend extends ProvisionerBackend {
       buildAuthScript,
       templatePayload,
     });
-    const startCmd = ["/bin/sh", "/opt/openclaw-runtime/start.sh"];
+    // Pin Entrypoint + Cmd so a future base-image that adds ENTRYPOINT can't
+    // prepend a second interpreter (see agent-runtime/lib/containerCommand.ts
+    // for the nemoclaw/k8s/hermes variants of the same contract).
+    const launch = {
+      Entrypoint: ["/bin/sh"],
+      Cmd: ["/opt/openclaw-runtime/start.sh"],
+    };
 
     // Docker agents now boot through an injected startup script instead of a
     // giant inline shell string. That keeps bootstrap semantics predictable and
@@ -548,12 +582,13 @@ class DockerBackend extends ProvisionerBackend {
     // Derive a DNS-safe hostname from the agent name (lowercase, alphanumeric + hyphens, max 63 chars).
     // This controls the container's /etc/hostname and avoids Bonjour name-conflict warnings
     // (e.g. "gateway hostname conflict resolved") when multiple agents run on the same host.
-    const safeHostname = (name || containerName)
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 63) || `agent-${id}`;
+    const safeHostname =
+      (name || containerName)
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 63) || `agent-${id}`;
 
     try {
       throwIfAborted(abortSignal, `docker create for ${containerName}`);
@@ -562,7 +597,7 @@ class DockerBackend extends ProvisionerBackend {
         name: containerName,
         Hostname: safeHostname,
         Env: envArray,
-        Cmd: startCmd,
+        ...launch,
         WorkingDir: "/root",
         ExposedPorts: { "18789/tcp": {}, "9090/tcp": {} },
         HostConfig: {
@@ -578,9 +613,11 @@ class DockerBackend extends ProvisionerBackend {
           // DNS servers for internet access from within the container
           Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
         },
-        NetworkingConfig: composeNetwork ? {
-          EndpointsConfig: networkingConfig,
-        } : undefined,
+        NetworkingConfig: composeNetwork
+          ? {
+              EndpointsConfig: networkingConfig,
+            }
+          : undefined,
         Labels: {
           "openclaw.agent.id": String(id),
           "openclaw.agent.name": name || "",
@@ -616,7 +653,9 @@ class DockerBackend extends ProvisionerBackend {
       const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
       const gatewayHostPort = portBindings?.[0]?.HostPort || null;
 
-      console.log(`[docker] Container ${container.id} started at ${host} (gateway port 18789, host port ${gatewayHostPort || 'none'})`);
+      console.log(
+        `[docker] Container ${container.id} started at ${host} (gateway port 18789, host port ${gatewayHostPort || "none"})`,
+      );
       return { containerId: container.id, host, gatewayToken, containerName, gatewayHostPort };
     } catch (error) {
       if (container) {
@@ -647,9 +686,7 @@ class DockerBackend extends ProvisionerBackend {
       const container = this.docker.getContainer(containerId);
       const info = await container.inspect();
       const running = info.State?.Running || false;
-      const startedAt = info.State?.StartedAt
-        ? new Date(info.State.StartedAt).getTime()
-        : 0;
+      const startedAt = info.State?.StartedAt ? new Date(info.State.StartedAt).getTime() : 0;
       const uptime = running ? Date.now() - startedAt : 0;
 
       return { running, uptime, cpu: null, memory: null };

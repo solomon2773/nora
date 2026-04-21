@@ -203,8 +203,9 @@ describe("provisioning runtime/gateway contracts", () => {
     expect(mockCreateNamespacedDeployment).toHaveBeenCalledTimes(1);
     expect(mockCreateNamespacedService).toHaveBeenCalledTimes(1);
 
-    const deployment = mockCreateNamespacedDeployment.mock.calls[0][1];
-    const service = mockCreateNamespacedService.mock.calls[0][1];
+    // v1.x @kubernetes/client-node uses object args; body is nested inside.
+    const deployment = mockCreateNamespacedDeployment.mock.calls[0][0].body;
+    const service = mockCreateNamespacedService.mock.calls[0][0].body;
     const container = deployment.spec.template.spec.containers[0];
 
     expect(container.ports).toEqual(expect.arrayContaining([
@@ -251,7 +252,7 @@ describe("provisioning runtime/gateway contracts", () => {
       env: { OPENAI_API_KEY: "test-key" },
     });
 
-    const service = mockCreateNamespacedService.mock.calls[0][1];
+    const service = mockCreateNamespacedService.mock.calls[0][0].body;
 
     expect(service.spec.type).toBe("NodePort");
     expect(service.spec.ports).toEqual(expect.arrayContaining([
@@ -304,8 +305,8 @@ describe("provisioning runtime/gateway contracts", () => {
 
     expect(mockCreateNamespacedService).toHaveBeenCalledTimes(2);
 
-    const fixedService = mockCreateNamespacedService.mock.calls[0][1];
-    const fallbackService = mockCreateNamespacedService.mock.calls[1][1];
+    const fixedService = mockCreateNamespacedService.mock.calls[0][0].body;
+    const fallbackService = mockCreateNamespacedService.mock.calls[1][0].body;
 
     expect(fixedService.spec.ports).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "gateway", nodePort: 31879 }),

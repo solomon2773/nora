@@ -1,9 +1,11 @@
-name: Nora Deploy
+name: Deploy Production
 
 on:
-  release:
+  workflow_run:
+    workflows:
+      - Release Docker Images
     types:
-      - published
+      - completed
   workflow_dispatch:
     inputs:
       ref:
@@ -16,6 +18,7 @@ on:
         default: ""
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -24,8 +27,13 @@ concurrency:
 
 jobs:
   deploy:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master')
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
+      url: https://nora.solomontsao.com
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -34,11 +42,11 @@ jobs:
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
       DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
       DEPLOY_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE || '.env' }}
-      DEPLOY_COMPOSE_FILES: ${{ vars.DEPLOY_COMPOSE_FILES || 'docker-compose.yml' }}
+      DEPLOY_COMPOSE_FILES: ${{ vars.DEPLOY_COMPOSE_FILES || 'docker-compose.yml:infra/docker-compose.public-prod.yml:infra/docker-compose.public-tls.yml' }}
       NORA_GITHUB_REPO: ${{ vars.NORA_GITHUB_REPO || github.repository }}
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || '' }}
       INPUT_REF: ${{ github.event.inputs.ref || '' }}
       INPUT_VERSION: ${{ github.event.inputs.version || '' }}
+      WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha || '' }}
     steps:
       - name: Validate deployment config
         run: |
@@ -55,33 +63,30 @@ jobs:
         run: |
           set -euo pipefail
           ref="${INPUT_REF:-}"
-          if [ -z "$ref" ] && [ -n "$RELEASE_TAG" ]; then
-            ref="$RELEASE_TAG"
+          if [ -z "$ref" ] && [ -n "$WORKFLOW_RUN_SHA" ]; then
+            ref="$WORKFLOW_RUN_SHA"
           fi
           if [ -z "$ref" ]; then
             ref="master"
           fi
-
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ steps.target.outputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Compute deployed version metadata
         id: release_meta
         run: |
           set -euo pipefail
           commit="$(git rev-parse HEAD)"
-          latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          exact_tag="$(git tag --points-at HEAD | head -n 1 || true)"
 
           version="${INPUT_VERSION:-}"
-          if [ -z "$version" ] && [ -n "$RELEASE_TAG" ]; then
-            version="$RELEASE_TAG"
-          fi
-          if [ -z "$version" ] && [ -n "$latest_tag" ]; then
-            version="$latest_tag"
+          if [ -z "$version" ] && [ -n "$exact_tag" ]; then
+            version="$exact_tag"
           fi
           if [ -z "$version" ]; then
             version="$(git rev-parse --short=12 HEAD)"
@@ -89,6 +94,23 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Verify required CI workflows
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_SHA: ${{ steps.release_meta.outputs.commit }}
+          REQUIRED_WORKFLOWS: |
+            CI Quality
+            CI Compose Pipeline
+            CI Security
+            CodeQL
+          OPTIONAL_WORKFLOWS: |
+            CodeQL
+        run: node .github/workflows/scripts/require-workflow-success.mjs
 
       - name: Configure SSH
         run: |
@@ -162,8 +184,9 @@ jobs:
           TARGET_COMMIT: ${{ steps.release_meta.outputs.commit }}
         run: |
           {
-            echo "### Nora deploy complete"
+            echo "### Nora production deploy complete"
             echo ""
+            echo "- Site: \`https://nora.solomontsao.com\`"
             echo "- Ref: \`$TARGET_REF\`"
             echo "- Version: \`$TARGET_VERSION\`"
             echo "- Commit: \`$TARGET_COMMIT\`"

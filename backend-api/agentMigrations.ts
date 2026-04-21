@@ -52,9 +52,7 @@ const MIGRATION_BUNDLE_FORMAT = "nora-migration-bundle/v1";
 const MAX_REMOTE_BUFFER_BYTES = 200 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
-function shellSingleQuote(value) {
-  return `'${String(value || "").replace(/'/g, `'\\''`)}'`;
-}
+const { shellSingleQuote } = require("../agent-runtime/lib/containerCommand");
 
 function decodeStoredManifest(rawValue = "") {
   const decrypted = decrypt(String(rawValue || ""));

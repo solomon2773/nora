@@ -10,6 +10,7 @@ const llmProviders = require('./llmProviders');
 const { runtimeUrlForAgent } = require("../agent-runtime/lib/agentEndpoints");
 const { waitForAgentReadiness } = require("./healthChecks");
 const { resolveAgentRuntimeFamily } = require("./agentRuntimeFields");
+const { shellSingleQuote } = require("../agent-runtime/lib/containerCommand");
 
 const providerCatalog = Array.isArray(llmProviders.PROVIDERS)
   ? llmProviders.PROVIDERS
@@ -255,7 +256,7 @@ function buildHermesEnvWriteCommand(envVars = {}) {
     "fi",
     "if [ -s \"$tmp_file\" ]; then printf '\\n' >> \"$tmp_file\"; fi",
     "printf '%s\\n' \"$start_marker\" >> \"$tmp_file\"",
-    `printf '%s' '${blockB64}' | base64 -d >> "$tmp_file"`,
+    `printf '%s' ${shellSingleQuote(blockB64)} | base64 -d >> "$tmp_file"`,
     "printf '\\n' >> \"$tmp_file\"",
     "printf '%s\\n' \"$end_marker\" >> \"$tmp_file\"",
     'chown hermes:hermes "$tmp_file" 2>/dev/null || true',

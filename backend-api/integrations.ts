@@ -196,26 +196,12 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   'docker-hub.username':              'DOCKER_HUB_USERNAME',
 };
 
-// ── SSRF Protection ──────────────────────────────────────
-// Block user-supplied URLs from targeting internal/private network addresses.
-const PRIVATE_IP_RE = /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1|fc00:|fe80:)/i;
-
-function assertSafeUrl(rawUrl, label = "URL") {
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    throw new Error(`${label} is not a valid URL`);
-  }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`${label} must use http or https`);
-  }
-  const host = parsed.hostname;
-  if (PRIVATE_IP_RE.test(host)) {
-    throw new Error(`${label} must not target internal or private network addresses`);
-  }
-  return parsed.origin; // return validated origin only (strips path/query)
-}
+// SSRF guard lives in backend-api/networkSafety.ts now. The async variant
+// resolves the hostname via DNS and checks every returned IP, so attacks
+// that use a public-looking DNS name pointing at RFC1918 / metadata IPs
+// are blocked.
+const { assertSafeUrlAsync } = require("./networkSafety");
+const assertSafeUrl = assertSafeUrlAsync;
 
 // ── Catalog ──────────────────────────────────────────────
 
@@ -622,7 +608,7 @@ async function testIntegration(integrationId, agentId) {
     },
     gitlab: async () => {
       const config = typeof integration.config === "string" ? JSON.parse(integration.config) : (integration.config || {});
-      const baseUrl = assertSafeUrl(config.base_url || "https://gitlab.com", "GitLab base URL");
+      const baseUrl = await assertSafeUrl(config.base_url || "https://gitlab.com", "GitLab base URL");
       const res = await fetch(`${baseUrl}/api/v4/user`, {
         headers: { "PRIVATE-TOKEN": token },
       });
@@ -660,7 +646,7 @@ async function testIntegration(integrationId, agentId) {
       const domain = config.site_url || config.domain || config.base_url;
       if (!domain) throw new Error("Jira site URL not configured");
       const rawUrl = domain.includes("://") ? domain : `https://${domain}`;
-      const url = assertSafeUrl(rawUrl, "Jira site URL");
+      const url = await assertSafeUrl(rawUrl, "Jira site URL");
       const email = config.email;
       if (!email) throw new Error("Jira email not configured");
       const res = await fetch(`${url}/rest/api/3/myself`, {
@@ -785,7 +771,7 @@ async function testIntegration(integrationId, agentId) {
       if (!baseUrl) throw new Error("Confluence URL not configured");
       if (!email) throw new Error("Confluence email not configured");
       const rawUrl = baseUrl.includes("://") ? baseUrl : `https://${baseUrl}`;
-      const url = assertSafeUrl(rawUrl, "Confluence base URL");
+      const url = await assertSafeUrl(rawUrl, "Confluence base URL");
       const res = await fetch(`${url}/wiki/rest/api/user/current`, {
         headers: { Authorization: `Basic ${Buffer.from(`${email}:${token}`).toString("base64")}` },
       });
@@ -805,7 +791,7 @@ async function testIntegration(integrationId, agentId) {
       const config = typeof integration.config === "string" ? JSON.parse(integration.config) : (integration.config || {});
       const rawUrl = config.url;
       if (!rawUrl) throw new Error("Supabase project URL not configured");
-      const url = assertSafeUrl(rawUrl, "Supabase URL");
+      const url = await assertSafeUrl(rawUrl, "Supabase URL");
       const res = await fetch(`${url}/rest/v1/`, {
         headers: { apikey: token, Authorization: `Bearer ${token}` },
       });
@@ -849,7 +835,7 @@ async function testIntegration(integrationId, agentId) {
       const config = typeof integration.config === "string" ? JSON.parse(integration.config) : (integration.config || {});
       const rawUrl = config.node_url;
       if (!rawUrl) throw new Error("Elasticsearch node URL not configured");
-      const nodeUrl = assertSafeUrl(rawUrl, "Elasticsearch node URL");
+      const nodeUrl = await assertSafeUrl(rawUrl, "Elasticsearch node URL");
       const headers = {};
       if (config.username) {
         headers.Authorization = `Basic ${Buffer.from(`${config.username}:${token}`).toString("base64")}`;
@@ -904,7 +890,7 @@ async function testIntegration(integrationId, agentId) {
       const config = typeof integration.config === "string" ? JSON.parse(integration.config) : (integration.config || {});
       const rawUrl = config.url;
       if (!rawUrl) throw new Error("Grafana URL not configured");
-      const url = assertSafeUrl(rawUrl, "Grafana URL");
+      const url = await assertSafeUrl(rawUrl, "Grafana URL");
       const res = await fetch(`${url}/api/org`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -926,7 +912,7 @@ async function testIntegration(integrationId, agentId) {
       const username = config.username;
       if (!rawUrl) throw new Error("Jenkins URL not configured");
       if (!username) throw new Error("Jenkins username not configured");
-      const url = assertSafeUrl(rawUrl, "Jenkins URL");
+      const url = await assertSafeUrl(rawUrl, "Jenkins URL");
       const res = await fetch(`${url}/api/json`, {
         headers: { Authorization: `Basic ${Buffer.from(`${username}:${token}`).toString("base64")}` },
       });
@@ -970,7 +956,7 @@ async function testIntegration(integrationId, agentId) {
       const consumerKey = config.consumer_key;
       if (!siteUrl) throw new Error("WooCommerce site URL not configured");
       if (!consumerKey) throw new Error("WooCommerce consumer key not configured");
-      const url = assertSafeUrl(siteUrl, "WooCommerce site URL");
+      const url = await assertSafeUrl(siteUrl, "WooCommerce site URL");
       const res = await fetch(`${url}/wp-json/wc/v3/system_status`, {
         headers: { Authorization: `Basic ${Buffer.from(`${consumerKey}:${token}`).toString("base64")}` },
       });
@@ -1007,7 +993,7 @@ async function testIntegration(integrationId, agentId) {
       const config = typeof integration.config === "string" ? JSON.parse(integration.config) : (integration.config || {});
       const rawUrl = config.instance_url;
       if (!rawUrl) throw new Error("Salesforce instance URL not configured");
-      const instanceUrl = assertSafeUrl(rawUrl, "Salesforce instance URL");
+      const instanceUrl = await assertSafeUrl(rawUrl, "Salesforce instance URL");
       const res = await fetch(`${instanceUrl}/services/data/v59.0/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
