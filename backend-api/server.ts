@@ -52,10 +52,14 @@ if (!process.env.JWT_SECRET) {
   if (IS_TEST_ENV) {
     process.env.JWT_SECRET = "secret";
   } else if (process.env.NODE_ENV === "production") {
-    console.error("FATAL: JWT_SECRET must be set in production. Refusing to start with an ephemeral secret.");
+    console.error(
+      "FATAL: JWT_SECRET must be set in production. Refusing to start with an ephemeral secret.",
+    );
     process.exit(1);
   } else {
-    console.warn("SECURITY WARNING: JWT_SECRET not configured. Using ephemeral secret — all tokens will invalidate on restart. Set JWT_SECRET in .env.");
+    console.warn(
+      "SECURITY WARNING: JWT_SECRET not configured. Using ephemeral secret — all tokens will invalidate on restart. Set JWT_SECRET in .env.",
+    );
     process.env.JWT_SECRET = crypto.randomBytes(32).toString("hex");
   }
 }
@@ -93,10 +97,7 @@ function requestProtocol(req) {
   return req.protocol;
 }
 
-function getEmbedSessionCookieName(
-  agentId,
-  prefix = EMBED_SESSION_COOKIE_PREFIX
-) {
+function getEmbedSessionCookieName(agentId, prefix = EMBED_SESSION_COOKIE_PREFIX) {
   return `${prefix}${agentId}`;
 }
 
@@ -251,7 +252,7 @@ function injectEmbedBootstrapScript(html, agentId) {
   const bootstrapSrc = `/api/agents/${encodeURIComponent(agentId)}/gateway/embed/bootstrap.js`;
   return html.replace(
     /<head[^>]*>/i,
-    (match) => `${match}<base href="${embedBaseHref}"><script src="${bootstrapSrc}"></script>`
+    (match) => `${match}<base href="${embedBaseHref}"><script src="${bootstrapSrc}"></script>`,
   );
 }
 
@@ -279,18 +280,12 @@ function rewriteHermesEmbedHtml(html, agentId) {
   return html
     .replace(/(["'])\/assets\//g, `$1${embedBase}/assets/`)
     .replace(/(["'])\/fonts\//g, `$1${embedBase}/fonts/`)
-    .replace(
-      /(["'])\/favicon\.ico(["'])/g,
-      `$1${embedBase}/favicon.ico$2`
-    );
+    .replace(/(["'])\/favicon\.ico(["'])/g, `$1${embedBase}/favicon.ico$2`);
 }
 
 function rewriteHermesEmbedCss(css, agentId) {
   const embedBase = hermesEmbedBasePath(agentId);
-  return css.replace(
-    /url\((['"]?)\/fonts\//g,
-    `url($1${embedBase}/fonts/`
-  );
+  return css.replace(/url\((['"]?)\/fonts\//g, `url($1${embedBase}/fonts/`);
 }
 
 function rewriteHermesEmbedJavascript(source, agentId) {
@@ -300,7 +295,7 @@ function rewriteHermesEmbedJavascript(source, agentId) {
   if (rewritten.includes(routerMarker)) {
     rewritten = rewritten.replace(
       routerMarker,
-      `jsx($y,{basename:${JSON.stringify(embedBase)},children:`
+      `jsx($y,{basename:${JSON.stringify(embedBase)},children:`,
     );
   }
   return rewritten;
@@ -328,9 +323,13 @@ async function lookupEmbedAgent(agentId, userId) {
     `SELECT host, gateway_token, gateway_host_port, gateway_host, gateway_port, status
        FROM agents
       WHERE id = $1 AND user_id = $2`,
-    [agentId, userId]
+    [agentId, userId],
   );
-  if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status) || !hasGatewayEndpoint(result.rows[0])) {
+  if (
+    !result.rows[0] ||
+    !isGatewayAvailableStatus(result.rows[0].status) ||
+    !hasGatewayEndpoint(result.rows[0])
+  ) {
     return null;
   }
   return result.rows[0];
@@ -341,7 +340,7 @@ async function lookupHermesEmbedAgent(agentId, userId) {
     `SELECT host, runtime_host, runtime_port, status, runtime_family, backend_type
        FROM agents
       WHERE id = $1 AND user_id = $2`,
-    [agentId, userId]
+    [agentId, userId],
   );
   if (
     !result.rows[0] ||
@@ -361,7 +360,7 @@ async function resolveEmbedAccess(
     lookupAgent = lookupEmbedAgent,
     cookiePrefix = EMBED_SESSION_COOKIE_PREFIX,
     scope = "gateway-embed",
-  } = {}
+  } = {},
 ) {
   const jwt = require("jsonwebtoken");
   const agentId = req.params.agentId;
@@ -416,11 +415,9 @@ async function resolveEmbedAccess(
   }
 
   if (!relayToken) {
-    relayToken = jwt.sign(
-      { id: userId, agentId, scope },
-      process.env.JWT_SECRET,
-      { expiresIn: Math.floor(EMBED_SESSION_TTL_MS / 1000) }
-    );
+    relayToken = jwt.sign({ id: userId, agentId, scope }, process.env.JWT_SECRET, {
+      expiresIn: Math.floor(EMBED_SESSION_TTL_MS / 1000),
+    });
     res.cookie(embedCookieName, relayToken, {
       httpOnly: true,
       sameSite: "lax",
@@ -447,13 +444,22 @@ function getEmbeddedHermesPath(req) {
   return suffix.replace(/^\/+/, "");
 }
 
-const corsOrigins = (process.env.CORS_ORIGINS || process.env.NEXTAUTH_URL || "http://localhost:8080")
+const corsOrigins = (
+  process.env.CORS_ORIGINS ||
+  process.env.NEXTAUTH_URL ||
+  "http://localhost:8080"
+)
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 app.use(cors({ origin: corsOrigins }));
 
-const globalLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false });
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use(globalLimiter);
 
 // Stripe webhook needs raw body — must come before express.json()
@@ -498,8 +504,7 @@ app.get("/config/platform", async (_req, res) => {
     });
     res.json({
       mode: billing.PLATFORM_MODE,
-      selfhosted:
-        billing.PLATFORM_MODE !== "paas" ? billing.SELFHOSTED_LIMITS : null,
+      selfhosted: billing.PLATFORM_MODE !== "paas" ? billing.SELFHOSTED_LIMITS : null,
       billingEnabled: billing.BILLING_ENABLED,
       enabledBackends: getEnabledBackends(),
       defaultBackend: getDefaultBackend(),
@@ -581,15 +586,7 @@ app.use("/auth", require("./routes/auth"));
 // internal gateway API/config endpoints.
 const gatewayUIAssetProxy = require("express").Router();
 const PREAUTH_ASSET_METHODS = new Set(["GET", "HEAD"]);
-const EMBED_PROXY_METHODS = new Set([
-  "DELETE",
-  "GET",
-  "HEAD",
-  "OPTIONS",
-  "PATCH",
-  "POST",
-  "PUT",
-]);
+const EMBED_PROXY_METHODS = new Set(["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]);
 
 gatewayUIAssetProxy.use("/agents/:agentId/gateway", (req, res, next) => {
   if (!PREAUTH_ASSET_METHODS.has(req.method)) return next();
@@ -618,12 +615,14 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed/bootstrap.js", async (re
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Vary", "Cookie");
-    res.send(buildEmbedBootstrapScript({
-      agentId: access.agentId,
-      requestHost: req.headers.host,
-      requestScheme: requestProtocol(req),
-      gatewayToken: access.agent.gateway_token,
-    }));
+    res.send(
+      buildEmbedBootstrapScript({
+        agentId: access.agentId,
+        requestHost: req.headers.host,
+        requestScheme: requestProtocol(req),
+        gatewayToken: access.agent.gateway_token,
+      }),
+    );
   } catch (err) {
     console.error("[gateway-embed-bootstrap] error:", err);
     if (!res.headersSent) res.status(502).send(`embed bootstrap error: ${err.message}`);
@@ -744,14 +743,8 @@ async function proxyEmbeddedHermes(req, res) {
       return;
     }
 
-    if (
-      /(?:javascript|ecmascript)/i.test(contentType) ||
-      /\.js(?:$|\?)/i.test(hermesPath)
-    ) {
-      const javascript = rewriteHermesEmbedJavascript(
-        await resp.text(),
-        access.agentId
-      );
+    if (/(?:javascript|ecmascript)/i.test(contentType) || /\.js(?:$|\?)/i.test(hermesPath)) {
+      const javascript = rewriteHermesEmbedJavascript(await resp.text(), access.agentId);
       setProxyResponseHeaders(res, resp, {
         cachePolicy: isApiRequest ? "no-store" : "asset",
       });
@@ -795,16 +788,20 @@ async function proxyGatewayAsset(req, res) {
       `SELECT host, gateway_host_port, gateway_host, gateway_port, status
          FROM agents
         WHERE id = $1`,
-      [agentId]
+      [agentId],
     );
-    if (!result.rows[0] || !isGatewayAvailableStatus(result.rows[0].status) || !hasGatewayEndpoint(result.rows[0])) {
+    if (
+      !result.rows[0] ||
+      !isGatewayAvailableStatus(result.rows[0].status) ||
+      !hasGatewayEndpoint(result.rows[0])
+    ) {
       return res.status(404).end();
     }
     const gatewayPath = req.path || "/";
     const targetUrl = `${gatewayUrlForAgent(result.rows[0], gatewayPath)}${req._parsedUrl?.search || ""}`;
     const resp = await fetch(targetUrl, {
       method: req.method,
-      headers: { "Accept": req.headers.accept || "*/*", "Accept-Encoding": "identity" },
+      headers: { Accept: req.headers.accept || "*/*", "Accept-Encoding": "identity" },
       signal: AbortSignal.timeout(10000),
     });
     res.status(resp.status);
@@ -824,19 +821,19 @@ app.use(authenticateToken);
 app.use(createGatewayRouter());
 
 // ─── Protected Routes ─────────────────────────────────────────────
-app.use("/agents",        require("./routes/agents"));
-app.use("/agents",        require("./routes/agentFiles"));
-app.use("/agents",        require("./routes/channels"));
-app.use("/agents",        require("./routes/nemoclaw"));
+app.use("/agents", require("./routes/agents"));
+app.use("/agents", require("./routes/agentFiles"));
+app.use("/agents", require("./routes/channels"));
+app.use("/agents", require("./routes/nemoclaw"));
 app.use("/agent-migrations", require("./routes/agentMigrations"));
-app.use("/",              require("./routes/integrations"));   // handles /agents/:id/integrations + /integrations/catalog
-app.use("/",              require("./routes/monitoring"));     // handles /monitoring/* + /agents/:id/metrics
+app.use("/", require("./routes/integrations")); // handles /agents/:id/integrations + /integrations/catalog
+app.use("/", require("./routes/monitoring")); // handles /monitoring/* + /agents/:id/metrics
 app.use("/llm-providers", require("./routes/llmProviders"));
-app.use("/clawhub",       require("./routes/clawhub"));
-app.use("/marketplace",   require("./routes/marketplace"));
-app.use("/workspaces",    require("./routes/workspaces"));
-app.use("/billing",       require("./routes/billing"));
-app.use("/admin",         require("./routes/admin"));
+app.use("/clawhub", require("./routes/clawhub"));
+app.use("/marketplace", require("./routes/marketplace"));
+app.use("/workspaces", require("./routes/workspaces"));
+app.use("/billing", require("./routes/billing"));
+app.use("/admin", require("./routes/admin"));
 
 // ─── Central Error Handler ────────────────────────────────────────
 app.use(errorHandler);
@@ -996,7 +993,7 @@ async function migrateDB() {
     `DO $$ BEGIN ALTER TABLE platform_settings ADD COLUMN system_banner_severity TEXT NOT NULL DEFAULT 'warning'; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
     `DO $$ BEGIN ALTER TABLE platform_settings ADD COLUMN system_banner_title TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
     `DO $$ BEGIN ALTER TABLE platform_settings ADD COLUMN system_banner_message TEXT NOT NULL DEFAULT ''; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
-  `CREATE TABLE IF NOT EXISTS usage_metrics (
+    `CREATE TABLE IF NOT EXISTS usage_metrics (
        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
        agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -1167,9 +1164,7 @@ function stableStringify(value) {
 
 async function seedStarterMarketplace() {
   for (const template of STARTER_TEMPLATES) {
-    const existingListing = await marketplace.getPlatformListingByTemplateKey(
-      template.templateKey
-    );
+    const existingListing = await marketplace.getPlatformListingByTemplateKey(template.templateKey);
 
     let snapshotId = existingListing?.snapshot_id || null;
     let shouldCreateSnapshot = !snapshotId;
@@ -1184,8 +1179,7 @@ async function seedStarterMarketplace() {
         !currentSnapshot ||
         currentSnapshot.name !== template.name ||
         currentSnapshot.description !== template.description ||
-        stableStringify(currentConfig) !==
-          stableStringify(template.snapshotConfig);
+        stableStringify(currentConfig) !== stableStringify(template.snapshotConfig);
     }
 
     if (shouldCreateSnapshot) {
@@ -1198,7 +1192,7 @@ async function seedStarterMarketplace() {
           kind: template.snapshotConfig.kind || "starter-template",
           templateKey: template.templateKey,
           builtIn: true,
-        }
+        },
       );
       snapshotId = snapshot.id;
     }
@@ -1231,7 +1225,11 @@ if (require.main === module) {
   const server = app.listen(PORT, async () => {
     console.log(`api running on ${PORT}`);
 
-    try { await migrateDB(); } catch (e) { console.error("DB migration error:", e.message); }
+    try {
+      await migrateDB();
+    } catch (e) {
+      console.error("DB migration error:", e.message);
+    }
 
     // Seed bootstrap admin account on first boot only when explicit secure credentials are provided.
     try {
@@ -1243,29 +1241,43 @@ if (require.main === module) {
         });
 
         if (!bootstrapAdmin.shouldSeed) {
-          console.warn("Skipping bootstrap admin seed: set explicit DEFAULT_ADMIN_EMAIL and a non-default DEFAULT_ADMIN_PASSWORD with at least 12 characters.");
+          console.warn(
+            "Skipping bootstrap admin seed: set explicit DEFAULT_ADMIN_EMAIL and a non-default DEFAULT_ADMIN_PASSWORD with at least 12 characters.",
+          );
         } else {
           const bcrypt = require("bcryptjs");
           const hash = await bcrypt.hash(bootstrapAdmin.password, 10);
           await db.query(
             "INSERT INTO users(email, password_hash, role, name) VALUES($1, $2, 'admin', 'Admin') ON CONFLICT DO NOTHING",
-            [bootstrapAdmin.email, hash]
+            [bootstrapAdmin.email, hash],
           );
           console.log(`Bootstrap admin account created: ${bootstrapAdmin.email}`);
         }
       }
-    } catch (e) { console.error("Failed to seed admin account:", e.message); }
+    } catch (e) {
+      console.error("Failed to seed admin account:", e.message);
+    }
 
     try {
       const promotedUser = await ensureFirstRegisteredUserIsAdmin(db);
       if (promotedUser) {
         console.log(`Promoted first registered user to admin: ${promotedUser.email}`);
       }
-    } catch (e) { console.error("Failed to ensure an admin user exists:", e.message); }
+    } catch (e) {
+      console.error("Failed to ensure an admin user exists:", e.message);
+    }
 
-    try { await integrations.seedCatalog(); } catch (e) { console.error("Failed to seed integration catalog:", e.message); }
+    try {
+      await integrations.seedCatalog();
+    } catch (e) {
+      console.error("Failed to seed integration catalog:", e.message);
+    }
 
-    try { await seedStarterMarketplace(); } catch (e) { console.error("Failed to seed marketplace:", e.message); }
+    try {
+      await seedStarterMarketplace();
+    } catch (e) {
+      console.error("Failed to seed marketplace:", e.message);
+    }
 
     _startupComplete = true;
     console.log("Startup complete — health check now returning ok");

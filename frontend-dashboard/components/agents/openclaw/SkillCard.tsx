@@ -44,8 +44,7 @@ export default function SkillCard({
   selectedForAction = false,
   onToggleSelection,
 }: SkillCardProps) {
-  const showStats =
-    typeof skill.downloads === "number" || typeof skill.stars === "number";
+  const showStats = typeof skill.downloads === "number" || typeof skill.stars === "number";
 
   return (
     <div
@@ -55,7 +54,11 @@ export default function SkillCard({
           : "border-slate-200 bg-white hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
       }`}
     >
-      <button type="button" onClick={() => onSelect(skill)} className="flex flex-1 flex-col text-left">
+      <button
+        type="button"
+        onClick={() => onSelect(skill)}
+        className="flex flex-1 flex-col text-left"
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
             <div className="text-sm font-black text-slate-900">{skill.name || skill.slug}</div>
@@ -69,7 +72,10 @@ export default function SkillCard({
                 Installed
               </span>
             ) : null}
-            <ArrowUpRight size={16} className="mt-0.5 text-slate-300 transition-colors group-hover:text-blue-500" />
+            <ArrowUpRight
+              size={16}
+              className="mt-0.5 text-slate-300 transition-colors group-hover:text-blue-500"
+            />
           </div>
         </div>
 

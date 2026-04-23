@@ -80,23 +80,11 @@ export function normalizeDeployDraftResources(
     maxVcpu = 16,
     maxRamMb = 32768,
     maxDiskGb = 500,
-  }: DraftResourceOptions = {}
+  }: DraftResourceOptions = {},
 ) {
   return {
-    vcpu: clamp(
-      normalizeInteger(draft?.vcpu, defaultVcpu),
-      1,
-      maxVcpu
-    ),
-    ramMb: clamp(
-      normalizeInteger(draft?.ramMb, defaultRamMb),
-      512,
-      maxRamMb
-    ),
-    diskGb: clamp(
-      normalizeInteger(draft?.diskGb, defaultDiskGb),
-      10,
-      maxDiskGb
-    ),
+    vcpu: clamp(normalizeInteger(draft?.vcpu, defaultVcpu), 1, maxVcpu),
+    ramMb: clamp(normalizeInteger(draft?.ramMb, defaultRamMb), 512, maxRamMb),
+    diskGb: clamp(normalizeInteger(draft?.diskGb, defaultDiskGb), 10, maxDiskGb),
   };
 }

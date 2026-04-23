@@ -63,25 +63,25 @@ export default function SkillSelectionTray({
                 ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
-              {skills.map((skill) => (
-                <span
-                  key={`${skill.author}:${skill.installSlug}`}
-                  className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700"
-                >
-                  {skill.name || skill.installSlug}
-                  {onRemoveSkill ? (
-                    <button
-                      type="button"
-                      onClick={() => onRemoveSkill(skill)}
-                      className="inline-flex h-4 w-4 items-center justify-center rounded-full text-blue-500 transition-colors hover:bg-blue-100 hover:text-blue-700"
-                      aria-label={`Remove ${skill.name || skill.installSlug} from selection`}
-                    >
-                      <X size={12} />
-                    </button>
-                  ) : null}
-                </span>
-              ))}
-            </div>
+                {skills.map((skill) => (
+                  <span
+                    key={`${skill.author}:${skill.installSlug}`}
+                    className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700"
+                  >
+                    {skill.name || skill.installSlug}
+                    {onRemoveSkill ? (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveSkill(skill)}
+                        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-blue-500 transition-colors hover:bg-blue-100 hover:text-blue-700"
+                        aria-label={`Remove ${skill.name || skill.installSlug} from selection`}
+                      >
+                        <X size={12} />
+                      </button>
+                    ) : null}
+                  </span>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="text-sm text-slate-500">
@@ -90,9 +90,7 @@ export default function SkillSelectionTray({
                 : "No ClawHub skills selected yet. Pick one or more cards to queue installs."}
             </p>
           )}
-          {installError ? (
-            <p className="text-sm font-medium text-red-600">{installError}</p>
-          ) : null}
+          {installError ? <p className="text-sm font-medium text-red-600">{installError}</p> : null}
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row">

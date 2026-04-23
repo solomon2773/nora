@@ -8,7 +8,7 @@ async function findOwnedAgent(agentId, userId) {
             deploy_target, sandbox_profile, clawhub_skills
        FROM agents
       WHERE id = $1 AND user_id = $2`,
-    [agentId, userId]
+    [agentId, userId],
   );
   return result.rows[0] || null;
 }
@@ -17,7 +17,7 @@ async function findOwnedWorkspace(workspaceId, userId) {
   if (!workspaceId) return null;
   const result = await db.query(
     "SELECT id, user_id, name, created_at FROM workspaces WHERE id = $1 AND user_id = $2",
-    [workspaceId, userId]
+    [workspaceId, userId],
   );
   return result.rows[0] || null;
 }

@@ -129,7 +129,9 @@ export default function AgentDetail() {
 
   // Refresh immediately when tab becomes visible (e.g. after using Docker Desktop)
   useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible" && id) refreshAgent(); };
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && id) refreshAgent();
+    };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [id]);
@@ -139,7 +141,7 @@ export default function AgentDetail() {
       setDuplicateName(`${agent.name} Copy`);
       setPublishName(agent.name);
       setPublishDescription(
-        `Shared template built from ${agent.name}. Review the included instructions before installing.`
+        `Shared template built from ${agent.name}. Review the included instructions before installing.`,
       );
       setPublishCategory("General");
     }
@@ -165,7 +167,7 @@ export default function AgentDetail() {
     setPublishIssues([]);
     setPublishName(agent?.name || "Untitled Template");
     setPublishDescription(
-      `Shared template built from ${agent?.name || "this agent"}. Review the included instructions before installing.`
+      `Shared template built from ${agent?.name || "this agent"}. Review the included instructions before installing.`,
     );
     setPublishCategory("General");
     setShowPublishDialog(true);
@@ -175,22 +177,34 @@ export default function AgentDetail() {
     setActionLoading(action);
     try {
       const endpoint =
-        action === "start" ? `/api/agents/${id}/start` :
-        action === "stop" ? `/api/agents/${id}/stop` :
-        action === "restart" ? `/api/agents/${id}/restart` :
-        action === "redeploy" ? `/api/agents/${id}/redeploy` : null;
+        action === "start"
+          ? `/api/agents/${id}/start`
+          : action === "stop"
+            ? `/api/agents/${id}/stop`
+            : action === "restart"
+              ? `/api/agents/${id}/restart`
+              : action === "redeploy"
+                ? `/api/agents/${id}/redeploy`
+                : null;
       if (!endpoint) return;
 
       const res = await fetchWithAuth(endpoint, { method: "POST" });
       if (res.ok) {
-        const statusMap = { start: "running", stop: "stopped", restart: "running", redeploy: "queued" };
+        const statusMap = {
+          start: "running",
+          stop: "stopped",
+          restart: "running",
+          redeploy: "queued",
+        };
         setAgent((a) => ({ ...a, status: statusMap[action] || a.status }));
-        toast.success(`Agent ${action === "redeploy" ? "re-queued" : action + (action.endsWith("e") ? "d" : "ed")}`);
+        toast.success(
+          `Agent ${action === "redeploy" ? "re-queued" : action + (action.endsWith("e") ? "d" : "ed")}`,
+        );
         // Refresh to get authoritative state from server
         setTimeout(refreshAgent, 2000);
       } else {
         const data = await res.json();
-        const ref = data.correlationId ? ` (ref: ${data.correlationId.slice(0, 8)})` : '';
+        const ref = data.correlationId ? ` (ref: ${data.correlationId.slice(0, 8)})` : "";
         toast.error((data.error || `Failed to ${action} agent`) + ref);
       }
     } catch (err) {
@@ -251,9 +265,7 @@ export default function AgentDetail() {
           name: trimmedName,
           clone_mode: duplicateCloneMode,
           runtime_family:
-            duplicateRuntimeFamily ||
-            runtimeFamilyFromConfig(backendConfig)?.id ||
-            "openclaw",
+            duplicateRuntimeFamily || runtimeFamilyFromConfig(backendConfig)?.id || "openclaw",
           deploy_target: duplicateExecutionTarget,
           sandbox_profile: duplicateSandboxProfile || "standard",
         }),
@@ -289,9 +301,7 @@ export default function AgentDetail() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           runtime_family:
-            redeployRuntimeFamily ||
-            runtimeFamilyFromConfig(backendConfig)?.id ||
-            "openclaw",
+            redeployRuntimeFamily || runtimeFamilyFromConfig(backendConfig)?.id || "openclaw",
           deploy_target: redeployExecutionTarget,
           sandbox_profile: redeploySandboxProfile || "standard",
         }),
@@ -299,8 +309,7 @@ export default function AgentDetail() {
 
       if (res.ok) {
         const nextSandboxProfile = redeploySandboxProfile || "standard";
-        const nextExecutionTarget =
-          redeployExecutionTarget || resolveAgentExecutionTarget(agent);
+        const nextExecutionTarget = redeployExecutionTarget || resolveAgentExecutionTarget(agent);
         setShowRedeployDialog(false);
         setAgent((current) =>
           current
@@ -315,16 +324,13 @@ export default function AgentDetail() {
                 deploy_target: nextExecutionTarget,
                 sandbox_profile: nextSandboxProfile,
                 backend_type: resolveBackendTypeForSelection({
-                  runtimeFamily:
-                    redeployRuntimeFamily ||
-                    current.runtime_family ||
-                    "openclaw",
+                  runtimeFamily: redeployRuntimeFamily || current.runtime_family || "openclaw",
                   deployTarget: nextExecutionTarget,
                   sandboxProfile: nextSandboxProfile,
                 }),
                 sandbox_type: nextSandboxProfile,
               }
-            : current
+            : current,
         );
         toast.success("Agent re-queued");
         setTimeout(refreshAgent, 2000);
@@ -332,9 +338,7 @@ export default function AgentDetail() {
       }
 
       const data = await res.json().catch(() => ({}));
-      const ref = data.correlationId
-        ? ` (ref: ${data.correlationId.slice(0, 8)})`
-        : "";
+      const ref = data.correlationId ? ` (ref: ${data.correlationId.slice(0, 8)})` : "";
       toast.error((data.error || "Failed to redeploy agent") + ref);
     } catch (err) {
       console.error(err);
@@ -443,10 +447,7 @@ export default function AgentDetail() {
   const supportsGateway = runtimeSupportsGateway(runtimeFamily);
 
   useEffect(() => {
-    if (
-      runtimeFamily === "hermes" &&
-      (activeTab === "openclaw" || activeTab === "nemoclaw")
-    ) {
+    if (runtimeFamily === "hermes" && (activeTab === "openclaw" || activeTab === "nemoclaw")) {
       setActiveTab("overview");
       return;
     }
@@ -471,7 +472,10 @@ export default function AgentDetail() {
         <div className="flex flex-col items-center justify-center h-96 text-slate-500">
           <Bot size={48} className="mb-4 opacity-30" />
           <p className="text-lg font-bold mb-4">Agent not found</p>
-          <a href="/app/agents" className="flex items-center gap-2 text-blue-400 hover:underline text-sm">
+          <a
+            href="/app/agents"
+            className="flex items-center gap-2 text-blue-400 hover:underline text-sm"
+          >
             <ArrowLeft size={16} /> Back to Agents
           </a>
         </div>
@@ -479,43 +483,42 @@ export default function AgentDetail() {
     );
   }
 
-  const executionTargetLabel = formatExecutionTargetLabel(
-    resolveAgentExecutionTarget(agent)
-  );
+  const executionTargetLabel = formatExecutionTargetLabel(resolveAgentExecutionTarget(agent));
   const sandboxProfile = resolveAgentSandboxProfile(agent);
   const sandboxLabel = formatSandboxProfileLabel(sandboxProfile);
   const duplicateActiveExecutionTarget = activeExecutionTargetFromConfig(
     backendConfig,
     duplicateRuntimeFamily,
-    duplicateExecutionTarget
+    duplicateExecutionTarget,
   );
   const duplicateActiveSandboxOption = activeSandboxOptionFromTarget(
     duplicateActiveExecutionTarget,
-    duplicateSandboxProfile
+    duplicateSandboxProfile,
   );
   const redeployActiveExecutionTarget = activeExecutionTargetFromConfig(
     backendConfig,
     redeployRuntimeFamily,
-    redeployExecutionTarget
+    redeployExecutionTarget,
   );
   const redeployActiveSandboxOption = activeSandboxOptionFromTarget(
     redeployActiveExecutionTarget,
-    redeploySandboxProfile
+    redeploySandboxProfile,
   );
-  const canDuplicate = Boolean(
-    backendConfig && duplicateActiveSandboxOption?.available
-  );
-  const canRedeploy = Boolean(
-    backendConfig && redeployActiveSandboxOption?.available
-  );
+  const canDuplicate = Boolean(backendConfig && duplicateActiveSandboxOption?.available);
+  const canRedeploy = Boolean(backendConfig && redeployActiveSandboxOption?.available);
 
   return (
     <Layout>
-      <div className={`w-full max-w-full space-y-4 sm:space-y-6 ${activeTab === "terminal" ? "flex-1 flex flex-col min-h-0" : ""}`}>
+      <div
+        className={`w-full max-w-full space-y-4 sm:space-y-6 ${activeTab === "terminal" ? "flex-1 flex flex-col min-h-0" : ""}`}
+      >
         {/* Header Bar */}
         <div className="flex items-center justify-between min-w-0">
           <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-            <a href="/app/agents" className="text-slate-400 hover:text-slate-600 transition-colors shrink-0">
+            <a
+              href="/app/agents"
+              className="text-slate-400 hover:text-slate-600 transition-colors shrink-0"
+            >
               <ArrowLeft size={20} />
             </a>
             <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20 shrink-0">
@@ -523,7 +526,9 @@ export default function AgentDetail() {
               <Bot size={24} className="text-white hidden sm:block" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-lg sm:text-xl font-black text-slate-900 truncate">{agent.name}</h1>
+              <h1 className="text-lg sm:text-xl font-black text-slate-900 truncate">
+                {agent.name}
+              </h1>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <StatusBadge status={agent.status} />
                 <span className="text-[10px] text-slate-400 font-mono">{agent.id.slice(0, 8)}</span>
@@ -540,15 +545,23 @@ export default function AgentDetail() {
           </div>
         </div>
 
-        <div className={`rounded-2xl border px-5 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between ${agent.status === "running" || agent.status === "warning" ? "bg-blue-50 border-blue-100" : "bg-amber-50 border-amber-100"}`}>
+        <div
+          className={`rounded-2xl border px-5 py-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between ${agent.status === "running" || agent.status === "warning" ? "bg-blue-50 border-blue-100" : "bg-amber-50 border-amber-100"}`}
+        >
           <div>
-            <p className={`text-[10px] font-black uppercase tracking-[0.2em] ${agent.status === "running" || agent.status === "warning" ? "text-blue-700" : "text-amber-700"}`}>Step 3 of 3 — Validate</p>
+            <p
+              className={`text-[10px] font-black uppercase tracking-[0.2em] ${agent.status === "running" || agent.status === "warning" ? "text-blue-700" : "text-amber-700"}`}
+            >
+              Step 3 of 3 — Validate
+            </p>
             <p className="text-sm font-bold text-slate-900 mt-1">
               {agent.status === "running" || agent.status === "warning"
                 ? "Use this agent detail view to prove the runtime works end-to-end."
                 : "This agent still needs to finish starting before the full validation pass."}
             </p>
-            <p className={`text-sm mt-1 ${agent.status === "running" || agent.status === "warning" ? "text-blue-700/80" : "text-amber-700/80"}`}>
+            <p
+              className={`text-sm mt-1 ${agent.status === "running" || agent.status === "warning" ? "text-blue-700/80" : "text-amber-700/80"}`}
+            >
               {agent.status === "running" || agent.status === "warning"
                 ? supportsGateway
                   ? "Check chat, logs, terminal, and the OpenClaw surface from this page before scaling the fleet."
@@ -560,37 +573,51 @@ export default function AgentDetail() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {supportsGateway ? (
-              <button onClick={() => setActiveTab("openclaw")} className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all">
+              <button
+                onClick={() => setActiveTab("openclaw")}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all"
+              >
                 <Zap size={14} />
                 OpenClaw
               </button>
             ) : (
-              <button onClick={() => setActiveTab("hermes-webui")} className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all">
+              <button
+                onClick={() => setActiveTab("hermes-webui")}
+                className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all"
+              >
                 <Bot size={14} />
                 Hermes WebUI
               </button>
             )}
-            <button onClick={() => setActiveTab("logs")} className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all">
+            <button
+              onClick={() => setActiveTab("logs")}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all"
+            >
               <ScrollText size={14} />
               Logs
             </button>
-            <button onClick={() => setActiveTab("files")} className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all">
+            <button
+              onClick={() => setActiveTab("files")}
+              className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all"
+            >
               <FolderTree size={14} />
               Files
             </button>
             <button
               onClick={() =>
                 setActiveTab(
-                  agent.status === "running"
-                    ? "terminal"
-                    : supportsGateway
-                      ? "openclaw"
-                      : "logs"
+                  agent.status === "running" ? "terminal" : supportsGateway ? "openclaw" : "logs",
                 )
               }
               className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-800 hover:bg-slate-50 transition-all"
             >
-              {agent.status === "running" ? <Terminal size={14} /> : supportsGateway ? <MessagesSquare size={14} /> : <ScrollText size={14} />}
+              {agent.status === "running" ? (
+                <Terminal size={14} />
+              ) : supportsGateway ? (
+                <MessagesSquare size={14} />
+              ) : (
+                <ScrollText size={14} />
+              )}
               {agent.status === "running" ? "Terminal" : supportsGateway ? "Chat" : "Logs"}
             </button>
           </div>
@@ -619,7 +646,9 @@ export default function AgentDetail() {
         />
 
         {/* Tab Content */}
-        <div className={`w-full min-w-0 overflow-x-hidden ${activeTab === "terminal" || activeTab === "logs" ? "flex-1 flex flex-col min-h-0" : "min-h-[200px] sm:min-h-[400px]"}`}>
+        <div
+          className={`w-full min-w-0 overflow-x-hidden ${activeTab === "terminal" || activeTab === "logs" ? "flex-1 flex flex-col min-h-0" : "min-h-[200px] sm:min-h-[400px]"}`}
+        >
           {activeTab === "overview" && (
             <OverviewTab
               agent={agent}
@@ -635,9 +664,7 @@ export default function AgentDetail() {
 
           {activeTab === "metrics" && <MetricsTab agentId={id} />}
 
-          {activeTab === "files" && (
-            <AgentFilesTab agentId={id} agentStatus={agent.status} />
-          )}
+          {activeTab === "files" && <AgentFilesTab agentId={id} agentStatus={agent.status} />}
 
           {/* Terminal — always mounted when agent is running, hidden via CSS when not active */}
           {agent.status === "running" ? (
@@ -662,7 +689,8 @@ export default function AgentDetail() {
             <div className="bg-slate-950 border border-slate-800 rounded-2xl p-12 flex flex-col items-center justify-center gap-3">
               <Terminal size={32} className="text-slate-700" />
               <p className="text-sm text-slate-500 font-medium">
-                Terminal available when agent is <span className="text-green-400 font-bold">running</span>
+                Terminal available when agent is{" "}
+                <span className="text-green-400 font-bold">running</span>
               </p>
               <p className="text-xs text-slate-600">
                 Agent is currently <span className="font-bold">{agent.status}</span>
@@ -680,11 +708,7 @@ export default function AgentDetail() {
               visibility: activeTab === "logs" ? "visible" : "hidden",
             }}
           >
-            <LogViewer
-              agentId={id}
-              historyRef={logHistoryRef}
-              visible={activeTab === "logs"}
-            />
+            <LogViewer agentId={id} historyRef={logHistoryRef} visible={activeTab === "logs"} />
           </div>
 
           {activeTab === "openclaw" && supportsGateway && (
@@ -787,7 +811,8 @@ export default function AgentDetail() {
 const CLONE_MODE_COPY = {
   files_only: "Copies only the OpenClaw agent files.",
   files_plus_memory: "Copies the agent files plus OpenClaw workspace and session memory.",
-  full_clone: "Copies files, memory, and Nora wiring structure. Secrets are stripped and must be reconnected.",
+  full_clone:
+    "Copies files, memory, and Nora wiring structure. Secrets are stripped and must be reconnected.",
 };
 
 function DuplicateAgentDialog({
@@ -826,17 +851,20 @@ function DuplicateAgentDialog({
             <Copy size={18} className="text-slate-700" />
           </div>
           <div className="flex-1">
-            <h3
-              id="duplicate-agent-dialog-title"
-              className="text-lg font-bold text-slate-900"
-            >
+            <h3 id="duplicate-agent-dialog-title" className="text-lg font-bold text-slate-900">
               Duplicate Agent
             </h3>
             <p className="text-sm text-slate-500 mt-1 leading-relaxed">
-              Create a new agent from <span className="font-semibold text-slate-700">{sourceName}</span>. Wiring structure can be copied, but secrets stay disconnected.
+              Create a new agent from{" "}
+              <span className="font-semibold text-slate-700">{sourceName}</span>. Wiring structure
+              can be copied, but secrets stay disconnected.
             </p>
           </div>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors" disabled={loading}>
+          <button
+            onClick={onCancel}
+            className="text-slate-400 hover:text-slate-600 transition-colors"
+            disabled={loading}
+          >
             <X size={18} />
           </button>
         </div>
@@ -941,10 +969,15 @@ function RedeployAgentDialog({
           <div className="flex-1">
             <h3 className="text-lg font-bold text-slate-900">Redeploy Agent</h3>
             <p className="text-sm text-slate-500 mt-1 leading-relaxed">
-              Re-queue <span className="font-semibold text-slate-700">{agentName}</span> and choose the runtime path it should use next.
+              Re-queue <span className="font-semibold text-slate-700">{agentName}</span> and choose
+              the runtime path it should use next.
             </p>
           </div>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors" disabled={loading}>
+          <button
+            onClick={onCancel}
+            className="text-slate-400 hover:text-slate-600 transition-colors"
+            disabled={loading}
+          >
             <X size={18} />
           </button>
         </div>
@@ -1013,24 +1046,29 @@ function PublishMarketplaceDialog({
             <Share2 size={18} className="text-blue-600" />
           </div>
           <div className="flex-1">
-            <h3
-              id="publish-marketplace-dialog-title"
-              className="text-lg font-bold text-slate-900"
-            >
+            <h3 id="publish-marketplace-dialog-title" className="text-lg font-bold text-slate-900">
               Publish to Marketplace
             </h3>
             <p className="text-sm text-slate-500 mt-1 leading-relaxed">
-              Share <span className="font-semibold text-slate-700">{sourceName}</span> as a community template. Nora publishes only the template files and runs a secret scan before submission.
+              Share <span className="font-semibold text-slate-700">{sourceName}</span> as a
+              community template. Nora publishes only the template files and runs a secret scan
+              before submission.
             </p>
           </div>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors" disabled={loading}>
+          <button
+            onClick={onCancel}
+            className="text-slate-400 hover:text-slate-600 transition-colors"
+            disabled={loading}
+          >
             <X size={18} />
           </button>
         </div>
 
         {issues.length > 0 && (
           <div className="rounded-2xl border border-red-200 bg-red-50 p-4">
-            <p className="text-xs font-black uppercase tracking-widest text-red-700">Publish blocked</p>
+            <p className="text-xs font-black uppercase tracking-widest text-red-700">
+              Publish blocked
+            </p>
             <div className="mt-2 space-y-2">
               {issues.map((issue, index) => (
                 <div key={`${issue.path}-${index}`} className="text-sm text-red-700">
@@ -1090,7 +1128,9 @@ function PublishMarketplaceDialog({
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-          Credentials, session memory, integrations, and channels are not published. If Nora detects `.env`, token-like values, or private keys, the submission is blocked until you remove them.
+          Credentials, session memory, integrations, and channels are not published. If Nora detects
+          `.env`, token-like values, or private keys, the submission is blocked until you remove
+          them.
         </div>
 
         <div className="flex items-center justify-end gap-3 pt-2">

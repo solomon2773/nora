@@ -60,8 +60,14 @@ const mockGetDeploymentDefaults = jest.fn().mockResolvedValue({
   disk_gb: 10,
 });
 jest.mock("../db", () => mockDb);
-jest.mock("../redisQueue", () => ({ addDeploymentJob: mockAddDeploymentJob, getDLQJobs: jest.fn(), retryDLQJob: jest.fn() }));
-jest.mock("../scheduler", () => ({ selectNode: jest.fn().mockResolvedValue({ name: "worker-01" }) }));
+jest.mock("../redisQueue", () => ({
+  addDeploymentJob: mockAddDeploymentJob,
+  getDLQJobs: jest.fn(),
+  retryDLQJob: jest.fn(),
+}));
+jest.mock("../scheduler", () => ({
+  selectNode: jest.fn().mockResolvedValue({ name: "worker-01" }),
+}));
 jest.mock("../containerManager", () => ({
   start: jest.fn().mockResolvedValue({}),
   stop: jest.fn().mockResolvedValue({}),
@@ -214,12 +220,14 @@ jest.mock("../agentFiles", () => ({
 
 const app = require("../server");
 
-const userToken = jwt.sign({ id: "user-1", email: "user@nora.test", role: "user" }, JWT_SECRET, { expiresIn: "1h" });
+const userToken = jwt.sign({ id: "user-1", email: "user@nora.test", role: "user" }, JWT_SECRET, {
+  expiresIn: "1h",
+});
 const auth = (req) => req.set("Authorization", `Bearer ${userToken}`);
 
 function createMockFetchResponse({ ok = true, status = 200, body = {}, headers = {} } = {}) {
   const normalizedHeaders = Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
   );
   const rawBody = typeof body === "string" ? body : JSON.stringify(body);
 
@@ -344,13 +352,15 @@ describe("GET /agents", () => {
 describe("GET /agents/:id", () => {
   it("preserves warning status when the container is still live", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-warning",
-        name: "Warning Agent",
-        status: "warning",
-        user_id: "user-1",
-        container_id: "container-1",
-      }],
+      rows: [
+        {
+          id: "a-warning",
+          name: "Warning Agent",
+          status: "warning",
+          user_id: "user-1",
+          container_id: "container-1",
+        },
+      ],
     });
 
     const res = await auth(request(app).get("/agents/a-warning"));
@@ -364,19 +374,23 @@ describe("GET /agents/:id", () => {
     containerManager.status.mockResolvedValueOnce({ running: false });
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-warning-down",
-          name: "Warning Down Agent",
-          status: "warning",
-          user_id: "user-1",
-          container_id: "container-warning-down",
-        }],
+        rows: [
+          {
+            id: "a-warning-down",
+            name: "Warning Down Agent",
+            status: "warning",
+            user_id: "user-1",
+            container_id: "container-warning-down",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-warning-down",
-          status: "stopped",
-        }],
+        rows: [
+          {
+            id: "a-warning-down",
+            status: "stopped",
+          },
+        ],
       });
 
     const res = await auth(request(app).get("/agents/a-warning-down"));
@@ -388,19 +402,23 @@ describe("GET /agents/:id", () => {
   it("reconciles stopped agents back to running when the container is live", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-stopped",
-          name: "Stopped Agent",
-          status: "stopped",
-          user_id: "user-1",
-          container_id: "container-2",
-        }],
+        rows: [
+          {
+            id: "a-stopped",
+            name: "Stopped Agent",
+            status: "stopped",
+            user_id: "user-1",
+            container_id: "container-2",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-stopped",
-          status: "running",
-        }],
+        rows: [
+          {
+            id: "a-stopped",
+            status: "running",
+          },
+        ],
       });
 
     const res = await auth(request(app).get("/agents/a-stopped"));
@@ -414,14 +432,16 @@ describe("GET /agents/:id/gateway-url", () => {
   it("uses GATEWAY_HOST when returning a published gateway url", async () => {
     process.env.GATEWAY_HOST = "gateway.external";
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-gateway",
-        container_id: "container-gateway",
-        gateway_token: "gateway-token",
-        gateway_host_port: 19123,
-        user_id: "user-1",
-        status: "running",
-      }],
+      rows: [
+        {
+          id: "a-gateway",
+          container_id: "container-gateway",
+          gateway_token: "gateway-token",
+          gateway_host_port: 19123,
+          user_id: "user-1",
+          status: "running",
+        },
+      ],
     });
 
     const res = await auth(request(app).get("/agents/a-gateway/gateway-url"));
@@ -437,19 +457,19 @@ describe("GET /agents/:id/gateway-url", () => {
 
   it("allows gateway url lookups for warning agents so degraded control-plane recovery still works", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-warning-gateway",
-        container_id: "container-warning-gateway",
-        gateway_host_port: 19123,
-        user_id: "user-1",
-        status: "warning",
-      }],
+      rows: [
+        {
+          id: "a-warning-gateway",
+          container_id: "container-warning-gateway",
+          gateway_host_port: 19123,
+          user_id: "user-1",
+          status: "warning",
+        },
+      ],
     });
 
     const res = await auth(
-      request(app)
-        .get("/agents/a-warning-gateway/gateway-url")
-        .set("Host", "app.nora.test:8080")
+      request(app).get("/agents/a-warning-gateway/gateway-url").set("Host", "app.nora.test:8080"),
     );
 
     expect(res.status).toBe(200);
@@ -461,20 +481,22 @@ describe("GET /agents/:id/gateway-url", () => {
 
   it("uses the forwarded request protocol for published gateway urls when the control plane is behind https", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-https-gateway",
-        container_id: "container-https-gateway",
-        gateway_host_port: 19123,
-        user_id: "user-1",
-        status: "running",
-      }],
+      rows: [
+        {
+          id: "a-https-gateway",
+          container_id: "container-https-gateway",
+          gateway_host_port: 19123,
+          user_id: "user-1",
+          status: "running",
+        },
+      ],
     });
 
     const res = await auth(
       request(app)
         .get("/agents/a-https-gateway/gateway-url")
         .set("Host", "app.nora.test")
-        .set("X-Forwarded-Proto", "https")
+        .set("X-Forwarded-Proto", "https"),
     );
 
     expect(res.status).toBe(200);
@@ -486,17 +508,19 @@ describe("GET /agents/:id/gateway-url", () => {
 
   it("uses explicit gateway host and port when the backend records them", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-k8s-gateway",
-        host: "oclaw-agent-a-k8s.openclaw-agents.svc.cluster.local",
-        container_id: "oclaw-agent-a-k8s",
-        backend_type: "k8s",
-        gateway_host_port: null,
-        gateway_host: "nora-kind-control-plane",
-        gateway_port: 31879,
-        user_id: "user-1",
-        status: "running",
-      }],
+      rows: [
+        {
+          id: "a-k8s-gateway",
+          host: "oclaw-agent-a-k8s.openclaw-agents.svc.cluster.local",
+          container_id: "oclaw-agent-a-k8s",
+          backend_type: "k8s",
+          gateway_host_port: null,
+          gateway_host: "nora-kind-control-plane",
+          gateway_port: 31879,
+          user_id: "user-1",
+          status: "running",
+        },
+      ],
     });
 
     const res = await auth(request(app).get("/agents/a-k8s-gateway/gateway-url"));
@@ -510,13 +534,15 @@ describe("GET /agents/:id/gateway-url", () => {
 
   it("rejects gateway url lookups for stopped agents so stale ports are not exposed", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-stopped-gateway",
-        container_id: "container-gateway",
-        gateway_host_port: 19123,
-        user_id: "user-1",
-        status: "stopped",
-      }],
+      rows: [
+        {
+          id: "a-stopped-gateway",
+          container_id: "container-gateway",
+          gateway_host_port: 19123,
+          user_id: "user-1",
+          status: "stopped",
+        },
+      ],
     });
 
     const res = await auth(request(app).get("/agents/a-stopped-gateway/gateway-url"));
@@ -527,13 +553,15 @@ describe("GET /agents/:id/gateway-url", () => {
 
   it("rejects gateway url lookups for error agents so failed control-plane state stays closed", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-error-gateway",
-        container_id: "container-error-gateway",
-        gateway_host_port: 19123,
-        user_id: "user-1",
-        status: "error",
-      }],
+      rows: [
+        {
+          id: "a-error-gateway",
+          container_id: "container-error-gateway",
+          gateway_host_port: 19123,
+          user_id: "user-1",
+          status: "error",
+        },
+      ],
     });
 
     const res = await auth(request(app).get("/agents/a-error-gateway/gateway-url"));
@@ -565,24 +593,26 @@ describe("Hermes WebUI routes", () => {
       },
     });
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-ui",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "hermes",
-        backend_type: "hermes",
-        container_id: "hermes-container",
-        runtime_host: "10.0.0.40",
-        runtime_port: 8642,
-        gateway_token: "hermes-token",
-      }],
+      rows: [
+        {
+          id: "a-hermes-ui",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          container_id: "hermes-container",
+          runtime_host: "10.0.0.40",
+          runtime_port: 8642,
+          gateway_token: "hermes-token",
+        },
+      ],
     });
     global.fetch = jest
       .fn()
       .mockResolvedValueOnce(
         createMockFetchResponse({
           body: { status: "ok", platform: "hermes-agent" },
-        })
+        }),
       )
       .mockResolvedValueOnce(
         createMockFetchResponse({
@@ -590,7 +620,7 @@ describe("Hermes WebUI routes", () => {
             object: "list",
             data: [{ id: "desk-bot", object: "model" }],
           },
-        })
+        }),
       )
       .mockResolvedValueOnce(
         createMockFetchResponse({
@@ -600,7 +630,7 @@ describe("Hermes WebUI routes", () => {
             gateway_state: "running",
             active_sessions: 4,
           },
-        })
+        }),
       );
 
     const res = await auth(request(app).get("/agents/a-hermes-ui/hermes-ui"));
@@ -628,7 +658,7 @@ describe("Hermes WebUI routes", () => {
         configuredModel: "gpt-5.4",
         configuredProvider: "custom",
         configuredBaseUrl: "https://api.openai.com/v1",
-      })
+      }),
     );
     expect(global.fetch).toHaveBeenNthCalledWith(
       1,
@@ -638,7 +668,7 @@ describe("Hermes WebUI routes", () => {
         headers: expect.objectContaining({
           Authorization: "Bearer hermes-token",
         }),
-      })
+      }),
     );
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
@@ -648,7 +678,7 @@ describe("Hermes WebUI routes", () => {
         headers: expect.objectContaining({
           Authorization: "Bearer hermes-token",
         }),
-      })
+      }),
     );
     expect(global.fetch).toHaveBeenNthCalledWith(
       3,
@@ -658,14 +688,14 @@ describe("Hermes WebUI routes", () => {
         headers: expect.objectContaining({
           Accept: "application/json",
         }),
-      })
+      }),
     );
     expect(res.body.gateway).toEqual(
       expect.objectContaining({
         state: "running",
         activeAgents: 1,
         jobsCount: 0,
-      })
+      }),
     );
   });
 
@@ -690,24 +720,26 @@ describe("Hermes WebUI routes", () => {
       },
     });
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-ui-old-image",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "hermes",
-        backend_type: "hermes",
-        container_id: "hermes-container",
-        runtime_host: "10.0.0.41",
-        runtime_port: 8642,
-        gateway_token: "hermes-token",
-      }],
+      rows: [
+        {
+          id: "a-hermes-ui-old-image",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          container_id: "hermes-container",
+          runtime_host: "10.0.0.41",
+          runtime_port: 8642,
+          gateway_token: "hermes-token",
+        },
+      ],
     });
     global.fetch = jest
       .fn()
       .mockResolvedValueOnce(
         createMockFetchResponse({
           body: { status: "ok", platform: "hermes-agent" },
-        })
+        }),
       )
       .mockResolvedValueOnce(
         createMockFetchResponse({
@@ -715,21 +747,15 @@ describe("Hermes WebUI routes", () => {
             object: "list",
             data: [{ id: "desk-bot", object: "model" }],
           },
-        })
+        }),
       )
       .mockRejectedValueOnce(new TypeError("fetch failed"));
     mockRunContainerCommand.mockResolvedValueOnce({
       exitCode: 0,
-      output: [
-        "STATUS=missing-dashboard",
-        "VERSION=Hermes Agent v0.8.0 (2026.4.8)",
-        "",
-      ].join("\n"),
+      output: ["STATUS=missing-dashboard", "VERSION=Hermes Agent v0.8.0 (2026.4.8)", ""].join("\n"),
     });
 
-    const res = await auth(
-      request(app).get("/agents/a-hermes-ui-old-image/hermes-ui")
-    );
+    const res = await auth(request(app).get("/agents/a-hermes-ui-old-image/hermes-ui"));
 
     expect(res.status).toBe(200);
     expect(res.body.dashboard).toEqual({
@@ -742,25 +768,25 @@ describe("Hermes WebUI routes", () => {
         "This Hermes image (Hermes Agent v0.8.0 (2026.4.8)) does not include the official dashboard yet. Pull a current Hermes image and redeploy this agent.",
     });
     expect(mockRunContainerCommand).toHaveBeenCalledTimes(1);
-    expect(mockRunContainerCommand.mock.calls[0][1]).toContain(
-      ">> /proc/1/fd/1 2>> /proc/1/fd/2"
-    );
+    expect(mockRunContainerCommand.mock.calls[0][1]).toContain(">> /proc/1/fd/1 2>> /proc/1/fd/2");
     expect(mockRunContainerCommand.mock.calls[0][1]).not.toContain("dashboard.log");
   });
 
   it("proxies Hermes chat requests through the runtime API", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-chat",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "hermes",
-        backend_type: "hermes",
-        container_id: "hermes-container",
-        runtime_host: "10.0.0.41",
-        runtime_port: 8642,
-        gateway_token: "hermes-token",
-      }],
+      rows: [
+        {
+          id: "a-hermes-chat",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          container_id: "hermes-container",
+          runtime_host: "10.0.0.41",
+          runtime_port: 8642,
+          gateway_token: "hermes-token",
+        },
+      ],
     });
     global.fetch = jest.fn().mockResolvedValueOnce(
       createMockFetchResponse({
@@ -780,13 +806,15 @@ describe("Hermes WebUI routes", () => {
         headers: {
           "x-hermes-session-id": "sess-123",
         },
-      })
+      }),
     );
 
     const res = await auth(
-      request(app).post("/agents/a-hermes-chat/hermes-ui/chat").send({
-        messages: [{ role: "user", content: "Inspect the workspace" }],
-      })
+      request(app)
+        .post("/agents/a-hermes-chat/hermes-ui/chat")
+        .send({
+          messages: [{ role: "user", content: "Inspect the workspace" }],
+        }),
     );
 
     expect(res.status).toBe(200);
@@ -796,7 +824,7 @@ describe("Hermes WebUI routes", () => {
         model: "desk-bot",
         sessionId: "sess-123",
         usage: expect.objectContaining({ total_tokens: 42 }),
-      })
+      }),
     );
 
     const [targetUrl, requestOptions] = global.fetch.mock.calls[0];
@@ -808,7 +836,7 @@ describe("Hermes WebUI routes", () => {
           Authorization: "Bearer hermes-token",
           "Content-Type": "application/json",
         }),
-      })
+      }),
     );
     expect(JSON.parse(requestOptions.body)).toEqual({
       stream: false,
@@ -818,12 +846,14 @@ describe("Hermes WebUI routes", () => {
 
   it("rejects Hermes cron routes for non-Hermes agents", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-openclaw-hermes-ui",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "openclaw",
-      }],
+      rows: [
+        {
+          id: "a-openclaw-hermes-ui",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "openclaw",
+        },
+      ],
     });
 
     const res = await auth(request(app).get("/agents/a-openclaw-hermes-ui/hermes-ui/cron"));
@@ -834,12 +864,14 @@ describe("Hermes WebUI routes", () => {
 
   it("rejects Hermes channel routes when the runtime is not running", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-ui-stopped",
-        user_id: "user-1",
-        status: "stopped",
-        runtime_family: "hermes",
-      }],
+      rows: [
+        {
+          id: "a-hermes-ui-stopped",
+          user_id: "user-1",
+          status: "stopped",
+          runtime_family: "hermes",
+        },
+      ],
     });
 
     const res = await auth(request(app).get("/agents/a-hermes-ui-stopped/hermes-ui/channels"));
@@ -850,24 +882,26 @@ describe("Hermes WebUI routes", () => {
 
   it("proxies Hermes cron list requests", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-cron-list",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "hermes",
-        backend_type: "hermes",
-        container_id: "hermes-container",
-        runtime_host: "10.0.0.42",
-        runtime_port: 8642,
-        gateway_token: "hermes-token",
-      }],
+      rows: [
+        {
+          id: "a-hermes-cron-list",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          container_id: "hermes-container",
+          runtime_host: "10.0.0.42",
+          runtime_port: 8642,
+          gateway_token: "hermes-token",
+        },
+      ],
     });
     global.fetch = jest.fn().mockResolvedValueOnce(
       createMockFetchResponse({
         body: {
           jobs: [{ id: "job-1", name: "Daily summary" }],
         },
-      })
+      }),
     );
 
     const res = await auth(request(app).get("/agents/a-hermes-cron-list/hermes-ui/cron"));
@@ -881,30 +915,32 @@ describe("Hermes WebUI routes", () => {
         headers: expect.objectContaining({
           Authorization: "Bearer hermes-token",
         }),
-      })
+      }),
     );
   });
 
   it("maps Nora cron create payloads to Hermes prompt payloads", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-cron-create",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "hermes",
-        backend_type: "hermes",
-        container_id: "hermes-container",
-        runtime_host: "10.0.0.43",
-        runtime_port: 8642,
-        gateway_token: "hermes-token",
-      }],
+      rows: [
+        {
+          id: "a-hermes-cron-create",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          container_id: "hermes-container",
+          runtime_host: "10.0.0.43",
+          runtime_port: 8642,
+          gateway_token: "hermes-token",
+        },
+      ],
     });
     global.fetch = jest.fn().mockResolvedValueOnce(
       createMockFetchResponse({
         body: {
           job: { id: "job-2", name: "Daily summary" },
         },
-      })
+      }),
     );
 
     const res = await auth(
@@ -912,7 +948,7 @@ describe("Hermes WebUI routes", () => {
         name: "Daily summary",
         schedule: "0 9 * * *",
         message: "Summarize the last 24 hours",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -925,7 +961,7 @@ describe("Hermes WebUI routes", () => {
           Authorization: "Bearer hermes-token",
           "Content-Type": "application/json",
         }),
-      })
+      }),
     );
     expect(JSON.parse(requestOptions.body)).toEqual({
       name: "Daily summary",
@@ -936,28 +972,30 @@ describe("Hermes WebUI routes", () => {
 
   it("proxies Hermes cron deletions", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-cron-delete",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "hermes",
-        backend_type: "hermes",
-        container_id: "hermes-container",
-        runtime_host: "10.0.0.44",
-        runtime_port: 8642,
-        gateway_token: "hermes-token",
-      }],
+      rows: [
+        {
+          id: "a-hermes-cron-delete",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "hermes",
+          container_id: "hermes-container",
+          runtime_host: "10.0.0.44",
+          runtime_port: 8642,
+          gateway_token: "hermes-token",
+        },
+      ],
     });
     global.fetch = jest.fn().mockResolvedValueOnce(
       createMockFetchResponse({
         body: {
           deleted: true,
         },
-      })
+      }),
     );
 
     const res = await auth(
-      request(app).delete("/agents/a-hermes-cron-delete/hermes-ui/cron/job-9")
+      request(app).delete("/agents/a-hermes-cron-delete/hermes-ui/cron/job-9"),
     );
 
     expect(res.status).toBe(200);
@@ -969,18 +1007,20 @@ describe("Hermes WebUI routes", () => {
         headers: expect.objectContaining({
           Authorization: "Bearer hermes-token",
         }),
-      })
+      }),
     );
   });
 
   it("lists Hermes channels through the helper", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "a-hermes-channel-list",
-        user_id: "user-1",
-        status: "running",
-        runtime_family: "hermes",
-      }],
+      rows: [
+        {
+          id: "a-hermes-channel-list",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+        },
+      ],
     });
     mockListHermesChannels.mockResolvedValueOnce({
       channels: [{ type: "telegram", name: "Telegram" }],
@@ -989,14 +1029,12 @@ describe("Hermes WebUI routes", () => {
       directoryUpdatedAt: "2026-04-12T12:00:00.000Z",
     });
 
-    const res = await auth(
-      request(app).get("/agents/a-hermes-channel-list/hermes-ui/channels")
-    );
+    const res = await auth(request(app).get("/agents/a-hermes-channel-list/hermes-ui/channels"));
 
     expect(res.status).toBe(200);
     expect(res.body.channels).toEqual([{ type: "telegram", name: "Telegram" }]);
     expect(mockListHermesChannels).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "a-hermes-channel-list" })
+      expect.objectContaining({ id: "a-hermes-channel-list" }),
     );
   });
 
@@ -1007,9 +1045,7 @@ describe("Hermes WebUI routes", () => {
       status: "running",
       runtime_family: "hermes",
     };
-    mockDb.query
-      .mockResolvedValueOnce({ rows: [agent] })
-      .mockResolvedValueOnce({ rows: [agent] });
+    mockDb.query.mockResolvedValueOnce({ rows: [agent] }).mockResolvedValueOnce({ rows: [agent] });
     mockSaveHermesChannel
       .mockResolvedValueOnce({
         payload: { channels: [{ type: "telegram" }] },
@@ -1021,17 +1057,19 @@ describe("Hermes WebUI routes", () => {
       });
 
     const createRes = await auth(
-      request(app).post("/agents/a-hermes-channel-save/hermes-ui/channels").send({
-        type: "Telegram",
-        config: { TELEGRAM_BOT_TOKEN: "secret-token" },
-      })
+      request(app)
+        .post("/agents/a-hermes-channel-save/hermes-ui/channels")
+        .send({
+          type: "Telegram",
+          config: { TELEGRAM_BOT_TOKEN: "secret-token" },
+        }),
     );
     const updateRes = await auth(
       request(app)
         .patch("/agents/a-hermes-channel-save/hermes-ui/channels/telegram")
         .send({
           config: { TELEGRAM_BOT_TOKEN: "[REDACTED]" },
-        })
+        }),
     );
 
     expect(createRes.status).toBe(200);
@@ -1041,13 +1079,13 @@ describe("Hermes WebUI routes", () => {
       expect.objectContaining({ id: "a-hermes-channel-save" }),
       "telegram",
       { TELEGRAM_BOT_TOKEN: "secret-token" },
-      { create: true }
+      { create: true },
     );
     expect(mockSaveHermesChannel).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ id: "a-hermes-channel-save" }),
       "telegram",
-      { TELEGRAM_BOT_TOKEN: "[REDACTED]" }
+      { TELEGRAM_BOT_TOKEN: "[REDACTED]" },
     );
   });
 
@@ -1058,9 +1096,7 @@ describe("Hermes WebUI routes", () => {
       status: "running",
       runtime_family: "hermes",
     };
-    mockDb.query
-      .mockResolvedValueOnce({ rows: [agent] })
-      .mockResolvedValueOnce({ rows: [agent] });
+    mockDb.query.mockResolvedValueOnce({ rows: [agent] }).mockResolvedValueOnce({ rows: [agent] });
     mockDeleteHermesChannel.mockResolvedValueOnce({
       channels: [],
       availableTypes: [{ type: "telegram", label: "Telegram" }],
@@ -1074,23 +1110,21 @@ describe("Hermes WebUI routes", () => {
     });
 
     const deleteRes = await auth(
-      request(app)
-        .delete("/agents/a-hermes-channel-actions/hermes-ui/channels/telegram")
+      request(app).delete("/agents/a-hermes-channel-actions/hermes-ui/channels/telegram"),
     );
     const testRes = await auth(
-      request(app)
-        .post("/agents/a-hermes-channel-actions/hermes-ui/channels/telegram/test")
+      request(app).post("/agents/a-hermes-channel-actions/hermes-ui/channels/telegram/test"),
     );
 
     expect(deleteRes.status).toBe(200);
     expect(testRes.status).toBe(200);
     expect(mockDeleteHermesChannel).toHaveBeenCalledWith(
       expect.objectContaining({ id: "a-hermes-channel-actions" }),
-      "telegram"
+      "telegram",
     );
     expect(mockTestHermesChannel).toHaveBeenCalledWith(
       expect.objectContaining({ id: "a-hermes-channel-actions" }),
-      "telegram"
+      "telegram",
     );
   });
 });
@@ -1108,43 +1142,46 @@ describe("Hermes integration sync routes", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-integration",
-          user_id: "user-1",
-          name: "Hermes Integration Agent",
-          status: "running",
-          host: "runtime-host",
-        }],
+        rows: [
+          {
+            id: "a-hermes-integration",
+            user_id: "user-1",
+            name: "Hermes Integration Agent",
+            status: "running",
+            host: "runtime-host",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-integration",
-          user_id: "user-1",
-          status: "running",
-          runtime_family: "hermes",
-        }],
+        rows: [
+          {
+            id: "a-hermes-integration",
+            user_id: "user-1",
+            status: "running",
+            runtime_family: "hermes",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-integration",
-          user_id: "user-1",
-          status: "running",
-          runtime_family: "hermes",
-        }],
+        rows: [
+          {
+            id: "a-hermes-integration",
+            user_id: "user-1",
+            status: "running",
+            runtime_family: "hermes",
+          },
+        ],
       });
 
     const res = await auth(
       request(app).post("/agents/a-hermes-integration/integrations").send({
         provider: "slack",
         token: "xoxb-secret",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
-    expect(mockSyncAuthToUserAgents).toHaveBeenCalledWith(
-      "user-1",
-      "a-hermes-integration"
-    );
+    expect(mockSyncAuthToUserAgents).toHaveBeenCalledWith("user-1", "a-hermes-integration");
   });
 
   it("returns a 502 when Hermes integration sync fails after disconnect", async () => {
@@ -1160,35 +1197,39 @@ describe("Hermes integration sync routes", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-integration-failed",
-          user_id: "user-1",
-          name: "Hermes Integration Agent",
-          status: "running",
-          host: "runtime-host",
-        }],
+        rows: [
+          {
+            id: "a-hermes-integration-failed",
+            user_id: "user-1",
+            name: "Hermes Integration Agent",
+            status: "running",
+            host: "runtime-host",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-integration-failed",
-          user_id: "user-1",
-          status: "running",
-          runtime_family: "hermes",
-        }],
+        rows: [
+          {
+            id: "a-hermes-integration-failed",
+            user_id: "user-1",
+            status: "running",
+            runtime_family: "hermes",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-integration-failed",
-          user_id: "user-1",
-          status: "running",
-          runtime_family: "hermes",
-        }],
+        rows: [
+          {
+            id: "a-hermes-integration-failed",
+            user_id: "user-1",
+            status: "running",
+            runtime_family: "hermes",
+          },
+        ],
       });
 
     const res = await auth(
-      request(app).delete(
-        "/agents/a-hermes-integration-failed/integrations/int-hermes-1"
-      )
+      request(app).delete("/agents/a-hermes-integration-failed/integrations/int-hermes-1"),
     );
 
     expect(res.status).toBe(502);
@@ -1225,11 +1266,9 @@ describe("agent audit logging", () => {
     const res = await auth(request(app).post("/agents/agent-start-1/start"));
 
     expect(res.status).toBe(200);
-    expect(mockSyncAuthToUserAgents).toHaveBeenCalledWith(
-      "user-1",
-      "agent-start-1",
-      { onlyIfAuthPresent: true }
-    );
+    expect(mockSyncAuthToUserAgents).toHaveBeenCalledWith("user-1", "agent-start-1", {
+      onlyIfAuthPresent: true,
+    });
     expect(monitoringModule.logEvent).toHaveBeenCalledWith(
       "agent_started",
       expect.stringContaining("Start Agent"),
@@ -1252,7 +1291,7 @@ describe("agent audit logging", () => {
           id: "agent-start-1",
           ownerEmail: "user@nora.test",
         }),
-      })
+      }),
     );
   });
 });
@@ -1261,32 +1300,36 @@ describe("GET /agents/:id/stats", () => {
   it("returns normalized live stats with derived rate fields", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-metrics",
-          user_id: "user-1",
-          container_id: "container-metrics",
-          backend_type: "docker",
-          sandbox_type: "standard",
-          status: "running",
-        }],
+        rows: [
+          {
+            id: "a-metrics",
+            user_id: "user-1",
+            container_id: "container-metrics",
+            backend_type: "docker",
+            sandbox_type: "standard",
+            status: "running",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          cpu_percent: 8,
-          memory_usage_mb: 500,
-          memory_limit_mb: 2048,
-          memory_percent: 24.41,
-          network_rx_mb: 5,
-          network_tx_mb: 15,
-          disk_read_mb: 25,
-          disk_write_mb: 35,
-          network_rx_rate_mbps: 0.5,
-          network_tx_rate_mbps: 1.5,
-          disk_read_rate_mbps: 2.5,
-          disk_write_rate_mbps: 3.5,
-          pids: 4,
-          recorded_at: "2026-04-08T00:00:00.000Z",
-        }],
+        rows: [
+          {
+            cpu_percent: 8,
+            memory_usage_mb: 500,
+            memory_limit_mb: 2048,
+            memory_percent: 24.41,
+            network_rx_mb: 5,
+            network_tx_mb: 15,
+            disk_read_mb: 25,
+            disk_write_mb: 35,
+            network_rx_rate_mbps: 0.5,
+            network_tx_rate_mbps: 1.5,
+            disk_read_rate_mbps: 2.5,
+            disk_write_rate_mbps: 3.5,
+            pids: 4,
+            recorded_at: "2026-04-08T00:00:00.000Z",
+          },
+        ],
       });
 
     const res = await auth(request(app).get("/agents/a-metrics/stats"));
@@ -1362,17 +1405,19 @@ describe("GET /agents/:id/stats", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-nemo",
-          user_id: "user-1",
-          container_id: "container-nemo",
-          backend_type: "nemoclaw",
-          sandbox_type: "nemoclaw",
-          status: "running",
-          host: "127.0.0.1",
-          runtime_host: "127.0.0.1",
-          runtime_port: 9090,
-        }],
+        rows: [
+          {
+            id: "a-nemo",
+            user_id: "user-1",
+            container_id: "container-nemo",
+            backend_type: "nemoclaw",
+            sandbox_type: "nemoclaw",
+            status: "running",
+            host: "127.0.0.1",
+            runtime_host: "127.0.0.1",
+            runtime_port: 9090,
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -1387,7 +1432,7 @@ describe("GET /agents/:id/stats", () => {
         policyActive: true,
         policyRuleCount: 2,
         pendingApprovalsCount: 1,
-      })
+      }),
     );
     expect(global.fetch).toHaveBeenCalledTimes(3);
   });
@@ -1415,50 +1460,56 @@ describe("GET /agents/:id/stats/history", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-proxmox",
-          user_id: "user-1",
-          container_id: "vm-101",
-          backend_type: "proxmox",
-          sandbox_type: "standard",
-          status: "running",
-        }],
+        rows: [
+          {
+            id: "a-proxmox",
+            user_id: "user-1",
+            container_id: "vm-101",
+            backend_type: "proxmox",
+            sandbox_type: "standard",
+            status: "running",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          cpu_percent: 15,
-          memory_usage_mb: 1024,
-          memory_limit_mb: 4096,
-          memory_percent: 25,
-          network_rx_mb: 50,
-          network_tx_mb: 10,
-          disk_read_mb: 25,
-          disk_write_mb: 5,
-          network_rx_rate_mbps: 1.5,
-          network_tx_rate_mbps: 0.5,
-          disk_read_rate_mbps: 0.25,
-          disk_write_rate_mbps: 0.1,
-          pids: 99,
-          recorded_at: "2026-04-08T00:00:05.000Z",
-        }],
+        rows: [
+          {
+            cpu_percent: 15,
+            memory_usage_mb: 1024,
+            memory_limit_mb: 4096,
+            memory_percent: 25,
+            network_rx_mb: 50,
+            network_tx_mb: 10,
+            disk_read_mb: 25,
+            disk_write_mb: 5,
+            network_rx_rate_mbps: 1.5,
+            network_tx_rate_mbps: 0.5,
+            disk_read_rate_mbps: 0.25,
+            disk_write_rate_mbps: 0.1,
+            pids: 99,
+            recorded_at: "2026-04-08T00:00:05.000Z",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          cpu_percent: 15,
-          memory_usage_mb: 1024,
-          memory_limit_mb: 4096,
-          memory_percent: 25,
-          network_rx_mb: 50,
-          network_tx_mb: 10,
-          disk_read_mb: 25,
-          disk_write_mb: 5,
-          network_rx_rate_mbps: 1.5,
-          network_tx_rate_mbps: 0.5,
-          disk_read_rate_mbps: 0.25,
-          disk_write_rate_mbps: 0.1,
-          pids: 99,
-          recorded_at: "2026-04-08T00:00:05.000Z",
-        }],
+        rows: [
+          {
+            cpu_percent: 15,
+            memory_usage_mb: 1024,
+            memory_limit_mb: 4096,
+            memory_percent: 25,
+            network_rx_mb: 50,
+            network_tx_mb: 10,
+            disk_read_mb: 25,
+            disk_write_mb: 5,
+            network_rx_rate_mbps: 1.5,
+            network_tx_rate_mbps: 0.5,
+            disk_read_rate_mbps: 0.25,
+            disk_write_rate_mbps: 0.1,
+            pids: 99,
+            recorded_at: "2026-04-08T00:00:05.000Z",
+          },
+        ],
       });
 
     const res = await auth(request(app).get("/agents/a-proxmox/stats/history?range=15m"));
@@ -1478,21 +1529,23 @@ describe("GET /agents/:id/stats/history", () => {
         cpu_percent: 15,
         network_rx_rate_mbps: 1.5,
         pids: null,
-      })
+      }),
     );
   });
 
   it("uses a 7-day window and returns the live sample when stored history is empty", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-empty",
-          user_id: "user-1",
-          container_id: "container-empty",
-          backend_type: "docker",
-          sandbox_type: "standard",
-          status: "running",
-        }],
+        rows: [
+          {
+            id: "a-empty",
+            user_id: "user-1",
+            container_id: "container-empty",
+            backend_type: "docker",
+            sandbox_type: "standard",
+            status: "running",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -1505,7 +1558,7 @@ describe("GET /agents/:id/stats/history", () => {
       expect.objectContaining({
         cpu_percent: 12.34,
         memory_usage_mb: 512,
-      })
+      }),
     );
 
     const historyQueryParams = mockDb.query.mock.calls[2][1];
@@ -1526,9 +1579,7 @@ describe("POST /agents/deploy", () => {
 
   it("rejects agent name over 100 chars", async () => {
     const longName = "A".repeat(101);
-    const res = await auth(
-      request(app).post("/agents/deploy").send({ name: longName })
-    );
+    const res = await auth(request(app).post("/agents/deploy").send({ name: longName }));
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/100/);
   });
@@ -1541,20 +1592,20 @@ describe("POST /agents/deploy", () => {
       })
       .mockResolvedValueOnce({ rows: [] });
 
-    const res = await auth(
-      request(app).post("/agents/deploy").send({ name: "TestAgent" })
-    );
+    const res = await auth(request(app).post("/agents/deploy").send({ name: "TestAgent" }));
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("id");
     expect(res.body).toHaveProperty("status", "queued");
-    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
-      id: "a-new",
-      name: "TestAgent",
-      userId: "user-1",
-      backend: "docker",
-      specs: { vcpu: 1, ram_mb: 1024, disk_gb: 10 },
-      sandbox: "standard",
-    }));
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "a-new",
+        name: "TestAgent",
+        userId: "user-1",
+        backend: "docker",
+        specs: { vcpu: 1, ram_mb: 1024, disk_gb: 10 },
+        sandbox: "standard",
+      }),
+    );
   });
 
   it("deploys from a migration draft and attaches the draft to the new agent", async () => {
@@ -1580,15 +1631,17 @@ describe("POST /agents/deploy", () => {
     });
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-migrated",
-          name: "Imported Support Agent",
-          status: "queued",
-          user_id: "user-1",
-          runtime_family: "openclaw",
-          deploy_target: "docker",
-          sandbox_profile: "standard",
-        }],
+        rows: [
+          {
+            id: "a-migrated",
+            name: "Imported Support Agent",
+            status: "queued",
+            user_id: "user-1",
+            runtime_family: "openclaw",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -1596,36 +1649,30 @@ describe("POST /agents/deploy", () => {
       request(app).post("/agents/deploy").send({
         migration_draft_id: "draft-openclaw-1",
         deploy_target: "docker",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
-    expect(mockGetOwnedMigrationDraft).toHaveBeenCalledWith(
-      "draft-openclaw-1",
-      "user-1"
-    );
+    expect(mockGetOwnedMigrationDraft).toHaveBeenCalledWith("draft-openclaw-1", "user-1");
     expect(mockMaterializeManagedMigrationState).toHaveBeenCalledWith(
       "user-1",
       "a-migrated",
       expect.objectContaining({
         runtimeFamily: "openclaw",
-      })
+      }),
     );
-    expect(mockAttachDraftToAgent).toHaveBeenCalledWith(
-      "draft-openclaw-1",
-      "a-migrated"
-    );
+    expect(mockAttachDraftToAgent).toHaveBeenCalledWith("draft-openclaw-1", "a-migrated");
     expect(JSON.parse(mockDb.query.mock.calls[0][1][10])).toEqual(
       expect.objectContaining({
         files: [{ path: "README.md", contentBase64: "" }],
-      })
+      }),
     );
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "a-migrated",
         migration_draft_id: "draft-openclaw-1",
         backend: "docker",
-      })
+      }),
     );
   });
 
@@ -1643,7 +1690,7 @@ describe("POST /agents/deploy", () => {
         name: "Mismatch",
         runtime_family: "openclaw",
         migration_draft_id: "draft-hermes-1",
-      })
+      }),
     );
 
     expect(res.status).toBe(400);
@@ -1657,16 +1704,18 @@ describe("POST /agents/deploy", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-deploy",
-          name: "Desk Bot",
-          status: "queued",
-          user_id: "user-1",
-          runtime_family: "hermes",
-          backend_type: "hermes",
-          deploy_target: "docker",
-          sandbox_profile: "standard",
-        }],
+        rows: [
+          {
+            id: "a-hermes-deploy",
+            name: "Desk Bot",
+            status: "queued",
+            user_id: "user-1",
+            runtime_family: "hermes",
+            backend_type: "hermes",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -1674,7 +1723,7 @@ describe("POST /agents/deploy", () => {
       request(app).post("/agents/deploy").send({
         name: "Desk Bot",
         runtime_family: "hermes",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -1685,7 +1734,7 @@ describe("POST /agents/deploy", () => {
         id: "a-hermes-deploy",
         backend: "hermes",
         container_name: expect.stringMatching(/^hermes-agent-desk-bot-/),
-      })
+      }),
     );
   });
 
@@ -1700,7 +1749,7 @@ describe("POST /agents/deploy", () => {
       .mockResolvedValueOnce({ rows: [] });
 
     const res = await auth(
-      request(app).post("/agents/deploy").send({ name: "K8sAgent", backend: "k8s" })
+      request(app).post("/agents/deploy").send({ name: "K8sAgent", backend: "k8s" }),
     );
 
     expect(res.status).toBe(200);
@@ -1709,7 +1758,7 @@ describe("POST /agents/deploy", () => {
         id: "a-k8s",
         backend: "k8s",
         sandbox: "standard",
-      })
+      }),
     );
   });
 
@@ -1719,14 +1768,16 @@ describe("POST /agents/deploy", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-target",
-          name: "TargetAgent",
-          status: "queued",
-          user_id: "user-1",
-          backend_type: "k8s",
-          sandbox_type: "standard",
-        }],
+        rows: [
+          {
+            id: "a-target",
+            name: "TargetAgent",
+            status: "queued",
+            user_id: "user-1",
+            backend_type: "k8s",
+            sandbox_type: "standard",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -1735,7 +1786,7 @@ describe("POST /agents/deploy", () => {
         name: "TargetAgent",
         runtime_family: "openclaw",
         deploy_target: "k8s",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -1745,23 +1796,17 @@ describe("POST /agents/deploy", () => {
         deploy_target: "k8s",
         sandbox_profile: "standard",
         backend_type: "k8s",
-      })
+      }),
     );
-    expect(mockDb.query.mock.calls[0][0]).toEqual(
-      expect.stringContaining("runtime_family")
-    );
-    expect(mockDb.query.mock.calls[0][0]).toEqual(
-      expect.stringContaining("deploy_target")
-    );
-    expect(mockDb.query.mock.calls[0][0]).toEqual(
-      expect.stringContaining("sandbox_profile")
-    );
+    expect(mockDb.query.mock.calls[0][0]).toEqual(expect.stringContaining("runtime_family"));
+    expect(mockDb.query.mock.calls[0][0]).toEqual(expect.stringContaining("deploy_target"));
+    expect(mockDb.query.mock.calls[0][0]).toEqual(expect.stringContaining("sandbox_profile"));
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "a-target",
         backend: "k8s",
         sandbox: "standard",
-      })
+      }),
     );
   });
 
@@ -1770,14 +1815,16 @@ describe("POST /agents/deploy", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-nemo-target",
-          name: "Nemo Target Agent",
-          status: "queued",
-          user_id: "user-1",
-          backend_type: "nemoclaw",
-          sandbox_type: "nemoclaw",
-        }],
+        rows: [
+          {
+            id: "a-nemo-target",
+            name: "Nemo Target Agent",
+            status: "queued",
+            user_id: "user-1",
+            backend_type: "nemoclaw",
+            sandbox_type: "nemoclaw",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -1786,7 +1833,7 @@ describe("POST /agents/deploy", () => {
         name: "Nemo Target Agent",
         deploy_target: "docker",
         sandbox_profile: "nemoclaw",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -1796,18 +1843,16 @@ describe("POST /agents/deploy", () => {
         deploy_target: "docker",
         sandbox_profile: "nemoclaw",
         backend_type: "nemoclaw",
-      })
+      }),
     );
     const insertParams = mockDb.query.mock.calls[0][1];
-    expect(insertParams[9]).toBe(
-      "ghcr.io/nvidia/openshell-community/sandboxes/openclaw"
-    );
+    expect(insertParams[9]).toBe("ghcr.io/nvidia/openshell-community/sandboxes/openclaw");
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "a-nemo-target",
         backend: "nemoclaw",
         sandbox: "nemoclaw",
-      })
+      }),
     );
   });
 
@@ -1820,7 +1865,7 @@ describe("POST /agents/deploy", () => {
         name: "BadSelection",
         deploy_target: "k8s",
         sandbox_profile: "nemoclaw",
-      })
+      }),
     );
 
     expect(res.status).toBe(400);
@@ -1834,7 +1879,7 @@ describe("POST /agents/deploy", () => {
       request(app).post("/agents/deploy").send({
         name: "BadRuntime",
         runtime_family: "custom-runtime",
-      })
+      }),
     );
 
     expect(res.status).toBe(400);
@@ -1856,7 +1901,7 @@ describe("POST /agents/deploy", () => {
         vcpu: 999,
         ram_mb: 999999,
         disk_gb: 999999,
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -1872,14 +1917,16 @@ describe("POST /agents/deploy", () => {
         16,
         32768,
         500,
-      ])
+      ]),
     );
-    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
-      id: "a-sanitized",
-      name: "BadName",
-      backend: "docker",
-      specs: { vcpu: 16, ram_mb: 32768, disk_gb: 500 },
-    }));
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "a-sanitized",
+        name: "BadName",
+        backend: "docker",
+        specs: { vcpu: 16, ram_mb: 32768, disk_gb: 500 },
+      }),
+    );
   });
 
   it("stores the default prebaked image and blank template payload when deploying", async () => {
@@ -1889,9 +1936,7 @@ describe("POST /agents/deploy", () => {
       })
       .mockResolvedValueOnce({ rows: [] });
 
-    const res = await auth(
-      request(app).post("/agents/deploy").send({ name: "Image Agent" })
-    );
+    const res = await auth(request(app).post("/agents/deploy").send({ name: "Image Agent" }));
 
     expect(res.status).toBe(200);
     const insertParams = mockDb.query.mock.calls[0][1];
@@ -1901,52 +1946,56 @@ describe("POST /agents/deploy", () => {
         files: [],
         memoryFiles: [],
         metadata: expect.objectContaining({ source: "blank-deploy" }),
-      })
+      }),
     );
   });
 
   it("persists normalized clawhub skills during deploy without changing the response shape", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-clawhub",
+        rows: [
+          {
+            id: "a-clawhub",
+            name: "ClawHub Agent",
+            status: "queued",
+            user_id: "user-1",
+            clawhub_skills: [
+              {
+                source: "clawhub",
+                installSlug: "github",
+                author: "steipete",
+                pagePath: "steipete/github",
+                installedAt: "2026-04-19T12:00:00.000Z",
+              },
+            ],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await auth(
+      request(app)
+        .post("/agents/deploy")
+        .send({
           name: "ClawHub Agent",
-          status: "queued",
-          user_id: "user-1",
           clawhub_skills: [
             {
               source: "clawhub",
               installSlug: "github",
               author: "steipete",
               pagePath: "steipete/github",
-              installedAt: "2026-04-19T12:00:00.000Z",
+              installedAt: "2026-04-19T12:00:00Z",
+              description: "Should not persist",
+            },
+            {
+              source: "clawhub",
+              installSlug: "github",
+              author: "steipete",
+              pagePath: "steipete/github",
+              installedAt: "2026-04-19T12:05:00Z",
             },
           ],
-        }],
-      })
-      .mockResolvedValueOnce({ rows: [] });
-
-    const res = await auth(
-      request(app).post("/agents/deploy").send({
-        name: "ClawHub Agent",
-        clawhub_skills: [
-          {
-            source: "clawhub",
-            installSlug: "github",
-            author: "steipete",
-            pagePath: "steipete/github",
-            installedAt: "2026-04-19T12:00:00Z",
-            description: "Should not persist",
-          },
-          {
-            source: "clawhub",
-            installSlug: "github",
-            author: "steipete",
-            pagePath: "steipete/github",
-            installedAt: "2026-04-19T12:05:00Z",
-          },
-        ],
-      })
+        }),
     );
 
     expect(res.status).toBe(200);
@@ -1955,7 +2004,7 @@ describe("POST /agents/deploy", () => {
         id: "a-clawhub",
         name: "ClawHub Agent",
         status: "queued",
-      })
+      }),
     );
 
     const insertParams = mockDb.query.mock.calls[0][1];
@@ -1979,7 +2028,7 @@ describe("POST /agents/deploy", () => {
             pagePath: "steipete/github",
           }),
         ],
-      })
+      }),
     );
   });
 
@@ -2004,9 +2053,7 @@ describe("POST /agents/deploy", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [
-          { id: "a-paas", name: "PaaS Agent", status: "queued", user_id: "user-1" },
-        ],
+        rows: [{ id: "a-paas", name: "PaaS Agent", status: "queued", user_id: "user-1" }],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -2016,7 +2063,7 @@ describe("POST /agents/deploy", () => {
         vcpu: 12,
         ram_mb: 12288,
         disk_gb: 200,
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -2024,7 +2071,7 @@ describe("POST /agents/deploy", () => {
       expect.objectContaining({
         id: "a-paas",
         specs: { vcpu: 4, ram_mb: 4096, disk_gb: 50 },
-      })
+      }),
     );
 
     billing.IS_PAAS = false;
@@ -2040,14 +2087,16 @@ describe("Agent file and export routes", () => {
 
   function mockOwnedAgent(overrides = {}) {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "agent-files-1",
-        user_id: "user-1",
-        name: "Files Agent",
-        runtime_family: "openclaw",
-        status: "running",
-        ...overrides,
-      }],
+      rows: [
+        {
+          id: "agent-files-1",
+          user_id: "user-1",
+          name: "Files Agent",
+          runtime_family: "openclaw",
+          status: "running",
+          ...overrides,
+        },
+      ],
     });
   }
 
@@ -2074,7 +2123,7 @@ describe("Agent file and export routes", () => {
       ],
     });
     expect(mockRootsForAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-files-1" })
+      expect.objectContaining({ id: "agent-files-1" }),
     );
   });
 
@@ -2083,13 +2132,11 @@ describe("Agent file and export routes", () => {
     mockListFiles.mockResolvedValueOnce({
       root: { id: "workspace", label: "Workspace", access: "rw" },
       path: "project",
-      entries: [
-        { name: "index.js", path: "project/index.js", type: "file", size: 42 },
-      ],
+      entries: [{ name: "index.js", path: "project/index.js", type: "file", size: 42 }],
     });
 
     const res = await auth(
-      request(app).get("/agents/agent-files-1/files/tree?root=workspace&path=project")
+      request(app).get("/agents/agent-files-1/files/tree?root=workspace&path=project"),
     );
 
     expect(res.status).toBe(200);
@@ -2097,12 +2144,12 @@ describe("Agent file and export routes", () => {
       expect.objectContaining({
         path: "project",
         entries: [expect.objectContaining({ path: "project/index.js" })],
-      })
+      }),
     );
     expect(mockListFiles).toHaveBeenCalledWith(
       expect.objectContaining({ id: "agent-files-1" }),
       "workspace",
-      "project"
+      "project",
     );
   });
 
@@ -2118,7 +2165,7 @@ describe("Agent file and export routes", () => {
     });
 
     const res = await auth(
-      request(app).get("/agents/agent-files-1/files/content?root=workspace&path=project/index.js")
+      request(app).get("/agents/agent-files-1/files/content?root=workspace&path=project/index.js"),
     );
 
     expect(res.status).toBe(200);
@@ -2126,12 +2173,12 @@ describe("Agent file and export routes", () => {
       expect.objectContaining({
         path: "project/index.js",
         writable: true,
-      })
+      }),
     );
     expect(mockReadFile).toHaveBeenCalledWith(
       expect.objectContaining({ id: "agent-files-1" }),
       "workspace",
-      "project/index.js"
+      "project/index.js",
     );
   });
 
@@ -2146,7 +2193,7 @@ describe("Agent file and export routes", () => {
           root: "workspace",
           path: "project/index.js",
           contentBase64: Buffer.from("hello").toString("base64"),
-        })
+        }),
     );
 
     expect(res.status).toBe(200);
@@ -2156,7 +2203,7 @@ describe("Agent file and export routes", () => {
       "workspace",
       "project/index.js",
       Buffer.from("hello").toString("base64"),
-      0o644
+      0o644,
     );
   });
 
@@ -2173,7 +2220,7 @@ describe("Agent file and export routes", () => {
       request(app)
         .get("/agents/agent-files-1/files/download?root=workspace&path=notes.txt")
         .buffer(true)
-        .parse(binaryParser)
+        .parse(binaryParser),
     );
 
     expect(res.status).toBe(200);
@@ -2189,20 +2236,17 @@ describe("Agent file and export routes", () => {
     mockPackMigrationBundle.mockResolvedValueOnce(Buffer.from("bundle-data"));
 
     const res = await auth(
-      request(app)
-        .get("/agents/agent-files-1/export")
-        .buffer(true)
-        .parse(binaryParser)
+      request(app).get("/agents/agent-files-1/export").buffer(true).parse(binaryParser),
     );
 
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/application\/gzip/);
     expect(res.headers["content-disposition"]).toContain(
-      'filename="files-agent.nora-migration.tgz"'
+      'filename="files-agent.nora-migration.tgz"',
     );
     expect(mockBuildMigrationManifestFromAgent).toHaveBeenCalledWith(
       expect.objectContaining({ id: "agent-files-1" }),
-      { userId: "user-1" }
+      { userId: "user-1" },
     );
     expect(mockPackMigrationBundle).toHaveBeenCalledWith(manifest);
     expect(Buffer.from(res.body)).toEqual(Buffer.from("bundle-data"));
@@ -2219,16 +2263,14 @@ describe("PATCH /agents/:id", () => {
         rows: [{ id: "a-rename", name: "New Name", user_id: "user-1" }],
       });
 
-    const res = await auth(
-      request(app).patch("/agents/a-rename").send({ name: "New Name" })
-    );
+    const res = await auth(request(app).patch("/agents/a-rename").send({ name: "New Name" }));
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("name", "New Name");
     expect(mockDb.query).toHaveBeenNthCalledWith(
       2,
       "UPDATE agents SET name = $1 WHERE id = $2 RETURNING *",
-      ["New Name", "a-rename"]
+      ["New Name", "a-rename"],
     );
   });
 });
@@ -2237,42 +2279,50 @@ describe("POST /agents/:id/duplicate", () => {
   it("duplicates an agent using stored payload fallback and full clone wiring", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-source",
-          name: "Source Agent",
-          user_id: "user-1",
-          status: "stopped",
-          sandbox_type: "standard",
-          vcpu: 4,
-          ram_mb: 4096,
-          disk_gb: 50,
-          image: "custom/image:latest",
-          template_payload: JSON.stringify({
-            files: [{ path: "AGENT.md", content: "hello" }],
-            memoryFiles: [{ path: "workspace/note.txt", content: "memory" }],
-            metadata: { source: "template" },
-          }),
-        }],
+        rows: [
+          {
+            id: "a-source",
+            name: "Source Agent",
+            user_id: "user-1",
+            status: "stopped",
+            sandbox_type: "standard",
+            vcpu: 4,
+            ram_mb: 4096,
+            disk_gb: 50,
+            image: "custom/image:latest",
+            template_payload: JSON.stringify({
+              files: [{ path: "AGENT.md", content: "hello" }],
+              memoryFiles: [{ path: "workspace/note.txt", content: "memory" }],
+              metadata: { source: "template" },
+            }),
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          provider: "slack",
-          catalog_id: "slack",
-          access_token: "secret",
-          config: { token: "secret" },
-          status: "active",
-        }],
+        rows: [
+          {
+            provider: "slack",
+            catalog_id: "slack",
+            access_token: "secret",
+            config: { token: "secret" },
+            status: "active",
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          type: "email",
-          name: "Ops Email",
-          config: { smtp_pass: "secret" },
-          enabled: true,
-        }],
+        rows: [
+          {
+            type: "email",
+            name: "Ops Email",
+            config: { smtp_pass: "secret" },
+            enabled: true,
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{ id: "a-duplicate", name: "Source Agent Copy", status: "queued", user_id: "user-1" }],
+        rows: [
+          { id: "a-duplicate", name: "Source Agent Copy", status: "queued", user_id: "user-1" },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -2282,7 +2332,7 @@ describe("POST /agents/:id/duplicate", () => {
       request(app).post("/agents/a-source/duplicate").send({
         name: "Source Agent Copy",
         clone_mode: "full_clone",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -2299,7 +2349,7 @@ describe("POST /agents/:id/duplicate", () => {
         "USER.md",
         "HEARTBEAT.md",
         "MEMORY.md",
-      ])
+      ]),
     );
     expect(templatePayload.memoryFiles).toEqual([
       expect.objectContaining({ path: "workspace/note.txt" }),
@@ -2310,14 +2360,16 @@ describe("POST /agents/:id/duplicate", () => {
     expect(templatePayload.wiring.channels).toEqual([
       expect.objectContaining({ type: "email", enabled: false }),
     ]);
-    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
-      id: "a-duplicate",
-      name: "Source Agent Copy",
-      backend: "docker",
-      image: "custom/image:latest",
-      sandbox: "standard",
-      specs: { vcpu: 4, ram_mb: 4096, disk_gb: 50 },
-    }));
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "a-duplicate",
+        name: "Source Agent Copy",
+        backend: "docker",
+        image: "custom/image:latest",
+        sandbox: "standard",
+        specs: { vcpu: 4, ram_mb: 4096, disk_gb: 50 },
+      }),
+    );
   });
 
   it("recomputes the default image when duplicating onto a different execution target", async () => {
@@ -2326,39 +2378,43 @@ describe("POST /agents/:id/duplicate", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-source-k8s",
-          name: "Source Agent",
-          user_id: "user-1",
-          status: "stopped",
-          runtime_family: "openclaw",
-          deploy_target: "docker",
-          sandbox_profile: "standard",
-          vcpu: 2,
-          ram_mb: 2048,
-          disk_gb: 20,
-          image: "nora-openclaw-agent:local",
-          template_payload: JSON.stringify({
-            files: [{ path: "AGENT.md", content: "hello" }],
-            memoryFiles: [],
-            metadata: { source: "template" },
-          }),
-        }],
+        rows: [
+          {
+            id: "a-source-k8s",
+            name: "Source Agent",
+            user_id: "user-1",
+            status: "stopped",
+            runtime_family: "openclaw",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+            vcpu: 2,
+            ram_mb: 2048,
+            disk_gb: 20,
+            image: "nora-openclaw-agent:local",
+            template_payload: JSON.stringify({
+              files: [{ path: "AGENT.md", content: "hello" }],
+              memoryFiles: [],
+              metadata: { source: "template" },
+            }),
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-duplicate-k8s",
-          name: "Source Agent K8s",
-          status: "queued",
-          user_id: "user-1",
-          backend_type: "k8s",
-          sandbox_type: "standard",
-          runtime_family: "openclaw",
-          deploy_target: "k8s",
-          sandbox_profile: "standard",
-        }],
+        rows: [
+          {
+            id: "a-duplicate-k8s",
+            name: "Source Agent K8s",
+            status: "queued",
+            user_id: "user-1",
+            backend_type: "k8s",
+            sandbox_type: "standard",
+            runtime_family: "openclaw",
+            deploy_target: "k8s",
+            sandbox_profile: "standard",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
@@ -2369,7 +2425,7 @@ describe("POST /agents/:id/duplicate", () => {
         name: "Source Agent K8s",
         clone_mode: "full_clone",
         deploy_target: "k8s",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -2381,7 +2437,7 @@ describe("POST /agents/:id/duplicate", () => {
         backend: "k8s",
         sandbox: "standard",
         image: "node:24-slim",
-      })
+      }),
     );
   });
 
@@ -2390,36 +2446,40 @@ describe("POST /agents/:id/duplicate", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-source-hermes",
-          name: "Desk Bot",
-          user_id: "user-1",
-          status: "stopped",
-          runtime_family: "openclaw",
-          deploy_target: "docker",
-          sandbox_profile: "standard",
-          vcpu: 2,
-          ram_mb: 2048,
-          disk_gb: 20,
-          image: "nora-openclaw-agent:local",
-          template_payload: JSON.stringify({
-            files: [{ path: "AGENT.md", content: "hello" }],
-            memoryFiles: [],
-            metadata: { source: "template" },
-          }),
-        }],
+        rows: [
+          {
+            id: "a-source-hermes",
+            name: "Desk Bot",
+            user_id: "user-1",
+            status: "stopped",
+            runtime_family: "openclaw",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+            vcpu: 2,
+            ram_mb: 2048,
+            disk_gb: 20,
+            image: "nora-openclaw-agent:local",
+            template_payload: JSON.stringify({
+              files: [{ path: "AGENT.md", content: "hello" }],
+              memoryFiles: [],
+              metadata: { source: "template" },
+            }),
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-duplicate-hermes",
-          name: "Desk Bot Hermes",
-          status: "queued",
-          user_id: "user-1",
-          runtime_family: "hermes",
-          backend_type: "hermes",
-          deploy_target: "docker",
-          sandbox_profile: "standard",
-        }],
+        rows: [
+          {
+            id: "a-duplicate-hermes",
+            name: "Desk Bot Hermes",
+            status: "queued",
+            user_id: "user-1",
+            runtime_family: "hermes",
+            backend_type: "hermes",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -2428,7 +2488,7 @@ describe("POST /agents/:id/duplicate", () => {
         name: "Desk Bot Hermes",
         runtime_family: "hermes",
         clone_mode: "files_only",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -2439,7 +2499,7 @@ describe("POST /agents/:id/duplicate", () => {
         id: "a-duplicate-hermes",
         backend: "hermes",
         container_name: expect.stringMatching(/^hermes-agent-desk-bot-hermes-/),
-      })
+      }),
     );
   });
 });
@@ -2479,14 +2539,16 @@ describe("POST /marketplace/install", () => {
     });
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-market",
-          name: "COS Agent",
-          status: "queued",
-          user_id: "user-1",
-          backend_type: "docker",
-          sandbox_type: "standard",
-        }],
+        rows: [
+          {
+            id: "a-market",
+            name: "COS Agent",
+            status: "queued",
+            user_id: "user-1",
+            backend_type: "docker",
+            sandbox_type: "standard",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -2495,7 +2557,7 @@ describe("POST /marketplace/install", () => {
       request(app).post("/marketplace/install").send({
         listingId: "listing-1",
         name: "COS Agent",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -2504,17 +2566,13 @@ describe("POST /marketplace/install", () => {
         runtime_family: "openclaw",
         deploy_target: "docker",
         sandbox_profile: "standard",
-      })
+      }),
     );
-    expect(mockDb.query.mock.calls[0][0]).toEqual(
-      expect.stringContaining("runtime_family")
-    );
+    expect(mockDb.query.mock.calls[0][0]).toEqual(expect.stringContaining("runtime_family"));
     const insertParams = mockDb.query.mock.calls[0][1];
     expect(insertParams[1]).toBe("COS Agent");
     expect(insertParams[9]).toBe("nora-openclaw-agent:local");
-    expect(
-      JSON.parse(insertParams[10]).files.map((file) => file.path)
-    ).toEqual(
+    expect(JSON.parse(insertParams[10]).files.map((file) => file.path)).toEqual(
       expect.arrayContaining([
         "AGENT.md",
         "AGENTS.md",
@@ -2525,15 +2583,17 @@ describe("POST /marketplace/install", () => {
         "HEARTBEAT.md",
         "MEMORY.md",
         "BOOTSTRAP.md",
-      ])
+      ]),
     );
-    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
-      id: "a-market",
-      name: "COS Agent",
-      backend: "docker",
-      image: "nora-openclaw-agent:local",
-      sandbox: "standard",
-    }));
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "a-market",
+        name: "COS Agent",
+        backend: "docker",
+        image: "nora-openclaw-agent:local",
+        sandbox: "standard",
+      }),
+    );
   });
 
   it("rejects NemoClaw sandbox installs on non-Docker execution targets", async () => {
@@ -2564,7 +2624,7 @@ describe("POST /marketplace/install", () => {
         name: "COS Agent",
         deploy_target: "k8s",
         sandbox_profile: "nemoclaw",
-      })
+      }),
     );
 
     expect(res.status).toBe(400);
@@ -2604,17 +2664,19 @@ describe("POST /marketplace/install", () => {
     });
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-market-k8s",
-          name: "COS Agent K8s",
-          status: "queued",
-          user_id: "user-1",
-          backend_type: "k8s",
-          sandbox_type: "standard",
-          runtime_family: "openclaw",
-          deploy_target: "k8s",
-          sandbox_profile: "standard",
-        }],
+        rows: [
+          {
+            id: "a-market-k8s",
+            name: "COS Agent K8s",
+            status: "queued",
+            user_id: "user-1",
+            backend_type: "k8s",
+            sandbox_type: "standard",
+            runtime_family: "openclaw",
+            deploy_target: "k8s",
+            sandbox_profile: "standard",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -2624,7 +2686,7 @@ describe("POST /marketplace/install", () => {
         listingId: "listing-1",
         name: "COS Agent K8s",
         deploy_target: "k8s",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -2636,7 +2698,7 @@ describe("POST /marketplace/install", () => {
         backend: "k8s",
         sandbox: "standard",
         image: "node:24-slim",
-      })
+      }),
     );
   });
 
@@ -2667,7 +2729,7 @@ describe("POST /marketplace/install", () => {
         listingId: "listing-1",
         name: "COS Agent",
         runtime_family: "future-runtime",
-      })
+      }),
     );
 
     expect(res.status).toBe(400);
@@ -2680,9 +2742,7 @@ describe("POST /marketplace/install", () => {
 describe("marketplace browse, publish, download, and report", () => {
   it("lists published marketplace entries for authenticated users", async () => {
     const marketplaceModule = require("../marketplace");
-    marketplaceModule.listMarketplace.mockResolvedValueOnce([
-      { id: "listing-1", name: "Preset" },
-    ]);
+    marketplaceModule.listMarketplace.mockResolvedValueOnce([{ id: "listing-1", name: "Preset" }]);
 
     const res = await auth(request(app).get("/marketplace"));
 
@@ -2701,7 +2761,7 @@ describe("marketplace browse, publish, download, and report", () => {
     expect(res.status).toBe(200);
     expect(marketplaceModule.listUserListings).toHaveBeenCalledWith("user-1");
     expect(res.body[0]).toEqual(
-      expect.objectContaining({ id: "listing-1", status: "pending_review" })
+      expect.objectContaining({ id: "listing-1", status: "pending_review" }),
     );
   });
 
@@ -2757,7 +2817,7 @@ describe("marketplace browse, publish, download, and report", () => {
             expect.objectContaining({ path: "SOUL.md", content: expect.any(String) }),
           ]),
         }),
-      })
+      }),
     );
   });
 
@@ -2797,35 +2857,31 @@ describe("marketplace browse, publish, download, and report", () => {
       },
     };
 
-    marketplaceModule.getListing
-      .mockResolvedValueOnce(listing)
-      .mockResolvedValueOnce({
-        ...listing,
-        name: "Updated Preset",
-        status: "pending_review",
-        category: "Support",
-        current_version: 3,
-      });
-    snapshotsModule.getSnapshot
-      .mockResolvedValueOnce(snapshot)
-      .mockResolvedValueOnce({
-        ...snapshot,
-        name: "Updated Preset",
-        description: "Updated description",
-        config: {
-          defaults: {
-            sandbox: "nemoclaw",
-            vcpu: 4,
-            ram_mb: 4096,
-            disk_gb: 40,
-          },
-          templatePayload: {
-            files: [{ path: "AGENTS.md", content: "updated" }],
-            memoryFiles: [],
-            wiring: { channels: [], integrations: [] },
-          },
+    marketplaceModule.getListing.mockResolvedValueOnce(listing).mockResolvedValueOnce({
+      ...listing,
+      name: "Updated Preset",
+      status: "pending_review",
+      category: "Support",
+      current_version: 3,
+    });
+    snapshotsModule.getSnapshot.mockResolvedValueOnce(snapshot).mockResolvedValueOnce({
+      ...snapshot,
+      name: "Updated Preset",
+      description: "Updated description",
+      config: {
+        defaults: {
+          sandbox: "nemoclaw",
+          vcpu: 4,
+          ram_mb: 4096,
+          disk_gb: 40,
         },
-      });
+        templatePayload: {
+          files: [{ path: "AGENTS.md", content: "updated" }],
+          memoryFiles: [],
+          wiring: { channels: [], integrations: [] },
+        },
+      },
+    });
     snapshotsModule.updateSnapshot.mockResolvedValueOnce({
       ...snapshot,
       name: "Updated Preset",
@@ -2837,23 +2893,25 @@ describe("marketplace browse, publish, download, and report", () => {
     });
 
     const res = await auth(
-      request(app).patch("/marketplace/listing-1").send({
-        name: "Updated Preset",
-        description: "Updated description",
-        category: "Support",
-        slug: "updated-preset",
-        currentVersion: 3,
-        sandbox: "nemoclaw",
-        vcpu: 4,
-        ram_mb: 4096,
-        disk_gb: 40,
-        files: [
-          {
-            path: "AGENTS.md",
-            content: "# Updated\n",
-          },
-        ],
-      })
+      request(app)
+        .patch("/marketplace/listing-1")
+        .send({
+          name: "Updated Preset",
+          description: "Updated description",
+          category: "Support",
+          slug: "updated-preset",
+          currentVersion: 3,
+          sandbox: "nemoclaw",
+          vcpu: 4,
+          ram_mb: 4096,
+          disk_gb: 40,
+          files: [
+            {
+              path: "AGENTS.md",
+              content: "# Updated\n",
+            },
+          ],
+        }),
     );
 
     expect(res.status).toBe(200);
@@ -2876,7 +2934,7 @@ describe("marketplace browse, publish, download, and report", () => {
             ]),
           }),
         }),
-      })
+      }),
     );
     expect(marketplaceModule.upsertListing).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2884,7 +2942,7 @@ describe("marketplace browse, publish, download, and report", () => {
         status: "pending_review",
         currentVersion: 3,
         category: "Support",
-      })
+      }),
     );
     expect(res.body).toEqual(
       expect.objectContaining({
@@ -2892,7 +2950,7 @@ describe("marketplace browse, publish, download, and report", () => {
         status: "pending_review",
         category: "Support",
         current_version: 3,
-      })
+      }),
     );
   });
 
@@ -2942,7 +3000,7 @@ describe("marketplace browse, publish, download, and report", () => {
         description: "Shared operations template",
         category: "Operations",
         price: "$99/mo",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -2972,7 +3030,7 @@ describe("marketplace browse, publish, download, and report", () => {
           wiring: { channels: [], integrations: [] },
         }),
       }),
-      expect.objectContaining({ kind: "community-template", builtIn: false })
+      expect.objectContaining({ kind: "community-template", builtIn: false }),
     );
     expect(marketplaceModule.upsertListing).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -2981,13 +3039,13 @@ describe("marketplace browse, publish, download, and report", () => {
         sourceType: "community",
         status: "pending_review",
         visibility: "public",
-      })
+      }),
     );
     expect(res.body).toEqual(
       expect.objectContaining({
         id: "listing-community-1",
         status: "pending_review",
-      })
+      }),
     );
   });
 
@@ -3020,7 +3078,7 @@ describe("marketplace browse, publish, download, and report", () => {
         name: "Sensitive Template",
         description: "Should fail",
         category: "Operations",
-      })
+      }),
     );
 
     expect(res.status).toBe(400);
@@ -3068,9 +3126,7 @@ describe("marketplace browse, publish, download, and report", () => {
     const res = await auth(request(app).get("/marketplace/listing-1/download"));
 
     expect(res.status).toBe(200);
-    expect(res.headers["content-disposition"]).toContain(
-      "chief-of-staff-claw.nora-template.json"
-    );
+    expect(res.headers["content-disposition"]).toContain("chief-of-staff-claw.nora-template.json");
     expect(marketplaceModule.recordDownload).toHaveBeenCalledWith("listing-1");
     expect(res.body).toEqual(
       expect.objectContaining({
@@ -3087,7 +3143,7 @@ describe("marketplace browse, publish, download, and report", () => {
             expect.objectContaining({ path: "BOOTSTRAP.md" }),
           ]),
         }),
-      })
+      }),
     );
   });
 
@@ -3111,7 +3167,7 @@ describe("marketplace browse, publish, download, and report", () => {
       request(app).post("/marketplace/listing-1/report").send({
         reason: "spam",
         details: "Low-quality content",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -3121,7 +3177,7 @@ describe("marketplace browse, publish, download, and report", () => {
         reporterUserId: "user-1",
         reason: "spam",
         details: "Low-quality content",
-      })
+      }),
     );
     expect(monitoringModule.logEvent).toHaveBeenCalledWith(
       "marketplace_reported",
@@ -3136,7 +3192,7 @@ describe("marketplace browse, publish, download, and report", () => {
           reporterUserId: "user-1",
           reporterEmail: "user@nora.test",
         }),
-      })
+      }),
     );
   });
 });
@@ -3158,16 +3214,18 @@ describe("POST /agents/:id/redeploy", () => {
   it("allows redeploy when an agent is in warning state", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-warning",
-          name: "Warning Agent",
-          status: "warning",
-          sandbox_type: "standard",
-          vcpu: 2,
-          ram_mb: 2048,
-          disk_gb: 20,
-          container_name: "oclaw-agent-warning",
-        }],
+        rows: [
+          {
+            id: "a-warning",
+            name: "Warning Agent",
+            status: "warning",
+            sandbox_type: "standard",
+            vcpu: 2,
+            ram_mb: 2048,
+            disk_gb: 20,
+            container_name: "oclaw-agent-warning",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -3188,17 +3246,19 @@ describe("POST /agents/:id/redeploy", () => {
         "standard",
         "oclaw-agent-warning",
         "nora-openclaw-agent:local",
-      ]
+      ],
     );
-    expect(mockAddDeploymentJob).toHaveBeenCalledWith(expect.objectContaining({
-      id: "a-warning",
-      name: "Warning Agent",
-      userId: "user-1",
-      backend: "docker",
-      sandbox: "standard",
-      specs: { vcpu: 2, ram_mb: 2048, disk_gb: 20 },
-      container_name: "oclaw-agent-warning",
-    }));
+    expect(mockAddDeploymentJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "a-warning",
+        name: "Warning Agent",
+        userId: "user-1",
+        backend: "docker",
+        sandbox: "standard",
+        specs: { vcpu: 2, ram_mb: 2048, disk_gb: 20 },
+        container_name: "oclaw-agent-warning",
+      }),
+    );
   });
 
   it("accepts deploy-target overrides during redeploy and resets the sandbox when needed", async () => {
@@ -3207,19 +3267,21 @@ describe("POST /agents/:id/redeploy", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-nemo-redeploy",
-          name: "Nemo Agent",
-          status: "stopped",
-          runtime_family: "openclaw",
-          deploy_target: "docker",
-          sandbox_profile: "nemoclaw",
-          vcpu: 2,
-          ram_mb: 2048,
-          disk_gb: 20,
-          container_name: "oclaw-agent-nemo",
-          image: null,
-        }],
+        rows: [
+          {
+            id: "a-nemo-redeploy",
+            name: "Nemo Agent",
+            status: "stopped",
+            runtime_family: "openclaw",
+            deploy_target: "docker",
+            sandbox_profile: "nemoclaw",
+            vcpu: 2,
+            ram_mb: 2048,
+            disk_gb: 20,
+            container_name: "oclaw-agent-nemo",
+            image: null,
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -3227,32 +3289,28 @@ describe("POST /agents/:id/redeploy", () => {
     const res = await auth(
       request(app).post("/agents/a-nemo-redeploy/redeploy").send({
         deploy_target: "k8s",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ success: true, status: "queued" });
-    expect(mockDb.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("deploy_target = $5"),
-      [
-        "a-nemo-redeploy",
-        "k8s",
-        "standard",
-        "openclaw",
-        "k8s",
-        "standard",
-        "oclaw-agent-nemo",
-        "node:24-slim",
-      ]
-    );
+    expect(mockDb.query).toHaveBeenNthCalledWith(2, expect.stringContaining("deploy_target = $5"), [
+      "a-nemo-redeploy",
+      "k8s",
+      "standard",
+      "openclaw",
+      "k8s",
+      "standard",
+      "oclaw-agent-nemo",
+      "node:24-slim",
+    ]);
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "a-nemo-redeploy",
         backend: "k8s",
         sandbox: "standard",
         image: "node:24-slim",
-      })
+      }),
     );
   });
 
@@ -3262,19 +3320,21 @@ describe("POST /agents/:id/redeploy", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-docker-redeploy",
-          name: "Docker Agent",
-          status: "stopped",
-          runtime_family: "openclaw",
-          deploy_target: "docker",
-          sandbox_profile: "standard",
-          vcpu: 2,
-          ram_mb: 2048,
-          disk_gb: 20,
-          container_name: "oclaw-agent-docker",
-          image: "nora-openclaw-agent:local",
-        }],
+        rows: [
+          {
+            id: "a-docker-redeploy",
+            name: "Docker Agent",
+            status: "stopped",
+            runtime_family: "openclaw",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+            vcpu: 2,
+            ram_mb: 2048,
+            disk_gb: 20,
+            container_name: "oclaw-agent-docker",
+            image: "nora-openclaw-agent:local",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -3282,31 +3342,27 @@ describe("POST /agents/:id/redeploy", () => {
     const res = await auth(
       request(app).post("/agents/a-docker-redeploy/redeploy").send({
         deploy_target: "k8s",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
-    expect(mockDb.query).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("image = $8"),
-      [
-        "a-docker-redeploy",
-        "k8s",
-        "standard",
-        "openclaw",
-        "k8s",
-        "standard",
-        "oclaw-agent-docker",
-        "node:24-slim",
-      ]
-    );
+    expect(mockDb.query).toHaveBeenNthCalledWith(2, expect.stringContaining("image = $8"), [
+      "a-docker-redeploy",
+      "k8s",
+      "standard",
+      "openclaw",
+      "k8s",
+      "standard",
+      "oclaw-agent-docker",
+      "node:24-slim",
+    ]);
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "a-docker-redeploy",
         backend: "k8s",
         sandbox: "standard",
         image: "node:24-slim",
-      })
+      }),
     );
   });
 
@@ -3315,19 +3371,21 @@ describe("POST /agents/:id/redeploy", () => {
 
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "a-hermes-redeploy",
-          name: "Desk Bot",
-          status: "stopped",
-          runtime_family: "openclaw",
-          deploy_target: "docker",
-          sandbox_profile: "standard",
-          vcpu: 2,
-          ram_mb: 2048,
-          disk_gb: 20,
-          container_name: "oclaw-agent-desk-bot-old123",
-          image: "nora-openclaw-agent:local",
-        }],
+        rows: [
+          {
+            id: "a-hermes-redeploy",
+            name: "Desk Bot",
+            status: "stopped",
+            runtime_family: "openclaw",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+            vcpu: 2,
+            ram_mb: 2048,
+            disk_gb: 20,
+            container_name: "oclaw-agent-desk-bot-old123",
+            image: "nora-openclaw-agent:local",
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -3335,7 +3393,7 @@ describe("POST /agents/:id/redeploy", () => {
     const res = await auth(
       request(app).post("/agents/a-hermes-redeploy/redeploy").send({
         runtime_family: "hermes",
-      })
+      }),
     );
 
     expect(res.status).toBe(200);
@@ -3351,7 +3409,7 @@ describe("POST /agents/:id/redeploy", () => {
         "standard",
         expect.stringMatching(/^hermes-agent-desk-bot-/),
         "nousresearch/hermes-agent:latest",
-      ]
+      ],
     );
     expect(mockAddDeploymentJob).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3359,7 +3417,7 @@ describe("POST /agents/:id/redeploy", () => {
         backend: "hermes",
         container_name: expect.stringMatching(/^hermes-agent-desk-bot-/),
         image: "nousresearch/hermes-agent:latest",
-      })
+      }),
     );
   });
 

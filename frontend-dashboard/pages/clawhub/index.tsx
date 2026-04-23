@@ -58,20 +58,18 @@ export default function ClawHubDeployPage() {
   const requestIdRef = useRef(0);
   const detailCacheRef = useRef<Record<string, SkillDetail>>({});
 
-  const showingDefaultBrowseEmptyState =
-    !query.trim() && !loading && !error && skills.length === 0;
+  const showingDefaultBrowseEmptyState = !query.trim() && !loading && !error && skills.length === 0;
   const selectedSkillKeys = useMemo(
     () => new Set(selectedSkills.map((skill) => `${skill.author}:${skill.installSlug}`)),
-    [selectedSkills]
+    [selectedSkills],
   );
   const selectedSkillSlugs = useMemo(
     () => new Set(selectedSkills.map((skill) => skill.installSlug)),
-    [selectedSkills]
+    [selectedSkills],
   );
-  const selectedCurrentSkill =
-    selectedSkillDetail
-      ? selectedSkillKeys.has(`${selectedSkillDetail.author || ""}:${selectedSkillDetail.slug}`)
-      : false;
+  const selectedCurrentSkill = selectedSkillDetail
+    ? selectedSkillKeys.has(`${selectedSkillDetail.author || ""}:${selectedSkillDetail.slug}`)
+    : false;
 
   useEffect(() => {
     const nextDraft = loadDeployDraft();
@@ -104,7 +102,9 @@ export default function ClawHubDeployPage() {
       if (requestId !== requestIdRef.current) return;
 
       if (!res.ok) {
-        throw new Error(data.message || data.error || "Could not load skills. ClawHub may be unavailable.");
+        throw new Error(
+          data.message || data.error || "Could not load skills. ClawHub may be unavailable.",
+        );
       }
 
       setSkills(Array.isArray(data.skills) ? data.skills : []);
@@ -131,12 +131,16 @@ export default function ClawHubDeployPage() {
     setError(null);
 
     try {
-      const res = await fetchWithAuth(`/api/clawhub/skills/search?q=${encodeURIComponent(trimmed)}`);
+      const res = await fetchWithAuth(
+        `/api/clawhub/skills/search?q=${encodeURIComponent(trimmed)}`,
+      );
       const data: SkillListResponse = await res.json();
       if (requestId !== requestIdRef.current) return;
 
       if (!res.ok) {
-        throw new Error(data.message || data.error || "Could not load skills. ClawHub may be unavailable.");
+        throw new Error(
+          data.message || data.error || "Could not load skills. ClawHub may be unavailable.",
+        );
       }
 
       setSkills(Array.isArray(data.skills) ? data.skills : []);
@@ -199,7 +203,7 @@ export default function ClawHubDeployPage() {
     const installSlug = "installSlug" in skill ? skill.installSlug : skill.slug;
     const author = "author" in skill ? skill.author || "" : "";
     setSelectedSkills((current) =>
-      current.filter((entry) => !(entry.installSlug === installSlug && entry.author === author))
+      current.filter((entry) => !(entry.installSlug === installSlug && entry.author === author)),
     );
   }
 
@@ -346,7 +350,9 @@ export default function ClawHubDeployPage() {
                 <Boxes size={12} />
                 ClawHub Selection
               </div>
-              <h1 className="text-3xl font-black text-slate-900">Choose skills for this new agent</h1>
+              <h1 className="text-3xl font-black text-slate-900">
+                Choose skills for this new agent
+              </h1>
               <p className="max-w-3xl text-sm leading-6 text-slate-600">
                 Search ClawHub, inspect each skill’s README and requirements, and attach only the
                 skills you want saved on this agent at deploy time.

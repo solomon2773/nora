@@ -22,10 +22,16 @@ export default function SkillSearchBar({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <form
+      onSubmit={handleSubmit}
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+    >
       <div className="flex flex-col gap-3 md:flex-row md:items-center">
         <div className="relative flex-1">
-          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search
+            size={16}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
           <input
             type="text"
             value={query}

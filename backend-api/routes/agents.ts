@@ -45,10 +45,7 @@ const {
   normalizeRuntimeFamilyName,
 } = require("../../agent-runtime/lib/backendCatalog");
 const { asyncHandler } = require("../middleware/errorHandler");
-const {
-  buildAgentHistoryResponse,
-  buildAgentStatsResponse,
-} = require("../agentTelemetry");
+const { buildAgentHistoryResponse, buildAgentStatsResponse } = require("../agentTelemetry");
 const {
   buildAgentRuntimeFields,
   isSameRuntimePath,
@@ -78,8 +75,7 @@ function resolveRequestedImage({
   fallbackImage = null,
   fallbackRuntimeFields = null,
 } = {}) {
-  const explicitRequestedImage =
-    typeof requestedImage === "string" ? requestedImage.trim() : "";
+  const explicitRequestedImage = typeof requestedImage === "string" ? requestedImage.trim() : "";
   if (explicitRequestedImage) return explicitRequestedImage;
 
   if (
@@ -90,13 +86,11 @@ function resolveRequestedImage({
     return fallbackImage;
   }
 
-  return (
-    getDefaultAgentImage({
-      backend: runtimeFields?.backend_type,
-      deploy_target: runtimeFields?.deploy_target,
-      sandbox_profile: runtimeFields?.sandbox_profile,
-    })
-  );
+  return getDefaultAgentImage({
+    backend: runtimeFields?.backend_type,
+    deploy_target: runtimeFields?.deploy_target,
+    sandbox_profile: runtimeFields?.sandbox_profile,
+  });
 }
 
 function normalizeRequestedRuntimeFamily(value) {
@@ -107,15 +101,13 @@ function normalizeRequestedRuntimeFamily(value) {
 function assertSupportedRuntimeSelection(runtimeFields) {
   if (runtimeFields?.runtime_family === "hermes") {
     if (runtimeFields.deploy_target !== "docker") {
-      const error = new Error(
-        "Hermes runtime is only supported on the Docker execution target."
-      );
+      const error = new Error("Hermes runtime is only supported on the Docker execution target.");
       error.statusCode = 400;
       throw error;
     }
     if (runtimeFields.sandbox_profile !== "standard") {
       const error = new Error(
-        "Hermes runtime currently supports only the Standard sandbox profile."
+        "Hermes runtime currently supports only the Standard sandbox profile.",
       );
       error.statusCode = 400;
       throw error;
@@ -126,9 +118,7 @@ function assertSupportedRuntimeSelection(runtimeFields) {
   if (runtimeFields?.sandbox_profile !== "nemoclaw") return;
 
   if (runtimeFields.deploy_target !== "docker") {
-    const error = new Error(
-      "NemoClaw sandbox is only supported on the Docker execution target."
-    );
+    const error = new Error("NemoClaw sandbox is only supported on the Docker execution target.");
     error.statusCode = 400;
     throw error;
   }
@@ -194,7 +184,7 @@ function assertBackendAvailable(backend) {
   }
   if (!status.configured) {
     const error = new Error(
-      status.issue || `${status.label} is not configured for this Nora control plane.`
+      status.issue || `${status.label} is not configured for this Nora control plane.`,
     );
     error.statusCode = 400;
     throw error;
@@ -223,8 +213,7 @@ function normalizeClawhubSkillEntry(entry) {
         ? `${author}/${installSlug}`
         : installSlug;
 
-  const installedAtRaw =
-    typeof entry.installedAt === "string" ? entry.installedAt.trim() : "";
+  const installedAtRaw = typeof entry.installedAt === "string" ? entry.installedAt.trim() : "";
   const installedAt =
     installedAtRaw && !Number.isNaN(new Date(installedAtRaw).getTime())
       ? new Date(installedAtRaw).toISOString()
@@ -257,73 +246,86 @@ function normalizeClawhubSkills(entries) {
   return normalized;
 }
 
-router.get("/", asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM agents WHERE user_id = $1 ORDER BY created_at DESC",
-    [req.user.id]
-  );
-  res.json(result.rows.map(serializeAgent));
-}));
+router.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      "SELECT * FROM agents WHERE user_id = $1 ORDER BY created_at DESC",
+      [req.user.id],
+    );
+    res.json(result.rows.map(serializeAgent));
+  }),
+);
 
-router.get("/:id", asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-    [req.params.id, req.user.id]
-  );
-  if (!result.rows[0]) return res.status(404).json({ error: "Agent not found" });
+router.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
+    if (!result.rows[0]) return res.status(404).json({ error: "Agent not found" });
 
-  const agent = result.rows[0];
+    const agent = result.rows[0];
 
-  // Live status reconciliation — check actual container state while preserving
-  // warning as a first-class degraded state until the container actually stops.
-  if (agent.container_id && ["running", "warning", "error", "stopped"].includes(agent.status)) {
-    try {
-      const live = await containerManager.status(agent);
-      const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live.running));
-      if (reconciledStatus !== agent.status) {
-        await db.query("UPDATE agents SET status = $1 WHERE id = $2", [reconciledStatus, agent.id]);
-        agent.status = reconciledStatus;
+    // Live status reconciliation — check actual container state while preserving
+    // warning as a first-class degraded state until the container actually stops.
+    if (agent.container_id && ["running", "warning", "error", "stopped"].includes(agent.status)) {
+      try {
+        const live = await containerManager.status(agent);
+        const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live.running));
+        if (reconciledStatus !== agent.status) {
+          await db.query("UPDATE agents SET status = $1 WHERE id = $2", [
+            reconciledStatus,
+            agent.id,
+          ]);
+          agent.status = reconciledStatus;
+        }
+      } catch {
+        // Can't reach container runtime — leave DB status as-is
       }
-    } catch {
-      // Can't reach container runtime — leave DB status as-is
     }
-  }
 
-  res.json(serializeAgent(agent));
-}));
+    res.json(serializeAgent(agent));
+  }),
+);
 
 // Historical container stats with time range
 // Query params: ?range=5m|15m|30m|1h|6h|24h|3d|7d (default 15m) or ?from=ISO&to=ISO
-router.get("/:id/stats/history", asyncHandler(async (req, res) => {
-  const agentCheck = await db.query(
-    "SELECT * FROM agents WHERE id = $1 AND user_id = $2", [req.params.id, req.user.id]
-  );
-  const agent = agentCheck.rows[0];
-  if (!agent) return res.status(404).json({ error: "Agent not found" });
+router.get(
+  "/:id/stats/history",
+  asyncHandler(async (req, res) => {
+    const agentCheck = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
+    const agent = agentCheck.rows[0];
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-  const rangeMap = {
-    "5m": "5 minutes",
-    "15m": "15 minutes",
-    "30m": "30 minutes",
-    "1h": "1 hour",
-    "6h": "6 hours",
-    "24h": "24 hours",
-    "3d": "3 days",
-    "7d": "7 days",
-  };
-  let fromTime, toTime;
+    const rangeMap = {
+      "5m": "5 minutes",
+      "15m": "15 minutes",
+      "30m": "30 minutes",
+      "1h": "1 hour",
+      "6h": "6 hours",
+      "24h": "24 hours",
+      "3d": "3 days",
+      "7d": "7 days",
+    };
+    let fromTime, toTime;
 
-  if (req.query.from && req.query.to) {
-    fromTime = new Date(req.query.from);
-    toTime = new Date(req.query.to);
-  } else {
-    const range = rangeMap[req.query.range || "15m"] || "15 minutes";
-    toTime = new Date();
-    fromTime = new Date(Date.now() - parseInterval(range));
-  }
+    if (req.query.from && req.query.to) {
+      fromTime = new Date(req.query.from);
+      toTime = new Date(req.query.to);
+    } else {
+      const range = rangeMap[req.query.range || "15m"] || "15 minutes";
+      toTime = new Date();
+      fromTime = new Date(Date.now() - parseInterval(range));
+    }
 
-  res.json(await buildAgentHistoryResponse(agent, fromTime, toTime));
-}));
+    res.json(await buildAgentHistoryResponse(agent, fromTime, toTime));
+  }),
+);
 
 function parseInterval(pg) {
   const m = pg.match(/(\d+)\s*(day|minute|hour|second)/);
@@ -341,72 +343,75 @@ function agentAuditMetadata(req, agent, extra = {}) {
     buildAgentContext(agent, {
       ownerEmail: req?.user?.email || null,
       ...extra,
-    })
+    }),
   );
 }
 
 // Get the gateway control UI URL (published host port for direct browser access)
-router.get("/:id/gateway-url", asyncHandler(async (req, res) => {
-  const result = await db.query(
-    `SELECT id, host, container_id, backend_type, runtime_family, deploy_target,
+router.get(
+  "/:id/gateway-url",
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `SELECT id, host, container_id, backend_type, runtime_family, deploy_target,
             sandbox_profile, gateway_token, gateway_host_port,
             gateway_host, gateway_port, user_id, status
        FROM agents
       WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
-  const agent = result.rows[0];
-  if (!agent) return res.status(404).json({ error: "Agent not found" });
-  res.locals.auditContext = buildAgentContext(agent, {
-    ownerEmail: req.user.email || null,
-  });
-  const runtimeFields = buildAgentRuntimeFields(agent);
-  if (!isGatewayAvailableStatus(agent.status)) {
-    return res.status(409).json({ error: "Agent gateway is only available while running" });
-  }
-  if (runtimeFields.runtime_family !== "openclaw") {
-    return res.status(409).json({
-      error: "This runtime family does not expose an OpenClaw gateway",
+      [req.params.id, req.user.id],
+    );
+    const agent = result.rows[0];
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, {
+      ownerEmail: req.user.email || null,
     });
-  }
-  if (!agent.container_id) return res.status(409).json({ error: "No container" });
-
-  // Prefer the stored published port when present. This keeps browser access on
-  // the control-plane host for Docker and local kind NodePort verification.
-  let hostPort = agent.gateway_host_port;
-  const backendType = runtimeFields.backend_type;
-  if (!hostPort && agent.container_id && ["docker", "nemoclaw"].includes(backendType)) {
-    try {
-      const Docker = require("dockerode");
-      const docker = new Docker({ socketPath: "/var/run/docker.sock" });
-      const info = await docker.getContainer(agent.container_id).inspect();
-      const portBindings = info.NetworkSettings?.Ports?.[`${OPENCLAW_GATEWAY_PORT}/tcp`];
-      hostPort = portBindings?.[0]?.HostPort || null;
-    } catch (e) {
-      return res.status(502).json({ error: "Could not inspect container", details: e.message });
+    const runtimeFields = buildAgentRuntimeFields(agent);
+    if (!isGatewayAvailableStatus(agent.status)) {
+      return res.status(409).json({ error: "Agent gateway is only available while running" });
     }
-  }
+    if (runtimeFields.runtime_family !== "openclaw") {
+      return res.status(409).json({
+        error: "This runtime family does not expose an OpenClaw gateway",
+      });
+    }
+    if (!agent.container_id) return res.status(409).json({ error: "No container" });
 
-  const publishedGatewayHost = resolvePublishedGatewayHost(req);
-  const publishedGatewayProtocol = resolvePublishedGatewayProtocol(req);
+    // Prefer the stored published port when present. This keeps browser access on
+    // the control-plane host for Docker and local kind NodePort verification.
+    let hostPort = agent.gateway_host_port;
+    const backendType = runtimeFields.backend_type;
+    if (!hostPort && agent.container_id && ["docker", "nemoclaw"].includes(backendType)) {
+      try {
+        const Docker = require("dockerode");
+        const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+        const info = await docker.getContainer(agent.container_id).inspect();
+        const portBindings = info.NetworkSettings?.Ports?.[`${OPENCLAW_GATEWAY_PORT}/tcp`];
+        hostPort = portBindings?.[0]?.HostPort || null;
+      } catch (e) {
+        return res.status(502).json({ error: "Could not inspect container", details: e.message });
+      }
+    }
 
-  if (hostPort) {
-    return res.json({
-      url: `${publishedGatewayProtocol}://${publishedGatewayHost}:${hostPort}`,
-      port: parseInt(hostPort, 10),
+    const publishedGatewayHost = resolvePublishedGatewayHost(req);
+    const publishedGatewayProtocol = resolvePublishedGatewayProtocol(req);
+
+    if (hostPort) {
+      return res.json({
+        url: `${publishedGatewayProtocol}://${publishedGatewayHost}:${hostPort}`,
+        port: parseInt(hostPort, 10),
+      });
+    }
+
+    const directAddress = resolveGatewayAddress(agent, {
+      publishedHost: publishedGatewayHost,
     });
-  }
+    if (!directAddress) return res.status(409).json({ error: "Gateway address not available" });
 
-  const directAddress = resolveGatewayAddress(agent, {
-    publishedHost: publishedGatewayHost,
-  });
-  if (!directAddress) return res.status(409).json({ error: "Gateway address not available" });
-
-  res.json({
-    url: `${publishedGatewayProtocol}://${directAddress.host}:${directAddress.port}`,
-    port: parseInt(directAddress.port, 10),
-  });
-}));
+    res.json({
+      url: `${publishedGatewayProtocol}://${directAddress.host}:${directAddress.port}`,
+      port: parseInt(directAddress.port, 10),
+    });
+  }),
+);
 
 function extractHermesApiError(payload, fallbackMessage) {
   if (payload && typeof payload === "object") {
@@ -436,10 +441,10 @@ function createStatusCodeError(message, statusCode) {
 }
 
 async function loadHermesUiAgent(req) {
-  const result = await db.query(
-    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-    [req.params.id, req.user.id]
-  );
+  const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+    req.params.id,
+    req.user.id,
+  ]);
   const agent = result.rows[0];
   if (!agent) {
     throw createStatusCodeError("Agent not found", 404);
@@ -449,15 +454,12 @@ async function loadHermesUiAgent(req) {
   if (runtimeFields.runtime_family !== "hermes") {
     throw createStatusCodeError(
       "This runtime family does not expose the Hermes WebUI surface",
-      409
+      409,
     );
   }
 
   if (!isGatewayAvailableStatus(agent.status)) {
-    throw createStatusCodeError(
-      "Hermes WebUI is only available while the agent is running",
-      409
-    );
+    throw createStatusCodeError("Hermes WebUI is only available while the agent is running", 409);
   }
 
   return agent;
@@ -466,11 +468,11 @@ async function loadHermesUiAgent(req) {
 function buildHermesGatewaySummary(snapshot = {}) {
   const directoryPlatforms = snapshot?.directory?.platforms || {};
   const configuredPlatforms = Object.values(snapshot?.platformDetails || {}).filter(
-    (entry) => entry?.connected || entry?.enabled
+    (entry) => entry?.connected || entry?.enabled,
   );
   const discoveredTargetsCount = Object.values(directoryPlatforms).reduce(
     (count, entries) => count + (Array.isArray(entries) ? entries.length : 0),
-    0
+    0,
   );
 
   return {
@@ -481,8 +483,7 @@ function buildHermesGatewaySummary(snapshot = {}) {
     updatedAt: snapshot?.runtimeStatus?.updated_at || null,
     configuredPlatformsCount: configuredPlatforms.length,
     discoveredTargetsCount,
-    jobsCount:
-      typeof snapshot?.jobsCount === "number" ? snapshot.jobsCount : null,
+    jobsCount: typeof snapshot?.jobsCount === "number" ? snapshot.jobsCount : null,
     platformStates: snapshot?.runtimeStatus?.platforms || {},
   };
 }
@@ -498,18 +499,13 @@ function buildHermesDashboardSummary(payload = {}) {
       typeof payload?.gateway_state === "string" && payload.gateway_state.trim()
         ? payload.gateway_state.trim()
         : null,
-    activeSessions:
-      typeof payload?.active_sessions === "number"
-        ? payload.active_sessions
-        : null,
+    activeSessions: typeof payload?.active_sessions === "number" ? payload.active_sessions : null,
   };
 }
 
 function buildHermesDashboardUnsupportedMessage(versionLine = "") {
   const versionSuffix =
-    typeof versionLine === "string" && versionLine.trim()
-      ? ` (${versionLine.trim()})`
-      : "";
+    typeof versionLine === "string" && versionLine.trim() ? ` (${versionLine.trim()})` : "";
   return (
     `This Hermes image${versionSuffix} does not include the official dashboard yet. ` +
     "Pull a current Hermes image and redeploy this agent."
@@ -527,7 +523,7 @@ function buildHermesDashboardEnsureCommand() {
     'if ! python3 -c \'import importlib.util,sys;sys.exit(0 if importlib.util.find_spec("hermes_cli.web_server") else 1)\'; then echo "STATUS=missing-web-server"; printf "VERSION=%s\\n" "$VERSION"; exit 0; fi',
     'if python3 -c \'import socket,sys;s=socket.socket();s.settimeout(1);rc=s.connect_ex(("127.0.0.1",9119));s.close();sys.exit(0 if rc==0 else 1)\'; then echo "STATUS=already-running"; printf "VERSION=%s\\n" "$VERSION"; exit 0; fi',
     'if [ -d "$LOG_DIR" ]; then chown -R hermes:hermes "$LOG_DIR" 2>/dev/null || true; else mkdir -p "$LOG_DIR"; chown hermes:hermes "$LOG_DIR" 2>/dev/null || true; fi',
-    'nohup /opt/hermes/docker/entrypoint.sh dashboard --host 0.0.0.0 --insecure --no-open >> /proc/1/fd/1 2>> /proc/1/fd/2 &',
+    "nohup /opt/hermes/docker/entrypoint.sh dashboard --host 0.0.0.0 --insecure --no-open >> /proc/1/fd/1 2>> /proc/1/fd/2 &",
     "sleep 2",
     'if python3 -c \'import socket,sys;s=socket.socket();s.settimeout(1);rc=s.connect_ex(("127.0.0.1",9119));s.close();sys.exit(0 if rc==0 else 1)\'; then echo "STATUS=started"; else echo "STATUS=start-failed"; fi',
     'printf "VERSION=%s\\n" "$VERSION"',
@@ -536,11 +532,9 @@ function buildHermesDashboardEnsureCommand() {
 
 async function ensureHermesDashboardProcess(agent) {
   try {
-    const { output } = await runContainerCommand(
-      agent,
-      buildHermesDashboardEnsureCommand(),
-      { timeout: 15000 }
-    );
+    const { output } = await runContainerCommand(agent, buildHermesDashboardEnsureCommand(), {
+      timeout: 15000,
+    });
     const lines = String(output || "")
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -601,11 +595,7 @@ function normalizeHermesCronListPayload(payload) {
 }
 
 function resolveHermesChannelConfig(body = {}) {
-  if (
-    body?.config &&
-    typeof body.config === "object" &&
-    !Array.isArray(body.config)
-  ) {
+  if (body?.config && typeof body.config === "object" && !Array.isArray(body.config)) {
     return body.config;
   }
 
@@ -627,12 +617,10 @@ async function resolveHermesApiToken(agent) {
     const docker = new Docker({ socketPath: "/var/run/docker.sock" });
     const info = await docker.getContainer(agent.container_id).inspect();
     const envVars = Array.isArray(info?.Config?.Env) ? info.Config.Env : [];
-    const keyEntry = envVars.find((entry) =>
-      typeof entry === "string" && entry.startsWith("API_SERVER_KEY=")
+    const keyEntry = envVars.find(
+      (entry) => typeof entry === "string" && entry.startsWith("API_SERVER_KEY="),
     );
-    const resolvedToken = keyEntry
-      ? keyEntry.slice("API_SERVER_KEY=".length).trim()
-      : "";
+    const resolvedToken = keyEntry ? keyEntry.slice("API_SERVER_KEY=".length).trim() : "";
 
     if (!resolvedToken) return null;
 
@@ -663,7 +651,7 @@ async function fetchHermesApi(agent, path, options = {}) {
   const apiToken = await resolveHermesApiToken(agent);
   if (!apiToken) {
     const error = new Error(
-      "Hermes API auth token unavailable. Redeploy the agent to refresh runtime auth."
+      "Hermes API auth token unavailable. Redeploy the agent to refresh runtime auth.",
     );
     error.statusCode = 409;
     throw error;
@@ -677,10 +665,7 @@ async function fetchHermesApi(agent, path, options = {}) {
 
   let body;
   if (options.body != null) {
-    body =
-      typeof options.body === "string"
-        ? options.body
-        : JSON.stringify(options.body);
+    body = typeof options.body === "string" ? options.body : JSON.stringify(options.body);
     if (!requestHeaders["Content-Type"]) {
       requestHeaders["Content-Type"] = "application/json";
     }
@@ -747,473 +732,483 @@ async function fetchHermesDashboard(agent, path, options = {}) {
 }
 
 // Hermes runtime status and model metadata for the agent-details WebUI tab.
-router.get("/:id/hermes-ui", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
+router.get(
+  "/:id/hermes-ui",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
 
-  const runtimeAddress = resolveRuntimeAddress(agent);
-  const dashboardAddress = resolveHermesDashboardAddress(agent);
-  if (!runtimeAddress) {
-    return res.status(409).json({ error: "Hermes runtime address not available" });
-  }
+    const runtimeAddress = resolveRuntimeAddress(agent);
+    const dashboardAddress = resolveHermesDashboardAddress(agent);
+    if (!runtimeAddress) {
+      return res.status(409).json({ error: "Hermes runtime address not available" });
+    }
 
-  let health = { ok: false, error: "Hermes runtime not ready yet" };
-  let models = [];
-  let modelsError = null;
-  let gateway = null;
-  let gatewayError = null;
-  let directoryUpdatedAt = null;
-  let configuredModel = null;
-  let configuredProvider = null;
-  let configuredBaseUrl = null;
-  const dashboardBaseUrl = dashboardAddress
-    ? dashboardUrlForAgent(agent, "")
-    : null;
-  let dashboard = {
-    ready: false,
-    url: dashboardBaseUrl,
-    port: dashboardAddress?.port || null,
-    health: null,
-    retryable: true,
-    error: dashboardAddress
-      ? "Hermes dashboard not ready yet"
-      : "Hermes dashboard endpoint not available",
-  };
+    let health = { ok: false, error: "Hermes runtime not ready yet" };
+    let models = [];
+    let modelsError = null;
+    let gateway = null;
+    let gatewayError = null;
+    let directoryUpdatedAt = null;
+    let configuredModel = null;
+    let configuredProvider = null;
+    let configuredBaseUrl = null;
+    const dashboardBaseUrl = dashboardAddress ? dashboardUrlForAgent(agent, "") : null;
+    let dashboard = {
+      ready: false,
+      url: dashboardBaseUrl,
+      port: dashboardAddress?.port || null,
+      health: null,
+      retryable: true,
+      error: dashboardAddress
+        ? "Hermes dashboard not ready yet"
+        : "Hermes dashboard endpoint not available",
+    };
 
-  try {
-    const healthResponse = await fetchHermesApi(agent, "/health", {
-      timeoutMs: 5000,
-    });
-    if (healthResponse.ok && healthResponse.data?.status === "ok") {
-      health = {
-        ok: true,
-        ...healthResponse.data,
-      };
-      const modelsResponse = await fetchHermesApi(agent, "/v1/models", {
+    try {
+      const healthResponse = await fetchHermesApi(agent, "/health", {
         timeoutMs: 5000,
       });
-      if (modelsResponse.ok && Array.isArray(modelsResponse.data?.data)) {
-        models = modelsResponse.data.data;
-      } else {
-        modelsError = extractHermesApiError(
-          modelsResponse.data,
-          `Hermes model listing returned ${modelsResponse.status}`
-        );
-      }
-    } else {
-      health = {
-        ok: false,
-        error: extractHermesApiError(
-          healthResponse.data,
-          `Hermes runtime returned ${healthResponse.status}`
-        ),
-      };
-    }
-  } catch (error) {
-    health = {
-      ok: false,
-      error: error.message || "Hermes runtime not reachable",
-    };
-  }
-
-  try {
-    const dashboardResponse = await fetchHermesDashboard(agent, "/api/status", {
-      timeoutMs: 5000,
-    });
-    if (dashboardResponse.ok) {
-      dashboard = {
-        ready: true,
-        url: dashboardBaseUrl,
-        port: dashboardAddress?.port || null,
-        health: buildHermesDashboardSummary(dashboardResponse.data),
-        retryable: false,
-        error: null,
-      };
-    } else {
-      dashboard = {
-        ready: false,
-        url: dashboardBaseUrl,
-        port: dashboardAddress?.port || null,
-        health: null,
-        retryable: true,
-        error: extractHermesApiError(
-          dashboardResponse.data,
-          `Hermes dashboard returned ${dashboardResponse.status}`
-        ),
-      };
-    }
-  } catch (error) {
-    const ensuredDashboard = await ensureHermesDashboardProcess(agent);
-
-    if (
-      ensuredDashboard.status === "started" ||
-      ensuredDashboard.status === "already-running"
-    ) {
-      try {
-        const dashboardResponse = await fetchHermesDashboard(agent, "/api/status", {
+      if (healthResponse.ok && healthResponse.data?.status === "ok") {
+        health = {
+          ok: true,
+          ...healthResponse.data,
+        };
+        const modelsResponse = await fetchHermesApi(agent, "/v1/models", {
           timeoutMs: 5000,
         });
-        if (dashboardResponse.ok) {
-          dashboard = {
-            ready: true,
-            url: dashboardBaseUrl,
-            port: dashboardAddress?.port || null,
-            health: buildHermesDashboardSummary(dashboardResponse.data),
-            retryable: false,
-            error: null,
-          };
+        if (modelsResponse.ok && Array.isArray(modelsResponse.data?.data)) {
+          models = modelsResponse.data.data;
         } else {
-          dashboard = {
-            ready: false,
-            url: dashboardBaseUrl,
-            port: dashboardAddress?.port || null,
-            health: null,
-            retryable: true,
-            error: extractHermesApiError(
-              dashboardResponse.data,
-              `Hermes dashboard returned ${dashboardResponse.status}`
-            ),
-          };
+          modelsError = extractHermesApiError(
+            modelsResponse.data,
+            `Hermes model listing returned ${modelsResponse.status}`,
+          );
         }
-      } catch (retryError) {
+      } else {
+        health = {
+          ok: false,
+          error: extractHermesApiError(
+            healthResponse.data,
+            `Hermes runtime returned ${healthResponse.status}`,
+          ),
+        };
+      }
+    } catch (error) {
+      health = {
+        ok: false,
+        error: error.message || "Hermes runtime not reachable",
+      };
+    }
+
+    try {
+      const dashboardResponse = await fetchHermesDashboard(agent, "/api/status", {
+        timeoutMs: 5000,
+      });
+      if (dashboardResponse.ok) {
+        dashboard = {
+          ready: true,
+          url: dashboardBaseUrl,
+          port: dashboardAddress?.port || null,
+          health: buildHermesDashboardSummary(dashboardResponse.data),
+          retryable: false,
+          error: null,
+        };
+      } else {
         dashboard = {
           ready: false,
           url: dashboardBaseUrl,
           port: dashboardAddress?.port || null,
           health: null,
           retryable: true,
-          error: retryError.message || "Hermes dashboard not reachable",
+          error: extractHermesApiError(
+            dashboardResponse.data,
+            `Hermes dashboard returned ${dashboardResponse.status}`,
+          ),
         };
       }
-    } else if (
-      ensuredDashboard.status === "missing-dashboard" ||
-      ensuredDashboard.status === "missing-web-server" ||
-      ensuredDashboard.status === "missing-cli"
-    ) {
-      dashboard = {
-        ready: false,
-        url: dashboardBaseUrl,
-        port: dashboardAddress?.port || null,
-        health: null,
-        retryable: false,
-        error: buildHermesDashboardUnsupportedMessage(ensuredDashboard.version),
-      };
-    } else if (ensuredDashboard.status === "start-failed") {
-      dashboard = {
-        ready: false,
-        url: dashboardBaseUrl,
-        port: dashboardAddress?.port || null,
-        health: null,
-        retryable: true,
-        error:
-          "Hermes dashboard failed to start inside the running agent. Check the container logs or redeploy the agent.",
-      };
-    } else {
-      dashboard = {
-        ready: false,
-        url: dashboardBaseUrl,
-        port: dashboardAddress?.port || null,
-        health: null,
-        retryable: true,
-        error: error.message || "Hermes dashboard not reachable",
-      };
-    }
-  }
+    } catch (error) {
+      const ensuredDashboard = await ensureHermesDashboardProcess(agent);
 
-  try {
-    const snapshot = await readHermesRuntimeSnapshot(agent);
-    gateway = buildHermesGatewaySummary(snapshot);
-    directoryUpdatedAt = snapshot?.directory?.updated_at || null;
-    configuredModel =
-      typeof snapshot?.modelConfig?.defaultModel === "string" &&
-      snapshot.modelConfig.defaultModel.trim()
-        ? snapshot.modelConfig.defaultModel.trim()
-        : null;
-    configuredProvider =
-      typeof snapshot?.modelConfig?.provider === "string" &&
-      snapshot.modelConfig.provider.trim()
-        ? snapshot.modelConfig.provider.trim()
-        : null;
-    configuredBaseUrl =
-      typeof snapshot?.modelConfig?.baseUrl === "string" &&
-      snapshot.modelConfig.baseUrl.trim()
-        ? snapshot.modelConfig.baseUrl.trim()
-        : null;
-  } catch (error) {
-    gatewayError = error.message || "Failed to read Hermes gateway state";
-  }
-
-  res.json({
-    url: runtimeUrlForAgent(agent, "/v1"),
-    runtime: runtimeAddress,
-    health,
-    dashboard,
-    models,
-    defaultModel: configuredModel || models[0]?.id || null,
-    configuredModel,
-    configuredProvider,
-    configuredBaseUrl,
-    directoryUpdatedAt,
-    ...(gateway ? { gateway } : {}),
-    ...(modelsError ? { modelsError } : {}),
-    ...(gatewayError ? { gatewayError } : {}),
-  });
-}));
-
-router.post("/:id/hermes-ui/chat", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
-
-  const messages = (Array.isArray(req.body?.messages) ? req.body.messages : [])
-    .map((entry) => ({
-      role: String(entry?.role || "").trim(),
-      content: String(entry?.content || ""),
-    }))
-    .filter(
-      (entry) =>
-        ["system", "user", "assistant"].includes(entry.role) &&
-        entry.content.trim()
-    );
-
-  if (!messages.length) {
-    return res.status(400).json({ error: "At least one chat message is required" });
-  }
-
-  if (messages[messages.length - 1]?.role !== "user") {
-    return res.status(400).json({
-      error: "Hermes chat requests must end with a user message",
-    });
-  }
-
-  const requestedModel =
-    typeof req.body?.model === "string" ? req.body.model.trim() : "";
-  const sessionId =
-    typeof req.body?.sessionId === "string" ? req.body.sessionId.trim() : "";
-
-  let chatResponse;
-  try {
-    chatResponse = await fetchHermesApi(agent, "/v1/chat/completions", {
-      method: "POST",
-      timeoutMs: 240000,
-      headers: sessionId
-        ? {
-            "X-Hermes-Session-Id": sessionId,
+      if (ensuredDashboard.status === "started" || ensuredDashboard.status === "already-running") {
+        try {
+          const dashboardResponse = await fetchHermesDashboard(agent, "/api/status", {
+            timeoutMs: 5000,
+          });
+          if (dashboardResponse.ok) {
+            dashboard = {
+              ready: true,
+              url: dashboardBaseUrl,
+              port: dashboardAddress?.port || null,
+              health: buildHermesDashboardSummary(dashboardResponse.data),
+              retryable: false,
+              error: null,
+            };
+          } else {
+            dashboard = {
+              ready: false,
+              url: dashboardBaseUrl,
+              port: dashboardAddress?.port || null,
+              health: null,
+              retryable: true,
+              error: extractHermesApiError(
+                dashboardResponse.data,
+                `Hermes dashboard returned ${dashboardResponse.status}`,
+              ),
+            };
           }
-        : undefined,
-      body: {
-        ...(requestedModel ? { model: requestedModel } : {}),
-        stream: false,
-        messages,
-      },
-    });
-  } catch (error) {
-    return res
-      .status(error.statusCode || 502)
-      .json({ error: error.message || "Hermes runtime unreachable" });
-  }
-
-  if (!chatResponse.ok) {
-    const upstreamStatus =
-      chatResponse.status >= 500 ? 502 : chatResponse.status;
-    return res.status(upstreamStatus).json({
-      error: extractHermesApiError(
-        chatResponse.data,
-        `Hermes chat returned ${chatResponse.status}`
-      ),
-    });
-  }
-
-  const assistantMessage =
-    chatResponse.data?.choices?.[0]?.message?.content || "";
-  if (!assistantMessage) {
-    return res.status(502).json({
-      error: "Hermes chat returned an empty assistant message",
-    });
-  }
-
-  res.json({
-    message: assistantMessage,
-    usage: chatResponse.data?.usage || null,
-    model: chatResponse.data?.model || requestedModel || null,
-    sessionId:
-      chatResponse.headers.get("x-hermes-session-id") || sessionId || null,
-  });
-}));
-
-router.get("/:id/hermes-ui/cron", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
-
-  try {
-    const cronResponse = await fetchHermesApi(
-      agent,
-      "/api/jobs?include_disabled=true",
-      { timeoutMs: 10000 }
-    );
-    if (!cronResponse.ok) {
-      return res.status(cronResponse.status >= 500 ? 502 : cronResponse.status).json({
-        error: extractHermesApiError(
-          cronResponse.data,
-          `Hermes cron listing returned ${cronResponse.status}`
-        ),
-      });
-    }
-
-    res.json(normalizeHermesCronListPayload(cronResponse.data));
-  } catch (error) {
-    res.status(error.statusCode || 502).json({
-      error: error.message || "Hermes cron endpoint unreachable",
-    });
-  }
-}));
-
-router.post("/:id/hermes-ui/cron", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
-
-  try {
-    const cronResponse = await fetchHermesApi(agent, "/api/jobs", {
-      method: "POST",
-      timeoutMs: 15000,
-      body: normalizeHermesCronPayload(req.body),
-    });
-    if (!cronResponse.ok) {
-      return res.status(cronResponse.status >= 500 ? 502 : cronResponse.status).json({
-        error: extractHermesApiError(
-          cronResponse.data,
-          `Hermes cron creation returned ${cronResponse.status}`
-        ),
-      });
-    }
-
-    res.json(
-      cronResponse.data && typeof cronResponse.data === "object"
-        ? cronResponse.data
-        : { job: null }
-    );
-  } catch (error) {
-    res.status(error.statusCode || 502).json({
-      error: error.message || "Hermes cron endpoint unreachable",
-    });
-  }
-}));
-
-router.delete("/:id/hermes-ui/cron/:jobId", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
-
-  try {
-    const cronResponse = await fetchHermesApi(
-      agent,
-      `/api/jobs/${encodeURIComponent(req.params.jobId)}`,
-      {
-        method: "DELETE",
-        timeoutMs: 15000,
+        } catch (retryError) {
+          dashboard = {
+            ready: false,
+            url: dashboardBaseUrl,
+            port: dashboardAddress?.port || null,
+            health: null,
+            retryable: true,
+            error: retryError.message || "Hermes dashboard not reachable",
+          };
+        }
+      } else if (
+        ensuredDashboard.status === "missing-dashboard" ||
+        ensuredDashboard.status === "missing-web-server" ||
+        ensuredDashboard.status === "missing-cli"
+      ) {
+        dashboard = {
+          ready: false,
+          url: dashboardBaseUrl,
+          port: dashboardAddress?.port || null,
+          health: null,
+          retryable: false,
+          error: buildHermesDashboardUnsupportedMessage(ensuredDashboard.version),
+        };
+      } else if (ensuredDashboard.status === "start-failed") {
+        dashboard = {
+          ready: false,
+          url: dashboardBaseUrl,
+          port: dashboardAddress?.port || null,
+          health: null,
+          retryable: true,
+          error:
+            "Hermes dashboard failed to start inside the running agent. Check the container logs or redeploy the agent.",
+        };
+      } else {
+        dashboard = {
+          ready: false,
+          url: dashboardBaseUrl,
+          port: dashboardAddress?.port || null,
+          health: null,
+          retryable: true,
+          error: error.message || "Hermes dashboard not reachable",
+        };
       }
-    );
-    if (!cronResponse.ok) {
-      return res.status(cronResponse.status >= 500 ? 502 : cronResponse.status).json({
+    }
+
+    try {
+      const snapshot = await readHermesRuntimeSnapshot(agent);
+      gateway = buildHermesGatewaySummary(snapshot);
+      directoryUpdatedAt = snapshot?.directory?.updated_at || null;
+      configuredModel =
+        typeof snapshot?.modelConfig?.defaultModel === "string" &&
+        snapshot.modelConfig.defaultModel.trim()
+          ? snapshot.modelConfig.defaultModel.trim()
+          : null;
+      configuredProvider =
+        typeof snapshot?.modelConfig?.provider === "string" && snapshot.modelConfig.provider.trim()
+          ? snapshot.modelConfig.provider.trim()
+          : null;
+      configuredBaseUrl =
+        typeof snapshot?.modelConfig?.baseUrl === "string" && snapshot.modelConfig.baseUrl.trim()
+          ? snapshot.modelConfig.baseUrl.trim()
+          : null;
+    } catch (error) {
+      gatewayError = error.message || "Failed to read Hermes gateway state";
+    }
+
+    res.json({
+      url: runtimeUrlForAgent(agent, "/v1"),
+      runtime: runtimeAddress,
+      health,
+      dashboard,
+      models,
+      defaultModel: configuredModel || models[0]?.id || null,
+      configuredModel,
+      configuredProvider,
+      configuredBaseUrl,
+      directoryUpdatedAt,
+      ...(gateway ? { gateway } : {}),
+      ...(modelsError ? { modelsError } : {}),
+      ...(gatewayError ? { gatewayError } : {}),
+    });
+  }),
+);
+
+router.post(
+  "/:id/hermes-ui/chat",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
+
+    const messages = (Array.isArray(req.body?.messages) ? req.body.messages : [])
+      .map((entry) => ({
+        role: String(entry?.role || "").trim(),
+        content: String(entry?.content || ""),
+      }))
+      .filter(
+        (entry) => ["system", "user", "assistant"].includes(entry.role) && entry.content.trim(),
+      );
+
+    if (!messages.length) {
+      return res.status(400).json({ error: "At least one chat message is required" });
+    }
+
+    if (messages[messages.length - 1]?.role !== "user") {
+      return res.status(400).json({
+        error: "Hermes chat requests must end with a user message",
+      });
+    }
+
+    const requestedModel = typeof req.body?.model === "string" ? req.body.model.trim() : "";
+    const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId.trim() : "";
+
+    let chatResponse;
+    try {
+      chatResponse = await fetchHermesApi(agent, "/v1/chat/completions", {
+        method: "POST",
+        timeoutMs: 240000,
+        headers: sessionId
+          ? {
+              "X-Hermes-Session-Id": sessionId,
+            }
+          : undefined,
+        body: {
+          ...(requestedModel ? { model: requestedModel } : {}),
+          stream: false,
+          messages,
+        },
+      });
+    } catch (error) {
+      return res
+        .status(error.statusCode || 502)
+        .json({ error: error.message || "Hermes runtime unreachable" });
+    }
+
+    if (!chatResponse.ok) {
+      const upstreamStatus = chatResponse.status >= 500 ? 502 : chatResponse.status;
+      return res.status(upstreamStatus).json({
         error: extractHermesApiError(
-          cronResponse.data,
-          `Hermes cron deletion returned ${cronResponse.status}`
+          chatResponse.data,
+          `Hermes chat returned ${chatResponse.status}`,
         ),
+      });
+    }
+
+    const assistantMessage = chatResponse.data?.choices?.[0]?.message?.content || "";
+    if (!assistantMessage) {
+      return res.status(502).json({
+        error: "Hermes chat returned an empty assistant message",
       });
     }
 
     res.json({
-      success: true,
-      ...(cronResponse.data && typeof cronResponse.data === "object"
-        ? cronResponse.data
-        : {}),
+      message: assistantMessage,
+      usage: chatResponse.data?.usage || null,
+      model: chatResponse.data?.model || requestedModel || null,
+      sessionId: chatResponse.headers.get("x-hermes-session-id") || sessionId || null,
     });
-  } catch (error) {
-    res.status(error.statusCode || 502).json({
-      error: error.message || "Hermes cron endpoint unreachable",
-    });
-  }
-}));
+  }),
+);
 
-router.get("/:id/hermes-ui/channels", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
+router.get(
+  "/:id/hermes-ui/cron",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
 
-  try {
-    res.json(await listHermesChannels(agent));
-  } catch (error) {
-    res.status(error.statusCode || 500).json({
-      error: error.message || "Failed to load Hermes channels",
-    });
-  }
-}));
+    try {
+      const cronResponse = await fetchHermesApi(agent, "/api/jobs?include_disabled=true", {
+        timeoutMs: 10000,
+      });
+      if (!cronResponse.ok) {
+        return res.status(cronResponse.status >= 500 ? 502 : cronResponse.status).json({
+          error: extractHermesApiError(
+            cronResponse.data,
+            `Hermes cron listing returned ${cronResponse.status}`,
+          ),
+        });
+      }
 
-router.post("/:id/hermes-ui/channels", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
-  const type =
-    typeof req.body?.type === "string" ? req.body.type.trim().toLowerCase() : "";
+      res.json(normalizeHermesCronListPayload(cronResponse.data));
+    } catch (error) {
+      res.status(error.statusCode || 502).json({
+        error: error.message || "Hermes cron endpoint unreachable",
+      });
+    }
+  }),
+);
 
-  if (!type) {
-    return res.status(400).json({ error: "Channel type is required" });
-  }
+router.post(
+  "/:id/hermes-ui/cron",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
 
-  try {
-    res.json(
-      await saveHermesChannel(agent, type, resolveHermesChannelConfig(req.body), {
-        create: true,
-      })
-    );
-  } catch (error) {
-    res.status(error.statusCode || 500).json({
-      error: error.message || "Failed to save Hermes channel",
-    });
-  }
-}));
+    try {
+      const cronResponse = await fetchHermesApi(agent, "/api/jobs", {
+        method: "POST",
+        timeoutMs: 15000,
+        body: normalizeHermesCronPayload(req.body),
+      });
+      if (!cronResponse.ok) {
+        return res.status(cronResponse.status >= 500 ? 502 : cronResponse.status).json({
+          error: extractHermesApiError(
+            cronResponse.data,
+            `Hermes cron creation returned ${cronResponse.status}`,
+          ),
+        });
+      }
 
-router.patch("/:id/hermes-ui/channels/:channelId", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
+      res.json(
+        cronResponse.data && typeof cronResponse.data === "object"
+          ? cronResponse.data
+          : { job: null },
+      );
+    } catch (error) {
+      res.status(error.statusCode || 502).json({
+        error: error.message || "Hermes cron endpoint unreachable",
+      });
+    }
+  }),
+);
 
-  try {
-    res.json(
-      await saveHermesChannel(
+router.delete(
+  "/:id/hermes-ui/cron/:jobId",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
+
+    try {
+      const cronResponse = await fetchHermesApi(
         agent,
-        req.params.channelId,
-        resolveHermesChannelConfig(req.body)
-      )
-    );
-  } catch (error) {
-    res.status(error.statusCode || 500).json({
-      error: error.message || "Failed to update Hermes channel",
-    });
-  }
-}));
+        `/api/jobs/${encodeURIComponent(req.params.jobId)}`,
+        {
+          method: "DELETE",
+          timeoutMs: 15000,
+        },
+      );
+      if (!cronResponse.ok) {
+        return res.status(cronResponse.status >= 500 ? 502 : cronResponse.status).json({
+          error: extractHermesApiError(
+            cronResponse.data,
+            `Hermes cron deletion returned ${cronResponse.status}`,
+          ),
+        });
+      }
 
-router.delete("/:id/hermes-ui/channels/:channelId", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
+      res.json({
+        success: true,
+        ...(cronResponse.data && typeof cronResponse.data === "object" ? cronResponse.data : {}),
+      });
+    } catch (error) {
+      res.status(error.statusCode || 502).json({
+        error: error.message || "Hermes cron endpoint unreachable",
+      });
+    }
+  }),
+);
 
-  try {
-    res.json(await deleteHermesChannel(agent, req.params.channelId));
-  } catch (error) {
-    res.status(error.statusCode || 500).json({
-      error: error.message || "Failed to delete Hermes channel",
-    });
-  }
-}));
+router.get(
+  "/:id/hermes-ui/channels",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
 
-router.post("/:id/hermes-ui/channels/:channelId/test", asyncHandler(async (req, res) => {
-  const agent = await loadHermesUiAgent(req);
+    try {
+      res.json(await listHermesChannels(agent));
+    } catch (error) {
+      res.status(error.statusCode || 500).json({
+        error: error.message || "Failed to load Hermes channels",
+      });
+    }
+  }),
+);
 
-  try {
-    res.json(await testHermesChannel(agent, req.params.channelId));
-  } catch (error) {
-    res.status(error.statusCode || 500).json({
-      error: error.message || "Failed to test Hermes channel",
-    });
-  }
-}));
+router.post(
+  "/:id/hermes-ui/channels",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
+    const type = typeof req.body?.type === "string" ? req.body.type.trim().toLowerCase() : "";
+
+    if (!type) {
+      return res.status(400).json({ error: "Channel type is required" });
+    }
+
+    try {
+      res.json(
+        await saveHermesChannel(agent, type, resolveHermesChannelConfig(req.body), {
+          create: true,
+        }),
+      );
+    } catch (error) {
+      res.status(error.statusCode || 500).json({
+        error: error.message || "Failed to save Hermes channel",
+      });
+    }
+  }),
+);
+
+router.patch(
+  "/:id/hermes-ui/channels/:channelId",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
+
+    try {
+      res.json(
+        await saveHermesChannel(agent, req.params.channelId, resolveHermesChannelConfig(req.body)),
+      );
+    } catch (error) {
+      res.status(error.statusCode || 500).json({
+        error: error.message || "Failed to update Hermes channel",
+      });
+    }
+  }),
+);
+
+router.delete(
+  "/:id/hermes-ui/channels/:channelId",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
+
+    try {
+      res.json(await deleteHermesChannel(agent, req.params.channelId));
+    } catch (error) {
+      res.status(error.statusCode || 500).json({
+        error: error.message || "Failed to delete Hermes channel",
+      });
+    }
+  }),
+);
+
+router.post(
+  "/:id/hermes-ui/channels/:channelId/test",
+  asyncHandler(async (req, res) => {
+    const agent = await loadHermesUiAgent(req);
+
+    try {
+      res.json(await testHermesChannel(agent, req.params.channelId));
+    } catch (error) {
+      res.status(error.statusCode || 500).json({
+        error: error.message || "Failed to test Hermes channel",
+      });
+    }
+  }),
+);
 
 // Live container resource stats (CPU, memory, network, PIDs)
-router.get("/:id/stats", asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-    [req.params.id, req.user.id]
-  );
-  const agent = result.rows[0];
-  if (!agent) return res.status(404).json({ error: "Agent not found" });
-  res.json(await buildAgentStatsResponse(agent));
-}));
+router.get(
+  "/:id/stats",
+  asyncHandler(async (req, res) => {
+    const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
+    const agent = result.rows[0];
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.json(await buildAgentStatsResponse(agent));
+  }),
+);
 
 router.post("/deploy", async (req, res) => {
   try {
@@ -1221,15 +1216,13 @@ router.post("/deploy", async (req, res) => {
     const clawhubSkills = normalizeClawhubSkills(requestBody.clawhub_skills);
     // Enforce billing limits
     const limits = await billing.enforceLimits(req.user.id);
-    if (!limits.allowed) return res.status(402).json({ error: limits.error, subscription: limits.subscription });
+    if (!limits.allowed)
+      return res.status(402).json({ error: limits.error, subscription: limits.subscription });
 
     const sub = limits.subscription;
     let migrationDraft = null;
     if (requestBody.migration_draft_id) {
-      migrationDraft = await getOwnedMigrationDraft(
-        requestBody.migration_draft_id,
-        req.user.id
-      );
+      migrationDraft = await getOwnedMigrationDraft(requestBody.migration_draft_id, req.user.id);
       if (!migrationDraft) {
         return res.status(404).json({ error: "Migration draft not found" });
       }
@@ -1248,11 +1241,10 @@ router.post("/deploy", async (req, res) => {
     const name = sanitizeAgentName(
       requestBody.name,
       migrationDraft?.manifest?.name ||
-        (migrationDraft?.manifest?.runtimeFamily === "hermes"
-          ? "Hermes-Agent"
-          : "OpenClaw-Agent")
+        (migrationDraft?.manifest?.runtimeFamily === "hermes" ? "Hermes-Agent" : "OpenClaw-Agent"),
     );
-    if (name.length > 100) return res.status(400).json({ error: "Agent name must be 100 characters or less" });
+    if (name.length > 100)
+      return res.status(400).json({ error: "Agent name must be 100 characters or less" });
     const runtimeFields = resolveRequestedRuntimeFields({
       request: {
         ...requestBody,
@@ -1265,10 +1257,7 @@ router.post("/deploy", async (req, res) => {
       runtimeSelection: runtimeFields,
     });
     assertSupportedRuntimeSelection(runtimeFields);
-    if (
-      migrationDraft &&
-      runtimeFields.runtime_family !== migrationDraft.manifest.runtimeFamily
-    ) {
+    if (migrationDraft && runtimeFields.runtime_family !== migrationDraft.manifest.runtimeFamily) {
       return res.status(400).json({
         error: `Migration draft targets the ${migrationDraft.manifest.runtimeFamily} runtime family and cannot be deployed as ${runtimeFields.runtime_family}.`,
       });
@@ -1285,7 +1274,7 @@ router.post("/deploy", async (req, res) => {
       // Self-hosted: accept user-chosen values clamped to operator limits
       specs = clampDeploymentDefaults(
         normalizeDeploymentDefaults(requestBody, deploymentDefaults),
-        billing.SELFHOSTED_LIMITS
+        billing.SELFHOSTED_LIMITS,
       );
     } else {
       // PaaS: resources are controlled by the operator-managed deployment defaults.
@@ -1297,7 +1286,8 @@ router.post("/deploy", async (req, res) => {
     });
     const templatePayload = migrationDraft
       ? migrationDraft.manifest.runtimeFamily === "openclaw"
-        ? migrationDraft.manifest.templatePayload || ensureCoreTemplateFiles(
+        ? migrationDraft.manifest.templatePayload ||
+          ensureCoreTemplateFiles(
             createEmptyTemplatePayload({
               source: "migration-draft",
             }),
@@ -1305,7 +1295,7 @@ router.post("/deploy", async (req, res) => {
               name,
               sourceType: "platform",
               includeBootstrap: true,
-            }
+            },
           )
         : createEmptyTemplatePayload({
             source: "migration-draft",
@@ -1320,7 +1310,7 @@ router.post("/deploy", async (req, res) => {
               name,
               sourceType: "platform",
               includeBootstrap: true,
-            }
+            },
           )
         : createEmptyTemplatePayload({
             source: "blank-deploy",
@@ -1348,7 +1338,7 @@ router.post("/deploy", async (req, res) => {
         runtimeFields.runtime_family,
         runtimeFields.deploy_target,
         runtimeFields.sandbox_profile,
-      ]
+      ],
     );
     const agent = result.rows[0];
 
@@ -1370,10 +1360,7 @@ router.post("/deploy", async (req, res) => {
       await attachDraftToAgent(migrationDraft.id, agent.id);
     }
 
-    await db.query(
-      "INSERT INTO deployments(agent_id, status) VALUES($1, 'queued')",
-      [agent.id]
-    );
+    await db.query("INSERT INTO deployments(agent_id, status) VALUES($1, 'queued')", [agent.id]);
 
     await addDeploymentJob({
       id: agent.id,
@@ -1406,7 +1393,7 @@ router.post("/deploy", async (req, res) => {
           containerName,
           migrationDraftId: migrationDraft?.id || null,
         },
-      })
+      }),
     );
 
     res.json(serializeAgent(agent));
@@ -1415,185 +1402,190 @@ router.post("/deploy", async (req, res) => {
   }
 });
 
-router.patch("/:id", asyncHandler(async (req, res) => {
-  const result = await db.query(
-    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-    [req.params.id, req.user.id]
-  );
-  const agent = result.rows[0];
-  if (!agent) return res.status(404).json({ error: "Agent not found" });
+router.patch(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
+    const agent = result.rows[0];
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-  const name = sanitizeAgentName(req.body.name, agent.name || "OpenClaw-Agent");
-  if (name.length > 100) {
-    return res.status(400).json({ error: "Agent name must be 100 characters or less" });
-  }
+    const name = sanitizeAgentName(req.body.name, agent.name || "OpenClaw-Agent");
+    if (name.length > 100) {
+      return res.status(400).json({ error: "Agent name must be 100 characters or less" });
+    }
 
-  const updated = await db.query(
-    "UPDATE agents SET name = $1 WHERE id = $2 RETURNING *",
-    [name, agent.id]
-  );
-  await monitoring.logEvent(
-    "agent_renamed",
-    `Agent renamed to "${name}"`,
-    agentAuditMetadata(req, updated.rows[0], {
-      result: {
-        previousName: agent.name,
-        nextName: name,
-      },
-    })
-  );
-  res.json(serializeAgent(updated.rows[0]));
-}));
+    const updated = await db.query("UPDATE agents SET name = $1 WHERE id = $2 RETURNING *", [
+      name,
+      agent.id,
+    ]);
+    await monitoring.logEvent(
+      "agent_renamed",
+      `Agent renamed to "${name}"`,
+      agentAuditMetadata(req, updated.rows[0], {
+        result: {
+          previousName: agent.name,
+          nextName: name,
+        },
+      }),
+    );
+    res.json(serializeAgent(updated.rows[0]));
+  }),
+);
 
-router.post("/:id/duplicate", asyncHandler(async (req, res) => {
-  const requestBody = req.body || {};
-  const limits = await billing.enforceLimits(req.user.id);
-  if (!limits.allowed) {
-    return res.status(402).json({ error: limits.error, subscription: limits.subscription });
-  }
+router.post(
+  "/:id/duplicate",
+  asyncHandler(async (req, res) => {
+    const requestBody = req.body || {};
+    const limits = await billing.enforceLimits(req.user.id);
+    if (!limits.allowed) {
+      return res.status(402).json({ error: limits.error, subscription: limits.subscription });
+    }
 
-  const sourceResult = await db.query(
-    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-    [req.params.id, req.user.id]
-  );
-  const sourceAgent = sourceResult.rows[0];
-  if (!sourceAgent) return res.status(404).json({ error: "Agent not found" });
-  const sourceRuntime = buildAgentRuntimeFields(sourceAgent);
-  res.locals.auditContext = buildAgentContext(sourceAgent, {
-    ownerEmail: req.user.email || null,
-  });
-
-  const cloneMode = CLONE_MODES.has(requestBody.clone_mode)
-    ? requestBody.clone_mode
-    : "files_only";
-  const runtimeFamily = normalizeRequestedRuntimeFamily(requestBody.runtime_family);
-  if (requestBody.runtime_family != null && runtimeFamily == null) {
-    return res.status(400).json({
-      error: `Unsupported runtime_family. Nora currently supports: ${KNOWN_RUNTIME_FAMILIES.map((value) => `"${value}"`).join(", ")}.`,
+    const sourceResult = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
+    const sourceAgent = sourceResult.rows[0];
+    if (!sourceAgent) return res.status(404).json({ error: "Agent not found" });
+    const sourceRuntime = buildAgentRuntimeFields(sourceAgent);
+    res.locals.auditContext = buildAgentContext(sourceAgent, {
+      ownerEmail: req.user.email || null,
     });
-  }
-  const name = sanitizeAgentName(
-    requestBody.name,
-    `${sourceAgent.name || "OpenClaw-Agent"} Copy`
-  );
-  if (name.length > 100) {
-    return res.status(400).json({ error: "Agent name must be 100 characters or less" });
-  }
 
-  const runtimeFields = resolveRequestedRuntimeFields({
-    request: {
-      ...requestBody,
-      runtime_family: runtimeFamily || sourceRuntime.runtime_family,
-    },
-    fallback: sourceRuntime,
-  });
-  assertSupportedRuntimeSelection(runtimeFields);
-  assertBackendAvailable(runtimeFields.backend_type);
-  const node = await scheduler.selectNode({
-    fallback: runtimeFields.deploy_target,
-  });
-  const specs = {
-    vcpu: sourceAgent.vcpu || 2,
-    ram_mb: sourceAgent.ram_mb || 2048,
-    disk_gb: sourceAgent.disk_gb || 20,
-  };
-  const image = resolveRequestedImage({
-    requestedImage: requestBody.image,
-    runtimeFields,
-    fallbackImage: sourceAgent.image || null,
-    fallbackRuntimeFields: sourceRuntime,
-  });
-  const containerName = resolveContainerName({
-    requestedName: requestBody.container_name,
-    agentName: name,
-    runtimeSelection: runtimeFields,
-  });
+    const cloneMode = CLONE_MODES.has(requestBody.clone_mode)
+      ? requestBody.clone_mode
+      : "files_only";
+    const runtimeFamily = normalizeRequestedRuntimeFamily(requestBody.runtime_family);
+    if (requestBody.runtime_family != null && runtimeFamily == null) {
+      return res.status(400).json({
+        error: `Unsupported runtime_family. Nora currently supports: ${KNOWN_RUNTIME_FAMILIES.map((value) => `"${value}"`).join(", ")}.`,
+      });
+    }
+    const name = sanitizeAgentName(
+      requestBody.name,
+      `${sourceAgent.name || "OpenClaw-Agent"} Copy`,
+    );
+    if (name.length > 100) {
+      return res.status(400).json({ error: "Agent name must be 100 characters or less" });
+    }
 
-  let templatePayload;
-  try {
-    templatePayload = await buildTemplatePayloadFromAgent(sourceAgent, cloneMode);
-  } catch (err) {
-    return res.status(409).json({ error: err.message });
-  }
+    const runtimeFields = resolveRequestedRuntimeFields({
+      request: {
+        ...requestBody,
+        runtime_family: runtimeFamily || sourceRuntime.runtime_family,
+      },
+      fallback: sourceRuntime,
+    });
+    assertSupportedRuntimeSelection(runtimeFields);
+    assertBackendAvailable(runtimeFields.backend_type);
+    const node = await scheduler.selectNode({
+      fallback: runtimeFields.deploy_target,
+    });
+    const specs = {
+      vcpu: sourceAgent.vcpu || 2,
+      ram_mb: sourceAgent.ram_mb || 2048,
+      disk_gb: sourceAgent.disk_gb || 20,
+    };
+    const image = resolveRequestedImage({
+      requestedImage: requestBody.image,
+      runtimeFields,
+      fallbackImage: sourceAgent.image || null,
+      fallbackRuntimeFields: sourceRuntime,
+    });
+    const containerName = resolveContainerName({
+      requestedName: requestBody.container_name,
+      agentName: name,
+      runtimeSelection: runtimeFields,
+    });
 
-  const inserted = await db.query(
-    `INSERT INTO agents(
+    let templatePayload;
+    try {
+      templatePayload = await buildTemplatePayloadFromAgent(sourceAgent, cloneMode);
+    } catch (err) {
+      return res.status(409).json({ error: err.message });
+    }
+
+    const inserted = await db.query(
+      `INSERT INTO agents(
        user_id, name, status, node, backend_type, sandbox_type, vcpu, ram_mb, disk_gb,
        container_name, image, template_payload, runtime_family, deploy_target,
        sandbox_profile
      ) VALUES($1, $2, 'queued', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
-    [
-      req.user.id,
-      name,
-      node?.name || runtimeFields.deploy_target,
-      runtimeFields.backend_type,
-      runtimeFields.sandbox_type,
-      specs.vcpu,
-      specs.ram_mb,
-      specs.disk_gb,
-      containerName,
+      [
+        req.user.id,
+        name,
+        node?.name || runtimeFields.deploy_target,
+        runtimeFields.backend_type,
+        runtimeFields.sandbox_type,
+        specs.vcpu,
+        specs.ram_mb,
+        specs.disk_gb,
+        containerName,
+        image,
+        JSON.stringify(templatePayload),
+        runtimeFields.runtime_family,
+        runtimeFields.deploy_target,
+        runtimeFields.sandbox_profile,
+      ],
+    );
+    const agent = inserted.rows[0];
+
+    await materializeTemplateWiring(agent.id, templatePayload);
+    await db.query("INSERT INTO deployments(agent_id, status) VALUES($1, 'queued')", [agent.id]);
+    await addDeploymentJob({
+      id: agent.id,
+      name: agent.name,
+      userId: req.user.id,
+      plan: limits.subscription.plan,
+      backend: runtimeFields.backend_type,
+      sandbox: runtimeFields.sandbox_profile,
+      specs,
+      container_name: containerName,
       image,
-      JSON.stringify(templatePayload),
-      runtimeFields.runtime_family,
-      runtimeFields.deploy_target,
-      runtimeFields.sandbox_profile,
-    ]
-  );
-  const agent = inserted.rows[0];
+    });
+    await monitoring.logEvent(
+      "agent_duplicated",
+      `Agent "${sourceAgent.name}" duplicated as "${agent.name}"`,
+      agentAuditMetadata(req, agent, {
+        sourceAgent: {
+          id: sourceAgent.id,
+          name: sourceAgent.name,
+        },
+        clone: {
+          mode: cloneMode,
+          runtimeFamily: runtimeFields.runtime_family,
+          deployTarget: runtimeFields.deploy_target,
+          sandboxProfile: runtimeFields.sandbox_profile,
+        },
+      }),
+    );
 
-  await materializeTemplateWiring(agent.id, templatePayload);
-  await db.query(
-    "INSERT INTO deployments(agent_id, status) VALUES($1, 'queued')",
-    [agent.id]
-  );
-  await addDeploymentJob({
-    id: agent.id,
-    name: agent.name,
-    userId: req.user.id,
-    plan: limits.subscription.plan,
-    backend: runtimeFields.backend_type,
-    sandbox: runtimeFields.sandbox_profile,
-    specs,
-    container_name: containerName,
-    image,
-  });
-  await monitoring.logEvent(
-    "agent_duplicated",
-    `Agent "${sourceAgent.name}" duplicated as "${agent.name}"`,
-    agentAuditMetadata(req, agent, {
-      sourceAgent: {
-        id: sourceAgent.id,
-        name: sourceAgent.name,
-      },
-      clone: {
-        mode: cloneMode,
-        runtimeFamily: runtimeFields.runtime_family,
-        deployTarget: runtimeFields.deploy_target,
-        sandboxProfile: runtimeFields.sandbox_profile,
-      },
-    })
-  );
-
-  res.json(serializeAgent(agent));
-}));
+    res.json(serializeAgent(agent));
+  }),
+);
 
 router.post("/:id/start", async (req, res) => {
   try {
-    const result = await db.query(
-      "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-      [req.params.id, req.user.id]
-    );
+    const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
     res.locals.auditContext = buildAgentContext(agent, {
       ownerEmail: req.user.email || null,
     });
-    if (!agent.container_id) return res.status(400).json({ error: "No container — redeploy the agent first" });
+    if (!agent.container_id)
+      return res.status(400).json({ error: "No container — redeploy the agent first" });
 
     await containerManager.start(agent);
 
     const updated = await db.query(
-      "UPDATE agents SET status = 'running' WHERE id = $1 RETURNING *", [agent.id]
+      "UPDATE agents SET status = 'running' WHERE id = $1 RETURNING *",
+      [agent.id],
     );
     try {
       const authSyncResults = await syncAuthToUserAgents(req.user.id, agent.id, {
@@ -1602,13 +1594,11 @@ router.post("/:id/start", async (req, res) => {
       const failedSync = authSyncResults.find((result) => result.status === "failed");
       if (failedSync) {
         console.warn(
-          `[agents.start] Auth sync failed for agent ${agent.id}: ${failedSync.error || "unknown error"}`
+          `[agents.start] Auth sync failed for agent ${agent.id}: ${failedSync.error || "unknown error"}`,
         );
       }
     } catch (syncError) {
-      console.warn(
-        `[agents.start] Auth sync errored for agent ${agent.id}: ${syncError.message}`
-      );
+      console.warn(`[agents.start] Auth sync errored for agent ${agent.id}: ${syncError.message}`);
     }
 
     await monitoring.logEvent(
@@ -1616,7 +1606,7 @@ router.post("/:id/start", async (req, res) => {
       `Agent "${agent.name}" started`,
       agentAuditMetadata(req, updated.rows[0], {
         result: { status: "running" },
-      })
+      }),
     );
     res.json(serializeAgent(updated.rows[0]));
   } catch (e) {
@@ -1626,10 +1616,10 @@ router.post("/:id/start", async (req, res) => {
 
 router.post("/:id/stop", async (req, res) => {
   try {
-    const result = await db.query(
-      "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-      [req.params.id, req.user.id]
-    );
+    const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
     res.locals.auditContext = buildAgentContext(agent, {
@@ -1647,14 +1637,15 @@ router.post("/:id/stop", async (req, res) => {
     }
 
     const updated = await db.query(
-      "UPDATE agents SET status = 'stopped' WHERE id = $1 RETURNING *", [agent.id]
+      "UPDATE agents SET status = 'stopped' WHERE id = $1 RETURNING *",
+      [agent.id],
     );
     await monitoring.logEvent(
       "agent_stopped",
       `Agent "${agent.name}" stopped`,
       agentAuditMetadata(req, updated.rows[0], {
         result: { status: "stopped" },
-      })
+      }),
     );
     res.json(serializeAgent(updated.rows[0]));
   } catch (e) {
@@ -1663,10 +1654,10 @@ router.post("/:id/stop", async (req, res) => {
 });
 
 async function destroyAgent(agentId, userId, req, res) {
-  const result = await db.query(
-    "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-    [agentId, userId]
-  );
+  const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+    agentId,
+    userId,
+  ]);
   const agent = result.rows[0];
   if (!agent) return res.status(404).json({ error: "Agent not found" });
   res.locals.auditContext = buildAgentContext(agent, {
@@ -1687,7 +1678,7 @@ async function destroyAgent(agentId, userId, req, res) {
     `Agent "${agent.name}" deleted`,
     agentAuditMetadata(req, agent, {
       result: { deleted: true },
-    })
+    }),
   );
   res.json({ success: true });
 }
@@ -1710,16 +1701,17 @@ router.delete("/:id", async (req, res) => {
 
 router.post("/:id/restart", async (req, res) => {
   try {
-    const result = await db.query(
-      "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-      [req.params.id, req.user.id]
-    );
+    const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
     res.locals.auditContext = buildAgentContext(agent, {
       ownerEmail: req.user.email || null,
     });
-    if (!agent.container_id) return res.status(400).json({ error: "No container — redeploy the agent first" });
+    if (!agent.container_id)
+      return res.status(400).json({ error: "No container — redeploy the agent first" });
 
     await containerManager.restart(agent);
 
@@ -1729,7 +1721,7 @@ router.post("/:id/restart", async (req, res) => {
       `Agent "${agent.name}" restarted`,
       agentAuditMetadata(req, agent, {
         result: { status: "running" },
-      })
+      }),
     );
     res.json({ success: true });
   } catch (e) {
@@ -1740,17 +1732,19 @@ router.post("/:id/restart", async (req, res) => {
 router.post("/:id/redeploy", async (req, res) => {
   try {
     const requestBody = req.body || {};
-    const result = await db.query(
-      "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
-      [req.params.id, req.user.id]
-    );
+    const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
+      req.params.id,
+      req.user.id,
+    ]);
     const agent = result.rows[0];
     if (!agent) return res.status(404).json({ error: "Agent not found" });
     res.locals.auditContext = buildAgentContext(agent, {
       ownerEmail: req.user.email || null,
     });
     if (!["warning", "error", "stopped"].includes(agent.status)) {
-      return res.status(400).json({ error: "Agent must be in warning, error, or stopped state to redeploy" });
+      return res
+        .status(400)
+        .json({ error: "Agent must be in warning, error, or stopped state to redeploy" });
     }
 
     const runtimeFamily = normalizeRequestedRuntimeFamily(requestBody.runtime_family);
@@ -1811,13 +1805,10 @@ router.post("/:id/redeploy", async (req, res) => {
         runtimeFields.sandbox_profile,
         containerName,
         image,
-      ]
+      ],
     );
 
-    await db.query(
-      "INSERT INTO deployments(agent_id, status) VALUES($1, 'queued')",
-      [agent.id]
-    );
+    await db.query("INSERT INTO deployments(agent_id, status) VALUES($1, 'queued')", [agent.id]);
 
     await addDeploymentJob({
       id: agent.id,
@@ -1841,7 +1832,7 @@ router.post("/:id/redeploy", async (req, res) => {
           deployTarget: runtimeFields.deploy_target,
           sandboxProfile: runtimeFields.sandbox_profile,
         },
-      })
+      }),
     );
 
     res.json({ success: true, status: "queued" });

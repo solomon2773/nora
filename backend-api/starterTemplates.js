@@ -1,9 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const {
-  encodeContentBase64,
-  normalizeTemplatePayload,
-} = require("./agentPayloads");
+const { encodeContentBase64, normalizeTemplatePayload } = require("./agentPayloads");
 const { getDefaultAgentImage } = require("../agent-runtime/lib/agentImages");
 const { getDefaultBackend } = require("../agent-runtime/lib/backendCatalog");
 
@@ -73,9 +70,9 @@ function loadTemplatesFromDisk() {
     const { templateKey, name, description, price, category, starterType } = manifest;
     if (!templateKey) continue;
 
-    const coreFiles = CORE_FILES
-      .filter((f) => fs.existsSync(path.join(dir, f)))
-      .map((f) => textFile(f, fs.readFileSync(path.join(dir, f), "utf8")));
+    const coreFiles = CORE_FILES.filter((f) => fs.existsSync(path.join(dir, f))).map((f) =>
+      textFile(f, fs.readFileSync(path.join(dir, f), "utf8")),
+    );
 
     const payload = buildStarterPayload(coreFiles, { starterType });
 

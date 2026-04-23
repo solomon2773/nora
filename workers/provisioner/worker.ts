@@ -55,19 +55,13 @@ function parsePositiveInteger(rawValue, fallbackValue, { min = 1, max = 32 } = {
   return Math.min(max, Math.max(min, parsed));
 }
 
-const OPENCLAW_WORKSPACE_PATH = '/root/.openclaw/workspace';
+const OPENCLAW_WORKSPACE_PATH = "/root/.openclaw/workspace";
 const CLAWHUB_LOCKFILE_PATH = `${OPENCLAW_WORKSPACE_PATH}/.clawhub/lock.json`;
-const CLAWHUB_INSTALL_TIMEOUT_MS = parseTimeoutMs(
-  process.env.CLAWHUB_INSTALL_TIMEOUT_MS,
-  300000
-);
-const CLAWHUB_INSTALL_LOCK_DURATION_MS = Math.max(
-  CLAWHUB_INSTALL_TIMEOUT_MS + 120000,
-  420000
-);
+const CLAWHUB_INSTALL_TIMEOUT_MS = parseTimeoutMs(process.env.CLAWHUB_INSTALL_TIMEOUT_MS, 300000);
+const CLAWHUB_INSTALL_LOCK_DURATION_MS = Math.max(CLAWHUB_INSTALL_TIMEOUT_MS + 120000, 420000);
 const CLAWHUB_INSTALL_LOCK_RENEW_MS = Math.max(
   Math.min(Math.floor(CLAWHUB_INSTALL_LOCK_DURATION_MS / 2), 120000),
-  30000
+  30000,
 );
 
 const PROVIDER_ENV_MAP = Object.freeze({
@@ -472,21 +466,26 @@ function appendChunkTail(chunks, chunk, state, maxBytes) {
   }
 }
 
-function sanitizeExecOutput(output = '') {
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE_RE = new RegExp("\\u001b\\[[0-9;?]*[ -/]*[@-~]", "g");
+// eslint-disable-next-line no-control-regex
+const NON_PRINTABLE_RE = new RegExp("[^\\x09\\x0a\\x20-\\x7e]", "g");
+
+function sanitizeExecOutput(output = "") {
   return String(output)
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/\r/g, '\n')
-    .replace(/[^\x09\x0a\x20-\x7e]/g, '')
+    .replace(ANSI_ESCAPE_RE, "")
+    .replace(/\r/g, "\n")
+    .replace(NON_PRINTABLE_RE, "")
     .trim();
 }
 async function runProvisionerExecCommand(
   provisioner,
   containerId,
   command,
-  { timeout = 30000, maxOutputBytes = 65536, tty = false, env = [] } = {}
+  { timeout = 30000, maxOutputBytes = 65536, tty = false, env = [] } = {},
 ) {
   const execResult = await provisioner.exec(containerId, {
-    cmd: ['/bin/sh', '-lc', command],
+    cmd: ["/bin/sh", "-lc", command],
     tty,
     env,
   });
@@ -516,10 +515,10 @@ async function runProvisionerExecCommand(
       settled = true;
       clearTimeout(timer);
       if (inspectInterval) clearInterval(inspectInterval);
-      resolve(sanitizeExecOutput(Buffer.concat(chunks).toString('utf8')));
+      resolve(sanitizeExecOutput(Buffer.concat(chunks).toString("utf8")));
     };
 
-    execResult.stream.on('data', (chunk) => {
+    execResult.stream.on("data", (chunk) => {
       appendChunkTail(chunks, chunk, state, maxOutputBytes);
     });
     execResult.stream.on("end", finish);
@@ -564,11 +563,11 @@ async function runProvisionerExecCommand(
 function wrapCommandWithContainerTimeout(command, timeoutMs) {
   const timeoutSeconds = Math.max(1, Math.ceil(timeoutMs / 1000));
   return [
-    'if command -v timeout >/dev/null 2>&1; then',
+    "if command -v timeout >/dev/null 2>&1; then",
     `  exec timeout -k 5s ${timeoutSeconds}s /bin/sh -lc ${JSON.stringify(command)};`,
-    'fi;',
+    "fi;",
     `exec /bin/sh -lc ${JSON.stringify(command)};`,
-  ].join(' ');
+  ].join(" ");
 }
 
 function createClawhubInstallLogger({ jobId, agentId, slug }) {
@@ -576,9 +575,9 @@ function createClawhubInstallLogger({ jobId, agentId, slug }) {
 
   return (step, message, extra = null) => {
     const elapsedMs = Date.now() - startedAt;
-    const suffix = extra ? ` ${JSON.stringify(extra)}` : '';
+    const suffix = extra ? ` ${JSON.stringify(extra)}` : "";
     console.log(
-      `[clawhub-installs] job=${jobId} agent=${agentId} slug=${slug} step=${step} elapsedMs=${elapsedMs} ${message}${suffix}`
+      `[clawhub-installs] job=${jobId} agent=${agentId} slug=${slug} step=${step} elapsedMs=${elapsedMs} ${message}${suffix}`,
     );
   };
 }
@@ -732,15 +731,15 @@ async function markDeploymentLifecycle(db, agentId, status) {
 
 function normalizeInstalledSkillsLockfile(parsed = {}) {
   const skills = parsed?.skills;
-  if (!skills || typeof skills !== 'object' || Array.isArray(skills)) return [];
+  if (!skills || typeof skills !== "object" || Array.isArray(skills)) return [];
 
   return Object.entries(skills)
     .map(([slug, entry]) => ({
       slug,
       version:
-        entry && typeof entry === 'object' && typeof entry.version === 'string'
+        entry && typeof entry === "object" && typeof entry.version === "string"
           ? entry.version
-          : '',
+          : "",
     }))
     .filter((entry) => entry.slug);
 }
@@ -757,27 +756,20 @@ async function readInstalledClawhubSkills(provisioner, containerId) {
 
   let lastError = null;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
-    const { output } = await runProvisionerExecCommand(
-      provisioner,
-      containerId,
-      readCommand,
-      {
-        // Use a TTY here so Docker does not prepend multiplexed stream framing bytes
-        // to the lockfile payload. We additionally base64-wrap the file contents so
-        // JSON parsing only happens after the transport output is normalized.
-        tty: true,
-        env: ['TERM=dumb', 'CI=1', 'NO_COLOR=1', 'CLICOLOR=0'],
-      }
-    );
+    const { output } = await runProvisionerExecCommand(provisioner, containerId, readCommand, {
+      // Use a TTY here so Docker does not prepend multiplexed stream framing bytes
+      // to the lockfile payload. We additionally base64-wrap the file contents so
+      // JSON parsing only happens after the transport output is normalized.
+      tty: true,
+      env: ["TERM=dumb", "CI=1", "NO_COLOR=1", "CLICOLOR=0"],
+    });
 
     try {
       const decoded = Buffer.from(
-        String(output || 'eyJ2ZXJzaW9uIjoxLCJza2lsbHMiOnt9fQ==').trim(),
-        'base64'
-      ).toString('utf8');
-      return normalizeInstalledSkillsLockfile(
-        JSON.parse(decoded || '{"version":1,"skills":{}}')
-      );
+        String(output || "eyJ2ZXJzaW9uIjoxLCJza2lsbHMiOnt9fQ==").trim(),
+        "base64",
+      ).toString("utf8");
+      return normalizeInstalledSkillsLockfile(JSON.parse(decoded || '{"version":1,"skills":{}}'));
     } catch (error) {
       lastError = error;
       if (attempt < 5) {
@@ -786,7 +778,7 @@ async function readInstalledClawhubSkills(provisioner, containerId) {
     }
   }
 
-  throw new Error(`Failed to parse ClawHub lockfile: ${lastError?.message || 'unknown error'}`);
+  throw new Error(`Failed to parse ClawHub lockfile: ${lastError?.message || "unknown error"}`);
 }
 
 async function ensureClawhubCli(provisioner, containerId) {
@@ -795,22 +787,22 @@ async function ensureClawhubCli(provisioner, containerId) {
       provisioner,
       containerId,
       wrapCommandWithContainerTimeout(
-        'if command -v clawhub >/dev/null 2>&1; then exit 0; fi; ' +
-        'if ! command -v npm >/dev/null 2>&1; then exit 42; fi; ' +
-          'npm install -g clawhub',
-        CLAWHUB_INSTALL_TIMEOUT_MS
+        "if command -v clawhub >/dev/null 2>&1; then exit 0; fi; " +
+          "if ! command -v npm >/dev/null 2>&1; then exit 42; fi; " +
+          "npm install -g clawhub",
+        CLAWHUB_INSTALL_TIMEOUT_MS,
       ),
       {
         timeout: CLAWHUB_INSTALL_TIMEOUT_MS + 10000,
-        env: ['TERM=dumb', 'CI=1', 'NO_COLOR=1', 'CLICOLOR=0'],
-      }
+        env: ["TERM=dumb", "CI=1", "NO_COLOR=1", "CLICOLOR=0"],
+      },
     );
   } catch (error) {
-    if (String(error?.message || '').includes('exit 42')) {
+    if (String(error?.message || "").includes("exit 42")) {
       const npmError = new Error(
-        'The clawhub CLI could not be installed. Ensure Node.js is in your base image.'
+        "The clawhub CLI could not be installed. Ensure Node.js is in your base image.",
       );
-      npmError.code = 'npm_unavailable';
+      npmError.code = "npm_unavailable";
       throw npmError;
     }
     throw error;
@@ -821,35 +813,34 @@ async function appendSavedClawhubSkill(agentId, slug, skillEntry) {
   const normalizedEntry = normalizeSavedClawhubSkillEntry(slug, skillEntry);
   if (!normalizedEntry) return;
 
-  const result = await db.query(
-    'SELECT clawhub_skills FROM agents WHERE id = $1 LIMIT 1',
-    [agentId]
-  );
+  const result = await db.query("SELECT clawhub_skills FROM agents WHERE id = $1 LIMIT 1", [
+    agentId,
+  ]);
   const current = Array.isArray(result.rows[0]?.clawhub_skills)
     ? result.rows[0].clawhub_skills
     : [];
   const exists = current.some((entry) => {
-    const savedSlug = String(entry?.installSlug || entry?.slug || '').trim();
-    const savedAuthor = String(entry?.author || '').trim();
+    const savedSlug = String(entry?.installSlug || entry?.slug || "").trim();
+    const savedAuthor = String(entry?.author || "").trim();
     return savedSlug === normalizedEntry.installSlug && savedAuthor === normalizedEntry.author;
   });
   if (exists) return;
 
-  await db.query(
-    'UPDATE agents SET clawhub_skills = $2::jsonb WHERE id = $1',
-    [agentId, JSON.stringify([...current, normalizedEntry])]
-  );
+  await db.query("UPDATE agents SET clawhub_skills = $2::jsonb WHERE id = $1", [
+    agentId,
+    JSON.stringify([...current, normalizedEntry]),
+  ]);
 }
 
 async function reconcileSavedClawhubSkills({
   agentId,
   containerId,
   provisioner,
-  logPrefix = '[clawhub-reconcile]',
+  logPrefix = "[clawhub-reconcile]",
 }) {
   const result = await db.query(
-    'SELECT clawhub_skills, backend_type, runtime_family FROM agents WHERE id = $1 LIMIT 1',
-    [agentId]
+    "SELECT clawhub_skills, backend_type, runtime_family FROM agents WHERE id = $1 LIMIT 1",
+    [agentId],
   );
   const agent = result.rows[0];
   if (!agent) {
@@ -857,7 +848,7 @@ async function reconcileSavedClawhubSkills({
     return;
   }
 
-  if (agent.backend_type !== 'docker' || agent.runtime_family !== 'openclaw') {
+  if (agent.backend_type !== "docker" || agent.runtime_family !== "openclaw") {
     return;
   }
 
@@ -873,7 +864,7 @@ async function reconcileSavedClawhubSkills({
     installedSkills = await readInstalledClawhubSkills(provisioner, containerId);
   } catch (error) {
     console.warn(
-      `${logPrefix} agent=${agentId} Failed to read installed skills before reconciliation: ${error.message}`
+      `${logPrefix} agent=${agentId} Failed to read installed skills before reconciliation: ${error.message}`,
     );
     installedSkills = [];
   }
@@ -886,40 +877,40 @@ async function reconcileSavedClawhubSkills({
   }
 
   console.log(
-    `${logPrefix} agent=${agentId} Reconciling ${missingSkills.length} missing ClawHub skill(s)`
+    `${logPrefix} agent=${agentId} Reconciling ${missingSkills.length} missing ClawHub skill(s)`,
   );
 
   for (const skill of missingSkills) {
     try {
       console.log(
-        `${logPrefix} agent=${agentId} slug=${skill.installSlug} Installing missing saved skill`
+        `${logPrefix} agent=${agentId} slug=${skill.installSlug} Installing missing saved skill`,
       );
       await ensureClawhubCli(provisioner, containerId);
       await runProvisionerExecCommand(
         provisioner,
         containerId,
         `cd ${JSON.stringify(OPENCLAW_WORKSPACE_PATH)} && clawhub install ${JSON.stringify(
-          skill.installSlug
+          skill.installSlug,
         )} --no-input`,
         {
           timeout: CLAWHUB_INSTALL_TIMEOUT_MS + 10000,
           maxOutputBytes: 32768,
-          env: ['TERM=dumb', 'CI=1', 'NO_COLOR=1', 'CLICOLOR=0'],
-        }
+          env: ["TERM=dumb", "CI=1", "NO_COLOR=1", "CLICOLOR=0"],
+        },
       );
       console.log(
-        `${logPrefix} agent=${agentId} slug=${skill.installSlug} Reconciliation install completed`
+        `${logPrefix} agent=${agentId} slug=${skill.installSlug} Reconciliation install completed`,
       );
     } catch (error) {
-      const message = String(error?.message || '');
-      if (message.includes('Already installed')) {
+      const message = String(error?.message || "");
+      if (message.includes("Already installed")) {
         console.log(
-          `${logPrefix} agent=${agentId} slug=${skill.installSlug} Skill already installed during reconciliation`
+          `${logPrefix} agent=${agentId} slug=${skill.installSlug} Skill already installed during reconciliation`,
         );
         continue;
       }
       console.warn(
-        `${logPrefix} agent=${agentId} slug=${skill.installSlug} Reconciliation install failed: ${message}`
+        `${logPrefix} agent=${agentId} slug=${skill.installSlug} Reconciliation install failed: ${message}`,
       );
     }
   }
@@ -1570,12 +1561,12 @@ worker.on("completed", (job) => {
 });
 
 const clawhubInstallWorker = new Worker(
-  'clawhub-installs',
+  "clawhub-installs",
   async (job) => {
     const { agentId, slug, skillEntry, persistOnSuccess = true } = job.data || {};
-    const normalizedSlug = String(slug || '').trim();
+    const normalizedSlug = String(slug || "").trim();
     if (!agentId || !normalizedSlug) {
-      throw new Error('ClawHub install job is missing agentId or slug');
+      throw new Error("ClawHub install job is missing agentId or slug");
     }
     const logInstall = createClawhubInstallLogger({
       jobId: job.id,
@@ -1589,42 +1580,39 @@ const clawhubInstallWorker = new Worker(
          FROM agents
         WHERE id = $1
         LIMIT 1`,
-      [agentId]
+      [agentId],
     );
     const agent = result.rows[0];
     if (!agent) {
       throw new Error(`Agent not found: ${agentId}`);
     }
-    if (agent.backend_type !== 'docker' || agent.runtime_family !== 'openclaw') {
-      throw new Error('ClawHub installs are only available for Docker-backed OpenClaw agents.');
+    if (agent.backend_type !== "docker" || agent.runtime_family !== "openclaw") {
+      throw new Error("ClawHub installs are only available for Docker-backed OpenClaw agents.");
     }
-    if (!agent.container_id || (agent.status !== 'running' && agent.status !== 'warning')) {
-      throw new Error('Start the agent before installing skills.');
+    if (!agent.container_id || (agent.status !== "running" && agent.status !== "warning")) {
+      throw new Error("Start the agent before installing skills.");
     }
     const provisioner = loadBackend(agent.backend_type);
 
-    logInstall('start', 'Starting install job');
+    logInstall("start", "Starting install job");
 
-    logInstall('cli-check', 'Ensuring clawhub CLI is available');
+    logInstall("cli-check", "Ensuring clawhub CLI is available");
     await ensureClawhubCli(provisioner, agent.container_id);
-    logInstall('cli-check', 'Clawhub CLI is ready');
+    logInstall("cli-check", "Clawhub CLI is ready");
 
-    logInstall('precheck', 'Reading installed skills before install');
-    const installedBefore = await readInstalledClawhubSkills(
-      provisioner,
-      agent.container_id
-    );
-    logInstall('precheck', 'Read installed skills before install', {
+    logInstall("precheck", "Reading installed skills before install");
+    const installedBefore = await readInstalledClawhubSkills(provisioner, agent.container_id);
+    logInstall("precheck", "Read installed skills before install", {
       installedCount: installedBefore.length,
     });
     if (installedBefore.some((entry) => entry.slug === normalizedSlug)) {
-      logInstall('precheck', 'Skill already installed before command');
+      logInstall("precheck", "Skill already installed before command");
       if (persistOnSuccess) {
-        logInstall('persist', 'Persisting already-installed skill to agents table');
+        logInstall("persist", "Persisting already-installed skill to agents table");
         await appendSavedClawhubSkill(agentId, normalizedSlug, skillEntry);
-        logInstall('persist', 'Persisted already-installed skill');
+        logInstall("persist", "Persisted already-installed skill");
       }
-      logInstall('done', 'Install job completed without running clawhub install');
+      logInstall("done", "Install job completed without running clawhub install");
       return {
         agentId,
         slug: normalizedSlug,
@@ -1633,7 +1621,7 @@ const clawhubInstallWorker = new Worker(
     }
 
     try {
-      logInstall('install', 'Running clawhub install command', {
+      logInstall("install", "Running clawhub install command", {
         timeoutMs: CLAWHUB_INSTALL_TIMEOUT_MS,
       });
       // Keep the install invocation unwrapped. A nested in-container `timeout ... /bin/sh -lc ...`
@@ -1644,47 +1632,44 @@ const clawhubInstallWorker = new Worker(
         provisioner,
         agent.container_id,
         `cd ${JSON.stringify(OPENCLAW_WORKSPACE_PATH)} && clawhub install ${JSON.stringify(
-          normalizedSlug
+          normalizedSlug,
         )} --no-input`,
         {
           timeout: CLAWHUB_INSTALL_TIMEOUT_MS + 10000,
           maxOutputBytes: 32768,
-          env: ['TERM=dumb', 'CI=1', 'NO_COLOR=1', 'CLICOLOR=0'],
-        }
+          env: ["TERM=dumb", "CI=1", "NO_COLOR=1", "CLICOLOR=0"],
+        },
       );
-      logInstall('install', 'Clawhub install command finished');
+      logInstall("install", "Clawhub install command finished");
     } catch (error) {
-      const message = String(error?.message || '');
-      if (!message.includes('Already installed')) {
-        logInstall('install', 'Clawhub install command failed', {
+      const message = String(error?.message || "");
+      if (!message.includes("Already installed")) {
+        logInstall("install", "Clawhub install command failed", {
           error: message,
         });
         throw error;
       }
-      logInstall('install', 'Clawhub reported skill already installed');
+      logInstall("install", "Clawhub reported skill already installed");
     }
 
-    logInstall('verify', 'Reading installed skills after install');
-    const installedSkills = await readInstalledClawhubSkills(
-      provisioner,
-      agent.container_id
-    );
-    logInstall('verify', 'Read installed skills after install', {
+    logInstall("verify", "Reading installed skills after install");
+    const installedSkills = await readInstalledClawhubSkills(provisioner, agent.container_id);
+    logInstall("verify", "Read installed skills after install", {
       installedCount: installedSkills.length,
     });
     const installed = installedSkills.some((entry) => entry.slug === normalizedSlug);
     if (!installed) {
-      logInstall('verify', 'Lockfile missing expected slug after install');
+      logInstall("verify", "Lockfile missing expected slug after install");
       throw new Error(`ClawHub install completed but ${normalizedSlug} was not found in lockfile`);
     }
 
     if (persistOnSuccess) {
-      logInstall('persist', 'Persisting successful install to agents table');
+      logInstall("persist", "Persisting successful install to agents table");
       await appendSavedClawhubSkill(agentId, normalizedSlug, skillEntry);
-      logInstall('persist', 'Persisted successful install');
+      logInstall("persist", "Persisted successful install");
     }
 
-    logInstall('done', 'Install job completed successfully');
+    logInstall("done", "Install job completed successfully");
     return {
       agentId,
       slug: normalizedSlug,
@@ -1698,14 +1683,14 @@ const clawhubInstallWorker = new Worker(
     lockRenewTime: CLAWHUB_INSTALL_LOCK_RENEW_MS,
     stalledInterval: 30000,
     maxStalledCount: 1,
-  }
+  },
 );
 
-clawhubInstallWorker.on('failed', (job, err) => {
+clawhubInstallWorker.on("failed", (job, err) => {
   console.error(`[clawhub-installs] Job ${job?.id} failed: ${err.message}`);
 });
 
-clawhubInstallWorker.on('completed', (job) => {
+clawhubInstallWorker.on("completed", (job) => {
   console.log(`[clawhub-installs] Job ${job.id} completed successfully`);
 });
 
@@ -1713,10 +1698,10 @@ clawhubInstallWorker.on('completed', (job) => {
 const http = require("http");
 const HEALTH_PORT = parseInt(process.env.WORKER_HEALTH_PORT || "4001");
 const healthServer = http.createServer((req, res) => {
-  if (req.url === '/health') {
+  if (req.url === "/health") {
     const isReady = worker.isRunning() && clawhubInstallWorker.isRunning();
-    res.writeHead(isReady ? 200 : 503, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: isReady ? 'ok' : 'not_ready', uptime: process.uptime() }));
+    res.writeHead(isReady ? 200 : 503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: isReady ? "ok" : "not_ready", uptime: process.uptime() }));
   } else {
     res.writeHead(404);
     res.end();

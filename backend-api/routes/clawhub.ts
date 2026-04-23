@@ -1,10 +1,6 @@
 // @ts-nocheck
 const express = require("express");
-const {
-  getSkillDetail,
-  listSkills,
-  searchSkills,
-} = require("../clawhubClient");
+const { getSkillDetail, listSkills, searchSkills } = require("../clawhubClient");
 const {
   addClawhubInstallJob,
   findInFlightClawhubInstallJob,
@@ -83,7 +79,7 @@ function validateInstallableAgent(agent) {
 
   if (agent.backend_type !== "docker" || agent.runtime_family !== "openclaw") {
     const error = new Error(
-      "ClawHub installs are only available for Docker-backed OpenClaw agents."
+      "ClawHub installs are only available for Docker-backed OpenClaw agents.",
     );
     error.statusCode = 409;
     error.code = "unsupported_runtime";
@@ -116,8 +112,7 @@ function normalizeSavedSkillEntry(slug, input = {}) {
       : author
         ? `${author}/${installSlug}`
         : installSlug;
-  const installedAtRaw =
-    typeof input.installedAt === "string" ? input.installedAt.trim() : "";
+  const installedAtRaw = typeof input.installedAt === "string" ? input.installedAt.trim() : "";
   const installedAt =
     installedAtRaw && !Number.isNaN(new Date(installedAtRaw).getTime())
       ? new Date(installedAtRaw).toISOString()
@@ -154,8 +149,7 @@ function sendInstallError(res, error) {
   if (error?.code === "npm_unavailable") {
     return res.status(422).json({
       error: "npm_unavailable",
-      message:
-        "The clawhub CLI could not be installed. Ensure Node.js is in your base image.",
+      message: "The clawhub CLI could not be installed. Ensure Node.js is in your base image.",
     });
   }
 
@@ -172,7 +166,7 @@ async function loadOwnedAgent(agentId, userId) {
        FROM agents
       WHERE id = $1 AND user_id = $2
       LIMIT 1`,
-    [agentId, userId]
+    [agentId, userId],
   );
   return result.rows[0] || null;
 }
@@ -192,8 +186,7 @@ router.get("/skills", async (req, res) => {
 
 router.get("/skills/search", async (req, res) => {
   try {
-    const q =
-      typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
     if (!q) {
       return res.status(400).json({
         error: "missing_query",
@@ -224,106 +217,92 @@ router.get("/skills/:slug", async (req, res) => {
   }
 });
 
-router.get(
-  "/agents/:agentId/skills",
-  async (req, res) => {
+router.get("/agents/:agentId/skills", async (req, res) => {
+  try {
+    const agent = await loadOwnedAgent(req.params.agentId, req.user.id);
+    validateInstallableAgent(agent);
+    const { output } = await runContainerCommand(
+      agent,
+      `if [ -f ${JSON.stringify(CLAWHUB_LOCKFILE_PATH)} ]; then cat ${JSON.stringify(
+        CLAWHUB_LOCKFILE_PATH,
+      )}; else printf '{"version":1,"skills":{}}'; fi`,
+    );
+    const parsed = JSON.parse(output || '{"version":1,"skills":{}}');
+    return res.json({
+      skills: normalizeInstalledSkillsLockfile(parsed),
+    });
+  } catch (error) {
+    return sendInstallError(res, error);
+  }
+});
+
+router.post("/agents/:agentId/skills/:slug/install", async (req, res) => {
+  try {
+    const agent = await loadOwnedAgent(req.params.agentId, req.user.id);
+    validateInstallableAgent(agent);
+    const slug = typeof req.params.slug === "string" ? req.params.slug.trim() : "";
+    if (!slug) {
+      return res.status(404).json({
+        error: "skill_not_found",
+        message: "No skill found with slug: unknown",
+      });
+    }
+
+    const skillEntry = normalizeSavedSkillEntry(slug, req.body || {});
+    const existingSavedSkills = Array.isArray(agent.clawhub_skills) ? agent.clawhub_skills : [];
+    const existingSaved = existingSavedSkills.some((entry) => {
+      const savedSlug = typeof entry?.installSlug === "string" ? entry.installSlug : entry?.slug;
+      return String(savedSlug || "").trim() === slug;
+    });
+
     try {
-      const agent = await loadOwnedAgent(req.params.agentId, req.user.id);
-      validateInstallableAgent(agent);
-      const { output } = await runContainerCommand(
+      await runContainerCommand(
         agent,
-        `if [ -f ${JSON.stringify(
-          CLAWHUB_LOCKFILE_PATH
-        )} ]; then cat ${JSON.stringify(
-          CLAWHUB_LOCKFILE_PATH
-        )}; else printf '{"version":1,"skills":{}}'; fi`
+        "if command -v clawhub >/dev/null 2>&1; then exit 0; fi; " +
+          "if ! command -v npm >/dev/null 2>&1; then exit 42; fi; " +
+          "npm install -g clawhub",
+        { timeout: CLAWHUB_INSTALL_TIMEOUT_MS },
       );
-      const parsed = JSON.parse(output || '{"version":1,"skills":{}}');
-      return res.json({
-        skills: normalizeInstalledSkillsLockfile(parsed),
-      });
     } catch (error) {
-      return sendInstallError(res, error);
-    }
-  }
-);
-
-router.post(
-  "/agents/:agentId/skills/:slug/install",
-  async (req, res) => {
-    try {
-      const agent = await loadOwnedAgent(req.params.agentId, req.user.id);
-      validateInstallableAgent(agent);
-      const slug =
-        typeof req.params.slug === "string" ? req.params.slug.trim() : "";
-      if (!slug) {
-        return res.status(404).json({
-          error: "skill_not_found",
-          message: "No skill found with slug: unknown",
-        });
-      }
-
-      const skillEntry = normalizeSavedSkillEntry(slug, req.body || {});
-      const existingSavedSkills = Array.isArray(agent.clawhub_skills)
-        ? agent.clawhub_skills
-        : [];
-      const existingSaved = existingSavedSkills.some((entry) => {
-        const savedSlug =
-          typeof entry?.installSlug === "string"
-            ? entry.installSlug
-            : entry?.slug;
-        return String(savedSlug || "").trim() === slug;
-      });
-
-      try {
-        await runContainerCommand(
-          agent,
-          "if command -v clawhub >/dev/null 2>&1; then exit 0; fi; " +
-            "if ! command -v npm >/dev/null 2>&1; then exit 42; fi; " +
-            "npm install -g clawhub",
-          { timeout: CLAWHUB_INSTALL_TIMEOUT_MS }
+      if (String(error?.message || "").includes("exit 42")) {
+        const npmError = new Error(
+          "The clawhub CLI could not be installed. Ensure Node.js is in your base image.",
         );
-      } catch (error) {
-        if (String(error?.message || "").includes("exit 42")) {
-          const npmError = new Error(
-            "The clawhub CLI could not be installed. Ensure Node.js is in your base image."
-          );
-          npmError.statusCode = 422;
-          npmError.code = "npm_unavailable";
-          throw npmError;
-        }
-        throw error;
+        npmError.statusCode = 422;
+        npmError.code = "npm_unavailable";
+        throw npmError;
       }
-
-      const existingJob = await findInFlightClawhubInstallJob(agent.id, slug);
-      if (existingJob) {
-        const existingStatus = await getClawhubInstallJobStatus(existingJob.id);
-        return res.status(202).json({
-          jobId: String(existingJob.id),
-          agentId: agent.id,
-          slug,
-          status: existingStatus?.status || "pending",
-        });
-      }
-
-      const job = await addClawhubInstallJob({
-        agentId: agent.id,
-        slug,
-        skillEntry,
-        persistOnSuccess: !existingSaved,
-      });
-
-      return res.status(202).json({
-        jobId: String(job.id),
-        agentId: agent.id,
-        slug,
-        status: "pending",
-      });
-    } catch (error) {
-      return sendInstallError(res, error);
+      throw error;
     }
+
+    const existingJob = await findInFlightClawhubInstallJob(agent.id, slug);
+    if (existingJob) {
+      const existingStatus = await getClawhubInstallJobStatus(existingJob.id);
+      return res.status(202).json({
+        jobId: String(existingJob.id),
+        agentId: agent.id,
+        slug,
+        status: existingStatus?.status || "pending",
+      });
+    }
+
+    const job = await addClawhubInstallJob({
+      agentId: agent.id,
+      slug,
+      skillEntry,
+      persistOnSuccess: !existingSaved,
+    });
+
+    return res.status(202).json({
+      jobId: String(job.id),
+      agentId: agent.id,
+      slug,
+      status: "pending",
+    });
+  } catch (error) {
+    return sendInstallError(res, error);
   }
-);
+});
 
 router.get("/jobs/:jobId", async (req, res) => {
   const jobId = typeof req.params.jobId === "string" ? req.params.jobId.trim() : "";

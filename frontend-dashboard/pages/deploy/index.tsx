@@ -68,7 +68,7 @@ function MaturityBadge({ maturityTier = "ga", maturityLabel = "GA" }) {
   return (
     <span
       className={`inline-flex items-center rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-widest ${maturityClasses(
-        maturityTier
+        maturityTier,
       )}`}
     >
       {maturityLabel}
@@ -101,7 +101,9 @@ function formatDateTime(value) {
 }
 
 function formatMigrationTransportLabel(value) {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (normalized === "ssh") return "SSH";
   if (normalized === "docker") return "Docker";
   return "Bundle";
@@ -123,9 +125,7 @@ export default function Deploy() {
   const [migrationMethod, setMigrationMethod] = useState("upload");
   const [migrationDraft, setMigrationDraft] = useState(null);
   const [migrationBusyAction, setMigrationBusyAction] = useState("");
-  const [migrationSource, setMigrationSource] = useState(() =>
-    createEmptyMigrationSource()
-  );
+  const [migrationSource, setMigrationSource] = useState(() => createEmptyMigrationSource());
   const [platformConfig, setPlatformConfig] = useState(null);
   const [viewerRole, setViewerRole] = useState("user");
   const migrationUploadInputRef = useRef(null);
@@ -190,25 +190,19 @@ export default function Deploy() {
   };
 
   useEffect(() => {
-    if (
-      !platformConfig?.deploymentDefaults ||
-      resourceDefaultsInitializedRef.current
-    ) {
+    if (!platformConfig?.deploymentDefaults || resourceDefaultsInitializedRef.current) {
       return;
     }
 
     if (deployDraftRef.current) {
-      const normalizedResources = normalizeDeployDraftResources(
-        deployDraftRef.current,
-        {
-          defaultVcpu: deploymentDefaults.vcpu,
-          defaultRamMb: deploymentDefaults.ram_mb,
-          defaultDiskGb: deploymentDefaults.disk_gb,
-          maxVcpu: platformConfig?.selfhosted?.max_vcpu || 16,
-          maxRamMb: platformConfig?.selfhosted?.max_ram_mb || 32768,
-          maxDiskGb: platformConfig?.selfhosted?.max_disk_gb || 500,
-        }
-      );
+      const normalizedResources = normalizeDeployDraftResources(deployDraftRef.current, {
+        defaultVcpu: deploymentDefaults.vcpu,
+        defaultRamMb: deploymentDefaults.ram_mb,
+        defaultDiskGb: deploymentDefaults.disk_gb,
+        maxVcpu: platformConfig?.selfhosted?.max_vcpu || 16,
+        maxRamMb: platformConfig?.selfhosted?.max_ram_mb || 32768,
+        maxDiskGb: platformConfig?.selfhosted?.max_disk_gb || 500,
+      });
 
       setSelVcpu(normalizedResources.vcpu);
       setSelRam(normalizedResources.ramMb);
@@ -226,31 +220,33 @@ export default function Deploy() {
   const isSelfHosted = platformConfig?.mode !== "paas";
   const plan = sub?.plan || "free";
   const planLabel = isSelfHosted ? "Self-hosted" : plan.charAt(0).toUpperCase() + plan.slice(1);
-  const limit = isSelfHosted ? (platformConfig?.selfhosted?.max_agents || 50) : (sub?.agent_limit || 3);
+  const limit = isSelfHosted ? platformConfig?.selfhosted?.max_agents || 50 : sub?.agent_limit || 3;
   const atLimit = agentCount >= limit;
   const isAdmin = viewerRole === "admin";
   const runtimeFamilyLocked =
     deploymentMode === "migrate"
-      ? String(migrationDraft?.runtimeFamily || "").trim().toLowerCase()
+      ? String(migrationDraft?.runtimeFamily || "")
+          .trim()
+          .toLowerCase()
       : "";
   const defaultRuntimeFamily = useMemo(
     () => runtimeFamilyFromConfig(backendConfig),
-    [backendConfig]
+    [backendConfig],
   );
   const activeRuntimeFamily = useMemo(
     () => runtimeFamilyFromConfig(backendConfig, selectedRuntimeFamily),
-    [backendConfig, selectedRuntimeFamily]
+    [backendConfig, selectedRuntimeFamily],
   );
   const visibleRuntimeFamilies = useMemo(
     () => visibleRuntimeFamiliesFromConfig(backendConfig, viewerRole),
-    [backendConfig, viewerRole]
+    [backendConfig, viewerRole],
   );
   const visibleExecutionTargets = useMemo(
     () =>
       visibleExecutionTargetsFromConfig(
         backendConfig,
         viewerRole,
-        runtimeFamilyLocked || activeRuntimeFamily?.id || selectedRuntimeFamily
+        runtimeFamilyLocked || activeRuntimeFamily?.id || selectedRuntimeFamily,
       ),
     [
       backendConfig,
@@ -258,14 +254,14 @@ export default function Deploy() {
       runtimeFamilyLocked,
       activeRuntimeFamily?.id,
       selectedRuntimeFamily,
-    ]
+    ],
   );
   const activeExecutionTarget = useMemo(
     () =>
       activeExecutionTargetFromConfig(
         backendConfig,
         runtimeFamilyLocked || activeRuntimeFamily?.id || selectedRuntimeFamily,
-        selectedExecutionTarget
+        selectedExecutionTarget,
       ),
     [
       backendConfig,
@@ -273,7 +269,7 @@ export default function Deploy() {
       activeRuntimeFamily?.id,
       selectedRuntimeFamily,
       selectedExecutionTarget,
-    ]
+    ],
   );
   const visibleSandboxOptions = useMemo(() => {
     const sandboxProfiles = activeExecutionTarget?.sandboxProfiles || [];
@@ -286,18 +282,18 @@ export default function Deploy() {
   const activeSandboxOption = useMemo(
     () =>
       (activeExecutionTarget?.sandboxProfiles || []).find(
-        (profile) => profile.id === selectedSandboxProfile
+        (profile) => profile.id === selectedSandboxProfile,
       ) || null,
-    [activeExecutionTarget, selectedSandboxProfile]
+    [activeExecutionTarget, selectedSandboxProfile],
   );
   const ramOptions = useMemo(() => {
     const maxRam = platformConfig?.selfhosted?.max_ram_mb || 32768;
     return Array.from(
       new Set(
         [selRam, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536].filter(
-          (value) => value <= maxRam || value === selRam
-        )
-      )
+          (value) => value <= maxRam || value === selRam,
+        ),
+      ),
     ).sort((left, right) => left - right);
   }, [platformConfig?.selfhosted?.max_ram_mb, selRam]);
   const diskOptions = useMemo(() => {
@@ -305,9 +301,9 @@ export default function Deploy() {
     return Array.from(
       new Set(
         [selDisk, 10, 20, 50, 100, 200, 500, 1000].filter(
-          (value) => value <= maxDisk || value === selDisk
-        )
-      )
+          (value) => value <= maxDisk || value === selDisk,
+        ),
+      ),
     ).sort((left, right) => left - right);
   }, [platformConfig?.selfhosted?.max_disk_gb, selDisk]);
   const canDeployExecutionTarget = Boolean(activeSandboxOption?.available);
@@ -324,20 +320,11 @@ export default function Deploy() {
   const suggestedContainerName = useMemo(() => {
     const slug = slugifyName(name);
     const prefix = containerNamePrefixForSelection({
-      runtimeFamily:
-        effectiveRuntimeFamily,
-      sandboxProfile:
-        selectedSandboxProfile ||
-        activeSandboxOption?.id ||
-        "standard",
+      runtimeFamily: effectiveRuntimeFamily,
+      sandboxProfile: selectedSandboxProfile || activeSandboxOption?.id || "standard",
     });
     return slug ? `${prefix}-${slug}` : `${prefix}-my-first-agent`;
-  }, [
-    activeSandboxOption?.id,
-    effectiveRuntimeFamily,
-    name,
-    selectedSandboxProfile,
-  ]);
+  }, [activeSandboxOption?.id, effectiveRuntimeFamily, name, selectedSandboxProfile]);
 
   useEffect(() => {
     if (!runtimeFamilyLocked) return;
@@ -357,7 +344,7 @@ export default function Deploy() {
     const nextRuntimeFamily = pickRuntimeFamilySelection(
       backendConfig,
       viewerRole,
-      selectedRuntimeFamily
+      selectedRuntimeFamily,
     );
     if (nextRuntimeFamily && nextRuntimeFamily !== selectedRuntimeFamily) {
       setSelectedRuntimeFamily(nextRuntimeFamily);
@@ -370,7 +357,7 @@ export default function Deploy() {
       backendConfig,
       viewerRole,
       selectedExecutionTarget,
-      runtimeFamilyLocked || activeRuntimeFamily?.id || selectedRuntimeFamily
+      runtimeFamilyLocked || activeRuntimeFamily?.id || selectedRuntimeFamily,
     );
     if (nextTarget && nextTarget !== selectedExecutionTarget) {
       setSelectedExecutionTarget(nextTarget);
@@ -386,28 +373,21 @@ export default function Deploy() {
 
   useEffect(() => {
     const candidateSandboxProfiles = isAdmin
-      ? (activeExecutionTarget?.sandboxProfiles || []).filter(
-          (profile) => profile.enabled
-        )
+      ? (activeExecutionTarget?.sandboxProfiles || []).filter((profile) => profile.enabled)
       : visibleSandboxOptions;
     if (!candidateSandboxProfiles.length) return;
 
     const current = candidateSandboxProfiles.find(
-      (profile) => profile.id === selectedSandboxProfile
+      (profile) => profile.id === selectedSandboxProfile,
     );
     const nextSandboxProfile =
       current ||
-      candidateSandboxProfiles.find(
-        (profile) => profile.available && profile.isDefault
-      ) ||
+      candidateSandboxProfiles.find((profile) => profile.available && profile.isDefault) ||
       candidateSandboxProfiles.find((profile) => profile.available) ||
       candidateSandboxProfiles[0] ||
       null;
 
-    if (
-      nextSandboxProfile &&
-      nextSandboxProfile.id !== selectedSandboxProfile
-    ) {
+    if (nextSandboxProfile && nextSandboxProfile.id !== selectedSandboxProfile) {
       setSelectedSandboxProfile(nextSandboxProfile.id);
     }
 
@@ -445,7 +425,7 @@ export default function Deploy() {
         maxVcpu: platformConfig?.selfhosted?.max_vcpu || 16,
         maxRamMb: platformConfig?.selfhosted?.max_ram_mb || 32768,
         maxDiskGb: platformConfig?.selfhosted?.max_disk_gb || 500,
-      }
+      },
     );
 
     saveDeployDraft({
@@ -505,7 +485,9 @@ export default function Deploy() {
   }
 
   async function inspectLiveMigrationSource() {
-    const transport = String(migrationSource.transport || "").trim().toLowerCase();
+    const transport = String(migrationSource.transport || "")
+      .trim()
+      .toLowerCase();
     const runtimeFamily = runtimeFamilyLocked || effectiveRuntimeFamily;
 
     if (transport === "docker" && !migrationSource.container.trim()) {
@@ -587,10 +569,9 @@ export default function Deploy() {
 
     setMigrationBusyAction("discard");
     try {
-      const res = await fetchWithAuth(
-        `/api/agent-migrations/${migrationDraft.id}`,
-        { method: "DELETE" }
-      );
+      const res = await fetchWithAuth(`/api/agent-migrations/${migrationDraft.id}`, {
+        method: "DELETE",
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || "Failed to discard migration draft");
@@ -654,9 +635,7 @@ export default function Deploy() {
               </div>
               <div>
                 <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-slate-900 tracking-tight leading-none">
-                  {deploymentMode === "migrate"
-                    ? "Migrate Existing Agent"
-                    : "Deploy New Agent"}
+                  {deploymentMode === "migrate" ? "Migrate Existing Agent" : "Deploy New Agent"}
                 </h1>
                 <p className="text-slate-400 font-medium mt-1">
                   {deploymentMode === "migrate"
@@ -669,7 +648,9 @@ export default function Deploy() {
             </div>
 
             <div className="bg-blue-50 border border-blue-100 rounded-2xl p-5">
-              <p className="text-xs font-black uppercase tracking-widest text-blue-700 mb-2">Fast path to activation</p>
+              <p className="text-xs font-black uppercase tracking-widest text-blue-700 mb-2">
+                Fast path to activation
+              </p>
               <p className="text-sm text-blue-700/80 leading-relaxed">
                 {deploymentMode === "migrate"
                   ? "This flow does not adopt the old runtime in place. Nora inspects the source, stores a migration draft, then recreates the workload as a Nora-managed agent so files, managed secrets, and runtime validation all land in one control surface."
@@ -680,16 +661,24 @@ export default function Deploy() {
             </div>
           </div>
 
-          <div className={`flex flex-col gap-4 p-6 rounded-[2rem] border ${atLimit ? "bg-red-50 border-red-200" : "bg-slate-900 border-slate-800"}`}>
+          <div
+            className={`flex flex-col gap-4 p-6 rounded-[2rem] border ${atLimit ? "bg-red-50 border-red-200" : "bg-slate-900 border-slate-800"}`}
+          >
             <div className="flex items-center gap-3">
-              {atLimit ? <AlertTriangle size={20} className="text-red-500" /> : <Shield size={20} className="text-blue-400" />}
+              {atLimit ? (
+                <AlertTriangle size={20} className="text-red-500" />
+              ) : (
+                <Shield size={20} className="text-blue-400" />
+              )}
               <div>
                 <p className={`text-sm font-bold ${atLimit ? "text-red-700" : "text-white"}`}>
                   {planLabel} Plan — {agentCount}/{limit} agents used
                 </p>
                 <p className={`text-xs mt-0.5 ${atLimit ? "text-red-500" : "text-slate-400"}`}>
                   {atLimit
-                    ? (isSelfHosted ? "Contact your administrator to increase the limit." : "Upgrade your plan to deploy more agents.")
+                    ? isSelfHosted
+                      ? "Contact your administrator to increase the limit."
+                      : "Upgrade your plan to deploy more agents."
                     : `${limit - agentCount} deployment slot${limit - agentCount !== 1 ? "s" : ""} remaining.`}
                 </p>
               </div>
@@ -727,9 +716,9 @@ export default function Deploy() {
                       Start clean or recreate an existing runtime under Nora.
                     </h2>
                     <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500">
-                      Blank deploy provisions a fresh agent. Migrate existing inspects an
-                      OpenClaw or Hermes runtime, previews the import surface, then deploys
-                      a new Nora-managed agent from that draft.
+                      Blank deploy provisions a fresh agent. Migrate existing inspects an OpenClaw
+                      or Hermes runtime, previews the import surface, then deploys a new
+                      Nora-managed agent from that draft.
                     </p>
                   </div>
                   {migrationDraft ? (
@@ -861,10 +850,10 @@ export default function Deploy() {
                             Import an existing Nora bundle or OpenClaw template snapshot.
                           </h3>
                           <p className="mt-2 text-sm leading-relaxed text-slate-500">
-                            Upload Nora migration bundles, Nora legacy template JSON, or
-                            previous exports from another Nora control plane. Nora will
-                            parse the package, summarize the managed state, and keep the
-                            source runtime family aligned for deploy.
+                            Upload Nora migration bundles, Nora legacy template JSON, or previous
+                            exports from another Nora control plane. Nora will parse the package,
+                            summarize the managed state, and keep the source runtime family aligned
+                            for deploy.
                           </p>
                           <div className="mt-4 flex flex-wrap items-center gap-3">
                             <button
@@ -1158,8 +1147,7 @@ export default function Deploy() {
                   </span>
                 </div>
                 <p className="text-sm font-bold text-slate-900 mt-2">
-                  {activeRuntimeFamily?.label ||
-                    formatRuntimeFamilyLabel(effectiveRuntimeFamily)}
+                  {activeRuntimeFamily?.label || formatRuntimeFamilyLabel(effectiveRuntimeFamily)}
                 </p>
                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                   {runtimeFamilyLocked
@@ -1206,9 +1194,7 @@ export default function Deploy() {
                         disabled={!isAvailable}
                       >
                         <div className="flex items-start justify-between gap-3 mb-1">
-                          <span className="text-sm font-bold text-slate-900">
-                            {family.label}
-                          </span>
+                          <span className="text-sm font-bold text-slate-900">{family.label}</span>
                           <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-1 text-[10px] font-bold text-slate-600 border border-slate-200">
                             {family.contractStatusLabel}
                           </span>
@@ -1227,7 +1213,10 @@ export default function Deploy() {
                 </div>
               ) : null}
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">
-                Container Name <span className="text-slate-300 font-medium normal-case tracking-normal">(optional)</span>
+                Container Name{" "}
+                <span className="text-slate-300 font-medium normal-case tracking-normal">
+                  (optional)
+                </span>
               </label>
               <input
                 className="w-full px-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold text-slate-900 font-mono outline-none transition-all focus:ring-2 focus:ring-blue-500/20 focus:bg-white focus:border-blue-500/40 placeholder:text-slate-400 placeholder:font-sans"
@@ -1238,8 +1227,12 @@ export default function Deploy() {
             </div>
 
             <div className="flex flex-col gap-3">
-              <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">Execution Target</label>
-              <div className={`grid grid-cols-1 ${visibleExecutionTargets.length > 2 ? "md:grid-cols-2" : "md:grid-cols-2"} gap-3`}>
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">
+                Execution Target
+              </label>
+              <div
+                className={`grid grid-cols-1 ${visibleExecutionTargets.length > 2 ? "md:grid-cols-2" : "md:grid-cols-2"} gap-3`}
+              >
                 {visibleExecutionTargets.map((target) => {
                   const Icon = executionTargetIcon(target.id);
                   const isSelected = selectedExecutionTarget === target.id;
@@ -1266,18 +1259,14 @@ export default function Deploy() {
                             size={16}
                             className={!isAvailable ? "text-slate-400" : "text-blue-600"}
                           />
-                          <span className="text-sm font-bold text-slate-900">
-                            {target.label}
-                          </span>
+                          <span className="text-sm font-bold text-slate-900">{target.label}</span>
                         </div>
                         <MaturityBadge
                           maturityTier={target.maturityTier}
                           maturityLabel={target.maturityLabel}
                         />
                       </div>
-                      <p className="text-[11px] text-slate-500 leading-relaxed">
-                        {target.summary}
-                      </p>
+                      <p className="text-[11px] text-slate-500 leading-relaxed">{target.summary}</p>
                       <div className="flex flex-wrap gap-2 mt-3">
                         <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-1 text-[10px] font-bold text-slate-600 border border-slate-200">
                           {target.runtimeFamilyLabel || "OpenClaw"}
@@ -1293,7 +1282,9 @@ export default function Deploy() {
                         )}
                       </div>
                       {!isAvailable && target.issue ? (
-                        <p className="text-[10px] text-amber-600 font-medium mt-2">{target.issue}</p>
+                        <p className="text-[10px] text-amber-600 font-medium mt-2">
+                          {target.issue}
+                        </p>
                       ) : null}
                     </button>
                   );
@@ -1310,7 +1301,9 @@ export default function Deploy() {
 
             {showSandboxSelection && (
               <div className="flex flex-col gap-3">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">Sandbox</label>
+                <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">
+                  Sandbox
+                </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {visibleSandboxOptions.map((profile) => {
                     const Icon = sandboxIcon(profile.id);
@@ -1373,7 +1366,9 @@ export default function Deploy() {
 
             {isNemoClaw && activeSandboxOption?.models?.length > 0 && (
               <div className="flex flex-col gap-3">
-                <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">Nemotron Model</label>
+                <label className="text-xs font-black text-slate-400 uppercase tracking-widest leading-none ml-2">
+                  Nemotron Model
+                </label>
                 <div className="flex items-center gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-2xl">
                   <Brain size={16} className="text-green-600 shrink-0" />
                   <select
@@ -1382,13 +1377,19 @@ export default function Deploy() {
                     className="flex-1 bg-transparent text-sm font-bold text-slate-900 outline-none"
                   >
                     {activeSandboxOption.models.map((model) => (
-                      <option key={model} value={model}>{model.replace("nvidia/", "")}</option>
+                      <option key={model} value={model}>
+                        {model.replace("nvidia/", "")}
+                      </option>
                     ))}
                   </select>
                 </div>
                 <div className="flex items-center gap-4 text-[10px] text-green-700 font-medium ml-2 flex-wrap">
-                  <span className="flex items-center gap-1"><ShieldCheck size={10} /> Deny-by-default network</span>
-                  <span className="flex items-center gap-1"><Shield size={10} /> Capability-restricted</span>
+                  <span className="flex items-center gap-1">
+                    <ShieldCheck size={10} /> Deny-by-default network
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Shield size={10} /> Capability-restricted
+                  </span>
                 </div>
               </div>
             )}
@@ -1408,8 +1409,13 @@ export default function Deploy() {
                     }}
                     className="text-xl font-black text-slate-900 bg-transparent outline-none"
                   >
-                    {Array.from({ length: platformConfig?.selfhosted?.max_vcpu || 16 }, (_, i) => i + 1).map((v) => (
-                      <option key={v} value={v}>{v}</option>
+                    {Array.from(
+                      { length: platformConfig?.selfhosted?.max_vcpu || 16 },
+                      (_, i) => i + 1,
+                    ).map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
                     ))}
                   </select>
                 ) : (
@@ -1486,36 +1492,58 @@ export default function Deploy() {
               }
               className="w-full flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 transition-all text-sm font-black text-white px-8 py-5 rounded-2xl shadow-xl shadow-blue-500/30 active:scale-95 disabled:opacity-50 group"
             >
-              {loading ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} className="group-hover:scale-125 transition-transform" />}
+              {loading ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <CheckCircle2 size={18} className="group-hover:scale-125 transition-transform" />
+              )}
               {atLimit
                 ? "Agent Limit Reached"
                 : deploymentMode === "migrate" && !migrationDraft?.id
                   ? "Prepare Migration Draft First"
-                : !canDeployExecutionTarget
-                  ? "Selected Runtime Path Unavailable"
-                  : deploymentMode === "migrate"
-                    ? "Next: Choose Skills"
-                    : "Next: Choose Skills"}
+                  : !canDeployExecutionTarget
+                    ? "Selected Runtime Path Unavailable"
+                    : deploymentMode === "migrate"
+                      ? "Next: Choose Skills"
+                      : "Next: Choose Skills"}
             </button>
           </div>
 
           <div className="flex flex-col gap-6">
-            <div className={`flex items-start gap-4 p-6 border rounded-[2rem] ${isNemoClaw ? "bg-green-50 border-green-100" : isHermes ? "bg-cyan-50 border-cyan-100" : "bg-blue-50 border-blue-100"}`}>
-              {isNemoClaw ? <ShieldCheck size={24} className="text-green-600 flex-shrink-0" /> : <Server size={24} className={`${isHermes ? "text-cyan-600" : "text-blue-600"} flex-shrink-0`} />}
+            <div
+              className={`flex items-start gap-4 p-6 border rounded-[2rem] ${isNemoClaw ? "bg-green-50 border-green-100" : isHermes ? "bg-cyan-50 border-cyan-100" : "bg-blue-50 border-blue-100"}`}
+            >
+              {isNemoClaw ? (
+                <ShieldCheck size={24} className="text-green-600 flex-shrink-0" />
+              ) : (
+                <Server
+                  size={24}
+                  className={`${isHermes ? "text-cyan-600" : "text-blue-600"} flex-shrink-0`}
+                />
+              )}
               <div>
-                <p className={`text-xs font-black uppercase tracking-widest mb-2 ${isNemoClaw ? "text-green-700" : isHermes ? "text-cyan-700" : "text-blue-700"}`}>
+                <p
+                  className={`text-xs font-black uppercase tracking-widest mb-2 ${isNemoClaw ? "text-green-700" : isHermes ? "text-cyan-700" : "text-blue-700"}`}
+                >
                   {deploymentMode === "migrate"
                     ? "Destination Runtime Summary"
                     : "Runtime Path Summary"}
                 </p>
-                <p className={`text-sm font-medium leading-relaxed ${isNemoClaw ? "text-green-700" : isHermes ? "text-cyan-700" : "text-blue-700"}`}>
+                <p
+                  className={`text-sm font-medium leading-relaxed ${isNemoClaw ? "text-green-700" : isHermes ? "text-cyan-700" : "text-blue-700"}`}
+                >
                   {activeSandboxOption?.detail ||
                     activeExecutionTarget?.detail ||
                     "Select an enabled execution target to see the runtime summary."}
                 </p>
                 <div className="flex flex-wrap items-center gap-2 mt-3">
-                  <span className={`text-xs font-bold ${isNemoClaw ? "text-green-700/80" : isHermes ? "text-cyan-700/80" : "text-blue-700/80"}`}>
-                    {(activeExecutionTarget?.runtimeFamilyLabel || activeRuntimeFamily?.label || defaultRuntimeFamily?.label || "OpenClaw") +
+                  <span
+                    className={`text-xs font-bold ${isNemoClaw ? "text-green-700/80" : isHermes ? "text-cyan-700/80" : "text-blue-700/80"}`}
+                  >
+                    {(activeExecutionTarget?.runtimeFamilyLabel ||
+                      activeRuntimeFamily?.label ||
+                      defaultRuntimeFamily?.label ||
+                      "OpenClaw") +
                       " runtime" +
                       " • " +
                       (activeExecutionTarget?.label || "Docker") +
@@ -1524,25 +1552,35 @@ export default function Deploy() {
                       ((activeSandboxOption?.label || "Standard") + " sandbox")}
                   </span>
                   <MaturityBadge
-                    maturityTier={activeSandboxOption?.maturityTier || activeExecutionTarget?.maturityTier}
-                    maturityLabel={activeSandboxOption?.maturityLabel || activeExecutionTarget?.maturityLabel}
+                    maturityTier={
+                      activeSandboxOption?.maturityTier || activeExecutionTarget?.maturityTier
+                    }
+                    maturityLabel={
+                      activeSandboxOption?.maturityLabel || activeExecutionTarget?.maturityLabel
+                    }
                   />
                 </div>
                 {isAdmin && activeExecutionTarget?.maturityTier === "blocked" ? (
                   <p className="text-[11px] text-red-700 mt-2 leading-relaxed">
-                    Blocked targets stay visible to admins for release awareness, but they remain disabled for onboarding and deployment.
+                    Blocked targets stay visible to admins for release awareness, but they remain
+                    disabled for onboarding and deployment.
                   </p>
                 ) : null}
                 {deploymentMode === "migrate" && migrationDraft ? (
                   <p className="text-[11px] mt-2 leading-relaxed text-inherit">
-                    Source draft: <span className="font-bold">{migrationDraft?.source?.label || migrationDraft.name}</span>
+                    Source draft:{" "}
+                    <span className="font-bold">
+                      {migrationDraft?.source?.label || migrationDraft.name}
+                    </span>
                   </p>
                 ) : null}
               </div>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-[2rem] p-6 shadow-sm">
-              <p className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4">What happens next</p>
+              <p className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4">
+                What happens next
+              </p>
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
@@ -1589,7 +1627,9 @@ export default function Deploy() {
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-6">
-              <p className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4">Operator checklist</p>
+              <p className="text-xs font-black uppercase tracking-widest text-slate-500 mb-4">
+                Operator checklist
+              </p>
               <div className="space-y-3">
                 {checklist.map((item) => (
                   <div key={item} className="flex items-start gap-2 text-sm text-slate-300">
@@ -1613,13 +1653,10 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
         <p className="text-xs font-black uppercase tracking-widest text-slate-400">
           Migration Preview
         </p>
-        <h3 className="mt-2 text-base font-black text-slate-900">
-          No draft prepared yet.
-        </h3>
+        <h3 className="mt-2 text-base font-black text-slate-900">No draft prepared yet.</h3>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
-          Upload a Nora export bundle or inspect a live Docker or SSH source to
-          preview files, imported channels, provider keys, warnings, and the
-          runtime family Nora will recreate.
+          Upload a Nora export bundle or inspect a live Docker or SSH source to preview files,
+          imported channels, provider keys, warnings, and the runtime family Nora will recreate.
         </p>
       </div>
     );
@@ -1627,8 +1664,7 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
 
   const isHermesDraft = draft.runtimeFamily === "hermes";
   const managedWiringCount =
-    Number(draft.summary?.integrationCount || 0) +
-    Number(draft.summary?.channelCount || 0);
+    Number(draft.summary?.integrationCount || 0) + Number(draft.summary?.channelCount || 0);
   const sourceKindLabel =
     draft?.source?.kind === "docker" || draft?.source?.kind === "ssh"
       ? "Live source"
@@ -1645,10 +1681,7 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
         },
         {
           label: "Hermes Channels",
-          value:
-            draft.hermes?.channels?.length ||
-            draft.summary?.hermesChannelCount ||
-            0,
+          value: draft.hermes?.channels?.length || draft.summary?.hermesChannelCount || 0,
         },
         {
           label: "LLM Providers",
@@ -1666,10 +1699,7 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
         },
         {
           label: "Session Memory",
-          value:
-            draft.openclaw?.memoryFileCount ||
-            draft.summary?.memoryFileCount ||
-            0,
+          value: draft.openclaw?.memoryFileCount || draft.summary?.memoryFileCount || 0,
         },
         {
           label: "LLM Providers",
@@ -1688,9 +1718,7 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
           <p className="text-xs font-black uppercase tracking-widest text-slate-400">
             Migration Preview
           </p>
-          <h3 className="mt-2 text-base font-black text-slate-900">
-            {draft.name}
-          </h3>
+          <h3 className="mt-2 text-base font-black text-slate-900">{draft.name}</h3>
           <p className="mt-1 text-sm text-slate-500">
             {formatRuntimeFamilyLabel(draft.runtimeFamily)} from{" "}
             <span className="font-bold text-slate-700">
@@ -1715,23 +1743,17 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-            Source
-          </p>
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Source</p>
           <p className="mt-2 text-sm font-bold text-slate-900">
             {formatMigrationTransportLabel(draft?.source?.transport)}
           </p>
-          <p className="mt-1 text-xs leading-relaxed text-slate-500">
-            {sourceKindLabel}
-          </p>
+          <p className="mt-1 text-xs leading-relaxed text-slate-500">{sourceKindLabel}</p>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
             Draft Expires
           </p>
-          <p className="mt-2 text-sm font-bold text-slate-900">
-            {formatDateTime(draft.expiresAt)}
-          </p>
+          <p className="mt-2 text-sm font-bold text-slate-900">{formatDateTime(draft.expiresAt)}</p>
           <p className="mt-1 text-xs leading-relaxed text-slate-500">
             Deploy attaches this draft to the new agent and clears the expiry.
           </p>
@@ -1796,8 +1818,8 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
             !draft.managed?.channels?.length &&
             !draft.managed?.agentSecretOverrides?.length ? (
               <p className="text-sm text-slate-500">
-                No Nora-managed records were detected in this source. Nora will
-                still import files and any supported runtime state it can see.
+                No Nora-managed records were detected in this source. Nora will still import files
+                and any supported runtime state it can see.
               </p>
             ) : null}
           </div>
@@ -1844,9 +1866,9 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
               <p className="text-sm font-black">OpenClaw Import Surface</p>
             </div>
             <p className="mt-3 text-sm leading-relaxed text-slate-500">
-              Nora imports the agent files, workspace contents, session memory, and
-              supported provider material from the source runtime. Deploy target and
-              sandbox profile remain operator-controlled on this screen.
+              Nora imports the agent files, workspace contents, session memory, and supported
+              provider material from the source runtime. Deploy target and sandbox profile remain
+              operator-controlled on this screen.
             </p>
           </div>
         )}
@@ -1861,11 +1883,7 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
           <div className="flex items-center gap-2">
             <KeyRound
               size={16}
-              className={
-                (draft.warnings || []).length > 0
-                  ? "text-amber-600"
-                  : "text-emerald-600"
-              }
+              className={(draft.warnings || []).length > 0 ? "text-amber-600" : "text-emerald-600"}
             />
             <p className="text-sm font-black text-slate-900">Warnings</p>
           </div>
@@ -1873,9 +1891,7 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
             <div className="mt-3 space-y-2">
               {draft.warnings.map((warning, index) => (
                 <div key={`${warning.code}-${index}`} className="text-sm text-amber-800">
-                  <span className="font-bold">
-                    {warning.path ? `${warning.path}: ` : ""}
-                  </span>
+                  <span className="font-bold">{warning.path ? `${warning.path}: ` : ""}</span>
                   {warning.message}
                 </div>
               ))}

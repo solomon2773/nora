@@ -13,10 +13,7 @@ jest.mock("../redisQueue", () => ({
   getClawhubInstallJobStatus: jest.fn(),
 }));
 
-const {
-  normalizeSkillDetailPayload,
-  parseSkillMarkdown,
-} = require("../clawhubClient");
+const { normalizeSkillDetailPayload, parseSkillMarkdown } = require("../clawhubClient");
 const db = require("../db");
 const { runContainerCommand } = require("../authSync");
 const {
@@ -79,7 +76,7 @@ Ship pull requests fast.
         slug: "plain-skill",
         name: "Plain Skill",
       },
-      "# Plain Skill\n\nNo frontmatter here."
+      "# Plain Skill\n\nNo frontmatter here.",
     );
 
     expect(detail).toMatchObject({
@@ -105,7 +102,7 @@ describe("clawhub routes", () => {
 
   function getRouteHandler(path, method = "get") {
     const layer = router.stack.find(
-      (entry) => entry.route?.path === path && entry.route.methods?.[method]
+      (entry) => entry.route?.path === path && entry.route.methods?.[method],
     );
     if (!layer) {
       throw new Error(`Route not found: ${method.toUpperCase()} ${path}`);
@@ -132,7 +129,7 @@ describe("clawhub routes", () => {
     const handler = getRouteHandler("/skills");
     fetchMock
       .mockResolvedValueOnce(
-        mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" })
+        mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" }),
       )
       .mockResolvedValueOnce(
         mockJsonResponse(200, {
@@ -147,7 +144,7 @@ describe("clawhub routes", () => {
             },
           ],
           next_cursor: "next-page",
-        })
+        }),
       );
 
     const req = { query: { limit: "70", cursor: "abc" } };
@@ -171,7 +168,7 @@ describe("clawhub routes", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "https://registry.clawhub.ai/api/v1/skills?limit=50&cursor=abc",
-      expect.any(Object)
+      expect.any(Object),
     );
   });
 
@@ -192,7 +189,9 @@ describe("clawhub routes", () => {
   it("returns normalized detail with parsed requirements from SKILL.md", async () => {
     const handler = getRouteHandler("/skills/:slug");
     fetchMock
-      .mockResolvedValueOnce(mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" }))
+      .mockResolvedValueOnce(
+        mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" }),
+      )
       .mockResolvedValueOnce(
         mockJsonResponse(200, {
           skill: {
@@ -206,9 +205,11 @@ describe("clawhub routes", () => {
           owner: {
             handle: "steipete",
           },
-        })
+        }),
       )
-      .mockResolvedValueOnce(mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" }))
+      .mockResolvedValueOnce(
+        mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" }),
+      )
       .mockResolvedValueOnce(
         mockTextResponse(
           200,
@@ -227,8 +228,8 @@ metadata:
 # GitHub Skill
 
 Install and manage repos.
-`
-        )
+`,
+        ),
       );
 
     const req = { params: { slug: "github" } };
@@ -258,7 +259,9 @@ Install and manage repos.
   it("returns skill_not_found when the skill metadata is missing", async () => {
     const handler = getRouteHandler("/skills/:slug");
     fetchMock
-      .mockResolvedValueOnce(mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" }))
+      .mockResolvedValueOnce(
+        mockJsonResponse(200, { registryBaseUrl: "https://registry.clawhub.ai" }),
+      )
       .mockResolvedValueOnce(mockJsonResponse(404, { error: "not_found" }));
 
     const req = { params: { slug: "unknown-skill" } };
@@ -417,8 +420,7 @@ Install and manage repos.
     expect(res.statusCode).toBe(422);
     expect(res.body).toEqual({
       error: "npm_unavailable",
-      message:
-        "The clawhub CLI could not be installed. Ensure Node.js is in your base image.",
+      message: "The clawhub CLI could not be installed. Ensure Node.js is in your base image.",
     });
   });
 

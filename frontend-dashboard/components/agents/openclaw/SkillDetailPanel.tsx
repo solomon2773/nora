@@ -1,5 +1,16 @@
 import type { ReactNode } from "react";
-import { ChevronLeft, Download, Star, Box, Cpu, FileText, Lock, CircleAlert, Check, Plus } from "lucide-react";
+import {
+  ChevronLeft,
+  Download,
+  Star,
+  Box,
+  Cpu,
+  FileText,
+  Lock,
+  CircleAlert,
+  Check,
+  Plus,
+} from "lucide-react";
 
 export type SkillRequirementItem = {
   kind?: string;
@@ -76,9 +87,12 @@ function renderInline(text: string) {
     const token = match[0];
     if (token.startsWith("`") && token.endsWith("`")) {
       tokens.push(
-        <code key={`inline-code-${key++}`} className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-slate-800 ring-1 ring-slate-200">
+        <code
+          key={`inline-code-${key++}`}
+          className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-slate-800 ring-1 ring-slate-200"
+        >
           {token.slice(1, -1)}
-        </code>
+        </code>,
       );
     } else if (token.startsWith("**") && token.endsWith("**")) {
       tokens.push(<strong key={`inline-strong-${key++}`}>{token.slice(2, -2)}</strong>);
@@ -97,7 +111,7 @@ function renderInline(text: string) {
           className="font-medium text-sky-600 underline decoration-sky-200 underline-offset-2 hover:text-sky-700"
         >
           {label}
-        </a>
+        </a>,
       );
     } else {
       tokens.push(token);
@@ -138,9 +152,12 @@ function MarkdownView({ source }: { source: string }) {
       }
       if (i < lines.length) i += 1;
       blocks.push(
-        <pre key={`md-code-${key++}`} className="mb-3 overflow-x-auto rounded-xl bg-slate-900 p-4 font-mono text-xs text-slate-100">
+        <pre
+          key={`md-code-${key++}`}
+          className="mb-3 overflow-x-auto rounded-xl bg-slate-900 p-4 font-mono text-xs text-slate-100"
+        >
           <code>{codeLines.join("\n")}</code>
-        </pre>
+        </pre>,
       );
       continue;
     }
@@ -158,7 +175,7 @@ function MarkdownView({ source }: { source: string }) {
       blocks.push(
         <Tag key={`md-heading-${key++}`} className={className}>
           {renderInline(content)}
-        </Tag>
+        </Tag>,
       );
       i += 1;
       continue;
@@ -171,9 +188,12 @@ function MarkdownView({ source }: { source: string }) {
         i += 1;
       }
       blocks.push(
-        <blockquote key={`md-quote-${key++}`} className="mb-3 border-l-4 border-sky-200 pl-4 italic text-slate-600">
+        <blockquote
+          key={`md-quote-${key++}`}
+          className="mb-3 border-l-4 border-sky-200 pl-4 italic text-slate-600"
+        >
           <p className="text-sm leading-6">{renderInline(quoteLines.join(" "))}</p>
-        </blockquote>
+        </blockquote>,
       );
       continue;
     }
@@ -191,7 +211,7 @@ function MarkdownView({ source }: { source: string }) {
               {renderInline(item)}
             </li>
           ))}
-        </ul>
+        </ul>,
       );
       continue;
     }
@@ -203,13 +223,16 @@ function MarkdownView({ source }: { source: string }) {
         i += 1;
       }
       blocks.push(
-        <ol key={`md-ol-${key++}`} className="mb-3 ml-5 list-decimal space-y-1 text-sm text-slate-700">
+        <ol
+          key={`md-ol-${key++}`}
+          className="mb-3 ml-5 list-decimal space-y-1 text-sm text-slate-700"
+        >
           {items.map((item, idx) => (
             <li key={idx} className="leading-6 text-slate-700">
               {renderInline(item)}
             </li>
           ))}
-        </ol>
+        </ol>,
       );
       continue;
     }
@@ -232,7 +255,7 @@ function MarkdownView({ source }: { source: string }) {
     blocks.push(
       <p key={`md-p-${key++}`} className="mb-3 text-sm leading-6 text-slate-700">
         {renderInline(paragraphLines.join(" "))}
-      </p>
+      </p>,
     );
   }
 
@@ -259,7 +282,9 @@ export default function SkillDetailPanel({
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-sky-600">Skill Detail</p>
+            <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-sky-600">
+              Skill Detail
+            </p>
             <h4 className="mt-1 text-lg font-black text-slate-900">
               {activeSkill?.name || "Select a skill to inspect"}
             </h4>
@@ -279,16 +304,19 @@ export default function SkillDetailPanel({
         {!activeSkill ? (
           <div className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
             <FileText size={24} className="mx-auto text-slate-300" />
-            <p className="mt-3 text-sm font-bold text-slate-700">Pick a card to open the README and requirements.</p>
+            <p className="mt-3 text-sm font-bold text-slate-700">
+              Pick a card to open the README and requirements.
+            </p>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              The detail panel is read-only in Phase 1. Install actions will unlock in a later phase.
+              The detail panel is read-only in Phase 1. Install actions will unlock in a later
+              phase.
             </p>
           </div>
         ) : (
           <div className="mt-5 space-y-5">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-slate-600">
                   {activeSkill.slug}
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-600">
@@ -300,7 +328,9 @@ export default function SkillDetailPanel({
                   {formatCount(activeSkill.stars)} stars
                 </span>
               </div>
-              <p className="text-sm leading-6 text-slate-600">{activeSkill.description || "No description provided."}</p>
+              <p className="text-sm leading-6 text-slate-600">
+                {activeSkill.description || "No description provided."}
+              </p>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -328,7 +358,11 @@ export default function SkillDetailPanel({
                     </>
                   ) : (
                     <>
-                      {action.label === "Add to selection" ? <Plus size={12} /> : <Check size={12} />}
+                      {action.label === "Add to selection" ? (
+                        <Plus size={12} />
+                      ) : (
+                        <Check size={12} />
+                      )}
                       {action.label}
                     </>
                   )
@@ -367,22 +401,36 @@ export default function SkillDetailPanel({
                   <div className="grid gap-2 sm:grid-cols-2">
                     <RequirementChip
                       label="Required binaries"
-                      value={activeSkill.requirements.bins?.length ? activeSkill.requirements.bins.join(", ") : "None listed"}
+                      value={
+                        activeSkill.requirements.bins?.length
+                          ? activeSkill.requirements.bins.join(", ")
+                          : "None listed"
+                      }
                     />
                     <RequirementChip
                       label="Required env vars"
-                      value={activeSkill.requirements.env?.length ? activeSkill.requirements.env.join(", ") : "None listed"}
+                      value={
+                        activeSkill.requirements.env?.length
+                          ? activeSkill.requirements.env.join(", ")
+                          : "None listed"
+                      }
                     />
                     <RequirementChip
                       label="Required config"
-                      value={activeSkill.requirements.config?.length ? activeSkill.requirements.config.join(", ") : "None listed"}
+                      value={
+                        activeSkill.requirements.config?.length
+                          ? activeSkill.requirements.config.join(", ")
+                          : "None listed"
+                      }
                     />
                     <RequirementChip
                       label="Install methods"
                       value={
                         activeSkill.requirements.install?.length
                           ? activeSkill.requirements.install
-                              .map((entry) => entry.kind || entry.package || entry.name || "unknown")
+                              .map(
+                                (entry) => entry.kind || entry.package || entry.name || "unknown",
+                              )
                               .join(", ")
                           : "None listed"
                       }
@@ -392,13 +440,18 @@ export default function SkillDetailPanel({
                   {activeSkill.requirements.install?.length ? (
                     <div className="space-y-2">
                       {activeSkill.requirements.install.map((entry, index) => (
-                        <div key={`${activeSkill.slug}-install-${index}`} className="rounded-xl border border-slate-200 bg-white p-3">
+                        <div
+                          key={`${activeSkill.slug}-install-${index}`}
+                          className="rounded-xl border border-slate-200 bg-white p-3"
+                        >
                           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-slate-500">
                             <Cpu size={12} />
                             {entry.kind || entry.package || entry.name || "install"}
                           </div>
                           <p className="mt-1 text-xs text-slate-500">
-                            {entry.package || entry.name ? `Package: ${entry.package || entry.name}` : "No package name supplied."}
+                            {entry.package || entry.name
+                              ? `Package: ${entry.package || entry.name}`
+                              : "No package name supplied."}
                           </p>
                         </div>
                       ))}
@@ -407,7 +460,11 @@ export default function SkillDetailPanel({
                 </div>
               ) : (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-                  No <code className="rounded bg-white px-1 py-0.5 text-[11px] font-mono text-slate-700">metadata.openclaw</code> requirements were declared for this skill.
+                  No{" "}
+                  <code className="rounded bg-white px-1 py-0.5 text-[11px] font-mono text-slate-700">
+                    metadata.openclaw
+                  </code>{" "}
+                  requirements were declared for this skill.
                 </div>
               )}
             </div>
@@ -427,7 +484,11 @@ export default function SkillDetailPanel({
               ) : (
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                   <div className="max-h-[28rem] overflow-y-auto pr-1 text-sm leading-6 text-slate-700">
-                    <MarkdownView source={activeSkill.readme || "No `SKILL.md` content was returned for this skill."} />
+                    <MarkdownView
+                      source={
+                        activeSkill.readme || "No `SKILL.md` content was returned for this skill."
+                      }
+                    />
                   </div>
                 </div>
               )}

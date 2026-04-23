@@ -59,25 +59,22 @@ function normalizeStringArray(value) {
     return [];
   }
 
-  return value
-    .flatMap((entry) => {
-      if (typeof entry === "string") {
-        const trimmed = entry.trim();
-        return trimmed ? [trimmed] : [];
-      }
-      if (typeof entry === "number" && Number.isFinite(entry)) {
-        return [String(entry)];
-      }
-      return [];
-    });
+  return value.flatMap((entry) => {
+    if (typeof entry === "string") {
+      const trimmed = entry.trim();
+      return trimmed ? [trimmed] : [];
+    }
+    if (typeof entry === "number" && Number.isFinite(entry)) {
+      return [String(entry)];
+    }
+    return [];
+  });
 }
 
 function normalizeInstallEntry(entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     const rawValue = normalizeText(entry);
-    return rawValue
-      ? { kind: "unknown", package: rawValue }
-      : null;
+    return rawValue ? { kind: "unknown", package: rawValue } : null;
   }
 
   const normalized = {};
@@ -87,15 +84,19 @@ function normalizeInstallEntry(entry) {
     normalizeText(entry.manager) ||
     "unknown";
   const rawPackage =
-    normalizeText(entry.package) ||
-    normalizeText(entry.name) ||
-    normalizeText(entry.value);
+    normalizeText(entry.package) || normalizeText(entry.name) || normalizeText(entry.value);
 
   if (rawKind) normalized.kind = rawKind;
   if (rawPackage) normalized.package = rawPackage;
 
   for (const [key, value] of Object.entries(entry)) {
-    if (key === "kind" || key === "package" || key === "type" || key === "name" || key === "value") {
+    if (
+      key === "kind" ||
+      key === "package" ||
+      key === "type" ||
+      key === "name" ||
+      key === "value"
+    ) {
       continue;
     }
     if (value == null) continue;
@@ -112,9 +113,7 @@ function normalizeRequirements(openClaw = null) {
   const env = normalizeStringArray(openClaw.requires?.env ?? openClaw.env);
   const config = normalizeStringArray(openClaw.requires?.config ?? openClaw.config);
   const installEntries = Array.isArray(openClaw.install)
-    ? openClaw.install
-        .map((entry) => normalizeInstallEntry(entry))
-        .filter(Boolean)
+    ? openClaw.install.map((entry) => normalizeInstallEntry(entry)).filter(Boolean)
     : [];
 
   if (!bins.length && !env.length && !config.length && !installEntries.length) {
@@ -140,10 +139,7 @@ function parseSkillMarkdown(readme = "") {
 
   try {
     const parsed = matter(raw);
-    const openClaw =
-      parsed?.data?.metadata?.openclaw ??
-      parsed?.data?.openclaw ??
-      null;
+    const openClaw = parsed?.data?.metadata?.openclaw ?? parsed?.data?.openclaw ?? null;
 
     return {
       readme: typeof parsed.content === "string" ? parsed.content.trim() : raw,
@@ -163,9 +159,7 @@ function normalizeSkillSummary(item = {}) {
       ? item.skill
       : item;
 
-  const slug = normalizeText(
-    source.slug || source.installSlug || source.pagePath || source.id
-  );
+  const slug = normalizeText(source.slug || source.installSlug || source.pagePath || source.id);
   if (!slug) return null;
 
   return {
@@ -173,22 +167,13 @@ function normalizeSkillSummary(item = {}) {
     name: normalizeText(source.name || source.displayName, slug),
     description: normalizeText(source.description || source.summary),
     downloads: normalizeOptionalNumber(
-      source.downloads ??
-        source.download_count ??
-        source.downloadCount ??
-        source.stats?.downloads
+      source.downloads ?? source.download_count ?? source.downloadCount ?? source.stats?.downloads,
     ),
     stars: normalizeOptionalNumber(
-      source.stars ??
-        source.star_count ??
-        source.starCount ??
-        source.stats?.stars
+      source.stars ?? source.star_count ?? source.starCount ?? source.stats?.stars,
     ),
     updatedAt: normalizeDate(
-      source.updatedAt ??
-        source.updated_at ??
-        source.updated_at_at ??
-        source.updated
+      source.updatedAt ?? source.updated_at ?? source.updated_at_at ?? source.updated,
     ),
   };
 }
@@ -208,7 +193,7 @@ function normalizeSkillListPayload(payload = {}) {
       .filter(Boolean),
     cursor:
       normalizeText(
-        payload?.cursor ?? payload?.nextCursor ?? payload?.next_cursor ?? payload?.next
+        payload?.cursor ?? payload?.nextCursor ?? payload?.next_cursor ?? payload?.next,
       ) || null,
   };
 }
@@ -232,7 +217,7 @@ function normalizeSkillDetailPayload(metadata = {}, readme = "") {
 
   const parsedMarkdown = parseSkillMarkdown(readme);
   const metadataRequirements = normalizeRequirements(
-    skillMetadata?.metadata?.openclaw ?? skillMetadata?.openClaw ?? null
+    skillMetadata?.metadata?.openclaw ?? skillMetadata?.openClaw ?? null,
   );
 
   return {
@@ -302,10 +287,7 @@ async function fetchRegistryDiscoveryBaseUrl() {
     return DEFAULT_CLAWHUB_BASE_URL;
   }
 
-  const payload = await parseJsonResponse(
-    response,
-    "Could not reach ClawHub registry."
-  );
+  const payload = await parseJsonResponse(response, "Could not reach ClawHub registry.");
   return pickDiscoveryBaseUrl(payload) || DEFAULT_CLAWHUB_BASE_URL;
 }
 
@@ -387,22 +369,29 @@ async function getSkillDetail(slug) {
     throw createClawhubError(404, "skill_not_found", "No skill found with slug: unknown");
   }
 
-  const metadata = await fetchRegistryJson(
-    `/api/v1/skills/${encodeURIComponent(normalizedSlug)}`,
-    { allowNotFound: true }
-  ).catch((error) => {
+  const metadata = await fetchRegistryJson(`/api/v1/skills/${encodeURIComponent(normalizedSlug)}`, {
+    allowNotFound: true,
+  }).catch((error) => {
     if (error?.statusCode === 404) {
-      throw createClawhubError(404, "skill_not_found", `No skill found with slug: ${normalizedSlug}`);
+      throw createClawhubError(
+        404,
+        "skill_not_found",
+        `No skill found with slug: ${normalizedSlug}`,
+      );
     }
     throw error;
   });
 
   const readme = await fetchRegistryText(
     `/api/v1/skills/${encodeURIComponent(normalizedSlug)}/file?path=${encodeURIComponent("SKILL.md")}`,
-    { allowNotFound: true }
+    { allowNotFound: true },
   ).catch((error) => {
     if (error?.statusCode === 404) {
-      throw createClawhubError(404, "skill_not_found", `No skill found with slug: ${normalizedSlug}`);
+      throw createClawhubError(
+        404,
+        "skill_not_found",
+        `No skill found with slug: ${normalizedSlug}`,
+      );
     }
     throw error;
   });

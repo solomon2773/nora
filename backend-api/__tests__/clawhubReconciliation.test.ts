@@ -28,9 +28,7 @@ describe("clawhub reconciliation helpers", () => {
       { installSlug: "notion", author: "dimagious" },
       { installSlug: "slack", author: "acme" },
     ];
-    const installedSkills = [
-      { slug: "github", version: "1.0.0" },
-    ];
+    const installedSkills = [{ slug: "github", version: "1.0.0" }];
 
     expect(computeMissingSavedSkills(savedSkills, installedSkills)).toEqual([
       expect.objectContaining({ installSlug: "notion", author: "dimagious" }),

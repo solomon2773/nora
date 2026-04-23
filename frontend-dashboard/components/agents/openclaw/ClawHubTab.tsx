@@ -61,11 +61,7 @@ function buildSelectedSkill(detail: SkillDetail): DeployClawHubSkill {
   };
 }
 
-export default function ClawHubTab({
-  agentId,
-  refreshToken,
-  onInstallSuccess,
-}: ClawHubTabProps) {
+export default function ClawHubTab({ agentId, refreshToken, onInstallSuccess }: ClawHubTabProps) {
   const toast = useToast();
   const [query, setQuery] = useState("");
   const [skills, setSkills] = useState<SkillSummary[]>([]);
@@ -83,30 +79,28 @@ export default function ClawHubTab({
   const requestIdRef = useRef(0);
   const detailCacheRef = useRef<Record<string, SkillDetail>>({});
 
-  const showingDefaultBrowseEmptyState =
-    !query.trim() && !loading && !error && skills.length === 0;
+  const showingDefaultBrowseEmptyState = !query.trim() && !loading && !error && skills.length === 0;
   const installedSlugs = useMemo(
     () => new Set(installedSkills.map((skill) => skill.slug)),
-    [installedSkills]
+    [installedSkills],
   );
   const selectedSkillKeys = useMemo(
     () => new Set(selectedSkills.map((skill) => `${skill.author}:${skill.installSlug}`)),
-    [selectedSkills]
+    [selectedSkills],
   );
   const selectedSkillSlugs = useMemo(
     () => new Set(selectedSkills.map((skill) => skill.installSlug)),
-    [selectedSkills]
+    [selectedSkills],
   );
-  const selectedCurrentSkill =
-    selectedSkillDetail
-      ? selectedSkillKeys.has(`${selectedSkillDetail.author || ""}:${selectedSkillDetail.slug}`)
-      : false;
+  const selectedCurrentSkill = selectedSkillDetail
+    ? selectedSkillKeys.has(`${selectedSkillDetail.author || ""}:${selectedSkillDetail.slug}`)
+    : false;
   const activeInstallCount = useMemo(
     () =>
       Object.values(jobStatuses).filter(
-        (status) => status.status === "pending" || status.status === "running"
+        (status) => status.status === "pending" || status.status === "running",
       ).length,
-    [jobStatuses]
+    [jobStatuses],
   );
 
   async function loadInstalledSkills() {
@@ -133,7 +127,9 @@ export default function ClawHubTab({
       if (requestId !== requestIdRef.current) return;
 
       if (!res.ok) {
-        throw new Error(data.message || data.error || "Could not load skills. ClawHub may be unavailable.");
+        throw new Error(
+          data.message || data.error || "Could not load skills. ClawHub may be unavailable.",
+        );
       }
 
       setSkills(Array.isArray(data.skills) ? data.skills : []);
@@ -160,12 +156,16 @@ export default function ClawHubTab({
     setError(null);
 
     try {
-      const res = await fetchWithAuth(`/api/clawhub/skills/search?q=${encodeURIComponent(trimmed)}`);
+      const res = await fetchWithAuth(
+        `/api/clawhub/skills/search?q=${encodeURIComponent(trimmed)}`,
+      );
       const data: SkillListResponse = await res.json();
       if (requestId !== requestIdRef.current) return;
 
       if (!res.ok) {
-        throw new Error(data.message || data.error || "Could not load skills. ClawHub may be unavailable.");
+        throw new Error(
+          data.message || data.error || "Could not load skills. ClawHub may be unavailable.",
+        );
       }
 
       setSkills(Array.isArray(data.skills) ? data.skills : []);
@@ -224,8 +224,8 @@ export default function ClawHubTab({
                 stars: detail.stars,
                 updatedAt: detail.updatedAt || entry.updatedAt,
               }
-            : entry
-        )
+            : entry,
+        ),
       );
       setSelectedSkillDetail(detail);
     } catch (err: any) {
@@ -250,14 +250,12 @@ export default function ClawHubTab({
     const installSlug = "installSlug" in skill ? skill.installSlug : skill.slug;
     const author = "author" in skill ? skill.author || "" : "";
     setSelectedSkills((current) =>
-      current.filter((entry) => !(entry.installSlug === installSlug && entry.author === author))
+      current.filter((entry) => !(entry.installSlug === installSlug && entry.author === author)),
     );
   }
 
   function removeSelectedSkillBySlug(slug: string) {
-    setSelectedSkills((current) =>
-      current.filter((entry) => entry.installSlug !== slug)
-    );
+    setSelectedSkills((current) => current.filter((entry) => entry.installSlug !== slug));
   }
 
   function clearSelectedSkills() {
@@ -310,7 +308,7 @@ export default function ClawHubTab({
               pagePath: skill.pagePath,
               installedAt: skill.installedAt,
             }),
-          }
+          },
         );
         const data: InstallJobResponse & { error?: string; message?: string } = await res.json();
         if (!res.ok) {
@@ -372,7 +370,7 @@ export default function ClawHubTab({
 
   useEffect(() => {
     const activeJobs = Object.values(jobStatuses).filter(
-      (status) => status.status === "pending" || status.status === "running"
+      (status) => status.status === "pending" || status.status === "running",
     );
     if (!activeJobs.length) return;
 
@@ -442,7 +440,8 @@ export default function ClawHubTab({
             </div>
             <h3 className="text-2xl font-black text-slate-900">Install skills on this agent</h3>
             <p className="max-w-2xl text-sm leading-6 text-slate-600">
-              Browse the public ClawHub registry from Nora, select one or more skills, and queue runtime installs for this running agent.
+              Browse the public ClawHub registry from Nora, select one or more skills, and queue
+              runtime installs for this running agent.
             </p>
           </div>
 
