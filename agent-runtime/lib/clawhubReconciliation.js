@@ -38,7 +38,7 @@ function computeMissingSavedSkills(savedSkills = [], installedSkills = []) {
   const installedSlugs = new Set(
     (Array.isArray(installedSkills) ? installedSkills : [])
       .map((entry) => String(entry?.slug || "").trim())
-      .filter(Boolean)
+      .filter(Boolean),
   );
   return normalizedSaved.filter((entry) => !installedSlugs.has(entry.installSlug));
 }
