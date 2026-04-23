@@ -118,6 +118,11 @@ test.describe("Complete platform journey", () => {
     await page.getByPlaceholder(/customer-support-operator/i).fill(primaryAgent.name);
 
     await Promise.all([
+      page.waitForURL(/\/clawhub$/, { waitUntil: "domcontentloaded" }),
+      page.getByRole("button", { name: /next: choose skills/i }).click(),
+    ]);
+
+    await Promise.all([
       page.waitForURL(/\/app\/agents\/[^/?#]+$/, {
         waitUntil: "domcontentloaded",
       }),
