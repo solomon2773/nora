@@ -625,7 +625,10 @@ gatewayUIAssetProxy.get("/agents/:agentId/gateway/embed/bootstrap.js", async (re
     );
   } catch (err) {
     console.error("[gateway-embed-bootstrap] error:", err);
-    if (!res.headersSent) res.status(502).send(`embed bootstrap error: ${err.message}`);
+    if (!res.headersSent) {
+      const message = err && typeof err.message === "string" ? err.message : "unknown error";
+      res.status(502).type("text/plain").send(`embed bootstrap error: ${message}`);
+    }
   }
 });
 
