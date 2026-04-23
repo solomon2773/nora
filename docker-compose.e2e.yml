@@ -47,6 +47,7 @@ services:
       context: .
       dockerfile: backend-api/Dockerfile
     volumes:
+      - ./workers:/workers:ro
       - ./agent-runtime:/agent-runtime:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"

@@ -16,7 +16,7 @@ const mockHermesStats = jest.fn();
 const mockHermesLogs = jest.fn();
 const mockHermesExec = jest.fn();
 
-jest.mock("../../workers/provisioner/backends/hermes", () => {
+jest.mock("../backends/hermes", () => {
   return jest.fn().mockImplementation(() => ({
     start: mockHermesStart,
     stop: mockHermesStop,
@@ -29,7 +29,7 @@ jest.mock("../../workers/provisioner/backends/hermes", () => {
   }));
 });
 
-jest.mock("../../workers/provisioner/backends/nemoclaw", () => {
+jest.mock("../backends/nemoclaw", () => {
   return jest.fn().mockImplementation(() => ({
     start: mockStart,
     stop: mockStop,

@@ -456,6 +456,7 @@ describe("GET /agents/:id/gateway-url", () => {
   });
 
   it("allows gateway url lookups for warning agents so degraded control-plane recovery still works", async () => {
+    process.env.NEXTAUTH_URL = "http://app.nora.test:8080";
     mockDb.query.mockResolvedValueOnce({
       rows: [
         {
@@ -468,18 +469,19 @@ describe("GET /agents/:id/gateway-url", () => {
       ],
     });
 
-    const res = await auth(
-      request(app).get("/agents/a-warning-gateway/gateway-url").set("Host", "app.nora.test:8080"),
-    );
+    const res = await auth(request(app).get("/agents/a-warning-gateway/gateway-url"));
 
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       url: "http://app.nora.test:19123",
       port: 19123,
     });
+
+    delete process.env.NEXTAUTH_URL;
   });
 
   it("uses the forwarded request protocol for published gateway urls when the control plane is behind https", async () => {
+    process.env.NEXTAUTH_URL = "https://app.nora.test";
     mockDb.query.mockResolvedValueOnce({
       rows: [
         {
@@ -495,7 +497,6 @@ describe("GET /agents/:id/gateway-url", () => {
     const res = await auth(
       request(app)
         .get("/agents/a-https-gateway/gateway-url")
-        .set("Host", "app.nora.test")
         .set("X-Forwarded-Proto", "https"),
     );
 
@@ -504,6 +505,8 @@ describe("GET /agents/:id/gateway-url", () => {
       url: "https://app.nora.test:19123",
       port: 19123,
     });
+
+    delete process.env.NEXTAUTH_URL;
   });
 
   it("uses explicit gateway host and port when the backend records them", async () => {
@@ -1943,7 +1946,16 @@ describe("POST /agents/deploy", () => {
     expect(insertParams[9]).toBe("nora-openclaw-agent:local");
     expect(JSON.parse(insertParams[10])).toEqual(
       expect.objectContaining({
-        files: [],
+        files: expect.arrayContaining([
+          expect.objectContaining({ path: "AGENTS.md" }),
+          expect.objectContaining({ path: "SOUL.md" }),
+          expect.objectContaining({ path: "TOOLS.md" }),
+          expect.objectContaining({ path: "IDENTITY.md" }),
+          expect.objectContaining({ path: "USER.md" }),
+          expect.objectContaining({ path: "HEARTBEAT.md" }),
+          expect.objectContaining({ path: "MEMORY.md" }),
+          expect.objectContaining({ path: "BOOTSTRAP.md" }),
+        ]),
         memoryFiles: [],
         metadata: expect.objectContaining({ source: "blank-deploy" }),
       }),

@@ -58,6 +58,7 @@ services:
     working_dir: /app
     volumes:
       - ./backend-api:/app
+      - ./workers:/workers:ro
       - ./workers/provisioner/backends:/app/backends
       - ./agent-runtime:/agent-runtime:ro
       - ./tsconfig.base.json:/tsconfig.base.json:ro
