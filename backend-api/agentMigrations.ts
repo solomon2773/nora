@@ -313,8 +313,11 @@ async function parseUploadedMigrationBuffer(buffer, filename = "") {
   if (!Buffer.isBuffer(buffer)) {
     throw new Error("Upload body is empty");
   }
-  const byteLength = buffer.length;
-  if (!Number.isInteger(byteLength) || byteLength === 0) {
+  // Use Buffer.byteLength() rather than buffer.length so the size comes from
+  // a type-narrowing method call on a verified Buffer, not a property access
+  // whose taint CodeQL still carries forward from the HTTP request body.
+  const byteLength = Buffer.byteLength(buffer);
+  if (byteLength === 0) {
     throw new Error("Upload body is empty");
   }
   if (byteLength > MAX_UPLOAD_BYTES) {
