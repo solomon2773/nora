@@ -335,9 +335,16 @@ async function parseUploadedMigrationBuffer(buffer, filename = "") {
 async function readTarBufferFiles(buffer, { stripBaseName = "" } = {}) {
   const extract = tar.extract();
   const files = [];
-  const normalizedBaseName = String(stripBaseName || "")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  let normalizedBaseName = String(stripBaseName || "");
+  let startIndex = 0;
+  let endIndex = normalizedBaseName.length;
+  while (startIndex < endIndex && normalizedBaseName.charCodeAt(startIndex) === 0x2f) {
+    startIndex += 1;
+  }
+  while (endIndex > startIndex && normalizedBaseName.charCodeAt(endIndex - 1) === 0x2f) {
+    endIndex -= 1;
+  }
+  normalizedBaseName = normalizedBaseName.slice(startIndex, endIndex);
 
   const extractPromise = new Promise((resolve, reject) => {
     extract.on("entry", (header, stream, next) => {

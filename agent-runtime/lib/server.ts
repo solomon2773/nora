@@ -311,14 +311,17 @@ async function forwardToGatewayAndReply(body) {
   // Send response back through the channel via backend API
   const apiUrl = process.env.BACKEND_API_URL || "http://backend-api:4000";
   try {
-    await fetch(`${apiUrl}/agents/${process.env.AGENT_ID}/channels/${channelId}/send`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        content: responseText,
-        metadata: { inReplyTo: sender, channelType },
-      }),
-    });
+    await fetch(
+      `${apiUrl}/agents/${encodeURIComponent(process.env.AGENT_ID || "")}/channels/${encodeURIComponent(channelId)}/send`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: responseText,
+          metadata: { inReplyTo: sender, channelType },
+        }),
+      },
+    );
   } catch (e) {
     const errLine = `${new Date().toISOString()} [CHANNEL] Failed to send reply: ${e.message}`;
     try {
@@ -418,7 +421,7 @@ const server = http.createServer(async (req, res) => {
     const apiUrl = process.env.BACKEND_API_URL || "http://backend-api:4000";
     try {
       const response = await fetch(
-        `${apiUrl}/agents/${process.env.AGENT_ID}/channels/${body.channelId}/send`,
+        `${apiUrl}/agents/${encodeURIComponent(process.env.AGENT_ID || "")}/channels/${encodeURIComponent(String(body.channelId || ""))}/send`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
