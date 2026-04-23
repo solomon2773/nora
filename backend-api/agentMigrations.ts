@@ -310,10 +310,14 @@ function legacyTemplateToManifest(payload = {}, filename = "") {
 }
 
 async function parseUploadedMigrationBuffer(buffer, filename = "") {
-  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+  if (!Buffer.isBuffer(buffer)) {
     throw new Error("Upload body is empty");
   }
-  if (buffer.length > MAX_UPLOAD_BYTES) {
+  const byteLength = buffer.length;
+  if (!Number.isInteger(byteLength) || byteLength === 0) {
+    throw new Error("Upload body is empty");
+  }
+  if (byteLength > MAX_UPLOAD_BYTES) {
     throw new Error("Upload is too large");
   }
 

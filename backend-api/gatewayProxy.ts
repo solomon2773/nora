@@ -22,6 +22,28 @@ const CALL_TIMEOUT = 30000;
 const CHAT_TIMEOUT = 120000;
 const RELAY_CONNECT_DELAY_MS = 750;
 
+// Hostname must be a plain DNS name / IP literal — no URL meta-chars that
+// could alter the parsed origin (no "@", "/", "?", "#", ":", whitespace, etc.).
+// Compose-internal aliases like "worker-provisioner" are intentionally allowed;
+// this is a syntactic guard against injection via agent DB fields, not an
+// allowlist of ranges.
+const GATEWAY_HOST_RE = /^[A-Za-z0-9._-]+$/;
+
+function assertSafeAgentAddress(addr, label = "agent gateway") {
+  if (!addr || typeof addr !== "object") {
+    throw new Error(`${label} address is missing`);
+  }
+  const host = typeof addr.host === "string" ? addr.host.trim() : "";
+  if (!host || host.length > 253 || !GATEWAY_HOST_RE.test(host)) {
+    throw new Error(`${label} host is not a valid hostname`);
+  }
+  const port = Number(addr.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${label} port is out of range`);
+  }
+  return { host, port };
+}
+
 // ─── Device Identity (Ed25519 keypair for Gateway auth) ──────────
 
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
@@ -32,7 +54,10 @@ function base64UrlEncode(buf) {
 }
 
 function deriveDeviceIdentity(gatewayToken) {
-  const seed = crypto.createHash("sha256").update("openclaw-device:" + gatewayToken).digest();
+  const seed = crypto
+    .createHash("sha256")
+    .update("openclaw-device:" + gatewayToken)
+    .digest();
   const privateDer = Buffer.concat([PKCS8_ED25519_PREFIX, seed]);
   const privateKey = crypto.createPrivateKey({ key: privateDer, format: "der", type: "pkcs8" });
   const publicKey = crypto.createPublicKey(privateKey);
@@ -52,14 +77,28 @@ function signDevicePayload(privateKeyPem, payload) {
 function buildConnectDevice(identity, role, scopes, nonce) {
   const signedAtMs = Date.now();
   const payload = [
-    "v3", identity.deviceId, "gateway-client", "backend",
-    role, scopes.join(","), String(signedAtMs),
-    "", nonce, process.platform, ""
+    "v3",
+    identity.deviceId,
+    "gateway-client",
+    "backend",
+    role,
+    scopes.join(","),
+    String(signedAtMs),
+    "",
+    nonce,
+    process.platform,
+    "",
   ].join("|");
   const signature = signDevicePayload(identity.privateKeyPem, payload);
   return {
-    device: { id: identity.deviceId, publicKey: identity.publicKeyB64, signature, signedAt: signedAtMs, nonce },
-    scopes
+    device: {
+      id: identity.deviceId,
+      publicKey: identity.publicKeyB64,
+      signature,
+      signedAt: signedAtMs,
+      nonce,
+    },
+    scopes,
   };
 }
 
@@ -84,7 +123,7 @@ class GatewayConnection {
     this._baseDelay = 1000; // 1s base, doubles each attempt (max ~2 min)
 
     // Circuit breaker state
-    this._circuitState = 'closed'; // closed | open | half-open
+    this._circuitState = "closed"; // closed | open | half-open
     this._circuitOpenedAt = 0;
     this._circuitCooldown = 30000; // 30s before half-open probe
     this._consecutiveFailures = 0;
@@ -104,25 +143,47 @@ class GatewayConnection {
 
       this.ws.on("message", (raw) => {
         let msg;
-        try { msg = JSON.parse(raw.toString()); } catch { return; }
+        try {
+          msg = JSON.parse(raw.toString());
+        } catch {
+          return;
+        }
 
         // Phase 1: Challenge → send connect frame with password + device identity.
         if (msg.type === "event" && msg.event === "connect.challenge") {
           const nonce = msg.payload?.nonce || "";
           const role = "operator";
-          const scopes = ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing"];
+          const scopes = [
+            "operator.admin",
+            "operator.read",
+            "operator.write",
+            "operator.approvals",
+            "operator.pairing",
+          ];
           const { device } = buildConnectDevice(this._identity, role, scopes, nonce);
-          this.ws.send(JSON.stringify({
-            type: "req", id: "__connect__", method: "connect",
-            params: {
-              minProtocol: 3, maxProtocol: 3,
-              client: { id: "gateway-client", version: "1.0.0", platform: "linux", mode: "backend" },
-              role, scopes,
-              caps: ["thinking-events"], commands: [],
-              auth: this.token ? { password: this.token } : {},
-              device
-            }
-          }));
+          this.ws.send(
+            JSON.stringify({
+              type: "req",
+              id: "__connect__",
+              method: "connect",
+              params: {
+                minProtocol: 3,
+                maxProtocol: 3,
+                client: {
+                  id: "gateway-client",
+                  version: "1.0.0",
+                  platform: "linux",
+                  mode: "backend",
+                },
+                role,
+                scopes,
+                caps: ["thinking-events"],
+                commands: [],
+                auth: this.token ? { password: this.token } : {},
+                device,
+              },
+            }),
+          );
           return;
         }
 
@@ -150,7 +211,7 @@ class GatewayConnection {
         // Dispatch events
         if (msg.type === "event" && msg.event) {
           const cbs = this.eventListeners.get(msg.event);
-          if (cbs) cbs.forEach(cb => cb(msg));
+          if (cbs) cbs.forEach((cb) => cb(msg));
         }
       });
 
@@ -208,11 +269,11 @@ class GatewayConnection {
 
   /** Attempt reconnection with exponential backoff, respecting circuit breaker. */
   async reconnect() {
-    if (this._circuitState === 'open') {
+    if (this._circuitState === "open") {
       if (Date.now() - this._circuitOpenedAt < this._circuitCooldown) {
-        throw new Error('Circuit breaker open — gateway temporarily unavailable');
+        throw new Error("Circuit breaker open — gateway temporarily unavailable");
       }
-      this._circuitState = 'half-open';
+      this._circuitState = "half-open";
     }
 
     if (this._reconnectAttempts >= this._maxReconnectAttempts) {
@@ -222,15 +283,17 @@ class GatewayConnection {
 
     this.close();
     const delay = Math.min(this._baseDelay * Math.pow(2, this._reconnectAttempts), 120000);
-    console.log(`[gatewayProxy] Reconnecting to ${this.host}:${this.port} in ${delay}ms (attempt ${this._reconnectAttempts + 1}/${this._maxReconnectAttempts})`);
-    await new Promise(r => setTimeout(r, delay));
+    console.log(
+      `[gatewayProxy] Reconnecting to ${this.host}:${this.port} in ${delay}ms (attempt ${this._reconnectAttempts + 1}/${this._maxReconnectAttempts})`,
+    );
+    await new Promise((r) => setTimeout(r, delay));
     this._reconnectAttempts++;
 
     try {
       await this.connect();
       this._reconnectAttempts = 0;
       this._consecutiveFailures = 0;
-      this._circuitState = 'closed';
+      this._circuitState = "closed";
     } catch (err) {
       this._consecutiveFailures++;
       if (this._consecutiveFailures >= this._circuitThreshold) {
@@ -241,9 +304,11 @@ class GatewayConnection {
   }
 
   _openCircuit() {
-    this._circuitState = 'open';
+    this._circuitState = "open";
     this._circuitOpenedAt = Date.now();
-    console.warn(`[gatewayProxy] Circuit breaker OPEN for ${this.host} — cooling down ${this._circuitCooldown / 1000}s`);
+    console.warn(
+      `[gatewayProxy] Circuit breaker OPEN for ${this.host} — cooling down ${this._circuitCooldown / 1000}s`,
+    );
   }
 
   /** Schedule a background reconnect attempt (non-blocking). */
@@ -253,14 +318,20 @@ class GatewayConnection {
     this.reconnect()
       .then(() => console.log(`[gatewayProxy] Background reconnect succeeded for ${this.host}`))
       .catch(() => {}) // silently fail — next getConnection() call will retry
-      .finally(() => { this._backgroundReconnecting = false; });
+      .finally(() => {
+        this._backgroundReconnecting = false;
+      });
   }
 
   close() {
     this.connected = false;
     this._connectPromise = null;
     if (this.ws) {
-      try { this.ws.close(); } catch {}
+      try {
+        this.ws.close();
+      } catch {
+        /* socket already closed */
+      }
       this.ws = null;
     }
   }
@@ -278,16 +349,17 @@ class GatewayConnection {
 const pool = new Map(); // host:port -> GatewayConnection
 
 async function getConnection(agent) {
-  const addr = resolveGatewayAddress(agent);
-  if (!addr) throw new Error("Agent gateway not yet provisioned");
+  const rawAddr = resolveGatewayAddress(agent);
+  if (!rawAddr) throw new Error("Agent gateway not yet provisioned");
+  const addr = assertSafeAgentAddress(rawAddr);
   const key = `${addr.host}:${addr.port}`;
   let conn = pool.get(key);
   if (conn?.isAlive) return conn;
 
   // Check circuit breaker — if cooldown elapsed, reset fully and retry
-  if (conn?.circuitState === 'open') {
+  if (conn?.circuitState === "open") {
     if (Date.now() - conn._circuitOpenedAt < conn._circuitCooldown) {
-      throw new Error('Circuit breaker open — gateway temporarily unavailable');
+      throw new Error("Circuit breaker open — gateway temporarily unavailable");
     }
     // Cooldown expired — clean up and start fresh
     conn.close();
@@ -296,7 +368,10 @@ async function getConnection(agent) {
   }
 
   // Clean up dead connection
-  if (conn) { conn.close(); pool.delete(key); }
+  if (conn) {
+    conn.close();
+    pool.delete(key);
+  }
 
   conn = new GatewayConnection(addr.host, agent.gateway_token, addr.port);
   pool.set(key, conn);
@@ -322,7 +397,7 @@ async function resolveAgent(agentId, userId) {
             gateway_host_port, gateway_host, gateway_port, runtime_host,
             runtime_port, runtime_family, user_id
        FROM agents WHERE id = $1`,
-    [agentId]
+    [agentId],
   );
   const agent = result.rows[0];
   if (!agent || agent.user_id !== userId) return null;
@@ -412,7 +487,9 @@ function createGatewayRouter() {
       // If we got a successful health response and the agent is in 'warning' state,
       // auto-promote to 'running' — the gateway proved itself healthy.
       if (health && req.agent.status === "warning") {
-        db.query("UPDATE agents SET status = 'running' WHERE id = $1", [req.agent.id]).catch(() => {});
+        db.query("UPDATE agents SET status = 'running' WHERE id = $1", [req.agent.id]).catch(
+          () => {},
+        );
       }
       res.json({ health, status });
     } catch (err) {
@@ -448,7 +525,7 @@ function createGatewayRouter() {
         res.writeHead(200, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
-          "Connection": "keep-alive",
+          Connection: "keep-alive",
           "X-Accel-Buffering": "no",
         });
 
@@ -494,7 +571,9 @@ function createGatewayRouter() {
           conn.off("agent", streamHandler);
           res.write("data: [DONE]\n\n");
           res.end();
-          metrics.recordMetric(req.agent.id, req.user.id, 'error', 1, { error: err.message }).catch(() => {});
+          metrics
+            .recordMetric(req.agent.id, req.user.id, "error", 1, { error: err.message })
+            .catch(() => {});
           return;
         }
 
@@ -509,14 +588,17 @@ function createGatewayRouter() {
             }
           }, 200);
           // Also resolve if the client disconnects
-          req.on("close", () => { clearInterval(check); resolve(); });
+          req.on("close", () => {
+            clearInterval(check);
+            resolve();
+          });
         });
 
         conn.off("chat", streamHandler);
         conn.off("agent", streamHandler);
 
         // Record metrics
-        metrics.recordMetric(req.agent.id, req.user.id, 'messages_sent', 1).catch(() => {});
+        metrics.recordMetric(req.agent.id, req.user.id, "messages_sent", 1).catch(() => {});
 
         res.write(`data: ${JSON.stringify({ type: "done", runId })}\n\n`);
         res.write("data: [DONE]\n\n");
@@ -525,15 +607,18 @@ function createGatewayRouter() {
         // Non-streaming: wait for final response
         const result = await rpcCall(req.agent, "chat.send", params, CHAT_TIMEOUT);
         // Record metrics
-        metrics.recordMetric(req.agent.id, req.user.id, 'messages_sent', 1).catch(() => {});
+        metrics.recordMetric(req.agent.id, req.user.id, "messages_sent", 1).catch(() => {});
         const tokens = result?.usage?.total_tokens;
-        if (tokens) metrics.recordMetric(req.agent.id, req.user.id, 'tokens_used', tokens).catch(() => {});
+        if (tokens)
+          metrics.recordMetric(req.agent.id, req.user.id, "tokens_used", tokens).catch(() => {});
         res.json(result);
       }
     } catch (err) {
       if (!res.headersSent) {
         if (req.agent?.id && req.user?.id) {
-          metrics.recordMetric(req.agent.id, req.user.id, 'error', 1, { error: err.message }).catch(() => {});
+          metrics
+            .recordMetric(req.agent.id, req.user.id, "error", 1, { error: err.message })
+            .catch(() => {});
         }
         res.status(502).json({ error: "Chat failed", details: err.message });
       }
@@ -604,9 +689,7 @@ function createGatewayRouter() {
       const { name, schedule, message, agentId: targetAgent } = req.body;
       // The cron.add RPC expects schedule as an object, not a plain string.
       // The anyOf schema accepts { cron: "expression" } or { interval: seconds }.
-      const scheduleObj = typeof schedule === "string"
-        ? { cron: schedule }
-        : schedule;
+      const scheduleObj = typeof schedule === "string" ? { cron: schedule } : schedule;
       const result = await rpcCall(req.agent, "cron.add", {
         name,
         schedule: scheduleObj,
@@ -634,16 +717,13 @@ function createGatewayRouter() {
     try {
       const result = await rpcCall(req.agent, "tools.catalog");
       const gatewayTools = extractToolList(result);
-      const reservedNames = new Set(
-        gatewayTools.map((tool, index) => getToolName(tool, index))
-      );
+      const reservedNames = new Set(gatewayTools.map((tool, index) => getToolName(tool, index)));
       const syncedIntegrations = await integrations
         .getIntegrationsForSync(req.agent.id)
         .catch(() => []);
-      const integrationTools = integrations.buildIntegrationToolCatalogEntries(
-        syncedIntegrations,
-        { reservedNames }
-      );
+      const integrationTools = integrations.buildIntegrationToolCatalogEntries(syncedIntegrations, {
+        reservedNames,
+      });
       res.json(replaceToolList(result, [...gatewayTools, ...integrationTools]));
     } catch (err) {
       res.status(502).json({ error: err.message });
@@ -714,12 +794,12 @@ function createGatewayRouter() {
     return async (req, res) => {
       try {
         const gatewayPath = buildGatewayProxyPath(req, prefix);
-        const addr = resolveGatewayAddress(req.agent);
+        const addr = assertSafeAgentAddress(resolveGatewayAddress(req.agent));
         const targetUrl = `http://${addr.host}:${addr.port}/${gatewayPath}${req._parsedUrl?.search || ""}`;
 
         const resp = await fetch(targetUrl, {
           method: req.method,
-          headers: { "Accept": req.headers.accept || "*/*", "Accept-Encoding": "identity" },
+          headers: { Accept: req.headers.accept || "*/*", "Accept-Encoding": "identity" },
           signal: AbortSignal.timeout(15000),
         });
 
@@ -742,7 +822,7 @@ function createGatewayRouter() {
   async function proxyGatewayFavicon(req, res) {
     try {
       const fullPath = req.path.replace(/^\/+/, "") || "favicon.svg";
-      const addr = resolveGatewayAddress(req.agent);
+      const addr = assertSafeAgentAddress(resolveGatewayAddress(req.agent));
       const targetUrl = `http://${addr.host}:${addr.port}/${fullPath}`;
       const resp = await fetch(targetUrl, { signal: AbortSignal.timeout(5000) });
       res.status(resp.status);
@@ -836,11 +916,16 @@ function attachGatewayWS(server) {
       const agent = await resolveAgent(agentId, user.id);
       if (!agent) {
         ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
-        ws.close(); return;
+        ws.close();
+        return;
       }
-      if ((agent.status !== "running" && agent.status !== "warning") || !hasGatewayEndpoint(agent)) {
+      if (
+        (agent.status !== "running" && agent.status !== "warning") ||
+        !hasGatewayEndpoint(agent)
+      ) {
         ws.send(JSON.stringify({ type: "error", message: `Agent is ${agent.status}` }));
-        ws.close(); return;
+        ws.close();
+        return;
       }
 
       const identity = deriveDeviceIdentity(agent.gateway_token);
@@ -852,10 +937,16 @@ function attachGatewayWS(server) {
       let relayConnectSent = false;
       let relayConnectTimer = null;
 
-      const addr = resolveGatewayAddress(agent);
+      const addr = assertSafeAgentAddress(resolveGatewayAddress(agent));
       const gwWs = new WebSocket(`ws://${addr.host}:${addr.port}`);
       const role = "operator";
-      const scopes = ["operator.admin", "operator.read", "operator.write", "operator.approvals", "operator.pairing"];
+      const scopes = [
+        "operator.admin",
+        "operator.read",
+        "operator.write",
+        "operator.approvals",
+        "operator.pairing",
+      ];
 
       function clearRelayConnectTimer() {
         if (relayConnectTimer) {
@@ -869,17 +960,29 @@ function attachGatewayWS(server) {
         relayConnectSent = true;
         clearRelayConnectTimer();
         const { device } = buildConnectDevice(identity, role, scopes, relayConnectNonce);
-        gwWs.send(JSON.stringify({
-          type: "req", id: "__relay_connect__", method: "connect",
-          params: {
-            minProtocol: 3, maxProtocol: 3,
-            client: { id: "gateway-client", version: "1.0.0", platform: "linux", mode: "backend" },
-            role, scopes,
-            caps: ["thinking-events"], commands: [],
-            auth: agent.gateway_token ? { password: agent.gateway_token } : {},
-            device
-          }
-        }));
+        gwWs.send(
+          JSON.stringify({
+            type: "req",
+            id: "__relay_connect__",
+            method: "connect",
+            params: {
+              minProtocol: 3,
+              maxProtocol: 3,
+              client: {
+                id: "gateway-client",
+                version: "1.0.0",
+                platform: "linux",
+                mode: "backend",
+              },
+              role,
+              scopes,
+              caps: ["thinking-events"],
+              commands: [],
+              auth: agent.gateway_token ? { password: agent.gateway_token } : {},
+              device,
+            },
+          }),
+        );
       }
 
       function queueRelayConnect() {
@@ -892,12 +995,14 @@ function attachGatewayWS(server) {
 
       function respondToClientConnect(connectRequestId) {
         if (!connectRequestId || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
-          type: "res",
-          id: connectRequestId,
-          ok: true,
-          payload: connectPayload || {},
-        }));
+        ws.send(
+          JSON.stringify({
+            type: "res",
+            id: connectRequestId,
+            ok: true,
+            payload: connectPayload || {},
+          }),
+        );
       }
 
       gwWs.on("open", () => {
@@ -908,7 +1013,11 @@ function attachGatewayWS(server) {
         const str = raw.toString();
         if (!handshakeComplete) {
           let msg;
-          try { msg = JSON.parse(str); } catch { return; }
+          try {
+            msg = JSON.parse(str);
+          } catch {
+            return;
+          }
 
           if (msg.type === "event" && msg.event === "connect.challenge") {
             // Forward challenge to client so its UI can go through the normal auth flow
@@ -923,7 +1032,7 @@ function attachGatewayWS(server) {
           if (msg.id === "__relay_connect__") {
             if (msg.ok) {
               handshakeComplete = true;
-              connectPayload = msg.payload !== undefined ? msg.payload : (msg.result || {});
+              connectPayload = msg.payload !== undefined ? msg.payload : msg.result || {};
               // If client already sent connect while we were handshaking, respond now
               if (pendingClientConnect) {
                 respondToClientConnect(pendingClientConnect.id);
@@ -936,7 +1045,12 @@ function attachGatewayWS(server) {
               clientQueue.length = 0;
             } else {
               console.error(`[gatewayProxy] WS relay handshake failed for ${agentId}:`, msg.error);
-              ws.send(JSON.stringify({ type: "error", message: `Gateway handshake failed: ${msg.error?.message || "unknown"}` }));
+              ws.send(
+                JSON.stringify({
+                  type: "error",
+                  message: `Gateway handshake failed: ${msg.error?.message || "unknown"}`,
+                }),
+              );
               ws.close();
               gwWs.close();
             }
@@ -962,7 +1076,9 @@ function attachGatewayWS(server) {
             }
             return;
           }
-        } catch { /* not JSON */ }
+        } catch {
+          /* not JSON */
+        }
         if (!handshakeComplete) {
           clientQueue.push(str);
           return;
@@ -974,9 +1090,16 @@ function attachGatewayWS(server) {
         clearRelayConnectTimer();
         const reasonStr = reason ? reason.toString() : "";
         const phase = handshakeComplete ? "after auth" : "before auth";
-        console.error(`[gatewayProxy] WS relay gateway closed for ${agentId} ${phase}: code=${code} reason=${reasonStr}`);
+        console.error(
+          `[gatewayProxy] WS relay gateway closed for ${agentId} ${phase}: code=${code} reason=${reasonStr}`,
+        );
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "system", message: `Gateway closed (${code}${reasonStr ? ": " + reasonStr : ""})` }));
+          ws.send(
+            JSON.stringify({
+              type: "system",
+              message: `Gateway closed (${code}${reasonStr ? ": " + reasonStr : ""})`,
+            }),
+          );
           ws.close();
         }
       });
@@ -987,9 +1110,9 @@ function attachGatewayWS(server) {
       });
       ws.on("close", () => {
         clearRelayConnectTimer();
-        if (gwWs.readyState === WebSocket.OPEN || gwWs.readyState === WebSocket.CONNECTING) gwWs.close();
+        if (gwWs.readyState === WebSocket.OPEN || gwWs.readyState === WebSocket.CONNECTING)
+          gwWs.close();
       });
-
     } catch (err) {
       console.error(`[gatewayProxy] WS error:`, err.message);
       ws.send(JSON.stringify({ type: "error", message: err.message }));
@@ -1003,12 +1126,17 @@ function attachGatewayWS(server) {
 /** Evict a cached gateway connection so the next request creates a fresh one.
  *  Called after authSync restarts an agent container. */
 function evictConnection(target) {
-  const address = typeof target === "string" ? { host: target } : resolveGatewayAddress(target || {});
+  const address =
+    typeof target === "string" ? { host: target } : resolveGatewayAddress(target || {});
   if (!address?.host) return;
 
   const keyPrefix = `${address.host}:`;
   for (const [key, conn] of pool) {
-    if (key === address.host || key === `${address.host}:${address.port}` || key.startsWith(keyPrefix)) {
+    if (
+      key === address.host ||
+      key === `${address.host}:${address.port}` ||
+      key.startsWith(keyPrefix)
+    ) {
       conn.close();
       pool.delete(key);
       console.log(`[gatewayProxy] Evicted connection for ${key}`);
