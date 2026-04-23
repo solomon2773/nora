@@ -495,9 +495,7 @@ describe("GET /agents/:id/gateway-url", () => {
     });
 
     const res = await auth(
-      request(app)
-        .get("/agents/a-https-gateway/gateway-url")
-        .set("X-Forwarded-Proto", "https"),
+      request(app).get("/agents/a-https-gateway/gateway-url").set("X-Forwarded-Proto", "https"),
     );
 
     expect(res.status).toBe(200);
