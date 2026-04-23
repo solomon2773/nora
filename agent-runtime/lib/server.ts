@@ -9,7 +9,7 @@ const http = require("http");
 const os = require("os");
 const fs = require("fs");
 const path = require("path");
-const { execSync, spawn } = require("child_process");
+const { execSync, execFileSync, spawn } = require("child_process");
 const { AGENT_RUNTIME_PORT, OPENCLAW_GATEWAY_PORT } = require("./contracts");
 const {
   NORA_INTEGRATIONS_CONTEXT_FILE,
@@ -51,10 +51,7 @@ const startTime = Date.now();
 
 const GATEWAY_PORT = parseInt(process.env.OPENCLAW_GATEWAY_PORT || String(OPENCLAW_GATEWAY_PORT));
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
-const AGENT_TEMPLATE_ROOTS = [
-  OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT,
-  OPENCLAW_WORKSPACE_ROOT,
-];
+const AGENT_TEMPLATE_ROOTS = [OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT, OPENCLAW_WORKSPACE_ROOT];
 const GENERATED_RUNTIME_FILE_NAMES = new Set([
   "auth-profiles.json",
   NORA_INTEGRATIONS_CONTEXT_FILE,
@@ -140,31 +137,21 @@ function buildIntegrationContextMarkdown(integrations = []) {
   for (const integration of syncedIntegrations) {
     const providerLabel = integration.name || integration.provider || "Integration";
     const category = integration.category || "unknown";
-    const capabilities = Array.isArray(integration.capabilities)
-      ? integration.capabilities
-      : [];
-    const toolSpecs = Array.isArray(integration.toolSpecs)
-      ? integration.toolSpecs
-      : [];
-    const usageHints = Array.isArray(integration.usageHints)
-      ? integration.usageHints
-      : [];
+    const capabilities = Array.isArray(integration.capabilities) ? integration.capabilities : [];
+    const toolSpecs = Array.isArray(integration.toolSpecs) ? integration.toolSpecs : [];
+    const usageHints = Array.isArray(integration.usageHints) ? integration.usageHints : [];
     const redactedConfig =
       integration.redactedConfig && typeof integration.redactedConfig === "object"
         ? integration.redactedConfig
         : {};
     const visibleConfigEntries = Object.entries(redactedConfig).filter(
-      ([, value]) => value != null && value !== "" && value !== "[REDACTED]"
+      ([, value]) => value != null && value !== "" && value !== "[REDACTED]",
     );
     const secretConfigKeys = Object.entries(redactedConfig)
       .filter(([, value]) => value === "[REDACTED]")
       .map(([key]) => key);
-    const api = integration.api && typeof integration.api === "object"
-      ? integration.api
-      : null;
-    const mcp = integration.mcp && typeof integration.mcp === "object"
-      ? integration.mcp
-      : null;
+    const api = integration.api && typeof integration.api === "object" ? integration.api : null;
+    const mcp = integration.mcp && typeof integration.mcp === "object" ? integration.mcp : null;
 
     lines.push(`## ${providerLabel}`);
     lines.push("");
@@ -179,9 +166,7 @@ function buildIntegrationContextMarkdown(integrations = []) {
     }
 
     if (api) {
-      const apiSummary = [api.type || "api", api.baseUrl || ""]
-        .filter(Boolean)
-        .join(" ");
+      const apiSummary = [api.type || "api", api.baseUrl || ""].filter(Boolean).join(" ");
       lines.push(`- API: ${apiSummary || "declared"}`);
       if (api.docsUrl) lines.push(`- API docs: ${api.docsUrl}`);
       if (api.authEnv) lines.push(`- API auth env: ${api.authEnv}`);
@@ -218,7 +203,7 @@ function buildIntegrationContextMarkdown(integrations = []) {
         lines.push(
           execution.executable
             ? `    - Execution: available via \`${execution.invokeCommand}\``
-            : "    - Execution: discovery only"
+            : "    - Execution: discovery only",
         );
       }
     }
@@ -251,11 +236,11 @@ function writeGeneratedRuntimeFile(relativePath, content) {
 function writeIntegrationContextFiles(integrations = []) {
   writeGeneratedRuntimeFile(
     NORA_INTEGRATIONS_CONTEXT_FILE,
-    buildIntegrationContextMarkdown(integrations)
+    buildIntegrationContextMarkdown(integrations),
   );
   writeGeneratedRuntimeFile(
     NORA_INTEGRATIONS_SKILL_FILE,
-    buildIntegrationSkillMarkdown(integrations)
+    buildIntegrationSkillMarkdown(integrations),
   );
 }
 
@@ -276,7 +261,7 @@ async function forwardToGatewayAndReply(body) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(GATEWAY_TOKEN ? { "Authorization": `Bearer ${GATEWAY_TOKEN}` } : {}),
+        ...(GATEWAY_TOKEN ? { Authorization: `Bearer ${GATEWAY_TOKEN}` } : {}),
       },
       body: JSON.stringify({
         messages: [{ role: "user", content }],
@@ -292,16 +277,20 @@ async function forwardToGatewayAndReply(body) {
 
     const chatData = await chatRes.json();
     // OpenAI-compatible response format
-    responseText = chatData.choices?.[0]?.message?.content
-      || chatData.content
-      || chatData.response
-      || JSON.stringify(chatData);
+    responseText =
+      chatData.choices?.[0]?.message?.content ||
+      chatData.content ||
+      chatData.response ||
+      JSON.stringify(chatData);
   } catch (e) {
-    // If gateway HTTP endpoint isn't available, try the exec-based fallback
+    // If gateway HTTP endpoint isn't available, try the exec-based fallback.
+    // Use execFileSync with an argv array so neither OPENCLAW_CLI nor `content`
+    // is interpreted by a shell — content comes from a request body.
     try {
-      const result = execSync(
-        `${JSON.stringify(OPENCLAW_CLI)} chat --message ${JSON.stringify(content)} --no-interactive 2>/dev/null`,
-        { encoding: "utf8", timeout: 120000 }
+      const result = execFileSync(
+        OPENCLAW_CLI,
+        ["chat", "--message", String(content), "--no-interactive"],
+        { encoding: "utf8", timeout: 120000, stdio: ["ignore", "pipe", "ignore"] },
       );
       responseText = result.trim();
     } catch {
@@ -313,7 +302,11 @@ async function forwardToGatewayAndReply(body) {
 
   // Log the response
   const logLine = `${new Date().toISOString()} [CHANNEL] Response to ${channelType}: ${responseText.slice(0, 200)}`;
-  try { fs.appendFileSync(LOG_FILE, logLine + "\n"); } catch { /* ignore */ }
+  try {
+    fs.appendFileSync(LOG_FILE, logLine + "\n");
+  } catch {
+    /* ignore */
+  }
 
   // Send response back through the channel via backend API
   const apiUrl = process.env.BACKEND_API_URL || "http://backend-api:4000";
@@ -328,7 +321,11 @@ async function forwardToGatewayAndReply(body) {
     });
   } catch (e) {
     const errLine = `${new Date().toISOString()} [CHANNEL] Failed to send reply: ${e.message}`;
-    try { fs.appendFileSync(LOG_FILE, errLine + "\n"); } catch { /* ignore */ }
+    try {
+      fs.appendFileSync(LOG_FILE, errLine + "\n");
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -376,6 +373,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── POST /exec ────────────────────────────────────────
+  // NOTE: the /exec endpoint is the designed terminal/command surface of the
+  // agent runtime. Authenticated callers pass an arbitrary shell command and
+  // it is executed inside the agent's container. The container sandbox is
+  // the isolation boundary here, not this endpoint. CodeQL's command-line
+  // injection rule is acknowledged and intentional — any change that
+  // sanitises `cmd` would break the feature.
   if (req.method === "POST" && path === "/exec") {
     const body = await parseBody(req);
     const cmd = body.command || body.cmd || "echo 'no command'";
@@ -414,11 +417,14 @@ const server = http.createServer(async (req, res) => {
     // Forward to the backend API for actual delivery
     const apiUrl = process.env.BACKEND_API_URL || "http://backend-api:4000";
     try {
-      const response = await fetch(`${apiUrl}/agents/${process.env.AGENT_ID}/channels/${body.channelId}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: body.content, metadata: body.metadata }),
-      });
+      const response = await fetch(
+        `${apiUrl}/agents/${process.env.AGENT_ID}/channels/${body.channelId}/send`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: body.content, metadata: body.metadata }),
+        },
+      );
       const result = await response.json();
       return json(res, response.status, result);
     } catch (e) {
@@ -430,7 +436,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && path === "/channels/receive") {
     const body = await parseBody(req);
     const line = `${new Date().toISOString()} [CHANNEL] Inbound from ${body.channelType}: ${body.content}`;
-    try { fs.appendFileSync(LOG_FILE, line + "\n"); } catch { /* ignore */ }
+    try {
+      fs.appendFileSync(LOG_FILE, line + "\n");
+    } catch {
+      /* ignore */
+    }
 
     // Respond immediately so the webhook caller isn't blocked
     json(res, 200, { received: true });
@@ -438,7 +448,11 @@ const server = http.createServer(async (req, res) => {
     // Asynchronously forward to the local OpenClaw gateway and send the response back
     forwardToGatewayAndReply(body).catch((e) => {
       const errLine = `${new Date().toISOString()} [CHANNEL] Gateway forward error: ${e.message}`;
-      try { fs.appendFileSync(LOG_FILE, errLine + "\n"); } catch { /* ignore */ }
+      try {
+        fs.appendFileSync(LOG_FILE, errLine + "\n");
+      } catch {
+        /* ignore */
+      }
     });
     return;
   }
@@ -453,7 +467,10 @@ const server = http.createServer(async (req, res) => {
         : [];
     try {
       fs.mkdirSync("/opt/openclaw", { recursive: true });
-      fs.writeFileSync("/opt/openclaw/integrations.json", JSON.stringify(syncedIntegrations, null, 2));
+      fs.writeFileSync(
+        "/opt/openclaw/integrations.json",
+        JSON.stringify(syncedIntegrations, null, 2),
+      );
       writeIntegrationContextFiles(syncedIntegrations);
       return json(res, 200, { synced: true, count: syncedIntegrations.length });
     } catch (e) {
@@ -508,7 +525,7 @@ const server = http.createServer(async (req, res) => {
                 ? entry.path.slice(prefix.length + 1)
                 : entry.path;
               return !templatePathSet.has(relativePath);
-            })
+            }),
           )
         : [];
 
@@ -529,7 +546,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const policyPath = "/opt/openclaw/policy.yaml";
       let policy = null;
-      try { policy = JSON.parse(fs.readFileSync(policyPath, "utf-8")); } catch { /* no policy file */ }
+      try {
+        policy = JSON.parse(fs.readFileSync(policyPath, "utf-8"));
+      } catch {
+        /* no policy file */
+      }
 
       const model = process.env.NEMOCLAW_MODEL || "unknown";
       const hasNvidia = !!process.env.NVIDIA_API_KEY;
@@ -567,7 +588,10 @@ const server = http.createServer(async (req, res) => {
 
       // Attempt hot-reload via openshell CLI if available
       try {
-        execSync("openshell policy set /opt/openclaw/policy.yaml", { timeout: 5000, stdio: "ignore" });
+        execSync("openshell policy set /opt/openclaw/policy.yaml", {
+          timeout: 5000,
+          stdio: "ignore",
+        });
       } catch {
         // openshell CLI may not be present in all sandbox images — policy file is still updated
       }
@@ -583,7 +607,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const approvalsPath = "/opt/openclaw/pending-approvals.json";
       let approvals = [];
-      try { approvals = JSON.parse(fs.readFileSync(approvalsPath, "utf-8")); } catch { /* no pending */ }
+      try {
+        approvals = JSON.parse(fs.readFileSync(approvalsPath, "utf-8"));
+      } catch {
+        /* no pending */
+      }
       return json(res, 200, { approvals });
     } catch (e) {
       return json(res, 500, { error: e.message });
@@ -597,7 +625,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const approvalsPath = "/opt/openclaw/pending-approvals.json";
       let approvals = [];
-      try { approvals = JSON.parse(fs.readFileSync(approvalsPath, "utf-8")); } catch { /* empty */ }
+      try {
+        approvals = JSON.parse(fs.readFileSync(approvalsPath, "utf-8"));
+      } catch {
+        /* empty */
+      }
 
       const idx = approvals.findIndex((a) => a.id === rid);
       if (idx === -1) return json(res, 404, { error: "Approval request not found" });
@@ -620,9 +652,18 @@ const server = http.createServer(async (req, res) => {
               approved: true,
             });
             fs.writeFileSync(policyPath, JSON.stringify(policy, null, 2));
-            try { execSync("openshell policy set /opt/openclaw/policy.yaml", { timeout: 5000, stdio: "ignore" }); } catch { /* best effort */ }
+            try {
+              execSync("openshell policy set /opt/openclaw/policy.yaml", {
+                timeout: 5000,
+                stdio: "ignore",
+              });
+            } catch {
+              /* best effort */
+            }
           }
-        } catch { /* policy update best-effort */ }
+        } catch {
+          /* policy update best-effort */
+        }
       }
 
       // Remove decided entries, keep only pending

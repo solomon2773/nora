@@ -25,8 +25,9 @@ const authLimiter = rateLimit({
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 function validateEmail(email) {
   if (!email || typeof email !== "string") return "Email is required";
-  if (!EMAIL_RE.test(email)) return "Invalid email format";
+  // Length check BEFORE regex so unbounded inputs can't drive backtracking cost.
   if (email.length > 255) return "Email too long";
+  if (!EMAIL_RE.test(email)) return "Invalid email format";
   return null;
 }
 function validatePassword(pw) {
@@ -77,7 +78,7 @@ router.post("/signup", authLimiter, async (req, res) => {
       const role = await nextRegisteredUserRole(client);
       const result = await client.query(
         "INSERT INTO users(email, password_hash, role) VALUES($1, $2, $3) RETURNING id, email, role",
-        [normalizedEmail, hash, role]
+        [normalizedEmail, hash, role],
       );
       return result.rows[0];
     });
@@ -90,20 +91,23 @@ router.post("/signup", authLimiter, async (req, res) => {
 router.post("/login", authLimiter, async (req, res) => {
   const { email, password } = req.body;
   const normalizedEmail = normalizeEmail(email);
-  if (!normalizedEmail || !password) return res.status(400).json({ error: "Email and password required" });
+  if (!normalizedEmail || !password)
+    return res.status(400).json({ error: "Email and password required" });
   try {
     const result = await db.query("SELECT * FROM users WHERE email=$1", [normalizedEmail]);
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: "Invalid email or password" });
     if (!user.password_hash) {
-      return res.status(401).json({ error: `This account uses ${user.provider || "OAuth"} login. Please sign in with ${user.provider || "your OAuth provider"} instead.` });
+      return res.status(401).json({
+        error: `This account uses ${user.provider || "OAuth"} login. Please sign in with ${user.provider || "your OAuth provider"} instead.`,
+      });
     }
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: "Invalid email or password" });
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
     res.json({ token });
   } catch (e) {
@@ -113,17 +117,12 @@ router.post("/login", authLimiter, async (req, res) => {
 
 router.post("/oauth-login", authLimiter, async (req, res) => {
   if (!isOAuthLoginEnabled()) {
-    return res.status(403).json({ error: "OAuth login is disabled until server-side provider verification is implemented" });
+    return res.status(403).json({
+      error: "OAuth login is disabled until server-side provider verification is implemented",
+    });
   }
 
-  const {
-    email,
-    name,
-    provider,
-    providerId,
-    oauthAccessToken,
-    oauthIdToken,
-  } = req.body || {};
+  const { email, name, provider, providerId, oauthAccessToken, oauthIdToken } = req.body || {};
 
   const normalizedProvider = normalizeProvider(provider);
   if (!normalizedProvider) return res.status(400).json({ error: "provider required" });
@@ -144,15 +143,12 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
     const user = await withUserCreationLock(async (client) => {
       const linkedResult = await client.query(
         "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE provider = $1 AND provider_id = $2",
-        [normalizedProvider, verified.providerId]
+        [normalizedProvider, verified.providerId],
       );
       const linkedUser = linkedResult.rows[0];
-      if (
-        linkedUser &&
-        normalizeEmail(linkedUser.email) !== normalizedVerifiedEmail
-      ) {
+      if (linkedUser && normalizeEmail(linkedUser.email) !== normalizedVerifiedEmail) {
         const error = new Error(
-          `This ${normalizedProvider} account is already linked to another Nora user email.`
+          `This ${normalizedProvider} account is already linked to another Nora user email.`,
         );
         error.statusCode = 409;
         throw error;
@@ -160,20 +156,20 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
 
       const existingResult = await client.query(
         "SELECT id, email, role, name, provider, provider_id, password_hash FROM users WHERE email = $1",
-        [normalizedVerifiedEmail]
+        [normalizedVerifiedEmail],
       );
       const existingUser = existingResult.rows[0];
 
       if (existingUser?.password_hash && !existingUser.provider) {
         const error = new Error(
-          "This email already uses password login. Sign in with password until account linking exists."
+          "This email already uses password login. Sign in with password until account linking exists.",
         );
         error.statusCode = 409;
         throw error;
       }
       if (existingUser?.provider && existingUser.provider !== normalizedProvider) {
         const error = new Error(
-          `This account is already linked to ${existingUser.provider} login.`
+          `This account is already linked to ${existingUser.provider} login.`,
         );
         error.statusCode = 409;
         throw error;
@@ -183,13 +179,13 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
         String(existingUser.provider_id) !== String(verified.providerId)
       ) {
         const error = new Error(
-          `This ${normalizedProvider} account is linked to a different Nora user.`
+          `This ${normalizedProvider} account is linked to a different Nora user.`,
         );
         error.statusCode = 409;
         throw error;
       }
 
-      const role = existingUser?.role || await nextRegisteredUserRole(client);
+      const role = existingUser?.role || (await nextRegisteredUserRole(client));
       const result = await client.query(
         `INSERT INTO users(email, name, provider, provider_id, role)
          VALUES($1, $2, $3, $4, $5)
@@ -204,7 +200,7 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
           normalizedProvider,
           verified.providerId,
           role,
-        ]
+        ],
       );
       return result.rows[0];
     });
@@ -212,7 +208,7 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "7d" },
     );
     res.json({ token, user });
   } catch (e) {
@@ -222,7 +218,11 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
     if (e.statusCode === 409) {
       return res.status(409).json({ error: e.message });
     }
-    if (/verification failed|audience mismatch|email is not verified|email is missing or unverified|did not match|required/i.test(e.message)) {
+    if (
+      /verification failed|audience mismatch|email is not verified|email is missing or unverified|did not match|required/i.test(
+        e.message,
+      )
+    ) {
       return res.status(401).json({ error: e.message });
     }
     res.status(500).json({ error: e.message });
@@ -234,12 +234,14 @@ router.post("/oauth-login", authLimiter, async (req, res) => {
 router.patch("/password", authenticateToken, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) return res.status(400).json({ error: "Both passwords required" });
+    if (!currentPassword || !newPassword)
+      return res.status(400).json({ error: "Both passwords required" });
     const pwErr = validatePassword(newPassword);
     if (pwErr) return res.status(400).json({ error: pwErr });
     const user = (await db.query("SELECT * FROM users WHERE id = $1", [req.user.id])).rows[0];
     if (!user) return res.status(404).json({ error: "User not found" });
-    if (!user.password_hash) return res.status(400).json({ error: "OAuth user — no password to change" });
+    if (!user.password_hash)
+      return res.status(400).json({ error: "OAuth user — no password to change" });
     const ok = await bcrypt.compare(currentPassword, user.password_hash);
     if (!ok) return res.status(401).json({ error: "Current password is incorrect" });
     const hash = await bcrypt.hash(newPassword, 10);
@@ -254,7 +256,7 @@ router.get("/me", authenticateToken, async (req, res) => {
   try {
     const result = await db.query(
       "SELECT id, email, name, role, provider, avatar, created_at FROM users WHERE id = $1",
-      [req.user.id]
+      [req.user.id],
     );
     if (!result.rows[0]) return res.status(404).json({ error: "User not found" });
     res.json(result.rows[0]);
@@ -302,7 +304,7 @@ router.patch("/profile", authenticateToken, async (req, res) => {
     values.push(req.user.id);
     const result = await db.query(
       `UPDATE users SET ${updates.join(", ")} WHERE id = $${idx} RETURNING name, avatar`,
-      values
+      values,
     );
     res.json(result.rows[0]);
   } catch (e) {

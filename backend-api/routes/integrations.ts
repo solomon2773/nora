@@ -19,7 +19,7 @@ async function getAgentIntegrationRuntimeTarget(agentId) {
             gateway_host_port, gateway_host, gateway_port, backend_type,
             runtime_family, deploy_target, sandbox_profile, user_id
        FROM agents WHERE id = $1`,
-    [agentId]
+    [agentId],
   );
   return agentResult.rows[0] || null;
 }
@@ -31,14 +31,12 @@ async function syncIntegrationsToAgent(agentId, { strictHermes = false } = {}) {
   if (resolveAgentRuntimeFamily(agent) === "hermes") {
     const syncResults = await syncAuthToUserAgents(agent.user_id, agent.id);
     const failedResult = Array.isArray(syncResults)
-      ? syncResults.find(
-          (entry) => entry?.agentId === agent.id && entry?.status === "failed"
-        )
+      ? syncResults.find((entry) => entry?.agentId === agent.id && entry?.status === "failed")
       : null;
 
     if (strictHermes && failedResult) {
       const error = new Error(
-        failedResult.error || "Failed to sync Hermes integrations to runtime"
+        failedResult.error || "Failed to sync Hermes integrations to runtime",
       );
       error.statusCode = 502;
       throw error;
@@ -62,20 +60,26 @@ async function syncIntegrationsToAgent(agentId, { strictHermes = false } = {}) {
       body: JSON.stringify({ integrations: syncData }),
     });
   } catch (e) {
-    console.warn(`[sync-integrations] Runtime sync failed for agent ${agentId} on port ${AGENT_RUNTIME_PORT}:`, e.message);
+    console.warn(
+      `[sync-integrations] Runtime sync failed for agent ${agentId} on port ${AGENT_RUNTIME_PORT}: ${String(e?.message || e)}`,
+    );
   }
 
   // 2. Push decrypted tokens into the live gateway env via RPC
-  if (agent.status === 'running') {
+  if (agent.status === "running") {
     try {
       const envVars = await integrations.getIntegrationEnvVars(agentId);
       const count = Object.keys(envVars).length;
       if (count > 0) {
-        await rpcCall(agent, 'config.set', { env: envVars });
-        console.log(`[sync-integrations] Pushed ${count} integration env var(s) to agent ${agentId} gateway`);
+        await rpcCall(agent, "config.set", { env: envVars });
+        console.log(
+          `[sync-integrations] Pushed ${count} integration env var(s) to agent ${agentId} gateway`,
+        );
       }
     } catch (e) {
-      console.warn(`[sync-integrations] Gateway env push failed for agent ${agentId}:`, e.message);
+      console.warn(
+        `[sync-integrations] Gateway env push failed for agent ${agentId}: ${String(e?.message || e)}`,
+      );
     }
   }
 
@@ -202,7 +206,9 @@ router.post("/agents/:id/integrations/tools/invoke", async (req, res) => {
     const input =
       req.body.input && typeof req.body.input === "object" && !Array.isArray(req.body.input)
         ? req.body.input
-        : req.body.arguments && typeof req.body.arguments === "object" && !Array.isArray(req.body.arguments)
+        : req.body.arguments &&
+            typeof req.body.arguments === "object" &&
+            !Array.isArray(req.body.arguments)
           ? req.body.arguments
           : {};
     const result = await invokeAgentIntegrationTool(req.params.id, {

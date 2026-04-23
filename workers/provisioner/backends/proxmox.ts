@@ -10,9 +10,7 @@ const {
   roundMetric,
   toFiniteInteger,
 } = require("./telemetry");
-const {
-  PROXMOX_RELEASE_BLOCKER_ISSUE,
-} = require("../../../agent-runtime/lib/backendCatalog");
+const { PROXMOX_RELEASE_BLOCKER_ISSUE } = require("../../../agent-runtime/lib/backendCatalog");
 
 class ProxmoxBackend extends ProvisionerBackend {
   constructor() {
@@ -21,7 +19,8 @@ class ProxmoxBackend extends ProvisionerBackend {
     this.tokenId = process.env.PROXMOX_TOKEN_ID; // e.g. root@pam!openclaw
     this.tokenSecret = process.env.PROXMOX_TOKEN_SECRET;
     this.node = process.env.PROXMOX_NODE || "pve";
-    this.template = process.env.PROXMOX_TEMPLATE || "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst";
+    this.template =
+      process.env.PROXMOX_TEMPLATE || "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst";
     this.timeoutMs = 60000;
   }
 
@@ -42,13 +41,17 @@ class ProxmoxBackend extends ProvisionerBackend {
       headers["Content-Length"] = Buffer.byteLength(body);
     }
 
+    // Proxmox self-signed certs are the norm on-prem; certificate verification
+    // is opt-in via PROXMOX_VERIFY_TLS=true (set it once CA trust is wired up).
+    const verifyTls = process.env.PROXMOX_VERIFY_TLS === "true";
+
     return new Promise((resolve, reject) => {
       const req = https.request(
         url,
         {
           method,
           headers,
-          rejectUnauthorized: false,
+          rejectUnauthorized: verifyTls,
           timeout: this.timeoutMs,
         },
         (res) => {
@@ -71,17 +74,16 @@ class ProxmoxBackend extends ProvisionerBackend {
 
             const statusCode = res.statusCode || 500;
             if (statusCode < 200 || statusCode >= 300) {
-              const detail =
-                parsed?.errors
-                  ? JSON.stringify(parsed.errors)
-                  : parsed?.message || raw || `HTTP ${statusCode}`;
+              const detail = parsed?.errors
+                ? JSON.stringify(parsed.errors)
+                : parsed?.message || raw || `HTTP ${statusCode}`;
               reject(new Error(detail));
               return;
             }
 
             resolve(parsed);
           });
-        }
+        },
       );
 
       req.on("timeout", () => {
@@ -127,10 +129,7 @@ class ProxmoxBackend extends ProvisionerBackend {
   async status(containerId) {
     const vmid = containerId;
     try {
-      const data = await this._requestData(
-        "GET",
-        `/nodes/${this.node}/lxc/${vmid}/status/current`
-      );
+      const data = await this._requestData("GET", `/nodes/${this.node}/lxc/${vmid}/status/current`);
       return {
         running: data.status === "running",
         uptime: data.uptime || 0,
@@ -146,13 +145,9 @@ class ProxmoxBackend extends ProvisionerBackend {
     const vmid = containerId;
 
     try {
-      const data = await this._requestData(
-        "GET",
-        `/nodes/${this.node}/lxc/${vmid}/status/current`
-      );
+      const data = await this._requestData("GET", `/nodes/${this.node}/lxc/${vmid}/status/current`);
 
-      const cpuPercent =
-        typeof data?.cpu === "number" ? roundMetric(data.cpu * 100) : null;
+      const cpuPercent = typeof data?.cpu === "number" ? roundMetric(data.cpu * 100) : null;
       const memoryUsageMb = bytesToMegabytes(data?.mem, 0);
       const memoryLimitMb = bytesToMegabytes(data?.maxmem, 0);
       const memoryPercent =
@@ -179,8 +174,7 @@ class ProxmoxBackend extends ProvisionerBackend {
         current: {
           recorded_at: new Date().toISOString(),
           running: data?.status === "running",
-          uptime_seconds:
-            data?.status === "running" ? toFiniteInteger(data?.uptime) ?? 0 : 0,
+          uptime_seconds: data?.status === "running" ? (toFiniteInteger(data?.uptime) ?? 0) : 0,
           cpu_percent: cpuPercent,
           memory_usage_mb: memoryUsageMb,
           memory_limit_mb: memoryLimitMb,
@@ -204,7 +198,9 @@ class ProxmoxBackend extends ProvisionerBackend {
   async stop(containerId) {
     const vmid = containerId;
     console.log(`[proxmox] Stopping LXC ${vmid}`);
-    await this._requestData("POST", `/nodes/${this.node}/lxc/${vmid}/status/shutdown`, { timeout: 30 });
+    await this._requestData("POST", `/nodes/${this.node}/lxc/${vmid}/status/shutdown`, {
+      timeout: 30,
+    });
     // Wait for graceful shutdown, then force-stop if needed
     for (let i = 0; i < 10; i++) {
       await new Promise((r) => setTimeout(r, 3000));

@@ -30,9 +30,7 @@ const {
   OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT,
   OPENCLAW_WORKSPACE_ROOT,
 } = require("../agent-runtime/lib/runtimeBootstrap");
-const {
-  NORA_INTEGRATIONS_SKILL_FILE,
-} = require("../agent-runtime/lib/integrationTools");
+const { NORA_INTEGRATIONS_SKILL_FILE } = require("../agent-runtime/lib/integrationTools");
 const {
   HERMES_CHANNEL_DEFINITIONS,
   HERMES_CHANNEL_TYPES,
@@ -89,12 +87,8 @@ function normalizeManifestWarnings(warnings = []) {
 
 function summarizeManagedState(managed = {}) {
   return {
-    llmProviderCount: Array.isArray(managed.llmProviders)
-      ? managed.llmProviders.length
-      : 0,
-    integrationCount: Array.isArray(managed.integrations)
-      ? managed.integrations.length
-      : 0,
+    llmProviderCount: Array.isArray(managed.llmProviders) ? managed.llmProviders.length : 0,
+    integrationCount: Array.isArray(managed.integrations) ? managed.integrations.length : 0,
     channelCount: Array.isArray(managed.channels) ? managed.channels.length : 0,
     agentSecretCount: Array.isArray(managed.agentSecretOverrides)
       ? managed.agentSecretOverrides.length
@@ -104,15 +98,15 @@ function summarizeManagedState(managed = {}) {
 
 function summarizeManifest(manifest = {}) {
   const templatePayload = normalizeTemplatePayload(manifest.templatePayload || {});
-  const hermesFiles = Array.isArray(manifest?.hermesSeed?.files)
-    ? manifest.hermesSeed.files
-    : [];
+  const hermesFiles = Array.isArray(manifest?.hermesSeed?.files) ? manifest.hermesSeed.files : [];
   const managedSummary = summarizeManagedState(manifest.managed || {});
   const warnings = normalizeManifestWarnings(manifest.warnings);
 
   return {
     runtimeFamily:
-      String(manifest.runtimeFamily || "").trim().toLowerCase() || "openclaw",
+      String(manifest.runtimeFamily || "")
+        .trim()
+        .toLowerCase() || "openclaw",
     fileCount: templatePayload.files.length,
     memoryFileCount: templatePayload.memoryFiles.length,
     hermesFileCount: hermesFiles.length,
@@ -135,7 +129,9 @@ function buildDraftPreview(manifest = {}) {
     id: manifest.id || null,
     name: manifest.name || "Imported Agent",
     runtimeFamily:
-      String(manifest.runtimeFamily || "").trim().toLowerCase() || "openclaw",
+      String(manifest.runtimeFamily || "")
+        .trim()
+        .toLowerCase() || "openclaw",
     source: manifest.source || {},
     summary: summarizeManifest(manifest),
     warnings,
@@ -153,20 +149,16 @@ function buildDraftPreview(manifest = {}) {
         name: entry.name,
         enabled: entry.enabled !== false,
       })),
-      agentSecretOverrides: (manifest?.managed?.agentSecretOverrides || []).map(
-        (entry) => ({
-          key: entry.key,
-        })
-      ),
+      agentSecretOverrides: (manifest?.managed?.agentSecretOverrides || []).map((entry) => ({
+        key: entry.key,
+      })),
     },
     openclaw: {
       fileCount: templatePayload.files.length,
       memoryFileCount: templatePayload.memoryFiles.length,
     },
     hermes: {
-      fileCount: Array.isArray(manifest?.hermesSeed?.files)
-        ? manifest.hermesSeed.files.length
-        : 0,
+      fileCount: Array.isArray(manifest?.hermesSeed?.files) ? manifest.hermesSeed.files.length : 0,
       modelConfig: manifest?.hermesSeed?.modelConfig || null,
       channels: hermesChannels.map((entry) => ({
         type: entry.type,
@@ -192,7 +184,7 @@ async function packMigrationBundle(manifest = {}) {
         if (error) return reject(error);
         bundle.finalize();
         resolve();
-      }
+      },
     );
   });
 
@@ -249,10 +241,7 @@ function normalizeMigrationManifest(rawManifest = {}) {
     version: 1,
     runtimeFamily,
     name: String(rawManifest.name || "Imported Agent").trim() || "Imported Agent",
-    source:
-      rawManifest.source && typeof rawManifest.source === "object"
-        ? rawManifest.source
-        : {},
+    source: rawManifest.source && typeof rawManifest.source === "object" ? rawManifest.source : {},
     templatePayload,
     hermesSeed:
       runtimeFamily === "hermes" &&
@@ -260,9 +249,7 @@ function normalizeMigrationManifest(rawManifest = {}) {
       typeof rawManifest.hermesSeed === "object"
         ? {
             version: 1,
-            files: Array.isArray(rawManifest.hermesSeed.files)
-              ? rawManifest.hermesSeed.files
-              : [],
+            files: Array.isArray(rawManifest.hermesSeed.files) ? rawManifest.hermesSeed.files : [],
             modelConfig:
               rawManifest.hermesSeed.modelConfig &&
               typeof rawManifest.hermesSeed.modelConfig === "object"
@@ -285,9 +272,7 @@ function normalizeMigrationManifest(rawManifest = {}) {
             channels: Array.isArray(rawManifest.managed.channels)
               ? rawManifest.managed.channels
               : [],
-            agentSecretOverrides: Array.isArray(
-              rawManifest.managed.agentSecretOverrides
-            )
+            agentSecretOverrides: Array.isArray(rawManifest.managed.agentSecretOverrides)
               ? rawManifest.managed.agentSecretOverrides
               : [],
           }
@@ -350,7 +335,9 @@ async function parseUploadedMigrationBuffer(buffer, filename = "") {
 async function readTarBufferFiles(buffer, { stripBaseName = "" } = {}) {
   const extract = tar.extract();
   const files = [];
-  const normalizedBaseName = String(stripBaseName || "").replace(/^\/+|\/+$/g, "");
+  const normalizedBaseName = String(stripBaseName || "")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
 
   const extractPromise = new Promise((resolve, reject) => {
     extract.on("entry", (header, stream, next) => {
@@ -496,7 +483,7 @@ async function execSsh(source = {}, command, { timeout = 120000, binary = false 
     const os = require("os");
     keyPath = path.join(
       os.tmpdir(),
-      `nora-ssh-${Date.now()}-${Math.random().toString(16).slice(2)}.pem`
+      `nora-ssh-${Date.now()}-${Math.random().toString(16).slice(2)}.pem`,
     );
     fs.writeFileSync(keyPath, String(source.privateKey), { mode: 0o600 });
     args.push("-i", keyPath);
@@ -525,8 +512,8 @@ async function execSsh(source = {}, command, { timeout = 120000, binary = false 
 async function getSshArchiveFiles(source = {}, absolutePath) {
   const command = `sh -lc ${JSON.stringify(
     `if [ -d ${shellSingleQuote(absolutePath)} ]; then tar -C ${shellSingleQuote(
-      absolutePath
-    )} -cf - .; fi`
+      absolutePath,
+    )} -cf - .; fi`,
   )}`;
   const buffer = await execSsh(source, command, {
     timeout: 120000,
@@ -539,9 +526,7 @@ async function getSshArchiveFiles(source = {}, absolutePath) {
 
 async function readSshText(source = {}, absolutePath) {
   const command = `sh -lc ${JSON.stringify(
-    `if [ -f ${shellSingleQuote(absolutePath)} ]; then cat ${shellSingleQuote(
-      absolutePath
-    )}; fi`
+    `if [ -f ${shellSingleQuote(absolutePath)} ]; then cat ${shellSingleQuote(absolutePath)}; fi`,
   )}`;
   return execSsh(source, command, { timeout: 30000, binary: false }).catch(() => "");
 }
@@ -624,14 +609,10 @@ async function readHermesSnapshotFromDocker(container) {
 }
 
 async function readHermesSnapshotFromSsh(source = {}) {
-  const output = await execSsh(
-    source,
-    buildHermesSnapshotCommand(),
-    {
-      timeout: 30000,
-      binary: false,
-    }
-  );
+  const output = await execSsh(source, buildHermesSnapshotCommand(), {
+    timeout: 30000,
+    binary: false,
+  });
   return JSON.parse(String(output || "{}").trim() || "{}");
 }
 
@@ -655,7 +636,7 @@ function manifestFromOpenClawSource({
     {
       name,
       sourceType: "community",
-    }
+    },
   );
 
   return normalizeMigrationManifest({
@@ -745,12 +726,7 @@ function hermesChannelsFromSnapshot(snapshot = {}) {
   return { channels: channelsPayload, warnings };
 }
 
-function manifestFromHermesSource({
-  name,
-  workspaceFiles = [],
-  snapshot = {},
-  source = {},
-}) {
+function manifestFromHermesSource({ name, workspaceFiles = [], snapshot = {}, source = {} }) {
   const { channels: hermesChannels, warnings } = hermesChannelsFromSnapshot(snapshot);
 
   return normalizeMigrationManifest({
@@ -778,7 +754,9 @@ async function buildLiveMigrationManifest(input = {}) {
     String(input.runtime_family || input.runtimeFamily || "")
       .trim()
       .toLowerCase() || "openclaw";
-  const transport = String(input.transport || "").trim().toLowerCase();
+  const transport = String(input.transport || "")
+    .trim()
+    .toLowerCase();
 
   if (!["docker", "ssh"].includes(transport)) {
     throw new Error("Unsupported live migration transport");
@@ -789,32 +767,28 @@ async function buildLiveMigrationManifest(input = {}) {
       const containerRef = String(input.container_id || input.container || "").trim();
       if (!containerRef) throw new Error("Docker live migration requires a container id or name");
       const container = docker.getContainer(containerRef);
-      const [agentFiles, workspaceFiles, sessionFiles, authProfilesBuffer] =
-        await Promise.all([
-          getDockerArchiveFiles(container, OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT),
-          getDockerArchiveFiles(container, OPENCLAW_WORKSPACE_ROOT),
-          getDockerArchiveFiles(container, "/root/.openclaw/agents/main/sessions"),
-          getDockerArchiveBuffer(
-            container,
-            `${OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`
-          ),
-        ]);
+      const [agentFiles, workspaceFiles, sessionFiles, authProfilesBuffer] = await Promise.all([
+        getDockerArchiveFiles(container, OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT),
+        getDockerArchiveFiles(container, OPENCLAW_WORKSPACE_ROOT),
+        getDockerArchiveFiles(container, "/root/.openclaw/agents/main/sessions"),
+        getDockerArchiveBuffer(
+          container,
+          `${OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`,
+        ),
+      ]);
 
       const authFiles = authProfilesBuffer.length
         ? await readTarBufferFiles(authProfilesBuffer)
         : [];
-      const authProfileEntry = authFiles.find(
-        (entry) => entry.path === "auth-profiles.json"
-      );
+      const authProfileEntry = authFiles.find((entry) => entry.path === "auth-profiles.json");
 
       return manifestFromOpenClawSource({
-        name:
-          String(input.name || "").trim() || `Imported OpenClaw ${containerRef.slice(0, 12)}`,
+        name: String(input.name || "").trim() || `Imported OpenClaw ${containerRef.slice(0, 12)}`,
         files: [...agentFiles, ...workspaceFiles].filter(
           (entry) =>
             entry.path !== "auth-profiles.json" &&
             entry.path !== NORA_INTEGRATIONS_CONTEXT_FILE &&
-            entry.path !== NORA_INTEGRATIONS_SKILL_FILE
+            entry.path !== NORA_INTEGRATIONS_SKILL_FILE,
         ),
         memoryFiles: sessionFiles.map((entry) => ({
           ...entry,
@@ -823,7 +797,7 @@ async function buildLiveMigrationManifest(input = {}) {
         llmProviderEntries: llmProvidersFromAuthProfiles(
           authProfileEntry
             ? Buffer.from(authProfileEntry.contentBase64, "base64").toString("utf8")
-            : ""
+            : "",
         ),
         source: {
           kind: "docker",
@@ -835,19 +809,19 @@ async function buildLiveMigrationManifest(input = {}) {
 
     const workspaceFiles = await getSshArchiveFiles(
       input,
-      input.workspace_root || OPENCLAW_WORKSPACE_ROOT
+      input.workspace_root || OPENCLAW_WORKSPACE_ROOT,
     );
     const agentFiles = await getSshArchiveFiles(
       input,
-      input.agent_root || OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT
+      input.agent_root || OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT,
     );
     const sessionFiles = await getSshArchiveFiles(
       input,
-      input.session_root || "/root/.openclaw/agents/main/sessions"
+      input.session_root || "/root/.openclaw/agents/main/sessions",
     );
     const authProfilesText = await readSshText(
       input,
-      `${input.agent_root || OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`
+      `${input.agent_root || OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`,
     );
 
     return manifestFromOpenClawSource({
@@ -856,7 +830,7 @@ async function buildLiveMigrationManifest(input = {}) {
         (entry) =>
           entry.path !== "auth-profiles.json" &&
           entry.path !== NORA_INTEGRATIONS_CONTEXT_FILE &&
-          entry.path !== NORA_INTEGRATIONS_SKILL_FILE
+          entry.path !== NORA_INTEGRATIONS_SKILL_FILE,
       ),
       memoryFiles: sessionFiles.map((entry) => ({
         ...entry,
@@ -881,8 +855,7 @@ async function buildLiveMigrationManifest(input = {}) {
     ]);
 
     return manifestFromHermesSource({
-      name:
-        String(input.name || "").trim() || `Imported Hermes ${containerRef.slice(0, 12)}`,
+      name: String(input.name || "").trim() || `Imported Hermes ${containerRef.slice(0, 12)}`,
       workspaceFiles,
       snapshot,
       source: {
@@ -916,17 +889,14 @@ async function listUserRawLlmProviders(userId) {
        FROM llm_providers
       WHERE user_id = $1
       ORDER BY created_at ASC`,
-    [userId]
+    [userId],
   );
 
   return result.rows.map((row) => ({
     provider: row.provider,
     apiKey: decrypt(row.api_key),
     model: row.model || null,
-    config:
-      typeof row.config === "string"
-        ? JSON.parse(row.config || "{}")
-        : row.config || {},
+    config: typeof row.config === "string" ? JSON.parse(row.config || "{}") : row.config || {},
     isDefault: row.is_default === true,
   }));
 }
@@ -937,7 +907,7 @@ async function listAgentIntegrationSecrets(agentId) {
        FROM integrations
       WHERE agent_id = $1
       ORDER BY created_at ASC`,
-    [agentId]
+    [agentId],
   );
 
   return result.rows.map((row) => ({
@@ -955,7 +925,7 @@ async function listAgentChannelSecrets(agentId) {
        FROM channels
       WHERE agent_id = $1
       ORDER BY created_at ASC`,
-    [agentId]
+    [agentId],
   );
 
   return result.rows.map((row) => ({
@@ -968,7 +938,9 @@ async function listAgentChannelSecrets(agentId) {
 
 async function buildMigrationManifestFromAgent(agent, { userId }) {
   const runtimeFamily =
-    String(agent?.runtime_family || "").trim().toLowerCase() || "openclaw";
+    String(agent?.runtime_family || "")
+      .trim()
+      .toLowerCase() || "openclaw";
 
   if (runtimeFamily === "openclaw") {
     const [templatePayload, providerEntries, integrationEntries, channelEntries, overrideMap] =
@@ -1016,9 +988,7 @@ async function buildMigrationManifestFromAgent(agent, { userId }) {
       getPersistedHermesState(agent.id),
     ]);
 
-  const state = liveSnapshot
-    ? snapshotToPersistedHermesState(liveSnapshot)
-    : persistedState;
+  const state = liveSnapshot ? snapshotToPersistedHermesState(liveSnapshot) : persistedState;
 
   return normalizeMigrationManifest({
     name: agent.name || "Hermes Agent",
@@ -1079,7 +1049,7 @@ async function createMigrationDraft({
       JSON.stringify(summarizeManifest(normalizedManifest)),
       JSON.stringify(normalizeManifestWarnings(normalizedManifest.warnings)),
       encodeStoredManifest(normalizedManifest),
-    ]
+    ],
   );
 
   const row = result.rows[0];
@@ -1101,7 +1071,7 @@ async function getOwnedMigrationDraft(draftId, userId) {
             summary, warnings, encrypted_manifest, created_at, expires_at, deployed_agent_id
        FROM agent_migrations
       WHERE id = $1 AND user_id = $2`,
-    [draftId, userId]
+    [draftId, userId],
   );
   const row = result.rows[0];
   if (!row) return null;
@@ -1126,7 +1096,7 @@ async function getMigrationManifestForAgent(agentId) {
       WHERE deployed_agent_id = $1
       ORDER BY created_at DESC
       LIMIT 1`,
-    [agentId]
+    [agentId],
   );
   if (!result.rows[0]) return null;
   return decodeStoredManifest(result.rows[0].encrypted_manifest);
@@ -1135,7 +1105,7 @@ async function getMigrationManifestForAgent(agentId) {
 async function deleteOwnedMigrationDraft(draftId, userId) {
   const result = await db.query(
     "DELETE FROM agent_migrations WHERE id = $1 AND user_id = $2 RETURNING id",
-    [draftId, userId]
+    [draftId, userId],
   );
   return Boolean(result.rows[0]);
 }
@@ -1146,7 +1116,7 @@ async function attachDraftToAgent(draftId, agentId) {
         SET deployed_agent_id = $2,
             expires_at = NULL
       WHERE id = $1`,
-    [draftId, agentId]
+    [draftId, agentId],
   );
 }
 
@@ -1157,7 +1127,7 @@ async function seedImportedLlmProviders(userId, providerEntries = []) {
     `SELECT provider
        FROM llm_providers
       WHERE user_id = $1`,
-    [userId]
+    [userId],
   );
   const existingProviders = new Set(existing.rows.map((row) => row.provider));
 
@@ -1170,7 +1140,7 @@ async function seedImportedLlmProviders(userId, providerEntries = []) {
       provider,
       apiKey,
       entry?.model || null,
-      entry?.config || {}
+      entry?.config || {},
     );
     existingProviders.add(provider);
   }
@@ -1185,14 +1155,14 @@ async function materializeManagedMigrationState(userId, agentId, manifest = {}) 
       agentId,
       integrationEntry.provider,
       integrationEntry.token || "",
-      integrationEntry.config || {}
+      integrationEntry.config || {},
     );
     if (integrationEntry.status && integrationEntry.status !== "active") {
       await db.query(
         `UPDATE integrations
             SET status = $3
           WHERE agent_id = $1 AND provider = $2`,
-        [agentId, integrationEntry.provider, integrationEntry.status]
+        [agentId, integrationEntry.provider, integrationEntry.status],
       );
     }
   }
@@ -1202,30 +1172,25 @@ async function materializeManagedMigrationState(userId, agentId, manifest = {}) 
       agentId,
       channelEntry.type,
       channelEntry.name || channelEntry.type,
-      channelEntry.config || {}
+      channelEntry.config || {},
     );
     if (channelEntry.enabled === false && created?.id) {
-      await db.query(
-        "UPDATE channels SET enabled = false WHERE id = $1 AND agent_id = $2",
-        [created.id, agentId]
-      );
+      await db.query("UPDATE channels SET enabled = false WHERE id = $1 AND agent_id = $2", [
+        created.id,
+        agentId,
+      ]);
     }
   }
 
   const overrideMap = Object.fromEntries(
-    (managed.agentSecretOverrides || []).map((entry) => [
-      entry.key,
-      entry.value,
-    ])
+    (managed.agentSecretOverrides || []).map((entry) => [entry.key, entry.value]),
   );
   await replaceAgentSecretOverrides(agentId, overrideMap);
 
   if (manifest.runtimeFamily === "hermes") {
     await replacePersistedHermesState(agentId, {
       modelConfig: manifest?.hermesSeed?.modelConfig || {},
-      channels: Array.isArray(manifest?.hermesSeed?.channels)
-        ? manifest.hermesSeed.channels
-        : [],
+      channels: Array.isArray(manifest?.hermesSeed?.channels) ? manifest.hermesSeed.channels : [],
     });
   }
 }
@@ -1267,7 +1232,7 @@ async function buildHermesSeedArchive(manifest = {}) {
         (error) => {
           if (error) return reject(error);
           resolve();
-        }
+        },
       );
     });
   }
