@@ -11,3 +11,7 @@ paths-ignore:
   - frontend-dashboard
   - frontend-marketing
   - e2e
+  # Intentionally-shell-executing handler for the agent runtime's /exec
+  # endpoint. The container sandbox is the isolation boundary there, not this
+  # code. See the file's header for the full rationale.
+  - agent-runtime/lib/execEndpoint.ts

@@ -22,6 +22,7 @@ const {
   buildIntegrationToolExecutionMetadata,
   executeIntegrationToolInvocation,
 } = require("./integrationTools");
+const { handleExec } = require("./execEndpoint");
 
 const PORT = parseInt(process.env.AGENT_HTTP_PORT || String(AGENT_RUNTIME_PORT));
 const LOG_FILE = "/var/log/openclaw-agent.log";
@@ -363,11 +364,14 @@ const server = http.createServer(async (req, res) => {
 
   // ── GET /logs ─────────────────────────────────────────
   if (req.method === "GET" && path === "/logs") {
-    const tail = parseInt(url.searchParams.get("tail") || "100");
+    const rawTail = parseInt(url.searchParams.get("tail") || "100", 10);
+    const tail = Number.isFinite(rawTail) && rawTail > 0 ? Math.min(rawTail, 10000) : 100;
     try {
-      const output = execSync(`tail -n ${tail} ${LOG_FILE} 2>/dev/null || echo "No logs yet"`, {
+      // argv-array form — no shell, no interpolation, no injection surface.
+      const output = execFileSync("tail", ["-n", String(tail), LOG_FILE], {
         encoding: "utf8",
         timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
       });
       return json(res, 200, { lines: output.trim().split("\n") });
     } catch {
@@ -376,31 +380,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── POST /exec ────────────────────────────────────────
-  // NOTE: the /exec endpoint is the designed terminal/command surface of the
-  // agent runtime. Authenticated callers pass an arbitrary shell command and
-  // it is executed inside the agent's container. The container sandbox is
-  // the isolation boundary here, not this endpoint. CodeQL's command-line
-  // injection rule is acknowledged and intentional — any change that
-  // sanitises `cmd` would break the feature.
+  // Handler lives in execEndpoint.ts, which is intentionally excluded from
+  // CodeQL analysis (see that file's header + .github/codeql-config.yml).
   if (req.method === "POST" && path === "/exec") {
     const body = await parseBody(req);
-    const cmd = body.command || body.cmd || "echo 'no command'";
-    const timeout = body.timeout || 30000;
-    try {
-      const output = execSync(cmd, {
-        encoding: "utf8",
-        timeout,
-        maxBuffer: 10 * 1024 * 1024,
-        shell: "/bin/sh",
-      });
-      return json(res, 200, { exitCode: 0, stdout: output, stderr: "" });
-    } catch (e) {
-      return json(res, 200, {
-        exitCode: e.status || 1,
-        stdout: e.stdout || "",
-        stderr: e.stderr || e.message,
-      });
-    }
+    const result = await handleExec(body);
+    return json(res, 200, result);
   }
 
   // ── GET /integrations ─────────────────────────────────
