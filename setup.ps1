@@ -406,10 +406,15 @@ function Start-NoraComposeStack {
 # ── Helper: generate random hex ─────────────────────────────
 
 function New-HexSecret {
-    param([int]$Bytes = 32)
-    $bytes = New-Object byte[] $Bytes
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    return ($bytes | ForEach-Object { $_.ToString("x2") }) -join ''
+    param([Alias("Bytes")][int]$ByteCount = 32)
+    $secretBytes = [byte[]]::new($ByteCount)
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($secretBytes)
+    } finally {
+        $rng.Dispose()
+    }
+    return ($secretBytes | ForEach-Object { $_.ToString("x2") }) -join ''
 }
 
 # ── Helper: refresh PATH from registry ─────────────────────
