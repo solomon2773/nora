@@ -1,0 +1,69 @@
+# Twitter / X
+
+> How to register an X (Twitter) OAuth 2.0 app and connect it to Nora.
+
+Twitter / X integrations let your agents post tweets, read timelines, and manage user data through the X API v2. Nora uses **OAuth 2.0 with PKCE** — the dashboard runs the full authorize → callback flow, so you never paste a long-lived token directly.
+
+## Where to apply for credentials
+
+<Card
+  title="X Developer Portal"
+  href="https://developer.x.com/en/portal/dashboard"
+  icon="twitter"
+  arrow
+>
+  developer.x.com → Projects & Apps
+</Card>
+
+<Steps>
+  <Step title="Create a project + app">
+    In the X Developer Portal, create a project, then a new app inside it. Pick **Web App, Automated App or Bot** as the type when prompted.
+  </Step>
+
+<Step title="Set up User authentication">
+  On the app's **Settings** tab, click **Set up** under User authentication settings. Pick **Read
+  and write** (or read-only as needed). App permissions = **Web App, Automated App or Bot**.
+</Step>
+
+  <Step title="Add the Nora redirect URI">
+    Under **Callback URI / Redirect URL**, paste the URL Nora's integration modal shows you (it's `https://<your-nora-host>/api/integrations/twitter/oauth/callback`). Set Website URL to anything reasonable.
+  </Step>
+
+  <Step title="Copy Client ID + Client Secret">
+    Open the **Keys and tokens** tab. Under OAuth 2.0, copy the Client ID. Generate (or rotate) and copy the Client Secret.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Twitter / X integration">
+    From an agent's detail page, open the **Integrations** tab and find **Twitter / X**.
+  </Step>
+
+<Step title="Paste the Client ID + Client Secret">
+  The integration modal also shows the redirect URI to copy into the app config (above).
+</Step>
+
+<Step title="Click Authorize">
+  Nora redirects you to X's consent screen. Approve, and Nora's callback exchanges the authorization
+  code for an access token + refresh token.
+</Step>
+
+  <Step title="Tokens refresh automatically">
+    X access tokens expire after 60 minutes; Nora rotates them via the stored refresh token.
+  </Step>
+</Steps>
+
+## MCP server
+
+No official X MCP server today. Community packages exist but are unstable.
+
+## Environment variables Nora injects
+
+| Variable                   | Source                    |
+| -------------------------- | ------------------------- |
+| `TWITTER_ACCESS_TOKEN`     | Auto-rotating OAuth token |
+| `TWITTER_DEFAULT_USERNAME` | Connected user's @handle  |
+
+The Client ID and Client Secret never reach the agent — they stay on the Nora control plane.

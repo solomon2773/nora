@@ -1,0 +1,65 @@
+# GitHub
+
+> Where to issue a GitHub personal access token and connect it to Nora.
+
+GitHub integrations let your agents read repos, open pull requests, comment on issues, and trigger workflow runs. Nora authenticates with a personal access token (PAT) sent as `Authorization: Bearer <token>`.
+
+## Where to apply for credentials
+
+<Card
+  title="GitHub — Personal Access Tokens"
+  href="https://github.com/settings/tokens"
+  icon="github"
+  arrow
+>
+  Settings → Developer settings → Personal access tokens
+</Card>
+
+GitHub offers two PAT shapes:
+
+- **Fine-grained** (Settings → Developer settings → Personal access tokens → Fine-grained tokens) — preferred. Pick specific repos and exact permissions.
+- **Classic** (Tokens (classic)) — broader, repository-level scopes. Easier for dev.
+
+## Required scopes
+
+Pick the smallest scope that covers your agent's behavior:
+
+| Scope (classic) | When to use                                                       |
+| --------------- | ----------------------------------------------------------------- |
+| `repo`          | Full read/write on private + public repos. Most agents need this. |
+| `read:user`     | Connectivity test — Nora calls `GET /user` to verify              |
+| `workflow`      | If your agent triggers GitHub Actions runs                        |
+| `read:org`      | If your agent enumerates org members or teams                     |
+
+For fine-grained tokens, equivalent permissions live under **Repository permissions** (Contents, Pull requests, Issues, Workflows).
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the GitHub integration">
+    From an agent's detail page, open the **Integrations** tab and find **GitHub**.
+  </Step>
+
+<Step title="Paste the token">
+  Paste your PAT into the **Personal Access Token** field. Optionally set an organization name.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET https://api.github.com/user` with the token and reports your GitHub login on success.
+  </Step>
+</Steps>
+
+## MCP server
+
+GitHub maintains an official MCP server:
+
+- **Package:** `@github/github-mcp-server`
+- **Docs:** [github.com/github/github-mcp-server](https://github.com/github/github-mcp-server)
+- **Env:** `GITHUB_PERSONAL_ACCESS_TOKEN` — Nora injects `GITHUB_TOKEN`, set the MCP env var to that value at startup.
+
+## Environment variables Nora injects
+
+| Variable       | Source                |
+| -------------- | --------------------- |
+| `GITHUB_TOKEN` | Personal Access Token |
+| `GITHUB_ORG`   | Organization (if set) |

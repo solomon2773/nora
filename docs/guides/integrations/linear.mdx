@@ -1,0 +1,38 @@
+# Linear
+
+> Where to issue a Linear API key and connect it to Nora.
+
+Linear integrations let your agents query and create issues, projects, and cycles via Linear's GraphQL API.
+
+## Where to apply for credentials
+
+<Card title="Linear — API settings" href="https://linear.app/settings/api" icon="linear" arrow>
+  Settings → API
+</Card>
+
+<Steps>
+  <Step title="Create a Personal API key">
+    Click **Create new key**, name it (e.g. "Nora").
+  </Step>
+
+  <Step title="Copy the key">
+    Copy the value — Linear shows it once. Personal API keys inherit the issuing user's permissions.
+  </Step>
+</Steps>
+
+For team-wide access independent of a single user, register an OAuth Application instead. Nora's current Linear integration uses the personal API key shape.
+
+## Connect in Nora
+
+Paste the key. Optionally set a default Team ID (the team's UUID, visible in `/settings/teams` URLs). Nora calls a `viewer { name }` GraphQL query to verify.
+
+## MCP server
+
+No first-party Linear MCP server today. Community servers exist on npm.
+
+## Environment variables Nora injects
+
+| Variable         | Source           |
+| ---------------- | ---------------- |
+| `LINEAR_API_KEY` | API Key field    |
+| `LINEAR_TEAM_ID` | Team ID (if set) |

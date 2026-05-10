@@ -1,0 +1,75 @@
+# LinkedIn
+
+> How to register a LinkedIn OAuth 2.0 app and connect it to Nora.
+
+LinkedIn integrations let your agents read profile data and post to LinkedIn via the Marketing/Sharing APIs. Nora uses **OAuth 2.0 (Authorization Code)** with automatic refresh-token rotation.
+
+## Where to apply for credentials
+
+<Card title="LinkedIn Developers" href="https://www.linkedin.com/developers/" icon="linkedin" arrow>
+  linkedin.com/developers
+</Card>
+
+<Steps>
+  <Step title="Create an app">
+    LinkedIn Developers → **Create app**. Associate it with a Company Page (required).
+  </Step>
+
+<Step title="Verify the app">
+  LinkedIn requires you to verify the app on behalf of the associated company before any OAuth flows
+  work. Follow the verification email sent to a Page admin.
+</Step>
+
+  <Step title="Add the Nora redirect URI">
+    On the app's **Auth** tab, paste the redirect URI Nora's integration modal shows (it's `https://<your-nora-host>/api/integrations/linkedin/oauth/callback`).
+  </Step>
+
+<Step title="Request scopes">
+  LinkedIn's `openid`, `profile`, `email` scopes are auto-available. For posting, you need
+  `w_member_social` — request it under the **Products** tab (Sign In with LinkedIn → Share on
+  LinkedIn).
+</Step>
+
+  <Step title="Copy Client ID + Client Secret">
+    Available on the Auth tab.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the LinkedIn integration">
+    From an agent's detail page → **Integrations** tab → find **LinkedIn**.
+  </Step>
+
+<Step title="Paste the Client ID + Client Secret">
+  The integration modal also shows the redirect URI for you to copy into the LinkedIn app config
+  (above).
+</Step>
+
+  <Step title="Click Authorize with LinkedIn">
+    Nora redirects you to LinkedIn's consent screen. Approve. Nora's callback swaps the auth code for an access + refresh token (LinkedIn issues 60-day access tokens; Nora refreshes them automatically).
+  </Step>
+</Steps>
+
+## Required scopes
+
+| Scope             | Why                                       |
+| ----------------- | ----------------------------------------- |
+| `openid`          | OIDC — user identity                      |
+| `profile`         | Connected user's name + LinkedIn ID       |
+| `email`           | Connected user's email                    |
+| `w_member_social` | Required for posting on the user's behalf |
+
+## MCP server
+
+No official LinkedIn MCP server today. Community packages exist (e.g. `stickerdaniel/linkedin-mcp-server`).
+
+## Environment variables Nora injects
+
+| Variable                    | Source                        |
+| --------------------------- | ----------------------------- |
+| `LINKEDIN_ACCESS_TOKEN`     | Auto-rotating OAuth token     |
+| `LINKEDIN_DEFAULT_USERNAME` | Connected user's display name |
+
+Client ID and Client Secret stay on the Nora control plane — they're never sent to the agent.

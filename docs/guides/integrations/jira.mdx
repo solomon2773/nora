@@ -1,0 +1,50 @@
+# Jira
+
+> Where to issue an Atlassian API token and connect Jira Cloud to Nora.
+
+Jira integrations let your agents read and write issues, transitions, and comments via the Jira REST API. Nora authenticates with HTTP Basic using your Atlassian email + an API token (same flow as [Confluence](/guides/integrations/confluence)).
+
+## Where to apply for credentials
+
+<Card
+  title="Atlassian — API Tokens"
+  href="https://id.atlassian.com/manage-profile/security/api-tokens"
+  icon="atlassian"
+  arrow
+>
+  id.atlassian.com/manage-profile/security/api-tokens
+</Card>
+
+<Steps>
+  <Step title="Create the API token">
+    Click **Create API token**, name it (e.g. "Nora"), and copy the value (only shown once).
+  </Step>
+
+  <Step title="Note your Jira site URL">
+    The integration needs your Jira Cloud origin (e.g. `https://acme.atlassian.net`) — the same site you sign in to.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+| Field       | Value                                     |
+| ----------- | ----------------------------------------- |
+| Site URL    | `https://<site>.atlassian.net`            |
+| Email       | Your Atlassian account email              |
+| API Token   | The secret you generated                  |
+| Project Key | (Optional) default project key like `ENG` |
+
+Nora validates the URL through the SSRF guard, then calls `GET <url>/rest/api/3/myself` with HTTP Basic. Reports your display name on success.
+
+## MCP server
+
+No official Jira MCP server today.
+
+## Environment variables Nora injects
+
+| Variable           | Source               |
+| ------------------ | -------------------- |
+| `JIRA_API_TOKEN`   | API Token field      |
+| `JIRA_EMAIL`       | Email field          |
+| `JIRA_BASE_URL`    | Site URL field       |
+| `JIRA_PROJECT_KEY` | Project Key (if set) |

@@ -1,0 +1,50 @@
+# Slack
+
+> Where to issue a Slack bot token and connect it to Nora.
+
+Slack integrations let your agents post messages, react to events, and read channel history. Nora authenticates with a Slack **Bot User OAuth Token** (`xoxb-...`).
+
+## Where to apply for credentials
+
+<Card title="Slack — Your apps" href="https://api.slack.com/apps" icon="slack" arrow>
+  Slack API — Your apps
+</Card>
+
+<Steps>
+  <Step title="Create a Slack app">
+    Click **Create New App** → **From scratch**. Pick the workspace where the agent should live.
+  </Step>
+
+<Step title="Configure Bot Token Scopes">
+  Open **OAuth & Permissions**. Under **Bot Token Scopes**, add the scopes your agent needs (e.g.
+  `chat:write`, `channels:read`, `channels:history`, `users:read`).
+</Step>
+
+<Step title="Install to Workspace">
+  Click **Install to Workspace** at the top of OAuth & Permissions. Slack returns a **Bot User OAuth
+  Token** starting with `xoxb-`. Copy it.
+</Step>
+
+  <Step title="Invite the bot to channels">
+    The bot can only post in channels it's been invited to. From any channel, type `/invite @your-bot-name`.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the `xoxb-...` token. Optionally set a default channel ID (for agents that always post to one channel). Nora calls `auth.test` to verify the token and reports the bot user's name.
+
+## MCP server
+
+A Slack MCP server is available:
+
+- **Package:** `@modelcontextprotocol/server-slack`
+- **Docs:** [github.com/modelcontextprotocol/servers/tree/main/src/slack](https://github.com/modelcontextprotocol/servers/tree/main/src/slack)
+- **Env:** `SLACK_BOT_TOKEN` — Nora injects this automatically.
+
+## Environment variables Nora injects
+
+| Variable                | Source                   |
+| ----------------------- | ------------------------ |
+| `SLACK_BOT_TOKEN`       | Bot Token field          |
+| `SLACK_DEFAULT_CHANNEL` | Default Channel (if set) |
