@@ -1,0 +1,76 @@
+# GitLab
+
+> Where to apply for a GitLab personal access token, which scopes it needs, and how to connect it to Nora.
+
+GitLab integrations let your agents read repos, open merge requests, list pipelines, and act on issues. Nora authenticates with a personal access token (PAT) — the same kind GitLab issues for `git clone` over HTTPS — and supports both gitlab.com and self-hosted GitLab via an optional base URL.
+
+## Where to apply for credentials
+
+GitLab issues PATs from your user settings page:
+
+<Card
+  title="GitLab Personal Access Tokens"
+  href="https://gitlab.com/-/user_settings/personal_access_tokens"
+  icon="gitlab"
+  arrow
+>
+  https://gitlab.com/-/user_settings/personal_access_tokens
+</Card>
+
+For self-hosted GitLab, the same path works on your instance — replace `gitlab.com` with your hostname (e.g. `https://gitlab.example.com/-/user_settings/personal_access_tokens`).
+
+## Required scopes
+
+| Scope              | Why                                                                 |
+| ------------------ | ------------------------------------------------------------------- |
+| `api`              | Full read/write access (covers most agent workflows)                |
+| `read_user`        | Connectivity test — Nora calls `GET /user` to verify the credential |
+| `read_repository`  | Read-only repo operations (clones, file contents, branches)         |
+| `write_repository` | Push commits, branches, tags                                        |
+
+If your agent only reads (no writes), you can drop `api` and `write_repository` and use `read_api` instead.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the GitLab integration">
+    From an agent's detail page, open the **Integrations** tab and find **GitLab** in the catalog.
+  </Step>
+
+<Step title="Paste the token">Paste the PAT into the **Personal Access Token** field.</Step>
+
+<Step title="(Self-hosted only) Enter the GitLab URL">
+  For gitlab.com, leave the **GitLab URL** field blank — it defaults to `https://gitlab.com`. For
+  self-hosted, paste your instance origin (e.g. `https://gitlab.example.com`). Nora rejects RFC1918
+  / loopback URLs to prevent SSRF, so the host must be reachable from the Nora deployment.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora encrypts the token with AES-256-GCM, stores it, and immediately calls `GET <baseUrl>/api/v4/user` as a connectivity test. On success, the card shows your GitLab username.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button on the integration card calls the same `GET /api/v4/user` endpoint and reports the username on success or the GitLab error message on failure. Common failures:
+
+- **401 Unauthorized** — token expired or revoked. Issue a new one.
+- **403 Forbidden** — token lacks the right scope (usually `api` or `read_user`).
+- **`getaddrinfo ENOTFOUND <host>`** — typo in the **GitLab URL** field, or your self-hosted instance isn't reachable from where Nora is deployed.
+
+## MCP server
+
+GitLab has a reference Model Context Protocol server published by the MCP project:
+
+- **Package:** `@modelcontextprotocol/server-gitlab`
+- **Docs:** [github.com/modelcontextprotocol/servers/tree/main/src/gitlab](https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab)
+- **Env vars:** `GITLAB_PERSONAL_ACCESS_TOKEN`, optionally `GITLAB_API_URL` for self-hosted instances.
+
+Nora's runtime does not auto-launch this MCP server today — bring it up alongside your agent if you want MCP-style tool calls. The integration record itself injects `GITLAB_TOKEN` (and `GITLAB_BASE_URL` if set) into the agent container, so the MCP server picks them up automatically.
+
+## Environment variables Nora injects
+
+| Variable          | Source                      |
+| ----------------- | --------------------------- |
+| `GITLAB_TOKEN`    | Personal Access Token field |
+| `GITLAB_BASE_URL` | GitLab URL field (when set) |

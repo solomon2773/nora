@@ -41,6 +41,8 @@ export { linearProvider } from "./providers/linear";
 export { jiraProvider } from "./providers/jira";
 export { twitterProvider } from "./providers/twitter";
 export { linkedinProvider } from "./providers/linkedin";
+export { gitlabProvider } from "./providers/gitlab";
+export { bitbucketProvider } from "./providers/bitbucket";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

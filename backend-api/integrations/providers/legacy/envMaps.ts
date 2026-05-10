@@ -12,7 +12,7 @@ const llmProviders = require("../../../llmProviders");
 const INTEGRATION_ENV_MAP = {
   huggingface: "HF_TOKEN",
   // github → migrated to providers/github.ts
-  gitlab: "GITLAB_TOKEN",
+  // gitlab → migrated to providers/gitlab.ts
   // slack → migrated to providers/slack.ts
   discord: "DISCORD_TOKEN",
   notion: "NOTION_TOKEN",
@@ -46,7 +46,7 @@ const INTEGRATION_ENV_MAP = {
   monday: "MONDAY_API_KEY",
   zendesk: "ZENDESK_API_TOKEN",
   "docker-hub": "DOCKER_HUB_TOKEN",
-  bitbucket: "BITBUCKET_TOKEN",
+  // bitbucket → migrated to providers/bitbucket.ts
   confluence: "CONFLUENCE_TOKEN",
   // jira → migrated to providers/jira.ts
   jenkins: "JENKINS_TOKEN",
@@ -82,9 +82,8 @@ const INTEGRATION_ENV_MAP = {
 const INTEGRATION_CONFIG_ENV_MAP = {
   // Developer tools
   // github.org → providers/github.ts
-  "gitlab.base_url": "GITLAB_BASE_URL",
-  "bitbucket.username": "BITBUCKET_USERNAME",
-  "bitbucket.workspace": "BITBUCKET_WORKSPACE",
+  // gitlab.base_url → providers/gitlab.ts
+  // bitbucket.username/workspace → providers/bitbucket.ts
   // jira.email/site_url/project_key → providers/jira.ts
   // linear.team_id → providers/linear.ts
   // Communication

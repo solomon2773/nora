@@ -43,22 +43,7 @@ function buildConnectivityTests(integration, token, deps) {
   const { assertSafeUrl } = deps;
 
   return {
-    gitlab: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const baseUrl = await assertSafeUrl(
-        config.base_url || "https://gitlab.com",
-        "GitLab base URL",
-      );
-      const res = await fetch(`${baseUrl}/api/v4/user`, {
-        headers: { "PRIVATE-TOKEN": token },
-      });
-      if (!res.ok) throw new Error(`GitLab API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.username}` };
-    },
+    // gitlab → migrated to providers/gitlab.ts
     discord: async () => {
       const res = await fetch("https://discord.com/api/v10/users/@me", {
         headers: { Authorization: `Bot ${token}` },
@@ -119,22 +104,7 @@ function buildConnectivityTests(integration, token, deps) {
       const data = await res.json();
       return { success: true, message: `Connected as ${data.name || data.fullname || "verified"}` };
     },
-    bitbucket: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const username = config.username;
-      if (!username) throw new Error("Bitbucket username not configured");
-      const res = await fetch("https://api.bitbucket.org/2.0/user", {
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${username}:${token}`).toString("base64")}`,
-        },
-      });
-      if (!res.ok) throw new Error(`Bitbucket API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.username || data.display_name}` };
-    },
+    // bitbucket → migrated to providers/bitbucket.ts
     airtable: async () => {
       const res = await fetch("https://api.airtable.com/v0/meta/whoami", {
         headers: { Authorization: `Bearer ${token}` },

@@ -136,7 +136,24 @@
       },
       { "key": "group", "label": "Group/Namespace", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://gitlab.com/-/user_settings/personal_access_tokens",
+    "setupGuide": {
+      "steps": [
+        "Sign in to GitLab and open User Settings → Access Tokens.",
+        "Click Add new token, name it (e.g. 'Nora'), pick an expiry, and select scopes.",
+        "Copy the generated token (you won't see it again) and paste it into Nora.",
+        "For self-hosted GitLab, also fill in your instance URL (e.g. https://gitlab.example.com)."
+      ],
+      "scopes": ["api", "read_user", "read_repository", "write_repository"]
+    },
+    "mcp": {
+      "available": true,
+      "transport": "stdio",
+      "npmPackage": "@modelcontextprotocol/server-gitlab",
+      "docsUrl": "https://github.com/modelcontextprotocol/servers/tree/main/src/gitlab",
+      "notes": "Reference MCP server. Set GITLAB_PERSONAL_ACCESS_TOKEN and (optionally) GITLAB_API_URL for self-hosted."
+    }
   },
   {
     "id": "bitbucket",
@@ -144,13 +161,24 @@
     "icon": "bitbucket",
     "category": "developer-tools",
     "description": "Connect to Bitbucket Cloud repos, PRs, and pipelines",
-    "authType": "api_key",
+    "authType": "basic",
     "configFields": [
       { "key": "app_password", "label": "App Password", "type": "password", "required": true },
       { "key": "username", "label": "Username", "type": "text", "required": true },
       { "key": "workspace", "label": "Workspace", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://bitbucket.org/account/settings/app-passwords/",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Bitbucket and open Personal settings → App passwords.",
+        "Click Create app password, name it, and select the permissions Nora needs.",
+        "Copy the generated app password (you won't see it again) and paste it into Nora.",
+        "Enter your Bitbucket username (not your email) so the basic-auth header can be built."
+      ],
+      "scopes": ["account:read", "repository:read", "repository:write", "pullrequest:write"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "jira",

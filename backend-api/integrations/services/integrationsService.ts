@@ -29,6 +29,8 @@ const { linearProvider } = require("../providers/linear");
 const { jiraProvider } = require("../providers/jira");
 const { twitterProvider } = require("../providers/twitter");
 const { linkedinProvider } = require("../providers/linkedin");
+const { gitlabProvider } = require("../providers/gitlab");
+const { bitbucketProvider } = require("../providers/bitbucket");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -62,6 +64,8 @@ const providerRegistry = createProviderRegistry((providerId) =>
   jiraProvider,
   twitterProvider,
   linkedinProvider,
+  gitlabProvider,
+  bitbucketProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`

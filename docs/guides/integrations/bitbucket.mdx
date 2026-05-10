@@ -1,0 +1,81 @@
+# Bitbucket
+
+> Where to apply for a Bitbucket app password, which permissions it needs, and how to connect it to Nora.
+
+Bitbucket Cloud integrations let your agents read and write repositories, pull requests, and pipelines on bitbucket.org. Nora authenticates with HTTP Basic auth using your username plus an **app password** — Bitbucket's narrowly-scoped, revocable alternative to your account password.
+
+<Note>
+  This guide covers Bitbucket **Cloud** (bitbucket.org). Bitbucket Data Center / Server uses a
+  different auth mechanism (HTTP access tokens) and is not supported by this integration today.
+</Note>
+
+## Where to apply for credentials
+
+Bitbucket Cloud issues app passwords from your personal account settings:
+
+<Card
+  title="Bitbucket app passwords"
+  href="https://bitbucket.org/account/settings/app-passwords/"
+  icon="bitbucket"
+  arrow
+>
+  https://bitbucket.org/account/settings/app-passwords/
+</Card>
+
+You'll also need your Bitbucket **username** (not your email). Find it under **Personal settings → Bitbucket profile settings** if you don't remember it.
+
+## Required permissions
+
+When creating the app password, select these checkboxes:
+
+| Permission               | Why                                            |
+| ------------------------ | ---------------------------------------------- |
+| **Account: Read**        | Connectivity test — Nora calls `GET /2.0/user` |
+| **Repositories: Read**   | Read repos, branches, files                    |
+| **Repositories: Write**  | Push commits, create branches                  |
+| **Pull requests: Write** | Open and merge PRs                             |
+| **Pipelines: Read**      | List pipeline runs (if your agent inspects CI) |
+
+Pick only what your agent actually needs — app passwords scope tightly.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Bitbucket integration">
+    From an agent's detail page, open the **Integrations** tab and find **Bitbucket** in the catalog.
+  </Step>
+
+<Step title="Paste username and app password">
+  Enter your Bitbucket **Username** and paste the generated **App Password** (you only see this
+  value once; copy it before closing the Bitbucket page).
+</Step>
+
+<Step title="(Optional) Enter your workspace">
+  Some agents need to know which workspace to default to. If your account belongs to multiple
+  Bitbucket workspaces, set the **Workspace** field to the slug — e.g. `acme-eng`.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora encrypts the app password with AES-256-GCM, stores it, and immediately calls `GET https://api.bitbucket.org/2.0/user` with HTTP Basic auth as a connectivity test. On success, the card shows your Bitbucket display name.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button on the integration card calls the same `GET /2.0/user` endpoint. Common failures:
+
+- **401 Unauthorized** — wrong username, wrong app password, or app password was revoked.
+- **403 Forbidden** — the app password lacks **Account: Read**.
+- **`Bitbucket username not configured`** — Nora can't build the basic-auth header without a username; double-check the field.
+
+## MCP server
+
+There is no official Bitbucket MCP server at the time of writing. Community servers exist on npm — Nora's catalog will be updated when one stabilizes.
+
+## Environment variables Nora injects
+
+| Variable                 | Source                   |
+| ------------------------ | ------------------------ |
+| `BITBUCKET_APP_PASSWORD` | App Password field       |
+| `BITBUCKET_USERNAME`     | Username field           |
+| `BITBUCKET_WORKSPACE`    | Workspace field (if set) |
