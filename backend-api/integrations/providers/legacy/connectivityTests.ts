@@ -44,14 +44,7 @@ function buildConnectivityTests(integration, token, deps) {
 
   return {
     // gitlab → migrated to providers/gitlab.ts
-    discord: async () => {
-      const res = await fetch("https://discord.com/api/v10/users/@me", {
-        headers: { Authorization: `Bot ${token}` },
-      });
-      if (!res.ok) throw new Error(`Discord API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.username}` };
-    },
+    // discord → migrated to providers/discord.ts
     notion: async () => {
       const res = await fetch("https://api.notion.com/v1/users/me", {
         headers: { Authorization: `Bearer ${token}`, "Notion-Version": "2022-06-28" },
@@ -74,13 +67,7 @@ function buildConnectivityTests(integration, token, deps) {
       if (!res.ok) throw new Error(`Sentry API returned ${res.status}`);
       return { success: true, message: "Authenticated successfully" };
     },
-    sendgrid: async () => {
-      const res = await fetch("https://api.sendgrid.com/v3/user/profile", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`SendGrid API returned ${res.status}`);
-      return { success: true, message: "API key validated" };
-    },
+    // sendgrid → migrated to providers/sendgrid.ts
     openai: async () => {
       const res = await fetch("https://api.openai.com/v1/models", {
         headers: { Authorization: `Bearer ${token}` },
@@ -309,30 +296,8 @@ function buildConnectivityTests(integration, token, deps) {
       const data = await res.json();
       return { success: true, message: `Connected as ${data.name?.display_name || "verified"}` };
     },
-    twilio: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const sid = config.account_sid;
-      if (!sid) throw new Error("Twilio Account SID not configured");
-      const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}.json`, {
-        headers: { Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString("base64")}` },
-      });
-      if (!res.ok) throw new Error(`Twilio API returned ${res.status}`);
-      return { success: true, message: "Connected to Twilio" };
-    },
-    telegram: async () => {
-      const botToken = String(token || "").trim();
-      if (!/^\d+:[A-Za-z0-9_-]+$/.test(botToken)) {
-        throw new Error("Invalid Telegram bot token format");
-      }
-      const res = await fetch(`https://api.telegram.org/bot${botToken}/getMe`);
-      if (!res.ok) throw new Error(`Telegram API returned ${res.status}`);
-      const data = await res.json();
-      if (!data.ok) throw new Error(`Telegram: ${data.description || "validation failed"}`);
-      return { success: true, message: `Connected as @${data.result?.username || "bot"}` };
-    },
+    // twilio → migrated to providers/twilio.ts
+    // telegram → migrated to providers/telegram.ts
     shopify: async () => {
       const config =
         typeof integration.config === "string"

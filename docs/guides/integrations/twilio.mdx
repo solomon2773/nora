@@ -1,0 +1,59 @@
+# Twilio
+
+> Where to find your Twilio Account SID + Auth Token, and how to connect them to Nora.
+
+Twilio integrations let your agents send SMS, place voice calls, and message via WhatsApp / Programmable Messaging. Nora authenticates with HTTP Basic using your Account SID as the username and Auth Token as the password.
+
+## Where to apply for credentials
+
+Both values live on the Twilio Console dashboard:
+
+<Card title="Twilio Console" href="https://console.twilio.com/" icon="phone" arrow>
+  https://console.twilio.com/
+</Card>
+
+The dashboard shows the **Account SID** in plain text and reveals the **Auth Token** when you click the show/hide toggle. Copy both.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Twilio integration">
+    From an agent's detail page, open the **Integrations** tab and find **Twilio**.
+  </Step>
+
+<Step title="Paste SID and Auth Token">
+  Paste the **Account SID** into its field and the **Auth Token** as the secret.
+</Step>
+
+<Step title="(Optional) Set the From number">
+  If your agent will send SMS, paste a Twilio phone number you've already provisioned (Phone Numbers
+  → Manage → Active numbers) into the **From Number** field.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET https://api.twilio.com/2010-04-01/Accounts/<sid>.json` with HTTP Basic to verify the credentials. The card shows "Connected to Twilio" on success.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button hits the same `/Accounts/<sid>.json` endpoint. Common failures:
+
+- **401 Unauthorized** — wrong SID or Auth Token. Note that **rotating the auth token** in the Twilio console invalidates the existing one immediately.
+- **404 Not Found** — wrong SID; double-check you copied the full string starting with `AC`.
+
+## API key alternative
+
+For production agents, prefer **API Keys** (Account → API keys & tokens → Create API key) over the Auth Token — they're scoped and revocable independently. Nora's current integration uses the Account SID + Auth Token shape; API key support can be added by setting a non-default username in the underlying basic-auth header.
+
+## MCP server
+
+There's a [twilio-labs/mcp](https://github.com/twilio-labs/mcp) project. It uses the same Account SID + Auth Token, so the env vars Nora injects work as input.
+
+## Environment variables Nora injects
+
+| Variable              | Source               |
+| --------------------- | -------------------- |
+| `TWILIO_AUTH_TOKEN`   | Auth Token field     |
+| `TWILIO_ACCOUNT_SID`  | Account SID field    |
+| `TWILIO_PHONE_NUMBER` | From Number (if set) |

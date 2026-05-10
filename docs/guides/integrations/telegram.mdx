@@ -1,0 +1,51 @@
+# Telegram
+
+> How to register a Telegram bot with BotFather and connect it to Nora.
+
+Telegram integrations let your agents send and receive messages via the [Bot API](https://core.telegram.org/bots/api). Nora authenticates with a bot token of the form `<bot_id>:<secret>`.
+
+## Where to apply for credentials
+
+Telegram doesn't have a developer console — bots are registered through a chatbot called **BotFather**:
+
+<Card title="@BotFather on Telegram" href="https://t.me/BotFather" icon="send" arrow>
+  https://t.me/BotFather
+</Card>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Talk to BotFather">
+    Open Telegram, search for `@BotFather`, and start a chat. Send `/newbot`, give your bot a name and a unique username ending in `bot` (e.g. `my_nora_bot`).
+  </Step>
+
+<Step title="Copy the token">
+  BotFather replies with an HTTP API token like `123456789:AAEbz...`. Copy it.
+</Step>
+
+  <Step title="(Optional) Find your operator user ID">
+    Send a message to your bot from your personal Telegram account, then visit `https://api.telegram.org/bot<token>/getUpdates`. Your `from.id` is the numeric user ID. Paste it into the **Operator User ID** field if your agent needs to know who's allowed to issue commands.
+  </Step>
+
+  <Step title="Connect in Nora">
+    Paste the token into Nora and click **Connect**. Nora calls `GET https://api.telegram.org/bot<token>/getMe` to verify the bot, then surfaces the bot's `@username`.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button calls `getMe`. Common failures:
+
+- **`Invalid Telegram bot token format`** — the token doesn't match `<digits>:<id>`. Make sure you pasted the bot token, not a bare chat token or a webhook secret.
+- **401 Unauthorized** — the token was revoked. Send `/revoke` to BotFather and create a new one.
+
+## MCP server
+
+No official Telegram MCP server today. Community packages exist but aren't stable.
+
+## Environment variables Nora injects
+
+| Variable                    | Source                 |
+| --------------------------- | ---------------------- |
+| `TELEGRAM_BOT_TOKEN`        | Bot Token field        |
+| `OPERATOR_TELEGRAM_ID` | Operator User ID field |

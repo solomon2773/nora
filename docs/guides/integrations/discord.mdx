@@ -1,0 +1,68 @@
+# Discord
+
+> Where to register a Discord bot, which scopes its token needs, and how to connect it to Nora.
+
+Discord integrations let your agents read messages, post replies, and manage channels via the bot API. Nora authenticates with a bot token — issued from the Discord Developer Portal.
+
+## Where to apply for credentials
+
+Bot tokens come from the Developer Portal:
+
+<Card
+  title="Discord Developer Portal"
+  href="https://discord.com/developers/applications"
+  icon="key"
+  arrow
+>
+  https://discord.com/developers/applications
+</Card>
+
+## Required scopes
+
+When inviting the bot via OAuth2, select:
+
+- **`bot`** — required for any bot-mode operation.
+- **`applications.commands`** — required if you want the bot to register slash commands.
+
+Plus the per-channel **bot permissions** the agent needs (Read Messages, Send Messages, Manage Channels, etc.).
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Create the application">
+    Open the Developer Portal, click **New Application**, give it a name. In the left nav, open **Bot**, click **Reset Token**, and copy the bot token (you only see it once).
+  </Step>
+
+<Step title="Invite the bot to your server">
+  In the left nav, open **OAuth2 → URL Generator**. Tick `bot` and `applications.commands` under
+  scopes, then tick the per-channel permissions you need under Bot Permissions. Visit the URL it
+  generates, pick your server, and authorize.
+</Step>
+
+<Step title="Copy the server (guild) ID">
+  Right-click your server in Discord → **Copy Server ID**. (You may need to enable **Developer
+  Mode** under User Settings → Advanced first.)
+</Step>
+
+  <Step title="Connect in Nora">
+    From the agent's **Integrations** tab, find **Discord**, paste the bot token and the server ID, and click **Connect**. Nora calls `GET /users/@me` with the bot token to verify it.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button calls `/users/@me`. The bot user's display name is reported back. Common failures:
+
+- **401 Unauthorized** — token revoked. Reset it in the Developer Portal.
+- **403 Forbidden** — token belongs to an application that hasn't been added to any server.
+
+## MCP server
+
+No official Discord MCP server today.
+
+## Environment variables Nora injects
+
+| Variable           | Source                  |
+| ------------------ | ----------------------- |
+| `DISCORD_TOKEN`    | Bot Token field         |
+| `DISCORD_GUILD_ID` | Server (Guild) ID field |

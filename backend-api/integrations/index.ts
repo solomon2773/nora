@@ -49,6 +49,12 @@ export { terraformProvider } from "./providers/terraform";
 export { jenkinsProvider } from "./providers/jenkins";
 export { dockerHubProvider } from "./providers/dockerHub";
 export { kubernetesProvider } from "./providers/kubernetes";
+export { discordProvider } from "./providers/discord";
+export { telegramProvider } from "./providers/telegram";
+export { teamsProvider } from "./providers/teams";
+export { emailProvider } from "./providers/email";
+export { twilioProvider } from "./providers/twilio";
+export { sendgridProvider } from "./providers/sendgrid";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

@@ -238,7 +238,18 @@
       { "key": "bot_token", "label": "Bot Token", "type": "password", "required": true },
       { "key": "guild_id", "label": "Server (Guild) ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://discord.com/developers/applications",
+    "setupGuide": {
+      "steps": [
+        "Open the Discord Developer Portal and click New Application.",
+        "In the left nav, open Bot, then click Reset Token to generate a bot token (copy it once).",
+        "Under OAuth2 → URL Generator, pick the bot scope and the permissions your agent needs, then visit the generated URL to invite the bot to your server.",
+        "Right-click your server in Discord → Copy Server ID (enable Developer Mode in User Settings if you don't see it). Paste it into the Server (Guild) ID field."
+      ],
+      "scopes": ["bot", "applications.commands"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "telegram",
@@ -251,7 +262,17 @@
       { "key": "bot_token", "label": "Bot Token", "type": "password", "required": true },
       { "key": "operator_user_id", "label": "Operator User ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://t.me/BotFather",
+    "setupGuide": {
+      "steps": [
+        "Open Telegram and start a chat with @BotFather.",
+        "Send /newbot, give your bot a name and a username ending in 'bot'.",
+        "BotFather replies with an HTTP API token in the form <id>:<secret> — copy it.",
+        "(Optional) Send a message to your bot, then call https://api.telegram.org/bot<token>/getUpdates to find your numeric user ID and paste it into the Operator User ID field."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "teams",
@@ -263,7 +284,17 @@
     "configFields": [
       { "key": "webhook_url", "label": "Incoming Webhook URL", "type": "url", "required": true }
     ],
-    "capabilities": ["write"]
+    "capabilities": ["write"],
+    "credentialsUrl": "https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook",
+    "setupGuide": {
+      "steps": [
+        "In Teams, go to the channel where messages should appear.",
+        "Click ⋯ next to the channel name → Manage channel → Connectors.",
+        "Find Incoming Webhook, click Add, give it a name, and click Create.",
+        "Copy the generated webhook URL and paste it into Nora."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "email",
@@ -279,7 +310,16 @@
       { "key": "smtp_pass", "label": "Password", "type": "password", "required": true },
       { "key": "from_address", "label": "From Address", "type": "email", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://nodemailer.com/smtp/",
+    "setupGuide": {
+      "steps": [
+        "Pick an SMTP relay — most providers (SendGrid, Mailgun, AWS SES, your Google Workspace, your own Postfix) expose SMTP credentials in their console.",
+        "Get the SMTP host, port (usually 587 with STARTTLS or 465 with implicit TLS), username, and password.",
+        "The from_address must be an email the relay will accept as the sender — for shared relays this often has to match a verified domain or sender."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "openai",
@@ -1046,7 +1086,16 @@
       { "key": "auth_token", "label": "Auth Token", "type": "password", "required": true },
       { "key": "phone_number", "label": "From Number", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.twilio.com/",
+    "setupGuide": {
+      "steps": [
+        "Sign in to the Twilio Console.",
+        "Copy your Account SID and Auth Token from the dashboard's Account Info panel.",
+        "(Optional) Buy or assign a phone number under Phone Numbers → Manage → Active numbers and paste it as the From Number."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "sendgrid",
@@ -1059,7 +1108,17 @@
       { "key": "api_key", "label": "API Key", "type": "password", "required": true },
       { "key": "from_email", "label": "From Email", "type": "email", "required": false }
     ],
-    "capabilities": ["write"]
+    "capabilities": ["write"],
+    "credentialsUrl": "https://app.sendgrid.com/settings/api_keys",
+    "setupGuide": {
+      "steps": [
+        "Sign in to SendGrid and open Settings → API Keys.",
+        "Click Create API Key, choose Full Access (or Restricted with Mail Send) and copy the key.",
+        "(Optional) Verify a sender at Settings → Sender Authentication and paste the email into the From Email field."
+      ],
+      "scopes": ["mail.send"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "terraform",

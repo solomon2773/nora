@@ -14,12 +14,12 @@ const INTEGRATION_ENV_MAP = {
   // github → migrated to providers/github.ts
   // gitlab → migrated to providers/gitlab.ts
   // slack → migrated to providers/slack.ts
-  discord: "DISCORD_TOKEN",
+  // discord → migrated to providers/discord.ts
   notion: "NOTION_TOKEN",
   // linear → migrated to providers/linear.ts
   datadog: "DD_API_KEY",
   sentry: "SENTRY_AUTH_TOKEN",
-  sendgrid: "SENDGRID_API_KEY",
+  // sendgrid → migrated to providers/sendgrid.ts
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   airtable: "AIRTABLE_API_KEY",
@@ -33,8 +33,8 @@ const INTEGRATION_ENV_MAP = {
   // terraform → migrated to providers/terraform.ts
   pagerduty: "PAGERDUTY_TOKEN",
   dropbox: "DROPBOX_ACCESS_TOKEN",
-  twilio: "TWILIO_AUTH_TOKEN",
-  telegram: "TELEGRAM_BOT_TOKEN",
+  // twilio → migrated to providers/twilio.ts
+  // telegram → migrated to providers/telegram.ts
   shopify: "SHOPIFY_ACCESS_TOKEN",
   // linkedin → migrated to providers/linkedin.ts
   instagram: "INSTAGRAM_ACCESS_TOKEN",
@@ -72,7 +72,7 @@ const INTEGRATION_ENV_MAP = {
   // Vector DBs
   weaviate: "WEAVIATE_API_KEY",
   // Communication
-  email: "SMTP_PASS",
+  // email → migrated to providers/email.ts
   // Automation webhooks have no token; webhook_url is in INTEGRATION_CONFIG_ENV_MAP.
 };
 
@@ -88,16 +88,12 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   // linear.team_id → providers/linear.ts
   // Communication
   // slack.default_channel → providers/slack.ts
-  "discord.guild_id": "DISCORD_GUILD_ID",
-  "teams.webhook_url": "TEAMS_WEBHOOK_URL",
-  "email.smtp_host": "SMTP_HOST",
-  "email.smtp_port": "SMTP_PORT",
-  "email.smtp_user": "SMTP_USER",
-  "email.from_address": "SMTP_FROM_ADDRESS",
-  "twilio.account_sid": "TWILIO_ACCOUNT_SID",
-  "twilio.phone_number": "TWILIO_PHONE_NUMBER",
+  // discord.guild_id → providers/discord.ts
+  // teams.webhook_url → providers/teams.ts
+  // email.* → providers/email.ts
+  // twilio.account_sid/phone_number → providers/twilio.ts
   "sendgrid.from_email": "SENDGRID_FROM_EMAIL",
-  "telegram.operator_user_id": "OPERATOR_TELEGRAM_ID",
+  // telegram.operator_user_id → providers/telegram.ts
   // AI / ML
   "openai.org_id": "OPENAI_ORG_ID",
   "huggingface.model_id": "HF_DEFAULT_MODEL",

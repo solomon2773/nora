@@ -1,0 +1,68 @@
+# SendGrid
+
+> Where to issue a SendGrid API key, which scope it needs, and how to connect it to Nora.
+
+SendGrid integrations let your agents send transactional and marketing email via the SendGrid v3 API. Nora authenticates with a Bearer API key.
+
+## Where to apply for credentials
+
+API keys are issued from your SendGrid account settings:
+
+<Card
+  title="SendGrid — API Keys"
+  href="https://app.sendgrid.com/settings/api_keys"
+  icon="send"
+  arrow
+>
+  https://app.sendgrid.com/settings/api_keys
+</Card>
+
+## Required scope
+
+Pick the smallest scope that covers your agent's behavior:
+
+| API Key permission    | When to use                                                                |
+| --------------------- | -------------------------------------------------------------------------- |
+| **Full Access**       | Agent reads stats, manages templates, sends mail (development convenience) |
+| **Restricted Access** | Production. Tick **Mail Send** at minimum.                                 |
+
+The `/v3/user/profile` endpoint Nora uses for connectivity testing is in the default scope of every key — so even a Mail-Send-only key passes the test.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the SendGrid integration">
+    From an agent's detail page, open the **Integrations** tab and find **SendGrid**.
+  </Step>
+
+<Step title="Paste the API key">
+  Paste the API key (starts with `SG.`) into the **API Key** field.
+</Step>
+
+<Step title="(Optional) Verify a sender">
+  For Mail Send, your **From Email** must be verified at **Settings → Sender Authentication**.
+  SendGrid rejects unverified senders. Paste the verified address into the **From Email** field.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET https://api.sendgrid.com/v3/user/profile` with the API key.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button calls the same `/v3/user/profile`. Common failures:
+
+- **401 Unauthorized** — key revoked or you copied the wrong value (note: SendGrid shows the key only once at creation; if you've lost it, generate a new one).
+- **403 Forbidden** — the key is restricted and lacks the User: Read scope. This shouldn't happen with default scopes; if it does, regenerate.
+
+## MCP server
+
+No official SendGrid MCP server today.
+
+## Environment variables Nora injects
+
+| Variable              | Source              |
+| --------------------- | ------------------- |
+| `SENDGRID_API_KEY`    | API Key field       |
+| `SENDGRID_FROM_EMAIL` | From Email (if set) |

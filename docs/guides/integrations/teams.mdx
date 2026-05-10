@@ -1,0 +1,59 @@
+# Microsoft Teams
+
+> How to set up an Incoming Webhook in Microsoft Teams and connect it to Nora.
+
+Teams integrations are write-only: Nora posts notifications and messages into a Teams channel via an Incoming Webhook URL. There's no return channel — the webhook can't read messages.
+
+## Where to apply for credentials
+
+The webhook is created from inside Teams — there's no developer portal:
+
+<Card
+  title="Add an Incoming Webhook to a Teams channel"
+  href="https://learn.microsoft.com/en-us/microsoftteams/platform/webhooks-and-connectors/how-to/add-incoming-webhook"
+  icon="message-square"
+  arrow
+>
+  Microsoft Learn — Add an Incoming Webhook
+</Card>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the channel's connectors">
+    In Teams, navigate to the channel where messages should appear. Click the **⋯** next to the channel name → **Manage channel** → **Connectors**.
+  </Step>
+
+<Step title="Add Incoming Webhook">
+  Find **Incoming Webhook** in the list, click **Add**. Give it a name (e.g. "Nora notifications")
+  and optionally upload an icon, then click **Create**.
+</Step>
+
+<Step title="Copy the webhook URL">
+  Teams generates a URL on `webhook.office.com`. Copy it — Microsoft only shows it once.
+</Step>
+
+  <Step title="Connect in Nora">
+    Paste the URL into Nora and click **Connect**. Nora validates that the URL is well-formed and points at a Microsoft webhook host, then stores it. **It does not send a test message** — that would deliver to the channel.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button repeats the structural validation — it does not send a test message. To verify end-to-end, deploy your agent and trigger a notification.
+
+## Limitations
+
+- **Send-only.** Teams webhooks can't read messages or list channels. For two-way agent integrations, set up a Bot via the Microsoft Bot Framework instead.
+- **Per-channel.** Each webhook is bound to one channel. To post into multiple channels, create multiple integrations or use one with the channel ID encoded into your message routing.
+- **Microsoft is sunsetting Office 365 Connectors.** Plan to migrate to Power Automate / Workflows when Microsoft retires the legacy webhook URLs.
+
+## MCP server
+
+No MCP server — webhook integrations don't have a query surface.
+
+## Environment variables Nora injects
+
+| Variable            | Source               |
+| ------------------- | -------------------- |
+| `TEAMS_WEBHOOK_URL` | Incoming Webhook URL |

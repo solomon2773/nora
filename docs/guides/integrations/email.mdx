@@ -1,0 +1,62 @@
+# Email (SMTP)
+
+> Where to get SMTP credentials and how to connect them to Nora.
+
+Email integrations let your agents send messages via any SMTP relay — your own Postfix server, Google Workspace SMTP, AWS SES, Mailgun, SendGrid (via SMTP), Mailtrap, etc. Nora stores the credentials encrypted and the agent runtime sends mail through the configured relay.
+
+## Where to apply for credentials
+
+Pick whichever SMTP provider you already have an account with:
+
+| Provider              | SMTP host                           | Where to get credentials                                                                |
+| --------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
+| Google Workspace      | `smtp.gmail.com`                    | [Create an app password](https://myaccount.google.com/apppasswords)                     |
+| AWS SES               | `email-smtp.<region>.amazonaws.com` | [SES SMTP credentials](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html) |
+| Mailgun               | `smtp.mailgun.org`                  | [Mailgun domain dashboard](https://app.mailgun.com/)                                    |
+| SendGrid (SMTP)       | `smtp.sendgrid.net`                 | [SendGrid API Keys](https://app.sendgrid.com/settings/api_keys) — username is `apikey`  |
+| Postmark              | `smtp.postmarkapp.com`              | [Postmark Servers](https://account.postmarkapp.com/)                                    |
+| Self-hosted (Postfix) | your hostname                       | `/etc/postfix/main.cf`                                                                  |
+
+For Google Workspace and other 2FA-protected accounts, use an **app password** — not your account password.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Email (SMTP) integration">
+    From an agent's detail page, open the **Integrations** tab and find **Email (SMTP)**.
+  </Step>
+
+<Step title="Fill in the SMTP fields">
+  | Field | Example | | -------------- | -------------------------------- | | SMTP Host |
+  `smtp.gmail.com` | | SMTP Port | `587` (STARTTLS) or `465` (TLS) | | Username | `you@example.com`
+  or `apikey` | | Password | the app password / API secret | | From Address | `you@example.com` |
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the field shapes (port range, email format, public-host check) and stores the credentials encrypted. **It does not perform an SMTP handshake** from the control plane — that happens in the agent runtime.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button runs the same structural validation. End-to-end verification happens when your agent sends its first message; failures usually surface as `EAUTH`, `ECONNREFUSED`, or `ETIMEOUT` in the agent logs.
+
+<Note>
+  Nora rejects RFC1918 / loopback SMTP hosts (e.g. `127.0.0.1`, `10.x.x.x`) as a defense-in-depth
+  measure. If you really do want to relay through localhost, the agent's container needs network
+  access to that host — set up an SSH tunnel or VPN at the runtime layer.
+</Note>
+
+## MCP server
+
+No MCP server — SMTP isn't a query API.
+
+## Environment variables Nora injects
+
+| Variable            | Source             |
+| ------------------- | ------------------ |
+| `SMTP_PASS`         | Password field     |
+| `SMTP_HOST`         | SMTP Host field    |
+| `SMTP_PORT`         | SMTP Port field    |
+| `SMTP_USER`         | Username field     |
+| `SMTP_FROM_ADDRESS` | From Address field |

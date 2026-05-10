@@ -37,6 +37,12 @@ const { terraformProvider } = require("../providers/terraform");
 const { jenkinsProvider } = require("../providers/jenkins");
 const { dockerHubProvider } = require("../providers/dockerHub");
 const { kubernetesProvider } = require("../providers/kubernetes");
+const { discordProvider } = require("../providers/discord");
+const { telegramProvider } = require("../providers/telegram");
+const { teamsProvider } = require("../providers/teams");
+const { emailProvider } = require("../providers/email");
+const { twilioProvider } = require("../providers/twilio");
+const { sendgridProvider } = require("../providers/sendgrid");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -78,6 +84,12 @@ const providerRegistry = createProviderRegistry((providerId) =>
   jenkinsProvider,
   dockerHubProvider,
   kubernetesProvider,
+  discordProvider,
+  telegramProvider,
+  teamsProvider,
+  emailProvider,
+  twilioProvider,
+  sendgridProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`
