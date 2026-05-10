@@ -1072,7 +1072,16 @@
       { "key": "api_token", "label": "API Token", "type": "password", "required": true },
       { "key": "organization", "label": "Organization", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.terraform.io/app/settings/tokens",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Terraform Cloud and open User settings → Tokens.",
+        "Click Create an API token, name it (e.g. 'Nora'), and copy the value.",
+        "Paste the token into Nora and (optionally) enter your organization slug."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "jenkins",
@@ -1086,7 +1095,17 @@
       { "key": "username", "label": "Username", "type": "text", "required": true },
       { "key": "api_token", "label": "API Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://www.jenkins.io/doc/book/managing/cli/#authentication",
+    "setupGuide": {
+      "steps": [
+        "Sign in to your Jenkins instance and click your username in the top-right.",
+        "Open Configure → API Token → Add new Token.",
+        "Copy the generated token and paste it into Nora alongside your Jenkins URL and username.",
+        "The Jenkins URL must be reachable from the Nora deployment (RFC1918 / loopback URLs are rejected)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "circleci",
@@ -1098,7 +1117,17 @@
     "configFields": [
       { "key": "api_token", "label": "Personal API Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.circleci.com/settings/user/tokens",
+    "setupGuide": {
+      "steps": [
+        "Sign in to CircleCI at app.circleci.com.",
+        "Open User settings → Personal API Tokens.",
+        "Click Create New Token, give it a name, and copy the value.",
+        "Paste the token into Nora."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "vercel",
@@ -1111,7 +1140,17 @@
       { "key": "api_token", "label": "API Token", "type": "password", "required": true },
       { "key": "team_id", "label": "Team ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://vercel.com/account/tokens",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Vercel and open Account Settings → Tokens.",
+        "Click Create, name the token, set an expiration, and pick the scope.",
+        "If you're managing a team's projects, copy the team ID from Team Settings → General.",
+        "Paste the token (and optional team ID) into Nora."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "sentry",
@@ -1252,7 +1291,17 @@
       { "key": "username", "label": "Username", "type": "text", "required": true },
       { "key": "access_token", "label": "Access Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://hub.docker.com/settings/security",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Docker Hub at hub.docker.com.",
+        "Open Account Settings → Security → Personal access tokens.",
+        "Click Generate new token, set the access (Read & Write or Read only), and copy the token.",
+        "Paste the token into Nora alongside your Docker Hub username."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "kubernetes",
@@ -1265,7 +1314,23 @@
       { "key": "kubeconfig", "label": "Kubeconfig (YAML)", "type": "textarea", "required": true },
       { "key": "context", "label": "Context Name", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/",
+    "setupGuide": {
+      "steps": [
+        "Generate a kubeconfig for your cluster (cloud-provider console, kubeadm, k3s, etc.).",
+        "Make sure the context inside the kubeconfig points to the user/SA Nora should authenticate as.",
+        "Paste the full kubeconfig YAML into the textarea (it's encrypted at rest).",
+        "Optionally pin the active context by name — leave blank to use current-context from the file."
+      ]
+    },
+    "mcp": {
+      "available": true,
+      "transport": "stdio",
+      "npmPackage": "@kubernetes/mcp-server",
+      "docsUrl": "https://github.com/kubernetes/mcp-server",
+      "notes": "Community MCP server for Kubernetes. Reads KUBECONFIG from the environment."
+    }
   },
   {
     "id": "algolia",

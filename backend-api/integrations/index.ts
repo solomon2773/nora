@@ -43,6 +43,12 @@ export { twitterProvider } from "./providers/twitter";
 export { linkedinProvider } from "./providers/linkedin";
 export { gitlabProvider } from "./providers/gitlab";
 export { bitbucketProvider } from "./providers/bitbucket";
+export { circleciProvider } from "./providers/circleci";
+export { vercelProvider } from "./providers/vercel";
+export { terraformProvider } from "./providers/terraform";
+export { jenkinsProvider } from "./providers/jenkins";
+export { dockerHubProvider } from "./providers/dockerHub";
+export { kubernetesProvider } from "./providers/kubernetes";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

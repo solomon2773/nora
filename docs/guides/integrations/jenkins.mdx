@@ -1,0 +1,59 @@
+# Jenkins
+
+> Where to issue a Jenkins API token, how to point Nora at your Jenkins host, and how to connect.
+
+Jenkins integrations let your agents trigger jobs, read build status, and inspect pipeline runs. Nora authenticates with HTTP Basic against your Jenkins host using your username plus an API token.
+
+## Where to apply for credentials
+
+API tokens are issued per-user from your Jenkins user profile:
+
+1. Sign in to your Jenkins instance (e.g. `https://jenkins.acme.io`).
+2. Click your username in the top-right.
+3. Open **Configure → API Token → Add new Token**.
+4. Name it (e.g. "Nora") and click **Generate**.
+
+Copy the token immediately — Jenkins shows it only once.
+
+<Note>
+  The Jenkins URL **must be reachable from where Nora is deployed.** Nora rejects RFC1918 / loopback
+  URLs (e.g. `http://localhost:8080`) to prevent SSRF, so a self-hosted Jenkins behind a private
+  network needs to be exposed (or Nora needs to live in the same network).
+</Note>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Jenkins integration">
+    From an agent's detail page, open the **Integrations** tab and find **Jenkins** in the catalog.
+  </Step>
+
+<Step title="Paste URL, username, and API token">
+  - **Jenkins URL** — the origin of your Jenkins instance (no trailing slash, no `/api/json`
+  suffix). - **Username** — your Jenkins login name. - **API Token** — the token you generated.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora encrypts the token and calls `GET <url>/api/json` with HTTP Basic auth as a connectivity test. On success, the card confirms "Connected to Jenkins".
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button hits the same `/api/json` endpoint. Failures usually fall into:
+
+- **401 Unauthorized** — token revoked or username typo.
+- **403 Forbidden** — Jenkins's "anonymous read access" is off and the user lacks the `Overall/Read` permission.
+- **`getaddrinfo ENOTFOUND`** — the Jenkins URL isn't resolvable from where Nora runs.
+
+## MCP server
+
+No official Jenkins MCP server. The agent receives `JENKINS_URL`, `JENKINS_USERNAME`, and `JENKINS_TOKEN` env vars — community MCP servers can read those directly.
+
+## Environment variables Nora injects
+
+| Variable           | Source            |
+| ------------------ | ----------------- |
+| `JENKINS_TOKEN`    | API Token field   |
+| `JENKINS_URL`      | Jenkins URL field |
+| `JENKINS_USERNAME` | Username field    |

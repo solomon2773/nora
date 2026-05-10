@@ -1,0 +1,117 @@
+# Kubernetes
+
+> How to provide a kubeconfig so your agents can drive a Kubernetes cluster, and what Nora can and can't verify on the way in.
+
+Kubernetes integrations let your agents run `kubectl`, manage Deployments, watch Pods, and apply manifests. Nora stores the **full kubeconfig** as the credential — the runtime container writes it to a file and runs `kubectl` from there.
+
+## What's the credential?
+
+A kubeconfig is a YAML (or JSON) file that contains:
+
+- The cluster's API server URL + CA certificate.
+- The user/service-account credentials (client cert, bearer token, or exec plugin).
+- A list of contexts that pair clusters with users.
+
+Most operators already have one at `~/.kube/config`. For team agents, generate a **dedicated service account + kubeconfig** so the agent's permissions are scoped — see the canonical guide:
+
+<Card
+  title="Organizing access using kubeconfig files"
+  href="https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/"
+  icon="server"
+  arrow
+>
+  kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/
+</Card>
+
+## Building a least-privilege kubeconfig
+
+1. **Create a ServiceAccount** in the namespace your agent operates in:
+
+   ```bash
+   kubectl create serviceaccount nora-agent -n <namespace>
+   ```
+
+2. **Bind the role(s)** the agent actually needs:
+
+   ```bash
+   kubectl create rolebinding nora-agent-edit \
+     --clusterrole=edit --serviceaccount=<namespace>:nora-agent \
+     -n <namespace>
+   ```
+
+3. **Generate a token** (Kubernetes 1.24+):
+
+   ```bash
+   kubectl create token nora-agent -n <namespace> --duration=8760h
+   ```
+
+4. **Build a kubeconfig** with that token. The simplest form:
+
+   ```yaml
+   apiVersion: v1
+   kind: Config
+   clusters:
+     - name: my-cluster
+       cluster:
+         server: https://<api-server>:6443
+         certificate-authority-data: <base64 CA>
+   users:
+     - name: nora-agent
+       user:
+         token: <token from step 3>
+   contexts:
+     - name: nora
+       context:
+         cluster: my-cluster
+         user: nora-agent
+         namespace: <namespace>
+   current-context: nora
+   ```
+
+Paste that YAML into Nora's **Kubeconfig** textarea.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Kubernetes integration">
+    From an agent's detail page, open the **Integrations** tab and find **Kubernetes** in the catalog.
+  </Step>
+
+<Step title="Paste the kubeconfig">
+  Paste the full kubeconfig YAML into the **Kubeconfig (YAML)** textarea. The value is encrypted at
+  rest.
+</Step>
+
+<Step title="(Optional) Pin a context">
+  If your kubeconfig has multiple contexts, set the **Context Name** field to pin which one the
+  agent uses. Leaving it blank uses the kubeconfig's `current-context`.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates that the YAML parses and contains a `clusters:` entry, but does **not** call the API server — most clusters aren't reachable from the Nora control plane (and that's fine; the agent runs the kubeconfig from inside its own container).
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button repeats the structural check (YAML/JSON parses, has `clusters`). The card reports "Kubeconfig stored — cluster connectivity not verified from control plane."
+
+To verify your agent can actually reach the cluster, deploy the agent and watch its logs as it makes its first `kubectl` call.
+
+## MCP server
+
+There's a community Kubernetes MCP server:
+
+- **Package:** `@kubernetes/mcp-server`
+- **Docs:** [github.com/kubernetes/mcp-server](https://github.com/kubernetes/mcp-server)
+
+It reads the kubeconfig from the standard `KUBECONFIG` env var. Nora doesn't auto-launch it — bring it up alongside your agent.
+
+## Environment variables Nora injects
+
+| Variable              | Source                |
+| --------------------- | --------------------- |
+| `KUBECONFIG_CONTENTS` | Kubeconfig field      |
+| `KUBECONFIG_CONTEXT`  | Context Name (if set) |
+
+The agent runtime writes `KUBECONFIG_CONTENTS` to a file at startup and points `KUBECONFIG` at that path.

@@ -273,33 +273,9 @@ function buildConnectivityTests(integration, token, deps) {
       if (!res.ok) throw new Error(`Algolia API returned ${res.status}`);
       return { success: true, message: "Connected to Algolia" };
     },
-    vercel: async () => {
-      const res = await fetch("https://api.vercel.com/v2/user", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Vercel API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.user?.username || "verified"}` };
-    },
-    circleci: async () => {
-      const res = await fetch("https://circleci.com/api/v2/me", {
-        headers: { "Circle-Token": token },
-      });
-      if (!res.ok) throw new Error(`CircleCI API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.name || data.login || "verified"}` };
-    },
-    terraform: async () => {
-      const res = await fetch("https://app.terraform.io/api/v2/account/details", {
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/vnd.api+json" },
-      });
-      if (!res.ok) throw new Error(`Terraform Cloud API returned ${res.status}`);
-      const data = await res.json();
-      return {
-        success: true,
-        message: `Connected as ${data.data?.attributes?.username || "verified"}`,
-      };
-    },
+    // vercel → migrated to providers/vercel.ts
+    // circleci → migrated to providers/circleci.ts
+    // terraform → migrated to providers/terraform.ts
     grafana: async () => {
       const config =
         typeof integration.config === "string"
@@ -323,24 +299,7 @@ function buildConnectivityTests(integration, token, deps) {
       const data = await res.json();
       return { success: true, message: `Connected as ${data.user?.name || "verified"}` };
     },
-    jenkins: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const rawUrl = config.url;
-      const username = config.username;
-      if (!rawUrl) throw new Error("Jenkins URL not configured");
-      if (!username) throw new Error("Jenkins username not configured");
-      const url = await assertSafeUrl(rawUrl, "Jenkins URL");
-      const res = await fetch(`${url}/api/json`, {
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${username}:${token}`).toString("base64")}`,
-        },
-      });
-      if (!res.ok) throw new Error(`Jenkins API returned ${res.status}`);
-      return { success: true, message: "Connected to Jenkins" };
-    },
+    // jenkins → migrated to providers/jenkins.ts
     dropbox: async () => {
       const res = await fetch("https://api.dropboxapi.com/2/users/get_current_account", {
         method: "POST",
@@ -434,21 +393,7 @@ function buildConnectivityTests(integration, token, deps) {
         message: `Connected as ${data.username || data.name || data.id || "verified"}`,
       };
     },
-    "docker-hub": async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const username = config.username;
-      if (!username) throw new Error("Docker Hub username not configured");
-      const res = await fetch("https://hub.docker.com/v2/users/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password: token }),
-      });
-      if (!res.ok) throw new Error(`Docker Hub API returned ${res.status}`);
-      return { success: true, message: `Connected as ${username}` };
-    },
+    // docker-hub → migrated to providers/dockerHub.ts
     salesforce: async () => {
       const config =
         typeof integration.config === "string"

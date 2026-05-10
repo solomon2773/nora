@@ -1,0 +1,54 @@
+# Terraform Cloud
+
+> Where to apply for a Terraform Cloud (HCP) API token and how to connect it to Nora.
+
+Terraform Cloud (now HCP Terraform) integrations let your agents read workspaces, queue runs, and inspect state versions. Nora authenticates with a user/team API token — Bearer auth with the JSON:API content type.
+
+## Where to apply for credentials
+
+User-level tokens come from your Terraform Cloud account settings:
+
+<Card
+  title="Terraform Cloud — Tokens"
+  href="https://app.terraform.io/app/settings/tokens"
+  icon="layers"
+  arrow
+>
+  https://app.terraform.io/app/settings/tokens
+</Card>
+
+For team-scoped permissions, use a **team token** (Settings → Teams → Choose team → API tokens) so the agent operates within a single team's permissions instead of the user's.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Terraform integration">
+    From an agent's detail page, open the **Integrations** tab and find **Terraform** in the catalog.
+  </Step>
+
+<Step title="Paste the token">Paste the API token into the **API Token** field.</Step>
+
+<Step title="(Optional) Enter the organization">
+  Set the **Organization** field to the organization slug (e.g. `acme-eng`) so the agent doesn't
+  have to specify it on every call.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora encrypts the token and calls `GET https://app.terraform.io/api/v2/account/details` to verify it. The card shows your Terraform Cloud username on success.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button calls `/api/v2/account/details`. Failures usually mean the token was revoked from the same page where it was issued.
+
+## MCP server
+
+There's no official Terraform MCP server published by HashiCorp yet. Community servers exist on npm — none have stabilized.
+
+## Environment variables Nora injects
+
+| Variable           | Source                |
+| ------------------ | --------------------- |
+| `TFE_TOKEN`        | API Token field       |
+| `TFE_ORGANIZATION` | Organization (if set) |

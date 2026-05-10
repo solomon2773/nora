@@ -1,0 +1,58 @@
+# Vercel
+
+> Where to apply for a Vercel API token, how to scope it, and how to connect it to Nora.
+
+Vercel integrations let your agents list and trigger deployments, manage domains, and read environment variables. Nora authenticates with a Bearer token issued from your Vercel account.
+
+## Where to apply for credentials
+
+API tokens are issued from your account settings:
+
+<Card title="Vercel API Tokens" href="https://vercel.com/account/tokens" icon="triangle" arrow>
+  https://vercel.com/account/tokens
+</Card>
+
+## Scope and team selection
+
+Vercel tokens scope to a **user account** by default. To act on a team's projects, you need to either:
+
+1. Generate the token from a team-admin user, or
+2. Set the **Team ID** field in Nora — Vercel API requests then include `?teamId=<id>` and the token is interpreted in the team's context.
+
+You can find the team ID under **Team Settings → General**.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Vercel integration">
+    From an agent's detail page, open the **Integrations** tab and find **Vercel** in the catalog.
+  </Step>
+
+<Step title="Paste the token">Paste the Vercel API token into the **API Token** field.</Step>
+
+<Step title="(Optional) Enter the team ID">
+  For team-scoped operations, paste the team ID into the **Team ID** field.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora encrypts the token and immediately calls `GET https://api.vercel.com/v2/user` to verify it. On success, the card shows your Vercel username.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button calls `GET /v2/user`. Common failures:
+
+- **403 Forbidden** — token expired or its scope was reduced after issue.
+- **400** with `forbidden` — team ID is invalid or the token doesn't belong to that team.
+
+## MCP server
+
+There's no official Vercel MCP server today. Track [vercel/mcp](https://github.com/vercel/mcp) (when it appears) — Nora's catalog will be updated.
+
+## Environment variables Nora injects
+
+| Variable         | Source                 |
+| ---------------- | ---------------------- |
+| `VERCEL_TOKEN`   | API Token field        |
+| `VERCEL_TEAM_ID` | Team ID field (if set) |

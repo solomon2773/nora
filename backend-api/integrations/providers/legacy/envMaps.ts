@@ -28,9 +28,9 @@ const INTEGRATION_ENV_MAP = {
   hubspot: "HUBSPOT_ACCESS_TOKEN",
   pipedrive: "PIPEDRIVE_API_KEY",
   pinecone: "PINECONE_API_KEY",
-  vercel: "VERCEL_TOKEN",
-  circleci: "CIRCLE_TOKEN",
-  terraform: "TFE_TOKEN",
+  // vercel → migrated to providers/vercel.ts
+  // circleci → migrated to providers/circleci.ts
+  // terraform → migrated to providers/terraform.ts
   pagerduty: "PAGERDUTY_TOKEN",
   dropbox: "DROPBOX_ACCESS_TOKEN",
   twilio: "TWILIO_AUTH_TOKEN",
@@ -45,11 +45,11 @@ const INTEGRATION_ENV_MAP = {
   clickup: "CLICKUP_API_KEY",
   monday: "MONDAY_API_KEY",
   zendesk: "ZENDESK_API_TOKEN",
-  "docker-hub": "DOCKER_HUB_TOKEN",
+  // docker-hub → migrated to providers/dockerHub.ts
   // bitbucket → migrated to providers/bitbucket.ts
   confluence: "CONFLUENCE_TOKEN",
   // jira → migrated to providers/jira.ts
-  jenkins: "JENKINS_TOKEN",
+  // jenkins → migrated to providers/jenkins.ts
   grafana: "GRAFANA_TOKEN",
   woocommerce: "WOOCOMMERCE_SECRET_KEY",
   trello: "TRELLO_TOKEN",

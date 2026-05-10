@@ -1,0 +1,57 @@
+# CircleCI
+
+> Where to apply for a CircleCI personal API token, which permissions it carries, and how to connect it to Nora.
+
+CircleCI integrations let your agents trigger pipelines, read build status, and inspect workflow runs. Nora authenticates with a personal API token via the `Circle-Token` header — the same scheme `circleci` CLI uses.
+
+## Where to apply for credentials
+
+Personal API tokens are managed from your user settings:
+
+<Card
+  title="CircleCI Personal API Tokens"
+  href="https://app.circleci.com/settings/user/tokens"
+  icon="key"
+  arrow
+>
+  https://app.circleci.com/settings/user/tokens
+</Card>
+
+## Required permissions
+
+CircleCI personal tokens inherit the permissions of your user account — there are no separate scope checkboxes. If your CircleCI account can read the projects you want the agent to act on, the token can too.
+
+For org-owned projects, make sure your account is a member of the relevant organization.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the CircleCI integration">
+    From an agent's detail page, open the **Integrations** tab and find **CircleCI** in the catalog.
+  </Step>
+
+<Step title="Paste the token">
+  Paste the personal API token into the **Personal API Token** field.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora encrypts the token and immediately calls `GET https://circleci.com/api/v2/me` to verify it. On success, the card shows your CircleCI username.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button calls `GET /api/v2/me`. Common failures:
+
+- **401 Unauthorized** — token revoked. Generate a new one from the same page.
+- **403 Forbidden** — token belongs to a user that no longer has access to the org.
+
+## MCP server
+
+No official MCP server. The token is exposed to the agent as `CIRCLE_TOKEN` so any community MCP server reading that env var works.
+
+## Environment variables Nora injects
+
+| Variable       | Source                   |
+| -------------- | ------------------------ |
+| `CIRCLE_TOKEN` | Personal API Token field |

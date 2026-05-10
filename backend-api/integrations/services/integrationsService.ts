@@ -31,6 +31,12 @@ const { twitterProvider } = require("../providers/twitter");
 const { linkedinProvider } = require("../providers/linkedin");
 const { gitlabProvider } = require("../providers/gitlab");
 const { bitbucketProvider } = require("../providers/bitbucket");
+const { circleciProvider } = require("../providers/circleci");
+const { vercelProvider } = require("../providers/vercel");
+const { terraformProvider } = require("../providers/terraform");
+const { jenkinsProvider } = require("../providers/jenkins");
+const { dockerHubProvider } = require("../providers/dockerHub");
+const { kubernetesProvider } = require("../providers/kubernetes");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -66,6 +72,12 @@ const providerRegistry = createProviderRegistry((providerId) =>
   linkedinProvider,
   gitlabProvider,
   bitbucketProvider,
+  circleciProvider,
+  vercelProvider,
+  terraformProvider,
+  jenkinsProvider,
+  dockerHubProvider,
+  kubernetesProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`

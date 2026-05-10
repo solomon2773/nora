@@ -1,0 +1,64 @@
+# Docker Hub
+
+> Where to apply for a Docker Hub personal access token and how to connect it to Nora.
+
+Docker Hub integrations let your agents pull/push images, manage repositories, and inspect automated builds. Nora authenticates with your Docker Hub username plus a personal access token.
+
+## Where to apply for credentials
+
+Personal access tokens are issued from Account Settings:
+
+<Card
+  title="Docker Hub — Personal Access Tokens"
+  href="https://hub.docker.com/settings/security"
+  icon="box"
+  arrow
+>
+  https://hub.docker.com/settings/security
+</Card>
+
+## Token permissions
+
+When generating the token, choose one of:
+
+| Access scope         | Use when                                           |
+| -------------------- | -------------------------------------------------- |
+| **Read & Write**     | Agent pushes images or modifies repositories       |
+| **Read only**        | Agent only pulls / inspects                        |
+| **Public Repo Read** | Agent only pulls public images (no private access) |
+
+Nora doesn't enforce a minimum scope — it just calls `POST /v2/users/login` to verify the credentials.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Docker Hub integration">
+    From an agent's detail page, open the **Integrations** tab and find **Docker Hub** in the catalog.
+  </Step>
+
+<Step title="Paste username and token">
+  Enter your Docker Hub **Username** (not your email) and paste the **Access Token**.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora encrypts the token and calls `POST https://hub.docker.com/v2/users/login` to verify the credentials.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button calls the same `/v2/users/login`. Common failures:
+
+- **401 Unauthorized** — wrong username, wrong token, or token expired.
+- **`Docker Hub username not configured`** — Nora needs the username explicitly because the API expects it in the JSON body.
+
+## MCP server
+
+No official Docker Hub MCP server today.
+
+## Environment variables Nora injects
+
+| Variable              | Source             |
+| --------------------- | ------------------ |
+| `DOCKER_HUB_TOKEN`    | Access Token field |
+| `DOCKER_HUB_USERNAME` | Username field     |
