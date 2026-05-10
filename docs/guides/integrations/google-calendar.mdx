@@ -1,0 +1,38 @@
+# Google Calendar
+
+> How to set up a service account for Google Calendar and connect it to Nora.
+
+Google Calendar integrations let your agents read, create, and update events.
+
+## Where to apply for credentials
+
+Same flow as [Google Drive](/guides/integrations/google-drive) and [Google Sheets](/guides/integrations/google-sheets):
+
+<Steps>
+  <Step title="Create a service account in GCP">
+    [console.cloud.google.com/iam-admin/serviceaccounts](https://console.cloud.google.com/iam-admin/serviceaccounts) → Create Service Account → generate a JSON key.
+  </Step>
+
+<Step title="Enable the Calendar API">
+  GCP Console → APIs & Services → Library → Google Calendar API → Enable.
+</Step>
+
+  <Step title="Share each calendar with the SA">
+    Open Google Calendar → calendar settings → **Share with specific people** → add the SA's `client_email`. Pick the permission level (Make changes to events, etc.).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the JSON, optionally set the calendar ID (`primary` or a calendar's ID from its settings page).
+
+## MCP server
+
+No official Google Calendar MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                              | Source               |
+| ------------------------------------- | -------------------- |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Service Account JSON |
+| `GOOGLE_CALENDAR_DEFAULT_ID`          | Calendar ID (if set) |

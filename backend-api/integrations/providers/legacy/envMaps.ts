@@ -15,15 +15,15 @@ const INTEGRATION_ENV_MAP = {
   // gitlab → migrated to providers/gitlab.ts
   // slack → migrated to providers/slack.ts
   // discord → migrated to providers/discord.ts
-  notion: "NOTION_TOKEN",
+  // notion → migrated to providers/notion.ts
   // linear → migrated to providers/linear.ts
   datadog: "DD_API_KEY",
   sentry: "SENTRY_AUTH_TOKEN",
   // sendgrid → migrated to providers/sendgrid.ts
   // openai → migrated to providers/openai.ts
   // anthropic → migrated to providers/anthropic.ts
-  airtable: "AIRTABLE_API_KEY",
-  asana: "ASANA_TOKEN",
+  // airtable → migrated to providers/airtable.ts
+  // asana → migrated to providers/asana.ts
   stripe: "STRIPE_SECRET_KEY",
   hubspot: "HUBSPOT_ACCESS_TOKEN",
   pipedrive: "PIPEDRIVE_API_KEY",
@@ -42,17 +42,17 @@ const INTEGRATION_ENV_MAP = {
   // twitter → migrated to providers/twitter.ts
   // digitalocean → migrated to providers/digitalocean.ts
   // algolia → migrated to providers/algolia.ts
-  clickup: "CLICKUP_API_KEY",
-  monday: "MONDAY_API_KEY",
+  // clickup → migrated to providers/clickup.ts
+  // monday → migrated to providers/monday.ts
   zendesk: "ZENDESK_API_TOKEN",
   // docker-hub → migrated to providers/dockerHub.ts
   // bitbucket → migrated to providers/bitbucket.ts
-  confluence: "CONFLUENCE_TOKEN",
+  // confluence → migrated to providers/confluence.ts
   // jira → migrated to providers/jira.ts
   // jenkins → migrated to providers/jenkins.ts
   grafana: "GRAFANA_TOKEN",
   woocommerce: "WOOCOMMERCE_SECRET_KEY",
-  trello: "TRELLO_TOKEN",
+  // trello → migrated to providers/trello.ts
   // elasticsearch → migrated to providers/elasticsearch.ts
   // supabase → migrated to providers/supabase.ts
   facebook: "FACEBOOK_ACCESS_TOKEN",
@@ -129,17 +129,16 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   "kubernetes.kubeconfig": "KUBECONFIG_CONTENT",
   "kubernetes.context": "KUBE_CONTEXT",
   // Productivity
-  "notion.workspace_id": "NOTION_WORKSPACE_ID",
-  "airtable.base_id": "AIRTABLE_BASE_ID",
-  "trello.api_key": "TRELLO_API_KEY",
-  "trello.board_id": "TRELLO_BOARD_ID",
-  "clickup.workspace_id": "CLICKUP_WORKSPACE_ID",
-  "confluence.base_url": "CONFLUENCE_BASE_URL",
-  "confluence.email": "CONFLUENCE_EMAIL",
-  "google-sheets.service_account_json": "GOOGLE_SHEETS_SA_JSON",
-  "google-sheets.spreadsheet_id": "GOOGLE_SHEETS_SPREADSHEET_ID",
-  "google-calendar.service_account_json": "GOOGLE_CALENDAR_SA_JSON",
-  "google-calendar.calendar_id": "GOOGLE_CALENDAR_ID",
+  // Productivity — all migrated to per-provider strategies:
+  //   notion → providers/notion.ts
+  //   airtable → providers/airtable.ts
+  //   trello → providers/trello.ts
+  //   clickup → providers/clickup.ts
+  //   asana → providers/asana.ts
+  //   monday → providers/monday.ts
+  //   confluence → providers/confluence.ts
+  //   google-sheets → providers/googleSheets.ts
+  //   google-calendar → providers/googleCalendar.ts
   // CRM
   "salesforce.instance_url": "SALESFORCE_INSTANCE_URL",
   "zendesk.subdomain": "ZENDESK_SUBDOMAIN",

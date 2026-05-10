@@ -1,0 +1,40 @@
+# Asana
+
+> Where to issue an Asana Personal Access Token and connect it to Nora.
+
+Asana integrations let your agents create tasks, query projects, and manage workspaces. Nora authenticates with a personal access token (Bearer auth).
+
+## Where to apply for credentials
+
+<Card title="Asana — My Apps" href="https://app.asana.com/0/my-apps" icon="check-circle" arrow>
+  https://app.asana.com/0/my-apps
+</Card>
+
+<Steps>
+  <Step title="Create a token">
+    Open My Apps → **Create new token**. Name it, accept the API ToS.
+  </Step>
+
+  <Step title="Copy the token">
+    Asana shows it once. Format: `1/<digits>:<random>`.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token. Optionally set a workspace GID — find it via:
+
+```bash
+curl -H "Authorization: Bearer <your-token>" https://app.asana.com/api/1.0/workspaces
+```
+
+## MCP server
+
+No official Asana MCP server today.
+
+## Environment variables Nora injects
+
+| Variable             | Source                      |
+| -------------------- | --------------------------- |
+| `ASANA_TOKEN`        | Personal Access Token field |
+| `ASANA_WORKSPACE_ID` | Workspace ID (if set)       |

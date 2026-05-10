@@ -619,7 +619,23 @@
       { "key": "api_key", "label": "Integration Token", "type": "password", "required": true },
       { "key": "workspace_id", "label": "Workspace ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://www.notion.so/my-integrations",
+    "setupGuide": {
+      "steps": [
+        "Open Notion integrations page (notion.so/my-integrations) and click New integration.",
+        "Pick the workspace, name your integration, and choose Internal as the type.",
+        "Copy the Internal Integration Token (starts with secret_).",
+        "From the page or database you want the agent to access, click Share → Add the integration."
+      ]
+    },
+    "mcp": {
+      "available": true,
+      "transport": "stdio",
+      "npmPackage": "@notionhq/notion-mcp-server",
+      "docsUrl": "https://github.com/makenotion/notion-mcp-server",
+      "notes": "Official Notion MCP server. Reads NOTION_TOKEN env var."
+    }
   },
   {
     "id": "airtable",
@@ -632,7 +648,18 @@
       { "key": "api_key", "label": "Personal Access Token", "type": "password", "required": true },
       { "key": "base_id", "label": "Default Base ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://airtable.com/create/tokens",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Airtable and open the personal access tokens page (airtable.com/create/tokens).",
+        "Click Create new token. Pick scopes (data.records:read, data.records:write, schema.bases:read).",
+        "Add the bases the agent should access under Access.",
+        "Copy the token (starts with pat...)."
+      ],
+      "scopes": ["data.records:read", "data.records:write", "schema.bases:read"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "google-sheets",
@@ -655,7 +682,17 @@
         "required": false
       }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.cloud.google.com/iam-admin/serviceaccounts",
+    "setupGuide": {
+      "steps": [
+        "In GCP Console, create a service account and download a JSON key.",
+        "Enable the Google Sheets API for the project (APIs & Services → Library).",
+        "Share each spreadsheet you want the agent to access with the SA's client_email.",
+        "Paste the JSON contents into the textarea."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "trello",
@@ -669,7 +706,17 @@
       { "key": "token", "label": "Token", "type": "password", "required": true },
       { "key": "board_id", "label": "Default Board ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://trello.com/power-ups/admin",
+    "setupGuide": {
+      "steps": [
+        "Open Trello Power-Ups admin (trello.com/power-ups/admin) and create a new Power-Up — this gives you the API Key.",
+        "On the Power-Up's API Key page, click Token (right side) to OAuth-authorize a token.",
+        "Copy the API Key + Token (Trello shows the token once after the OAuth flow).",
+        "(Optional) Find a board ID from its URL — the second path segment after /b/."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "asana",
@@ -687,7 +734,17 @@
       },
       { "key": "workspace_gid", "label": "Workspace GID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.asana.com/0/my-apps",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Asana and open My Apps (app.asana.com/0/my-apps).",
+        "Click Create new token, name it, accept the API ToS.",
+        "Copy the token (only shown once).",
+        "(Optional) Find your workspace GID via GET https://app.asana.com/api/1.0/workspaces."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "monday",
@@ -699,7 +756,16 @@
     "configFields": [
       { "key": "api_key", "label": "API Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://monday.com/developers/v2/admin",
+    "setupGuide": {
+      "steps": [
+        "Sign in to monday.com and open Avatar → Developers → My Access Tokens.",
+        "Click Show and copy the Personal API Token, OR generate a new one.",
+        "Token gives access to whatever you can see in the UI — for finer scoping, use OAuth apps."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "clickup",
@@ -712,7 +778,17 @@
       { "key": "api_key", "label": "API Key", "type": "password", "required": true },
       { "key": "workspace_id", "label": "Workspace ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.clickup.com/settings/apps",
+    "setupGuide": {
+      "steps": [
+        "Sign in to ClickUp and open Settings → Apps.",
+        "Click Generate next to API Token.",
+        "Copy the token (starts with pk_...).",
+        "(Optional) Find your workspace ID by viewing any workspace URL — it's the long number after /."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "salesforce",
@@ -1516,7 +1592,17 @@
       },
       { "key": "calendar_id", "label": "Calendar ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.cloud.google.com/iam-admin/serviceaccounts",
+    "setupGuide": {
+      "steps": [
+        "In GCP Console, create a service account and download a JSON key.",
+        "Enable the Google Calendar API for the project.",
+        "For each calendar the agent should access, share it with the SA's client_email (in Calendar Settings → Share with specific people).",
+        "Paste the JSON contents into the textarea."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "confluence",
@@ -1524,13 +1610,23 @@
     "icon": "book-open",
     "category": "productivity",
     "description": "Create and manage Confluence pages, spaces, and content",
-    "authType": "api_key",
+    "authType": "basic",
     "configFields": [
       { "key": "base_url", "label": "Confluence URL", "type": "url", "required": true },
       { "key": "email", "label": "Email", "type": "email", "required": true },
       { "key": "api_token", "label": "API Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://id.atlassian.com/manage-profile/security/api-tokens",
+    "setupGuide": {
+      "steps": [
+        "Open id.atlassian.com/manage-profile/security/api-tokens.",
+        "Click Create API token, name it (e.g. 'Nora'), copy the value.",
+        "Enter your Confluence Cloud URL (e.g. https://acme.atlassian.net) — the same site you sign in to.",
+        "Enter the email tied to your Atlassian account."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "docker-hub",

@@ -1,0 +1,43 @@
+# Trello
+
+> Where to issue a Trello API key + token and connect them to Nora.
+
+Trello integrations let your agents read/write boards, lists, and cards. Trello uses a two-part credential — an **API Key** that identifies the app and a **Token** that authorizes access to the user's data.
+
+## Where to apply for credentials
+
+<Card
+  title="Trello — Power-Ups Admin"
+  href="https://trello.com/power-ups/admin"
+  icon="layout"
+  arrow
+>
+  trello.com/power-ups/admin
+</Card>
+
+<Steps>
+  <Step title="Create a Power-Up">
+    Open Power-Ups Admin → **Create Power-Up**. This is how Trello issues an API Key. Name it (e.g. "Nora").
+  </Step>
+
+<Step title="Copy the API Key">On the Power-Up's API Key page, copy the **Key** value.</Step>
+
+  <Step title="Generate a token">
+    Same page — click **Token** (in the right column). You'll be sent through an OAuth-like flow that grants the Power-Up access to your account. Trello returns a token at the end.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the **API Key** and **Token**. Optionally set a default board ID (from any board's URL — the segment after `/b/`). Nora calls `GET /1/members/me?key=...&token=...` and reports the username.
+
+## MCP server
+
+No official Trello MCP server today.
+
+## Environment variables Nora injects
+
+| Variable         | Source        |
+| ---------------- | ------------- |
+| `TRELLO_TOKEN`   | Token field   |
+| `TRELLO_API_KEY` | API Key field |

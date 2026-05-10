@@ -1,0 +1,47 @@
+# Google Sheets
+
+> How to set up a service account for Google Sheets and connect it to Nora.
+
+Google Sheets integrations let your agents read and write spreadsheet rows, columns, and ranges. Same service-account flow as [Google Drive](/guides/integrations/google-drive).
+
+## Where to apply for credentials
+
+<Card
+  title="Google Cloud — Service Accounts"
+  href="https://console.cloud.google.com/iam-admin/serviceaccounts"
+  icon="table"
+  arrow
+>
+  https://console.cloud.google.com/iam-admin/serviceaccounts
+</Card>
+
+<Steps>
+  <Step title="Create a service account">
+    GCP Console → IAM & Admin → Service Accounts → Create Service Account.
+  </Step>
+
+<Step title="Generate a JSON key">Open the SA → Keys → Add Key → Create new key → JSON.</Step>
+
+<Step title="Enable the Google Sheets API">
+  APIs & Services → Library → Google Sheets API → Enable.
+</Step>
+
+  <Step title="Share each spreadsheet with the SA">
+    Open the spreadsheet in Google Sheets, click **Share**, and add the SA's `client_email`.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the JSON, optionally set a default spreadsheet ID (the long string in the spreadsheet URL after `/d/`).
+
+## MCP server
+
+No official Google Sheets MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                               | Source                          |
+| -------------------------------------- | ------------------------------- |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON`  | Service Account JSON            |
+| `GOOGLE_SHEETS_DEFAULT_SPREADSHEET_ID` | Default Spreadsheet ID (if set) |

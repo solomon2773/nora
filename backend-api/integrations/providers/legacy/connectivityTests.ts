@@ -45,14 +45,7 @@ function buildConnectivityTests(integration, token, deps) {
   return {
     // gitlab → migrated to providers/gitlab.ts
     // discord → migrated to providers/discord.ts
-    notion: async () => {
-      const res = await fetch("https://api.notion.com/v1/users/me", {
-        headers: { Authorization: `Bearer ${token}`, "Notion-Version": "2022-06-28" },
-      });
-      if (!res.ok) throw new Error(`Notion API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.name || data.id}` };
-    },
+    // notion → migrated to providers/notion.ts
     datadog: async () => {
       const res = await fetch("https://api.datadoghq.com/api/v1/validate", {
         headers: { "DD-API-KEY": token },
@@ -72,75 +65,12 @@ function buildConnectivityTests(integration, token, deps) {
     // anthropic → migrated to providers/anthropic.ts
     // huggingface → migrated to providers/huggingface.ts
     // bitbucket → migrated to providers/bitbucket.ts
-    airtable: async () => {
-      const res = await fetch("https://api.airtable.com/v0/meta/whoami", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Airtable API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.email || data.id}` };
-    },
-    asana: async () => {
-      const res = await fetch("https://app.asana.com/api/1.0/users/me", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Asana API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.data?.name || "verified"}` };
-    },
-    monday: async () => {
-      const res = await fetch("https://api.monday.com/v2", {
-        method: "POST",
-        headers: { Authorization: token, "Content-Type": "application/json" },
-        body: JSON.stringify({ query: "{ me { name } }" }),
-      });
-      if (!res.ok) throw new Error(`Monday.com API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.data?.me?.name || "verified"}` };
-    },
-    clickup: async () => {
-      const res = await fetch("https://api.clickup.com/api/v2/user", {
-        headers: { Authorization: token },
-      });
-      if (!res.ok) throw new Error(`ClickUp API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.user?.username || "verified"}` };
-    },
-    trello: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const apiKey = config.api_key;
-      if (!apiKey) throw new Error("Trello API key not configured");
-      const res = await fetch(
-        `https://api.trello.com/1/members/me?key=${encodeURIComponent(apiKey)}&token=${encodeURIComponent(token)}`,
-      );
-      if (!res.ok) throw new Error(`Trello API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.username}` };
-    },
-    confluence: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const baseUrl = config.base_url;
-      const email = config.email;
-      if (!baseUrl) throw new Error("Confluence URL not configured");
-      if (!email) throw new Error("Confluence email not configured");
-      const rawUrl = baseUrl.includes("://") ? baseUrl : `https://${baseUrl}`;
-      const url = await assertSafeUrl(rawUrl, "Confluence base URL");
-      const res = await fetch(`${url}/wiki/rest/api/user/current`, {
-        headers: { Authorization: `Basic ${Buffer.from(`${email}:${token}`).toString("base64")}` },
-      });
-      if (!res.ok) throw new Error(`Confluence API returned ${res.status}`);
-      const data = await res.json();
-      return {
-        success: true,
-        message: `Connected as ${data.displayName || data.username || "verified"}`,
-      };
-    },
+    // airtable → migrated to providers/airtable.ts
+    // asana → migrated to providers/asana.ts
+    // monday → migrated to providers/monday.ts
+    // clickup → migrated to providers/clickup.ts
+    // trello → migrated to providers/trello.ts
+    // confluence → migrated to providers/confluence.ts
     // digitalocean → migrated to providers/digitalocean.ts
     // supabase → migrated to providers/supabase.ts
     stripe: async () => {

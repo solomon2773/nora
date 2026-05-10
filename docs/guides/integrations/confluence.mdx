@@ -1,0 +1,50 @@
+# Confluence
+
+> Where to issue an Atlassian API token and connect Confluence Cloud to Nora.
+
+Confluence integrations let your agents read and write pages, attachments, and space content via the Confluence Cloud REST API. Nora authenticates with HTTP Basic using your Atlassian email + an API token (same shape as [Jira](/guides/integrations/jira)).
+
+## Where to apply for credentials
+
+<Card
+  title="Atlassian — API Tokens"
+  href="https://id.atlassian.com/manage-profile/security/api-tokens"
+  icon="book-open"
+  arrow
+>
+  id.atlassian.com/manage-profile/security/api-tokens
+</Card>
+
+<Steps>
+  <Step title="Create the API token">
+    Click **Create API token**, name it (e.g. "Nora"), and copy the value (only shown once).
+  </Step>
+
+  <Step title="Note your Confluence URL">
+    The integration needs your Confluence Cloud origin (e.g. `https://acme.atlassian.net`) — same site you sign in to.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Paste the URL, email, and token">
+    Confluence URL = `https://<site>.atlassian.net`. Email = your Atlassian account email. API Token = the secret you generated.
+  </Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the URL through the SSRF guard, then calls `GET <url>/wiki/rest/api/user/current` with HTTP Basic auth. The card shows your display name on success.
+  </Step>
+</Steps>
+
+## MCP server
+
+No official Confluence MCP server today.
+
+## Environment variables Nora injects
+
+| Variable              | Source               |
+| --------------------- | -------------------- |
+| `CONFLUENCE_TOKEN`    | API Token field      |
+| `CONFLUENCE_EMAIL`    | Email field          |
+| `CONFLUENCE_BASE_URL` | Confluence URL field |

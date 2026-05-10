@@ -1,0 +1,48 @@
+# Monday.com
+
+> Where to issue a Monday.com personal API token and connect it to Nora.
+
+Monday.com integrations let your agents read and write boards, items, and updates via Monday's GraphQL API. Nora authenticates by passing the token in the `Authorization` header (no `Bearer` prefix — Monday's docs are explicit on this).
+
+## Where to apply for credentials
+
+<Card
+  title="Monday.com — Developer settings"
+  href="https://monday.com/developers/v2/admin"
+  icon="calendar"
+  arrow
+>
+  Avatar → Developers → My Access Tokens
+</Card>
+
+<Steps>
+  <Step title="Open My Access Tokens">
+    Click your avatar (bottom-left) → **Developers**. Open **My Access Tokens**.
+  </Step>
+
+<Step title="Show or generate a token">
+  Click **Show** to reveal your existing personal token, or generate a fresh one.
+</Step>
+
+  <Step title="Copy">
+    Treat the token as a password — it inherits all your account permissions.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token. Nora POSTs `{ me { name } }` to `https://api.monday.com/v2` to verify it.
+
+## Limitations
+
+Personal tokens grant whatever permissions the user has. For tighter scoping, register a **Monday Apps** OAuth app — Nora's current integration uses the personal-token model.
+
+## MCP server
+
+No official Monday.com MCP server today.
+
+## Environment variables Nora injects
+
+| Variable         | Source          |
+| ---------------- | --------------- |
+| `MONDAY_API_KEY` | API Token field |

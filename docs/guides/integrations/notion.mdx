@@ -1,0 +1,46 @@
+# Notion
+
+> Where to issue a Notion internal-integration token and connect it to Nora.
+
+Notion integrations let your agents create pages, query and edit databases, and walk page hierarchies. Nora authenticates with an internal-integration token (Bearer auth) plus the standard `Notion-Version: 2022-06-28` header.
+
+## Where to apply for credentials
+
+<Card
+  title="Notion — My integrations"
+  href="https://www.notion.so/my-integrations"
+  icon="file-text"
+  arrow
+>
+  https://www.notion.so/my-integrations
+</Card>
+
+<Steps>
+  <Step title="Create an internal integration">
+    Click **+ New integration**. Pick the workspace, name it (e.g. "Nora agent"), choose **Internal** as the type.
+  </Step>
+
+<Step title="Copy the token">The Internal Integration Token starts with `secret_...`.</Step>
+
+  <Step title="Share pages with the integration">
+    Notion integrations don't auto-have access to pages. From any Notion page or database you want the agent to read/write, click **Share → Add connection** and pick your integration.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token, optionally set a workspace ID, and click **Connect**. Nora calls `GET /v1/users/me` to verify the token and reports the bot user's name.
+
+## MCP server
+
+Notion ships an official MCP server:
+
+- **Package:** `@notionhq/notion-mcp-server`
+- **Docs:** [github.com/makenotion/notion-mcp-server](https://github.com/makenotion/notion-mcp-server)
+- **Env:** `NOTION_TOKEN` (which Nora injects automatically).
+
+## Environment variables Nora injects
+
+| Variable       | Source            |
+| -------------- | ----------------- |
+| `NOTION_TOKEN` | Integration Token |

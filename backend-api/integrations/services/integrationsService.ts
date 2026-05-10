@@ -62,6 +62,15 @@ const { digitaloceanProvider } = require("../providers/digitalocean");
 const { awsProvider } = require("../providers/aws");
 const { gcpProvider } = require("../providers/gcp");
 const { azureProvider } = require("../providers/azure");
+const { notionProvider } = require("../providers/notion");
+const { airtableProvider } = require("../providers/airtable");
+const { asanaProvider } = require("../providers/asana");
+const { mondayProvider } = require("../providers/monday");
+const { clickupProvider } = require("../providers/clickup");
+const { trelloProvider } = require("../providers/trello");
+const { confluenceProvider } = require("../providers/confluence");
+const { googleSheetsProvider } = require("../providers/googleSheets");
+const { googleCalendarProvider } = require("../providers/googleCalendar");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -128,6 +137,15 @@ const providerRegistry = createProviderRegistry((providerId) =>
   awsProvider,
   gcpProvider,
   azureProvider,
+  notionProvider,
+  airtableProvider,
+  asanaProvider,
+  mondayProvider,
+  clickupProvider,
+  trelloProvider,
+  confluenceProvider,
+  googleSheetsProvider,
+  googleCalendarProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`

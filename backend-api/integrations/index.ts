@@ -74,6 +74,15 @@ export { digitaloceanProvider } from "./providers/digitalocean";
 export { awsProvider } from "./providers/aws";
 export { gcpProvider } from "./providers/gcp";
 export { azureProvider } from "./providers/azure";
+export { notionProvider } from "./providers/notion";
+export { airtableProvider } from "./providers/airtable";
+export { asanaProvider } from "./providers/asana";
+export { mondayProvider } from "./providers/monday";
+export { clickupProvider } from "./providers/clickup";
+export { trelloProvider } from "./providers/trello";
+export { confluenceProvider } from "./providers/confluence";
+export { googleSheetsProvider } from "./providers/googleSheets";
+export { googleCalendarProvider } from "./providers/googleCalendar";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

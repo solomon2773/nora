@@ -1,0 +1,41 @@
+# ClickUp
+
+> Where to issue a ClickUp API key and connect it to Nora.
+
+ClickUp integrations let your agents read/write tasks, lists, and spaces. Nora authenticates by passing the token in the raw `Authorization` header (ClickUp doesn't expect a `Bearer` prefix).
+
+## Where to apply for credentials
+
+<Card
+  title="ClickUp — Apps settings"
+  href="https://app.clickup.com/settings/apps"
+  icon="target"
+  arrow
+>
+  Settings → Apps
+</Card>
+
+<Steps>
+  <Step title="Generate the API token">
+    On the Apps page, click **Generate** next to **API Token**.
+  </Step>
+
+  <Step title="Copy the token">
+    Starts with `pk_...`.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token. Nora calls `GET /api/v2/user` and reports the username.
+
+## MCP server
+
+No official ClickUp MCP server today.
+
+## Environment variables Nora injects
+
+| Variable          | Source           |
+| ----------------- | ---------------- |
+| `CLICKUP_API_KEY` | API Key field    |
+| `CLICKUP_TEAM_ID` | Team ID (if set) |

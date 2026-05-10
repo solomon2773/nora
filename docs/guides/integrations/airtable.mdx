@@ -1,0 +1,51 @@
+# Airtable
+
+> Where to issue an Airtable Personal Access Token (PAT) and connect it to Nora.
+
+Airtable integrations let your agents read/write records, list bases and tables, and inspect schemas. Nora authenticates with a PAT (Bearer auth).
+
+## Where to apply for credentials
+
+<Card
+  title="Airtable — Personal Access Tokens"
+  href="https://airtable.com/create/tokens"
+  icon="grid"
+  arrow
+>
+  https://airtable.com/create/tokens
+</Card>
+
+<Steps>
+  <Step title="Create a PAT">
+    Click **Create new token**. Name it (e.g. "Nora").
+  </Step>
+
+<Step title="Pick the scopes">
+  Recommended for full CRUD agents: `data.records:read`, `data.records:write`, `schema.bases:read`.
+  Add `data.recordComments:write` if your agent leaves comments.
+</Step>
+
+<Step title="Add base access">
+  Under **Access**, click **Add a base** and pick the bases the agent should reach. (PATs default to
+  no access — you have to opt in per base.)
+</Step>
+
+  <Step title="Copy the token">
+    Starts with `pat...`.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token, optionally set a default base ID, and click **Connect**. Nora calls `GET /v0/meta/whoami` and reports the email tied to the PAT.
+
+## MCP server
+
+No official Airtable MCP server today.
+
+## Environment variables Nora injects
+
+| Variable           | Source                   |
+| ------------------ | ------------------------ |
+| `AIRTABLE_API_KEY` | Personal Access Token    |
+| `AIRTABLE_BASE_ID` | Default Base ID (if set) |
