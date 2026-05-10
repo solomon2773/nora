@@ -55,6 +55,18 @@ export { teamsProvider } from "./providers/teams";
 export { emailProvider } from "./providers/email";
 export { twilioProvider } from "./providers/twilio";
 export { sendgridProvider } from "./providers/sendgrid";
+export { postgresqlProvider } from "./providers/postgresql";
+export { mongodbProvider } from "./providers/mongodb";
+export { redisProvider } from "./providers/redis";
+export { supabaseProvider } from "./providers/supabase";
+export { firebaseProvider } from "./providers/firebase";
+export { googleDriveProvider } from "./providers/googleDrive";
+export { dropboxProvider } from "./providers/dropbox";
+export { s3Provider } from "./providers/s3";
+export { elasticsearchProvider } from "./providers/elasticsearch";
+export { pineconeProvider } from "./providers/pinecone";
+export { weaviateProvider } from "./providers/weaviate";
+export { algoliaProvider } from "./providers/algolia";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

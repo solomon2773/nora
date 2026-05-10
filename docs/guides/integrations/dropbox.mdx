@@ -1,0 +1,48 @@
+# Dropbox
+
+> How to issue a Dropbox access token and connect it to Nora.
+
+Dropbox integrations let your agents upload, download, and manage files in a Dropbox account. Nora authenticates with a Bearer access token issued from the Dropbox developer console.
+
+## Where to apply for credentials
+
+<Card title="Dropbox App Console" href="https://www.dropbox.com/developers/apps" icon="box" arrow>
+  https://www.dropbox.com/developers/apps
+</Card>
+
+<Steps>
+  <Step title="Create an app">
+    Click **Create app**. Choose **Scoped access**, then either **App folder** (sandbox to one folder) or **Full Dropbox** (broad access).
+  </Step>
+
+<Step title="Tick the permissions">
+  On the **Permissions** tab, tick the scopes your agent needs (e.g. `files.content.read`,
+  `files.content.write`, `files.metadata.read`). Click **Submit**.
+</Step>
+
+  <Step title="Generate an access token">
+    On the **Settings** tab, scroll to **OAuth 2 → Generated access token**. Click **Generate**. Copy the token.
+  </Step>
+</Steps>
+
+<Note>
+  The generated access token is short-lived (4 hours). For production agents, implement a refresh
+  flow: get the App key + secret from the same Settings page, do an OAuth2 authorization-code
+  exchange, and store the resulting refresh_token. Nora's current Dropbox integration shape uses the
+  long-lived token model — fine for personal/dev use, but you'll need to rotate the token manually
+  for now.
+</Note>
+
+## Connect in Nora
+
+Paste the access token into the **Access Token** field and click **Connect**. Nora calls `POST https://api.dropboxapi.com/2/users/get_current_account` to verify the token. The card shows your Dropbox display name on success.
+
+## MCP server
+
+No official Dropbox MCP server today.
+
+## Environment variables Nora injects
+
+| Variable               | Source             |
+| ---------------------- | ------------------ |
+| `DROPBOX_ACCESS_TOKEN` | Access Token field |

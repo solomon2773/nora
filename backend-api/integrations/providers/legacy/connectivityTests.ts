@@ -169,20 +169,7 @@ function buildConnectivityTests(integration, token, deps) {
       const data = await res.json();
       return { success: true, message: `Connected (${data.account?.email || "verified"})` };
     },
-    supabase: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const rawUrl = config.url;
-      if (!rawUrl) throw new Error("Supabase project URL not configured");
-      const url = await assertSafeUrl(rawUrl, "Supabase URL");
-      const res = await fetch(`${url}/rest/v1/`, {
-        headers: { apikey: token, Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Supabase API returned ${res.status}`);
-      return { success: true, message: "Connected to Supabase" };
-    },
+    // supabase → migrated to providers/supabase.ts
     stripe: async () => {
       const res = await fetch("https://api.stripe.com/v1/balance", {
         headers: { Authorization: `Bearer ${token}` },
@@ -223,43 +210,9 @@ function buildConnectivityTests(integration, token, deps) {
       const data = await res.json();
       return { success: true, message: `Connected as ${data.user?.name || "verified"}` };
     },
-    elasticsearch: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const rawUrl = config.node_url;
-      if (!rawUrl) throw new Error("Elasticsearch node URL not configured");
-      const nodeUrl = await assertSafeUrl(rawUrl, "Elasticsearch node URL");
-      const headers = {};
-      if (config.username) {
-        headers.Authorization = `Basic ${Buffer.from(`${config.username}:${token}`).toString("base64")}`;
-      }
-      const res = await fetch(nodeUrl, { headers });
-      if (!res.ok) throw new Error(`Elasticsearch returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected to cluster "${data.cluster_name || "unknown"}"` };
-    },
-    pinecone: async () => {
-      const res = await fetch("https://api.pinecone.io/indexes", {
-        headers: { "Api-Key": token },
-      });
-      if (!res.ok) throw new Error(`Pinecone API returned ${res.status}`);
-      return { success: true, message: "Connected to Pinecone" };
-    },
-    algolia: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const appId = config.app_id;
-      if (!appId) throw new Error("Algolia Application ID not configured");
-      const res = await fetch(`https://${appId}-dsn.algolia.net/1/keys`, {
-        headers: { "X-Algolia-Application-Id": appId, "X-Algolia-API-Key": token },
-      });
-      if (!res.ok) throw new Error(`Algolia API returned ${res.status}`);
-      return { success: true, message: "Connected to Algolia" };
-    },
+    // elasticsearch → migrated to providers/elasticsearch.ts
+    // pinecone → migrated to providers/pinecone.ts
+    // algolia → migrated to providers/algolia.ts
     // vercel → migrated to providers/vercel.ts
     // circleci → migrated to providers/circleci.ts
     // terraform → migrated to providers/terraform.ts
@@ -287,15 +240,7 @@ function buildConnectivityTests(integration, token, deps) {
       return { success: true, message: `Connected as ${data.user?.name || "verified"}` };
     },
     // jenkins → migrated to providers/jenkins.ts
-    dropbox: async () => {
-      const res = await fetch("https://api.dropboxapi.com/2/users/get_current_account", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Dropbox API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.name?.display_name || "verified"}` };
-    },
+    // dropbox → migrated to providers/dropbox.ts
     // twilio → migrated to providers/twilio.ts
     // telegram → migrated to providers/telegram.ts
     shopify: async () => {

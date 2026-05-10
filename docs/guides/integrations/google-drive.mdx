@@ -1,0 +1,70 @@
+# Google Drive
+
+> How to set up a service account for Google Drive and connect it to Nora.
+
+Google Drive integrations let your agents read/write files and folders in Drive. Nora uses a Google Cloud service account — same shape as Firebase.
+
+## Where to apply for credentials
+
+<Card
+  title="Google Cloud — Service Accounts"
+  href="https://console.cloud.google.com/iam-admin/serviceaccounts"
+  icon="hard-drive"
+  arrow
+>
+  https://console.cloud.google.com/iam-admin/serviceaccounts
+</Card>
+
+<Steps>
+  <Step title="Create a service account">
+    Open the IAM Service Accounts page. Click **Create Service Account**, give it a name (e.g. `nora-drive-agent`), and click **Create and Continue**. Skip the optional roles for now.
+  </Step>
+
+<Step title="Generate a JSON key">
+  Click the new service account → **Keys** tab → **Add Key → Create new key → JSON**. The file
+  downloads automatically.
+</Step>
+
+<Step title="Enable the Drive API">
+  In the GCP console, open **APIs & Services → Library**, search for **Google Drive API**, and click
+  **Enable**.
+</Step>
+
+  <Step title="Share the right Drive folders with the SA">
+    Service accounts don't auto-have access to your personal Drive. From Drive's UI, **share the folder** (or files) the agent should access with the service account's `client_email` (visible inside the JSON key).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Google Drive integration">
+    From an agent's detail page, open the **Integrations** tab and find **Google Drive**.
+  </Step>
+
+<Step title="Paste the JSON">Paste the entire service-account JSON into the textarea.</Step>
+
+<Step title="(Optional) Pin a default folder">
+  If the agent should default to a specific folder, paste the Drive folder ID (the URL fragment
+  after `folders/`) into the **Default Folder ID** field.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the JSON parses and contains `client_email`, `private_key`, and `project_id`.
+  </Step>
+</Steps>
+
+## MCP server
+
+The reference Google Drive MCP server:
+
+- **Package:** `@modelcontextprotocol/server-gdrive`
+- **Docs:** [github.com/modelcontextprotocol/servers/tree/main/src/gdrive](https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive)
+- **Env:** `GOOGLE_APPLICATION_CREDENTIALS` pointing at the SA JSON file path. Nora's agent runtime sets this automatically.
+
+## Environment variables Nora injects
+
+| Variable                              | Source                     |
+| ------------------------------------- | -------------------------- |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Service Account JSON       |
+| `GOOGLE_DRIVE_SHARED_DRIVE_ID`        | Default Folder ID (if set) |

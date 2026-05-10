@@ -438,6 +438,21 @@
       { "key": "user", "label": "Username", "type": "text", "required": true },
       { "key": "password", "label": "Password", "type": "password", "required": true }
     ],
+    "credentialsUrl": "https://www.postgresql.org/docs/current/auth-password.html",
+    "setupGuide": {
+      "steps": [
+        "Provision a Postgres user with the privileges your agent needs (avoid using the superuser).",
+        "Get the host, port, database name, username, and password from your provider (RDS / Cloud SQL / Supabase / self-hosted).",
+        "The Postgres host must be reachable from the agent's network — Nora doesn't tunnel."
+      ]
+    },
+    "mcp": {
+      "available": true,
+      "transport": "stdio",
+      "npmPackage": "@modelcontextprotocol/server-postgres",
+      "docsUrl": "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+      "notes": "Reads connection details from a single POSTGRES_URL env var."
+    },
     "capabilities": ["read", "write"]
   },
   {
@@ -447,6 +462,15 @@
     "category": "data",
     "description": "Connect to MongoDB for document storage and querying",
     "authType": "credentials",
+    "credentialsUrl": "https://www.mongodb.com/docs/manual/reference/connection-string/",
+    "setupGuide": {
+      "steps": [
+        "From MongoDB Atlas (or your self-hosted setup), build a connection string of the form mongodb+srv://<user>:<pass>@<host>/<db>.",
+        "URL-encode any special characters in username/password.",
+        "Test it locally with mongosh or your driver before pasting."
+      ]
+    },
+    "mcp": { "available": false },
     "configFields": [
       {
         "key": "connection_string",
@@ -470,7 +494,16 @@
       { "key": "port", "label": "Port", "type": "number", "required": true },
       { "key": "password", "label": "Password", "type": "password", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/",
+    "setupGuide": {
+      "steps": [
+        "Get host and port from your Redis provider (Redis Cloud, ElastiCache, Upstash, self-hosted).",
+        "If your Redis uses ACL or requires-pass, supply the password.",
+        "For Redis Cloud / Upstash, use the rediss:// (TLS) endpoint and treat the AUTH password as the credential."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "datadog",
@@ -689,7 +722,23 @@
       },
       { "key": "folder_id", "label": "Default Folder ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.cloud.google.com/iam-admin/serviceaccounts",
+    "setupGuide": {
+      "steps": [
+        "Open Google Cloud Console → IAM & Admin → Service Accounts.",
+        "Create a service account (or pick an existing one), then create a JSON key (Keys → Add Key → JSON).",
+        "Enable the Drive API for the project (APIs & Services → Library → Google Drive API).",
+        "Share the Drive folders the agent should access with the service account's client_email."
+      ]
+    },
+    "mcp": {
+      "available": true,
+      "transport": "stdio",
+      "npmPackage": "@modelcontextprotocol/server-gdrive",
+      "docsUrl": "https://github.com/modelcontextprotocol/servers/tree/main/src/gdrive",
+      "notes": "Reads GOOGLE_APPLICATION_CREDENTIALS pointing at the SA JSON file."
+    }
   },
   {
     "id": "dropbox",
@@ -701,7 +750,18 @@
     "configFields": [
       { "key": "access_token", "label": "Access Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://www.dropbox.com/developers/apps",
+    "setupGuide": {
+      "steps": [
+        "Open the Dropbox App Console and click Create app.",
+        "Choose Scoped access, App folder or Full Dropbox, give it a name.",
+        "Under Permissions, tick the scopes your agent needs (files.content.read, files.content.write, etc.) and submit.",
+        "On the Settings tab, generate an OAuth 2 Access token (or use a refresh token + auth code flow for production)."
+      ],
+      "scopes": ["files.content.read", "files.content.write", "files.metadata.read"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "s3",
@@ -721,7 +781,17 @@
       { "key": "bucket", "label": "Default Bucket", "type": "text", "required": false },
       { "key": "region", "label": "Region", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.aws.amazon.com/iam/home?#/users",
+    "setupGuide": {
+      "steps": [
+        "In AWS Console → IAM, create a programmatic-access user (or use an existing one).",
+        "Attach a policy that grants the S3 actions your agent needs (e.g. AmazonS3ReadOnlyAccess, or a tighter custom policy).",
+        "Create an access key for the user and copy the Access Key ID + Secret Access Key.",
+        "Enter the default bucket and region your agent should target."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "stripe",
@@ -1014,7 +1084,16 @@
       { "key": "password", "label": "Password", "type": "password", "required": false },
       { "key": "index", "label": "Default Index", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://www.elastic.co/guide/en/elasticsearch/reference/current/built-in-users.html",
+    "setupGuide": {
+      "steps": [
+        "Get the cluster's HTTPS endpoint (Elastic Cloud: Deployments → Endpoints; self-hosted: your nginx/ingress URL).",
+        "Create a dedicated user with the right roles (e.g. read for search-only agents, kibana_admin for management).",
+        "If your cluster has security disabled (dev), leave username/password blank — the test will hit the node anonymously."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "pinecone",
@@ -1028,7 +1107,16 @@
       { "key": "environment", "label": "Environment", "type": "text", "required": true },
       { "key": "index_name", "label": "Index Name", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.pinecone.io/organizations/-/projects/-/keys",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Pinecone at app.pinecone.io.",
+        "Open API Keys, click Create API Key, copy the value.",
+        "Note your environment (us-east-1-aws, gcp-starter, etc.) from the project home page."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "weaviate",
@@ -1041,7 +1129,16 @@
       { "key": "host", "label": "Cluster URL", "type": "url", "required": true },
       { "key": "api_key", "label": "API Key", "type": "password", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.weaviate.cloud/dashboard",
+    "setupGuide": {
+      "steps": [
+        "Open Weaviate Cloud Console (or your self-hosted instance).",
+        "Copy the cluster URL (looks like https://your-cluster.weaviate.network).",
+        "If the cluster uses API-key auth, generate one in the cluster settings — leave blank for anonymous clusters."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "supabase",
@@ -1054,7 +1151,22 @@
       { "key": "url", "label": "Project URL", "type": "url", "required": true },
       { "key": "anon_key", "label": "Anon/Service Key", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.supabase.com/project/_/settings/api",
+    "setupGuide": {
+      "steps": [
+        "Open your Supabase project's API settings.",
+        "Copy the Project URL (https://<ref>.supabase.co).",
+        "Copy the service_role key for full DB access, or the anon key for client-style access — paste whichever fits your agent's blast radius."
+      ]
+    },
+    "mcp": {
+      "available": true,
+      "transport": "stdio",
+      "npmPackage": "@supabase/mcp-server-supabase",
+      "docsUrl": "https://github.com/supabase-community/supabase-mcp",
+      "notes": "Official-track MCP server for Supabase by the community."
+    }
   },
   {
     "id": "firebase",
@@ -1072,7 +1184,17 @@
       },
       { "key": "database_url", "label": "Database URL", "type": "url", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.firebase.google.com/",
+    "setupGuide": {
+      "steps": [
+        "Open Firebase Console → Project Settings → Service accounts.",
+        "Click Generate new private key — Firebase downloads a JSON file.",
+        "Paste the entire JSON contents into the Service Account JSON field.",
+        "(Realtime Database only) Copy the database URL from the Realtime Database tab."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "twilio",
@@ -1403,6 +1525,15 @@
       { "key": "admin_api_key", "label": "Admin API Key", "type": "password", "required": true },
       { "key": "index_name", "label": "Default Index", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://dashboard.algolia.com/account/api-keys/all",
+    "setupGuide": {
+      "steps": [
+        "Open the Algolia dashboard → API Keys.",
+        "Copy the Application ID.",
+        "For full management access, use the Admin API Key. For read-only agents, generate a new key with Search-only ACLs and use that instead."
+      ]
+    },
+    "mcp": { "available": false }
   }
 ]

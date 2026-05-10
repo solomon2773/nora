@@ -1,0 +1,68 @@
+# Firebase
+
+> How to generate a Firebase service-account JSON and connect it to Nora.
+
+Firebase integrations cover Realtime Database, Firestore, Authentication, Cloud Functions, and Cloud Messaging. Nora authenticates with a Google service account — the same JSON file every server-side Firebase SDK expects.
+
+## Where to apply for credentials
+
+<Card title="Firebase Console" href="https://console.firebase.google.com/" icon="flame" arrow>
+  https://console.firebase.google.com/
+</Card>
+
+<Steps>
+  <Step title="Open Project Settings">
+    Pick your Firebase project, click the gear icon → **Project settings**.
+  </Step>
+
+<Step title="Open the Service accounts tab">
+  Tab labeled **Service accounts**. The default Firebase Admin SDK service account is there.
+</Step>
+
+  <Step title="Generate a private key">
+    Click **Generate new private key**. Firebase downloads a JSON file. Treat it as secret.
+  </Step>
+</Steps>
+
+## Required permissions
+
+The default Firebase Admin SDK service account already has full access to all Firebase services in the project. For tighter scoping, create a custom service account in **GCP IAM** and grant only the roles you need (e.g. `roles/firebasedatabase.viewer`, `roles/datastore.user`).
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Firebase integration">
+    From an agent's detail page, open the **Integrations** tab and find **Firebase**.
+  </Step>
+
+<Step title="Paste the JSON">
+  Open the downloaded file in a text editor and paste the **entire JSON contents** into the
+  **Service Account JSON** textarea. Nora encrypts it at rest with AES-256-GCM.
+</Step>
+
+<Step title="(Realtime DB only) Set the database URL">
+  If your agent uses Realtime Database, paste the database URL (e.g.
+  `https://my-proj.firebaseio.com`).
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the JSON parses and contains `client_email`, `private_key`, and `project_id`. **It does not call Google's auth server** — that happens in the agent runtime.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button repeats the structural validation. End-to-end verification happens when your agent makes its first Firebase call.
+
+## MCP server
+
+No official Firebase MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                              | Source               |
+| ------------------------------------- | -------------------- |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Service Account JSON |
+| `FIREBASE_PROJECT_ID`                 | extracted from JSON  |
+
+The agent runtime writes the JSON to a file and points `GOOGLE_APPLICATION_CREDENTIALS` at the file path — that's what the Firebase Admin SDK expects.

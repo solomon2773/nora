@@ -1,0 +1,51 @@
+# Pinecone
+
+> Where to issue a Pinecone API key and connect it to Nora.
+
+Pinecone integrations let your agents store and query vector embeddings — typically as the retrieval layer of a RAG pipeline.
+
+## Where to apply for credentials
+
+<Card
+  title="Pinecone — API Keys"
+  href="https://app.pinecone.io/organizations/-/projects/-/keys"
+  icon="database"
+  arrow
+>
+  https://app.pinecone.io/organizations/-/projects/-/keys
+</Card>
+
+The same page lists existing keys and lets you create new ones. While you're there, also note your **environment** (e.g. `us-east-1-aws`, `gcp-starter`) — it's part of the API URL Pinecone clients construct.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Paste the API key">
+    Pinecone keys start with `pc_`.
+  </Step>
+
+<Step title="Set the environment">
+  Required. Visible at the top of the Pinecone console. Examples: `us-east-1-aws`, `gcp-starter`,
+  `eu-west-1-gcp`.
+</Step>
+
+<Step title="(Optional) Pin an index">
+  If your agent queries a single index, set the **Index Name** field.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET https://api.pinecone.io/indexes` with the key in the `Api-Key` header.
+  </Step>
+</Steps>
+
+## MCP server
+
+No official Pinecone MCP server today.
+
+## Environment variables Nora injects
+
+| Variable               | Source              |
+| ---------------------- | ------------------- |
+| `PINECONE_API_KEY`     | API Key field       |
+| `PINECONE_ENVIRONMENT` | Environment field   |
+| `PINECONE_INDEX`       | Index Name (if set) |

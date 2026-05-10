@@ -1,0 +1,42 @@
+# Weaviate
+
+> Where to find your Weaviate cluster URL + API key and connect them to Nora.
+
+Weaviate is an open-source vector database — useful as the retrieval layer of agent workflows. Nora connects with the cluster URL and an optional API key (anonymous clusters are also supported for dev).
+
+## Where to apply for credentials
+
+| Setup                | Where to find auth                                                         |
+| -------------------- | -------------------------------------------------------------------------- |
+| Weaviate Cloud (WCS) | [console.weaviate.cloud](https://console.weaviate.cloud) → Cluster details |
+| Self-hosted          | The `WEAVIATE_API_KEY` env var on your Weaviate container                  |
+
+For Weaviate Cloud, the cluster URL has the shape `https://<id>.weaviate.network` and the API key is shown once on cluster creation.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Paste the cluster URL">
+    Required. Must be HTTPS. RFC1918 / loopback URLs are rejected.
+  </Step>
+
+<Step title="(Optional) Paste an API key">
+  For Weaviate Cloud and self-hosted clusters with API-key auth, paste the key. Leave blank for
+  anonymous (dev) clusters.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET <url>/v1/meta` (with the Bearer header when a key is set) and reports the Weaviate version on success.
+  </Step>
+</Steps>
+
+## MCP server
+
+No official Weaviate MCP server today.
+
+## Environment variables Nora injects
+
+| Variable           | Source            |
+| ------------------ | ----------------- |
+| `WEAVIATE_API_KEY` | API Key field     |
+| `WEAVIATE_URL`     | Cluster URL field |

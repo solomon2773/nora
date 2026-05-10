@@ -43,6 +43,18 @@ const { teamsProvider } = require("../providers/teams");
 const { emailProvider } = require("../providers/email");
 const { twilioProvider } = require("../providers/twilio");
 const { sendgridProvider } = require("../providers/sendgrid");
+const { postgresqlProvider } = require("../providers/postgresql");
+const { mongodbProvider } = require("../providers/mongodb");
+const { redisProvider } = require("../providers/redis");
+const { supabaseProvider } = require("../providers/supabase");
+const { firebaseProvider } = require("../providers/firebase");
+const { googleDriveProvider } = require("../providers/googleDrive");
+const { dropboxProvider } = require("../providers/dropbox");
+const { s3Provider } = require("../providers/s3");
+const { elasticsearchProvider } = require("../providers/elasticsearch");
+const { pineconeProvider } = require("../providers/pinecone");
+const { weaviateProvider } = require("../providers/weaviate");
+const { algoliaProvider } = require("../providers/algolia");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -90,6 +102,18 @@ const providerRegistry = createProviderRegistry((providerId) =>
   emailProvider,
   twilioProvider,
   sendgridProvider,
+  postgresqlProvider,
+  mongodbProvider,
+  redisProvider,
+  supabaseProvider,
+  firebaseProvider,
+  googleDriveProvider,
+  dropboxProvider,
+  s3Provider,
+  elasticsearchProvider,
+  pineconeProvider,
+  weaviateProvider,
+  algoliaProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`

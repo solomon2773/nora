@@ -1,0 +1,47 @@
+# Redis
+
+> Where to get Redis credentials for your agent and how to connect them to Nora.
+
+Redis integrations let your agents read/write keys, run pub/sub, and use streams. Nora stores host + port + optional password.
+
+## Where to apply for credentials
+
+| Provider                 | Where credentials live                                    |
+| ------------------------ | --------------------------------------------------------- |
+| Redis Cloud / Redis Labs | Console → Subscriptions → Database → Configuration tab    |
+| AWS ElastiCache          | ElastiCache Console → Redis cluster → Connection endpoint |
+| Upstash                  | Console → Database → REST API & Connection                |
+| Self-hosted              | `/etc/redis/redis.conf` — `requirepass` if AUTH is on     |
+
+For Redis Cloud / Upstash use the TLS endpoint (`rediss://`) — most managed Redis services require it.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Redis integration">
+    From an agent's detail page, open the **Integrations** tab and find **Redis**.
+  </Step>
+
+<Step title="Fill in host + port">Host and port are required. The default Redis port is 6379.</Step>
+
+<Step title="(Optional) Set password">
+  Leave the password field blank for no-auth dev clusters. For ACL'd Redis, use the password — Nora
+  doesn't yet model the ACL username separately, so use the `default` ACL user's password.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the host/port shape and stores the credentials encrypted.
+  </Step>
+</Steps>
+
+## MCP server
+
+No official Redis MCP server today.
+
+## Environment variables Nora injects
+
+| Variable         | Source         |
+| ---------------- | -------------- |
+| `REDIS_PASSWORD` | Password field |
+| `REDIS_HOST`     | Host field     |
+| `REDIS_PORT`     | Port field     |

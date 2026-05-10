@@ -1,0 +1,53 @@
+# Elasticsearch
+
+> How to connect Nora to an Elasticsearch cluster.
+
+Elasticsearch integrations let your agents index, search, and aggregate data. Nora supports any v7+ cluster — Elastic Cloud, self-hosted, or OpenSearch (which speaks the same API).
+
+## Where to apply for credentials
+
+| Setup                 | Where to find auth                                                         |
+| --------------------- | -------------------------------------------------------------------------- |
+| Elastic Cloud         | Deployments → your deployment → Endpoints (URL) + Security → Users (creds) |
+| OpenSearch (AWS)      | OpenSearch Dashboards → Security → Internal users                          |
+| Self-hosted (Bitnami) | `elasticsearch.yml` `xpack.security.enabled`; built-in users               |
+
+For Elastic Cloud the canonical pair is the `elastic` superuser. For production agents, create a [dedicated user](https://www.elastic.co/guide/en/elasticsearch/reference/current/built-in-users.html) with a least-privilege role.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Paste the node URL">
+    The node URL is the cluster's HTTPS endpoint, e.g. `https://my-cluster.es.us-east-1.aws.elastic-cloud.com:9243`. The control-plane SSRF guard rejects RFC1918 hosts — for self-hosted clusters behind a private network, your agent runtime needs reachable DNS.
+  </Step>
+
+<Step title="(Optional) Enter username + password">
+  For dev clusters with security off, leave both blank. For production, paste the user + password.
+</Step>
+
+<Step title="(Optional) Pin a default index">
+  If your agent always queries one index, set the **Default Index** field so the agent doesn't have
+  to specify it on every call.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET <url>` (Elasticsearch's root metadata endpoint) and reports the cluster name on success.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button repeats the cluster-info call. **401** means wrong username or password; **403** means the user lacks `monitor` cluster privilege.
+
+## MCP server
+
+No official Elasticsearch MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                 | Source                  |
+| ------------------------ | ----------------------- |
+| `ELASTICSEARCH_PASSWORD` | Password field          |
+| `ELASTICSEARCH_URL`      | Node URL field          |
+| `ELASTICSEARCH_USERNAME` | Username field (if set) |
+| `ELASTICSEARCH_INDEX`    | Default Index (if set)  |

@@ -1,0 +1,57 @@
+# Algolia
+
+> Where to find your Algolia Application ID + Admin API Key and connect them to Nora.
+
+Algolia integrations let your agents manage search indices, push records, and query results.
+
+## Where to apply for credentials
+
+<Card
+  title="Algolia Dashboard — API Keys"
+  href="https://dashboard.algolia.com/account/api-keys/all"
+  icon="search"
+  arrow
+>
+  https://dashboard.algolia.com/account/api-keys/all
+</Card>
+
+The page lists:
+
+- **Application ID** — public identifier
+- **Search-Only API Key** — for queries only
+- **Admin API Key** — full management access (treat as secret)
+- **Other API Keys** — scoped, custom-permission keys you create
+
+For agent management workflows (creating indices, pushing records), use the Admin Key. For pure read-only agents, create a custom search-only key.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Paste the Application ID">
+    Visible on every Algolia dashboard page.
+  </Step>
+
+<Step title="Paste the Admin API Key">
+  Or a custom key with the right ACLs. Avoid the public Search-Only key for write operations.
+</Step>
+
+<Step title="(Optional) Pin a default index">
+  Set the **Default Index** if your agent always operates against one index.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET https://<app-id>-dsn.algolia.net/1/keys` to list keys in the application — confirms both Application ID and Admin Key are valid.
+  </Step>
+</Steps>
+
+## MCP server
+
+No official Algolia MCP server today.
+
+## Environment variables Nora injects
+
+| Variable          | Source                 |
+| ----------------- | ---------------------- |
+| `ALGOLIA_API_KEY` | Admin API Key field    |
+| `ALGOLIA_APP_ID`  | Application ID field   |
+| `ALGOLIA_INDEX`   | Default Index (if set) |

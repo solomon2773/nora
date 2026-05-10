@@ -1,0 +1,64 @@
+# PostgreSQL
+
+> Where to provision PostgreSQL credentials for your agent and how to connect them to Nora.
+
+PostgreSQL integrations let your agents query and write to a Postgres database. Nora stores the connection parameters encrypted; the agent runtime opens connections using the standard `PG*` env vars (`PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`) — every Postgres driver picks them up automatically.
+
+## Where to apply for credentials
+
+There's no single console for Postgres — pick whichever provider hosts your database:
+
+| Provider                      | Where credentials live                                      |
+| ----------------------------- | ----------------------------------------------------------- |
+| AWS RDS                       | RDS Console → Databases → your instance → Configuration tab |
+| Google Cloud SQL              | Cloud SQL Console → Connections → Networking + Users tab    |
+| Azure Database for PostgreSQL | Azure Portal → your server → Connection strings             |
+| Supabase                      | Project Settings → Database → Connection info               |
+| Neon                          | Console → Project → Dashboard → Connection details          |
+| Self-hosted                   | `psql` itself: `\du` lists roles, `\l` lists databases      |
+
+## Best practices
+
+- **Create a dedicated role** for the agent (`CREATE ROLE nora_agent LOGIN PASSWORD '...'`) — don't reuse `postgres` superuser.
+- **Grant only what's needed** — `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO nora_agent;` for a typical CRUD agent; just `GRANT SELECT` for read-only.
+- **The DB host must be reachable from the agent's network.** Nora doesn't tunnel — for managed Postgres behind a VPC, your agent runtime needs network access to the same VPC.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the PostgreSQL integration">
+    From an agent's detail page, open the **Integrations** tab and find **PostgreSQL**.
+  </Step>
+
+<Step title="Fill in the connection fields">
+  Host, port (5432 default), database name, username, password.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the field shapes (port range, presence) and stores credentials encrypted. **It does not open a connection** from the control plane — the agent runtime does.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button repeats the structural check. End-to-end verification happens when your agent makes its first query.
+
+## MCP server
+
+The reference Postgres MCP server is published by the MCP project:
+
+- **Package:** `@modelcontextprotocol/server-postgres`
+- **Docs:** [github.com/modelcontextprotocol/servers/tree/main/src/postgres](https://github.com/modelcontextprotocol/servers/tree/main/src/postgres)
+- **Env:** `POSTGRES_URL` (the MCP server reads a single connection string).
+
+Nora doesn't auto-launch it. To use it, set `POSTGRES_URL` in your agent's runtime config (you can derive it from the `PG*` env vars Nora injects).
+
+## Environment variables Nora injects
+
+| Variable     | Source         |
+| ------------ | -------------- |
+| `PGPASSWORD` | Password field |
+| `PGHOST`     | Host field     |
+| `PGPORT`     | Port field     |
+| `PGDATABASE` | Database field |
+| `PGUSER`     | Username field |

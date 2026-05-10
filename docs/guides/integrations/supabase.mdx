@@ -1,0 +1,58 @@
+# Supabase
+
+> Where to get a Supabase project URL + service-role key, and how to connect them to Nora.
+
+Supabase integrations let your agents read/write Postgres tables, query auth users, manage storage buckets, and call edge functions through Supabase's PostgREST/Realtime/Storage APIs. Nora authenticates with the project URL plus an anon or service-role key.
+
+## Where to apply for credentials
+
+<Card
+  title="Supabase — Project API settings"
+  href="https://app.supabase.com/project/_/settings/api"
+  icon="database"
+  arrow
+>
+  https://app.supabase.com/project/_/settings/api
+</Card>
+
+The page shows three values:
+
+- **Project URL** — `https://<ref>.supabase.co`
+- **anon (public) key** — safe-ish to expose, respects Row-Level Security policies
+- **service_role key** — bypasses RLS; treat as secret
+
+Pick the smallest scope that fits your agent.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Supabase integration">
+    From an agent's detail page, open the **Integrations** tab and find **Supabase**.
+  </Step>
+
+<Step title="Paste URL + key">
+  Paste the **Project URL** and the **service_role key** (or anon key for read-only agents).
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora calls `GET <url>/rest/v1/` with the key as both `apikey` and `Authorization: Bearer <key>`. On success the card shows "Connected to Supabase".
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button hits the same endpoint. **401 Invalid API key** means the key is wrong; **404** means the URL is malformed.
+
+## MCP server
+
+A community MCP server exists:
+
+- **Package:** `@supabase/mcp-server-supabase`
+- **Docs:** [github.com/supabase-community/supabase-mcp](https://github.com/supabase-community/supabase-mcp)
+
+## Environment variables Nora injects
+
+| Variable                    | Source            |
+| --------------------------- | ----------------- |
+| `SUPABASE_SERVICE_ROLE_KEY` | Anon/Service Key  |
+| `SUPABASE_URL`              | Project URL field |

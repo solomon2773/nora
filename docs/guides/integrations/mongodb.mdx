@@ -1,0 +1,52 @@
+# MongoDB
+
+> Where to get a MongoDB connection string and how to connect it to Nora.
+
+MongoDB integrations expect a single connection string that encodes host, port, credentials, and database. The string is treated as a sensitive value (encrypted at rest) and exposed to the agent as the `MONGODB_URI` env var.
+
+## Where to apply for credentials
+
+| Provider       | Where to get the connection string                                  |
+| -------------- | ------------------------------------------------------------------- |
+| MongoDB Atlas  | Cluster → Connect → Connect your application → Driver: Node.js      |
+| AWS DocumentDB | RDS Console → DocumentDB → your cluster → Connect with mongo shell  |
+| Self-hosted    | Build by hand: `mongodb://user:pass@host:27017/db?authSource=admin` |
+
+For Atlas, the format is:
+
+```
+mongodb+srv://<user>:<password>@<cluster>.mongodb.net/<database>?retryWrites=true&w=majority
+```
+
+URL-encode any special characters in the username or password.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the MongoDB integration">
+    From an agent's detail page, open the **Integrations** tab and find **MongoDB**.
+  </Step>
+
+<Step title="Paste the connection string">
+  Paste the full URI into the **Connection String** field. Test it locally first with `mongosh` or
+  your driver — Nora doesn't dial out from the control plane.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora parses the URI to confirm it uses `mongodb://` or `mongodb+srv://` and stores it encrypted.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button repeats the URI parse. The agent runtime verifies real connectivity on its first query.
+
+## MCP server
+
+No official MongoDB MCP server today. Community packages exist but aren't stable.
+
+## Environment variables Nora injects
+
+| Variable      | Source                  |
+| ------------- | ----------------------- |
+| `MONGODB_URI` | Connection String field |

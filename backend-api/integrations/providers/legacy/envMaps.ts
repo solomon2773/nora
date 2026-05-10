@@ -27,12 +27,12 @@ const INTEGRATION_ENV_MAP = {
   stripe: "STRIPE_SECRET_KEY",
   hubspot: "HUBSPOT_ACCESS_TOKEN",
   pipedrive: "PIPEDRIVE_API_KEY",
-  pinecone: "PINECONE_API_KEY",
+  // pinecone → migrated to providers/pinecone.ts
   // vercel → migrated to providers/vercel.ts
   // circleci → migrated to providers/circleci.ts
   // terraform → migrated to providers/terraform.ts
   pagerduty: "PAGERDUTY_TOKEN",
-  dropbox: "DROPBOX_ACCESS_TOKEN",
+  // dropbox → migrated to providers/dropbox.ts
   // twilio → migrated to providers/twilio.ts
   // telegram → migrated to providers/telegram.ts
   shopify: "SHOPIFY_ACCESS_TOKEN",
@@ -41,7 +41,7 @@ const INTEGRATION_ENV_MAP = {
   salesforce: "SALESFORCE_ACCESS_TOKEN",
   // twitter → migrated to providers/twitter.ts
   digitalocean: "DIGITALOCEAN_TOKEN",
-  algolia: "ALGOLIA_API_KEY",
+  // algolia → migrated to providers/algolia.ts
   clickup: "CLICKUP_API_KEY",
   monday: "MONDAY_API_KEY",
   zendesk: "ZENDESK_API_TOKEN",
@@ -53,24 +53,24 @@ const INTEGRATION_ENV_MAP = {
   grafana: "GRAFANA_TOKEN",
   woocommerce: "WOOCOMMERCE_SECRET_KEY",
   trello: "TRELLO_TOKEN",
-  elasticsearch: "ELASTICSEARCH_PASSWORD",
-  supabase: "SUPABASE_SERVICE_ROLE_KEY",
+  // elasticsearch → migrated to providers/elasticsearch.ts
+  // supabase → migrated to providers/supabase.ts
   facebook: "FACEBOOK_ACCESS_TOKEN",
   // Cloud / infra
   aws: "AWS_SECRET_ACCESS_KEY",
   azure: "AZURE_CLIENT_SECRET",
-  s3: "S3_SECRET_ACCESS_KEY",
+  // s3 → migrated to providers/s3.ts
   // Databases
-  mongodb: "MONGODB_URI",
-  redis: "REDIS_PASSWORD",
-  postgresql: "PGPASSWORD",
+  // mongodb → migrated to providers/mongodb.ts
+  // redis → migrated to providers/redis.ts
+  // postgresql → migrated to providers/postgresql.ts
   // Payments
   paypal: "PAYPAL_CLIENT_SECRET",
   // Analytics / automation
   segment: "SEGMENT_WRITE_KEY",
   mixpanel: "MIXPANEL_API_SECRET",
   // Vector DBs
-  weaviate: "WEAVIATE_API_KEY",
+  // weaviate → migrated to providers/weaviate.ts
   // Communication
   // email → migrated to providers/email.ts
   // Automation webhooks have no token; webhook_url is in INTEGRATION_CONFIG_ENV_MAP.
@@ -104,35 +104,18 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   "gcp.project_id": "GCP_PROJECT_ID",
   "azure.tenant_id": "AZURE_TENANT_ID",
   "azure.client_id": "AZURE_CLIENT_ID",
-  // Storage
-  "s3.access_key_id": "S3_ACCESS_KEY_ID",
-  "s3.region": "S3_REGION",
-  "s3.bucket": "S3_BUCKET",
-  "google-drive.service_account_json": "GOOGLE_DRIVE_SA_JSON",
-  "google-drive.folder_id": "GOOGLE_DRIVE_FOLDER_ID",
-  // Databases
-  "postgresql.host": "PGHOST",
-  "postgresql.port": "PGPORT",
-  "postgresql.database": "PGDATABASE",
-  "postgresql.user": "PGUSER",
-  "mongodb.database": "MONGODB_DATABASE",
-  "redis.host": "REDIS_HOST",
-  "redis.port": "REDIS_PORT",
-  "redis.password": "REDIS_PASSWORD",
-  "supabase.url": "SUPABASE_URL",
-  "firebase.service_account_json": "FIREBASE_SA_JSON",
-  "firebase.database_url": "FIREBASE_DATABASE_URL",
-  "elasticsearch.node_url": "ELASTICSEARCH_URL",
-  "elasticsearch.username": "ELASTICSEARCH_USERNAME",
-  "elasticsearch.password": "ELASTICSEARCH_PASSWORD",
-  "elasticsearch.index": "ELASTICSEARCH_INDEX",
-  "weaviate.host": "WEAVIATE_HOST",
-  "weaviate.api_key": "WEAVIATE_API_KEY",
-  // Search
-  "pinecone.environment": "PINECONE_ENVIRONMENT",
-  "pinecone.index_name": "PINECONE_INDEX",
-  "algolia.app_id": "ALGOLIA_APP_ID",
-  "algolia.index_name": "ALGOLIA_INDEX",
+  // Storage / Databases / Search — all migrated to per-provider strategies:
+  //   s3 → providers/s3.ts
+  //   google-drive → providers/googleDrive.ts
+  //   postgresql → providers/postgresql.ts
+  //   mongodb → providers/mongodb.ts
+  //   redis → providers/redis.ts
+  //   supabase → providers/supabase.ts
+  //   firebase → providers/firebase.ts
+  //   elasticsearch → providers/elasticsearch.ts
+  //   weaviate → providers/weaviate.ts
+  //   pinecone → providers/pinecone.ts
+  //   algolia → providers/algolia.ts
   // Monitoring
   "datadog.app_key": "DD_APP_KEY",
   "datadog.site": "DD_SITE",

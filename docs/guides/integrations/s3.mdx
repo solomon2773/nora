@@ -1,0 +1,76 @@
+# Amazon S3
+
+> How to issue AWS IAM credentials scoped to S3 and connect them to Nora.
+
+S3 integrations let your agents read/write objects, list buckets, and manage object metadata. Nora authenticates with an AWS Access Key ID + Secret Access Key — same shape every AWS SDK uses.
+
+## Where to apply for credentials
+
+<Card
+  title="AWS IAM — Users"
+  href="https://console.aws.amazon.com/iam/home?#/users"
+  icon="archive"
+  arrow
+>
+  https://console.aws.amazon.com/iam/home?#/users
+</Card>
+
+<Steps>
+  <Step title="Create an IAM user (or pick an existing one)">
+    Open IAM → Users → **Create user**. Give it a programmatic-access name (e.g. `nora-agent-s3`). Skip console access — it's a service identity.
+  </Step>
+
+  <Step title="Attach an S3 policy">
+    Smallest policy that works for read/write on a single bucket:
+    ```json
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],
+          "Resource": [
+            "arn:aws:s3:::your-bucket",
+            "arn:aws:s3:::your-bucket/*"
+          ]
+        }
+      ]
+    }
+    ```
+    For read-only agents, AWS's managed `AmazonS3ReadOnlyAccess` policy is fine.
+  </Step>
+
+  <Step title="Generate an access key">
+    Open the user → **Security credentials** → **Create access key** → choose **Application running outside AWS**. Copy the **Access key ID** and **Secret access key** (you only see the secret once).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the Amazon S3 integration">
+    From an agent's detail page, open the **Integrations** tab and find **Amazon S3**.
+  </Step>
+
+<Step title="Paste the keys">
+  Paste **Access Key ID** + **Secret Access Key**. Set **Default Bucket** and **Region** if your
+  agent operates against a single bucket.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the field shapes and stores credentials encrypted. **It does not sign a test request** — that happens at runtime with the AWS SDK.
+  </Step>
+</Steps>
+
+## MCP server
+
+No official S3 MCP server. The standard AWS SDK env vars are present (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`) so any community S3 MCP can pick them up.
+
+## Environment variables Nora injects
+
+| Variable                | Source                  |
+| ----------------------- | ----------------------- |
+| `AWS_SECRET_ACCESS_KEY` | Secret Access Key field |
+| `AWS_ACCESS_KEY_ID`     | Access Key ID field     |
+| `AWS_REGION`            | Region field            |
+| `S3_BUCKET`             | Default Bucket field    |
