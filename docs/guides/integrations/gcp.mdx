@@ -1,0 +1,61 @@
+# Google Cloud Platform
+
+> How to provision a GCP service account JSON and connect it to Nora.
+
+The GCP integration covers any service the gcloud SDKs support — Compute Engine, Cloud Storage, BigQuery, Pub/Sub, Cloud Run, etc. Nora authenticates with a service-account JSON that the agent runtime mounts and points `GOOGLE_APPLICATION_CREDENTIALS` at.
+
+## Where to apply for credentials
+
+<Card
+  title="GCP — Service Accounts"
+  href="https://console.cloud.google.com/iam-admin/serviceaccounts"
+  icon="cloud"
+  arrow
+>
+  https://console.cloud.google.com/iam-admin/serviceaccounts
+</Card>
+
+<Steps>
+  <Step title="Create a service account">
+    GCP Console → IAM & Admin → Service Accounts → **Create Service Account**. Give it a descriptive name. Skip the optional roles assignment — you'll do it next.
+  </Step>
+
+<Step title="Grant least-privilege roles">
+  On the created SA's IAM page, attach the roles your agent needs (e.g.
+  `roles/storage.objectViewer`, `roles/bigquery.user`). Avoid `roles/owner` and `roles/editor` for
+  production agents.
+</Step>
+
+  <Step title="Generate a JSON key">
+    Open the SA → **Keys** → **Add Key → Create new key → JSON**. The file downloads — treat it as secret.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Paste the JSON">
+    Open the downloaded file in a text editor and paste the entire contents into the **Service Account JSON** textarea.
+  </Step>
+
+<Step title="Set the project ID">
+  Required field. Visible at the top of the GCP Console (or inside the JSON file as `project_id`).
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates that the JSON parses and contains `client_email`, `private_key`, and `project_id`.
+  </Step>
+</Steps>
+
+## MCP server
+
+No first-party GCP MCP server today. AWS has `awslabs/mcp` — a Google equivalent hasn't shipped.
+
+## Environment variables Nora injects
+
+| Variable                              | Source               |
+| ------------------------------------- | -------------------- |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Service Account JSON |
+| `GCP_PROJECT_ID`                      | Project ID field     |
+
+The agent runtime writes `GOOGLE_APPLICATION_CREDENTIALS_JSON` to a file at startup and points `GOOGLE_APPLICATION_CREDENTIALS` at the file path — that's what every gcloud SDK expects.

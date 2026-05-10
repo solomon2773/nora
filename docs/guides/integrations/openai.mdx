@@ -1,0 +1,50 @@
+# OpenAI
+
+> Where to issue an OpenAI API key and connect it to Nora.
+
+OpenAI integrations let your agents call GPT models, generate embeddings, render images via DALL-E, and transcribe audio with Whisper.
+
+## Where to apply for credentials
+
+<Card title="OpenAI API Keys" href="https://platform.openai.com/api-keys" icon="brain" arrow>
+  https://platform.openai.com/api-keys
+</Card>
+
+<Steps>
+  <Step title="Sign in">
+    Open [platform.openai.com](https://platform.openai.com).
+  </Step>
+
+<Step title="Create a project key">
+  Settings → API Keys → **Create new secret key**. Pick **Project** scoping for production agents
+  (revocable per project) or **Service account** for shared infra agents.
+</Step>
+
+  <Step title="Copy the key">
+    The key starts with `sk-...`. OpenAI shows it only once.
+  </Step>
+</Steps>
+
+## (Optional) Org / project IDs
+
+If you're on a multi-org account, find the **Organization ID** under Settings → Organization → General. Project IDs live under Project Settings. Setting these on the integration is mostly useful for cost attribution.
+
+## Connect in Nora
+
+Paste the API key into the **API Key** field, optionally set Organization ID and a default model (e.g. `gpt-4o-mini`), and click **Connect**. Nora calls `GET https://api.openai.com/v1/models` and reports how many models are visible to the key.
+
+## Verify the connection
+
+The **Test** button calls `/v1/models`. **401** means the key was revoked; **429** means you're rate-limited (try again).
+
+## MCP server
+
+No official OpenAI MCP server today. The standard env var (`OPENAI_API_KEY`) is exposed to the agent so any community OpenAI MCP can pick it up.
+
+## Environment variables Nora injects
+
+| Variable         | Source                   |
+| ---------------- | ------------------------ |
+| `OPENAI_API_KEY` | API Key field            |
+| `OPENAI_ORG_ID`  | Organization ID (if set) |
+| `OPENAI_MODEL`   | Default Model (if set)   |

@@ -1,0 +1,51 @@
+# Anthropic
+
+> Where to issue an Anthropic API key and connect it to Nora.
+
+Anthropic integrations let your agents call Claude (Opus, Sonnet, Haiku) for text generation and analysis. Nora authenticates with the standard `x-api-key` header.
+
+## Where to apply for credentials
+
+<Card
+  title="Anthropic API Keys"
+  href="https://console.anthropic.com/settings/keys"
+  icon="sparkles"
+  arrow
+>
+  https://console.anthropic.com/settings/keys
+</Card>
+
+<Steps>
+  <Step title="Sign in">
+    Open [console.anthropic.com](https://console.anthropic.com).
+  </Step>
+
+<Step title="Create a key">
+  Settings → API keys → **Create Key**. Give it a descriptive name (e.g. "nora-prod-agent").
+</Step>
+
+  <Step title="Copy the key">
+    Starts with `sk-ant-...`. Only shown once.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the API key. Optionally set **Default Model** to one of:
+
+- `claude-opus-4-7` — most capable
+- `claude-sonnet-4-6` — balanced cost / quality
+- `claude-haiku-4-5` — fastest, cheapest
+
+Nora calls `GET https://api.anthropic.com/v1/models` to validate.
+
+## MCP server
+
+No official Anthropic MCP server today.
+
+## Environment variables Nora injects
+
+| Variable            | Source                 |
+| ------------------- | ---------------------- |
+| `ANTHROPIC_API_KEY` | API Key field          |
+| `ANTHROPIC_MODEL`   | Default Model (if set) |

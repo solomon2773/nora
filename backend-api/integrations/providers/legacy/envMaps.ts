@@ -10,7 +10,7 @@ const llmProviders = require("../../../llmProviders");
 // access_token column). The access_token column stores the first
 // password+required configField per provider.
 const INTEGRATION_ENV_MAP = {
-  huggingface: "HF_TOKEN",
+  // huggingface → migrated to providers/huggingface.ts
   // github → migrated to providers/github.ts
   // gitlab → migrated to providers/gitlab.ts
   // slack → migrated to providers/slack.ts
@@ -20,8 +20,8 @@ const INTEGRATION_ENV_MAP = {
   datadog: "DD_API_KEY",
   sentry: "SENTRY_AUTH_TOKEN",
   // sendgrid → migrated to providers/sendgrid.ts
-  openai: "OPENAI_API_KEY",
-  anthropic: "ANTHROPIC_API_KEY",
+  // openai → migrated to providers/openai.ts
+  // anthropic → migrated to providers/anthropic.ts
   airtable: "AIRTABLE_API_KEY",
   asana: "ASANA_TOKEN",
   stripe: "STRIPE_SECRET_KEY",
@@ -40,7 +40,7 @@ const INTEGRATION_ENV_MAP = {
   instagram: "INSTAGRAM_ACCESS_TOKEN",
   salesforce: "SALESFORCE_ACCESS_TOKEN",
   // twitter → migrated to providers/twitter.ts
-  digitalocean: "DIGITALOCEAN_TOKEN",
+  // digitalocean → migrated to providers/digitalocean.ts
   // algolia → migrated to providers/algolia.ts
   clickup: "CLICKUP_API_KEY",
   monday: "MONDAY_API_KEY",
@@ -57,8 +57,9 @@ const INTEGRATION_ENV_MAP = {
   // supabase → migrated to providers/supabase.ts
   facebook: "FACEBOOK_ACCESS_TOKEN",
   // Cloud / infra
-  aws: "AWS_SECRET_ACCESS_KEY",
-  azure: "AZURE_CLIENT_SECRET",
+  // aws → migrated to providers/aws.ts
+  // azure → migrated to providers/azure.ts
+  // gcp → migrated to providers/gcp.ts (no primary token; uses service_account JSON)
   // s3 → migrated to providers/s3.ts
   // Databases
   // mongodb → migrated to providers/mongodb.ts
@@ -97,13 +98,10 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   // AI / ML
   "openai.org_id": "OPENAI_ORG_ID",
   "huggingface.model_id": "HF_DEFAULT_MODEL",
-  // Cloud
-  "aws.access_key_id": "AWS_ACCESS_KEY_ID",
-  "aws.region": "AWS_DEFAULT_REGION",
-  "gcp.service_account_json": "GOOGLE_APPLICATION_CREDENTIALS_JSON",
-  "gcp.project_id": "GCP_PROJECT_ID",
-  "azure.tenant_id": "AZURE_TENANT_ID",
-  "azure.client_id": "AZURE_CLIENT_ID",
+  // Cloud — all migrated:
+  //   aws → providers/aws.ts
+  //   gcp → providers/gcp.ts
+  //   azure → providers/azure.ts
   // Storage / Databases / Search — all migrated to per-provider strategies:
   //   s3 → providers/s3.ts
   //   google-drive → providers/googleDrive.ts
@@ -178,9 +176,17 @@ const LLM_AUTH_ENV_VARS = new Set(
     .filter(Boolean),
 );
 
+// Strategy-provider IDs whose primary env var matters for LLM auth.
+// Mirrors what the legacy INTEGRATION_ENV_MAP used to provide; kept here
+// so this file can answer the question without importing the registry
+// (which would be circular).
+const LLM_AUTH_PROVIDER_IDS = new Set(["openai", "anthropic", "huggingface"]);
+
 function integrationProviderAffectsLlmAuth(provider) {
   const providerId = String(provider || "").trim();
   if (!providerId) return false;
+
+  if (LLM_AUTH_PROVIDER_IDS.has(providerId)) return true;
 
   const primaryEnv = INTEGRATION_ENV_MAP[providerId];
   if (primaryEnv && LLM_AUTH_ENV_VARS.has(primaryEnv)) return true;

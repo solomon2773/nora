@@ -68,29 +68,9 @@ function buildConnectivityTests(integration, token, deps) {
       return { success: true, message: "Authenticated successfully" };
     },
     // sendgrid → migrated to providers/sendgrid.ts
-    openai: async () => {
-      const res = await fetch("https://api.openai.com/v1/models", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`OpenAI API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected (${data.data?.length || 0} models available)` };
-    },
-    anthropic: async () => {
-      const res = await fetch("https://api.anthropic.com/v1/models", {
-        headers: { "x-api-key": token, "anthropic-version": "2023-06-01" },
-      });
-      if (!res.ok) throw new Error(`Anthropic API returned ${res.status}`);
-      return { success: true, message: "API key validated" };
-    },
-    huggingface: async () => {
-      const res = await fetch("https://huggingface.co/api/whoami-v2", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Hugging Face API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.name || data.fullname || "verified"}` };
-    },
+    // openai → migrated to providers/openai.ts
+    // anthropic → migrated to providers/anthropic.ts
+    // huggingface → migrated to providers/huggingface.ts
     // bitbucket → migrated to providers/bitbucket.ts
     airtable: async () => {
       const res = await fetch("https://api.airtable.com/v0/meta/whoami", {
@@ -161,14 +141,7 @@ function buildConnectivityTests(integration, token, deps) {
         message: `Connected as ${data.displayName || data.username || "verified"}`,
       };
     },
-    digitalocean: async () => {
-      const res = await fetch("https://api.digitalocean.com/v2/account", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`DigitalOcean API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected (${data.account?.email || "verified"})` };
-    },
+    // digitalocean → migrated to providers/digitalocean.ts
     // supabase → migrated to providers/supabase.ts
     stripe: async () => {
       const res = await fetch("https://api.stripe.com/v1/balance", {

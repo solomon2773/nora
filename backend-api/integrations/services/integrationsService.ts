@@ -55,6 +55,13 @@ const { elasticsearchProvider } = require("../providers/elasticsearch");
 const { pineconeProvider } = require("../providers/pinecone");
 const { weaviateProvider } = require("../providers/weaviate");
 const { algoliaProvider } = require("../providers/algolia");
+const { openaiProvider } = require("../providers/openai");
+const { anthropicProvider } = require("../providers/anthropic");
+const { huggingfaceProvider } = require("../providers/huggingface");
+const { digitaloceanProvider } = require("../providers/digitalocean");
+const { awsProvider } = require("../providers/aws");
+const { gcpProvider } = require("../providers/gcp");
+const { azureProvider } = require("../providers/azure");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -114,6 +121,13 @@ const providerRegistry = createProviderRegistry((providerId) =>
   pineconeProvider,
   weaviateProvider,
   algoliaProvider,
+  openaiProvider,
+  anthropicProvider,
+  huggingfaceProvider,
+  digitaloceanProvider,
+  awsProvider,
+  gcpProvider,
+  azureProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`

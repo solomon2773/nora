@@ -1,0 +1,45 @@
+# DigitalOcean
+
+> Where to issue a DigitalOcean Personal Access Token and connect it to Nora.
+
+DigitalOcean integrations let your agents manage Droplets, Spaces (object storage), Kubernetes clusters (DOKS), Functions, and the Apps Platform.
+
+## Where to apply for credentials
+
+<Card
+  title="DigitalOcean — API Tokens"
+  href="https://cloud.digitalocean.com/account/api/tokens"
+  icon="droplet"
+  arrow
+>
+  https://cloud.digitalocean.com/account/api/tokens
+</Card>
+
+<Steps>
+  <Step title="Sign in">
+    Open [cloud.digitalocean.com](https://cloud.digitalocean.com).
+  </Step>
+
+<Step title="Create a Personal Access Token">
+  API → Tokens/Keys → **Generate New Token**. Pick **Custom Scopes** for least privilege, or **Full
+  Access** for development.
+</Step>
+
+  <Step title="Copy the token">
+    DO shows it once.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token and click **Connect**. Nora calls `GET https://api.digitalocean.com/v2/account` and reports your email on success.
+
+## MCP server
+
+No official DigitalOcean MCP server today.
+
+## Environment variables Nora injects
+
+| Variable             | Source          |
+| -------------------- | --------------- |
+| `DIGITALOCEAN_TOKEN` | API Token field |

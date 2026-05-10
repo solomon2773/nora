@@ -1,0 +1,52 @@
+# Microsoft Azure
+
+> How to register an Entra ID (Azure AD) app and connect its Service Principal to Nora.
+
+The Azure integration uses **Service Principal** credentials — Tenant ID + Client ID + Client Secret — which the `@azure/identity` library picks up from `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` env vars automatically.
+
+## Where to apply for credentials
+
+<Card
+  title="Azure Portal — App registrations"
+  href="https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+  icon="cloud"
+  arrow
+>
+  Azure Portal → Microsoft Entra ID → App registrations
+</Card>
+
+<Steps>
+  <Step title="Register an app">
+    Microsoft Entra ID → **App registrations** → **New registration**. Name it (e.g. `nora-agent-prod`). Leave redirect URI blank — this is a service identity.
+  </Step>
+
+<Step title="Copy the Tenant + Client IDs">
+  After creation, the Overview page shows **Application (client) ID** and **Directory (tenant) ID**.
+  Copy both.
+</Step>
+
+<Step title="Generate a client secret">
+  Open **Certificates & secrets → Client secrets → New client secret**. Set an expiry (Azure caps at
+  24 months). Copy the **Value** field — Azure only shows it once.
+</Step>
+
+  <Step title="Grant Azure RBAC roles">
+    The service principal has no permissions yet. Open **Subscriptions → your subscription → Access control (IAM) → Add role assignment** and grant the SP the role(s) it needs (e.g. **Reader** for read-only, **Contributor** for typical management). Scope tightly when possible (specific resource groups instead of the whole subscription).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste **Tenant ID**, **Client ID**, and **Client Secret**. Nora validates the IDs are well-formed UUIDs and stores everything encrypted.
+
+## MCP server
+
+No official Azure MCP server today.
+
+## Environment variables Nora injects
+
+| Variable              | Source              |
+| --------------------- | ------------------- |
+| `AZURE_CLIENT_SECRET` | Client Secret field |
+| `AZURE_TENANT_ID`     | Tenant ID field     |
+| `AZURE_CLIENT_ID`     | Client ID field     |

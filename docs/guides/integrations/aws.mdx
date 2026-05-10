@@ -1,0 +1,63 @@
+# Amazon Web Services
+
+> How to issue scoped AWS IAM credentials and connect them to Nora.
+
+The AWS integration is the broad-spectrum equivalent of [S3](/guides/integrations/s3) — same shape, but the credentials cover whichever services your agent's IAM policy permits (EC2, Lambda, SES, DynamoDB, etc.).
+
+## Where to apply for credentials
+
+<Card
+  title="AWS IAM — Users"
+  href="https://console.aws.amazon.com/iam/home?#/users"
+  icon="cloud"
+  arrow
+>
+  https://console.aws.amazon.com/iam/home?#/users
+</Card>
+
+<Steps>
+  <Step title="Create a programmatic-access user">
+    IAM → Users → **Create user**. Name it (e.g. `nora-agent-prod`). Skip console access — it's a service identity.
+  </Step>
+
+<Step title="Attach least-privilege policies">
+  Don't reach for `AdministratorAccess`. Compose a custom policy that lists exactly the actions your
+  agent needs (e.g. `ec2:DescribeInstances`, `lambda:InvokeFunction`, `ses:SendEmail`).
+</Step>
+
+  <Step title="Generate an access key">
+    Open the user → **Security credentials** → **Create access key** → **Application running outside AWS**. Copy the Access Key ID + Secret Access Key (only shown once).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Paste the keys">
+    Access Key ID + Secret Access Key.
+  </Step>
+
+<Step title="Set the default region">
+  Required for most AWS SDK calls. The agent runtime exposes this as `AWS_DEFAULT_REGION`.
+</Step>
+
+  <Step title="Connect">
+    Click **Connect**. Nora validates the access key format (must start with `AKIA` followed by 16 alphanumeric chars) and stores the credentials encrypted. **It does not sign a test request** — that happens in the agent runtime via the AWS SDK.
+  </Step>
+</Steps>
+
+## Verify the connection
+
+The **Test** button repeats the structural validation. End-to-end verification happens when your agent makes its first AWS SDK call.
+
+## MCP server
+
+There's an [AWS Labs MCP project](https://github.com/awslabs/mcp) that publishes per-service MCP servers (S3, Lambda, etc.). Pick whichever ones your agent needs and configure them with the standard AWS SDK env vars Nora injects.
+
+## Environment variables Nora injects
+
+| Variable                | Source            |
+| ----------------------- | ----------------- |
+| `AWS_SECRET_ACCESS_KEY` | Secret Access Key |
+| `AWS_ACCESS_KEY_ID`     | Access Key ID     |
+| `AWS_DEFAULT_REGION`    | Default Region    |

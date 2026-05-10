@@ -333,7 +333,17 @@
       { "key": "org_id", "label": "Organization ID", "type": "text", "required": false },
       { "key": "model", "label": "Default Model", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://platform.openai.com/api-keys",
+    "setupGuide": {
+      "steps": [
+        "Sign in to OpenAI at platform.openai.com.",
+        "Open Settings → API Keys → Create new secret key.",
+        "Copy the key (sk-...) — OpenAI shows it only once.",
+        "(Optional) Find your org ID under Settings → Organization for cost-attribution / project scoping."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "anthropic",
@@ -346,7 +356,17 @@
       { "key": "api_key", "label": "API Key", "type": "password", "required": true },
       { "key": "model", "label": "Default Model", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.anthropic.com/settings/keys",
+    "setupGuide": {
+      "steps": [
+        "Sign in at console.anthropic.com.",
+        "Open Settings → API keys → Create Key.",
+        "Copy the key (sk-ant-...) — it's only shown once.",
+        "(Optional) Pin a default Claude model (claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "huggingface",
@@ -359,7 +379,17 @@
       { "key": "api_key", "label": "API Token", "type": "password", "required": true },
       { "key": "model_id", "label": "Default Model ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://huggingface.co/settings/tokens",
+    "setupGuide": {
+      "steps": [
+        "Sign in to huggingface.co.",
+        "Open Settings → Access Tokens → New token.",
+        "Pick the role: Read for model inference, Write for pushing to repos.",
+        "Copy the token (hf_...)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "aws",
@@ -378,7 +408,18 @@
       },
       { "key": "region", "label": "Default Region", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.aws.amazon.com/iam/home?#/users",
+    "setupGuide": {
+      "steps": [
+        "In AWS Console → IAM → Users, create a programmatic-access user.",
+        "Attach a least-privilege policy (avoid AdministratorAccess unless your agent really needs it).",
+        "Open the user → Security credentials → Create access key → Application running outside AWS.",
+        "Copy the Access Key ID + Secret Access Key (only shown once).",
+        "Pick a default region (e.g. us-east-1) so the agent doesn't have to specify it on every call."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "gcp",
@@ -396,7 +437,17 @@
       },
       { "key": "project_id", "label": "Project ID", "type": "text", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://console.cloud.google.com/iam-admin/serviceaccounts",
+    "setupGuide": {
+      "steps": [
+        "In GCP Console → IAM & Admin → Service Accounts, create a service account.",
+        "Grant the roles your agent needs (least privilege wins).",
+        "Open the SA → Keys → Add Key → Create new key → JSON.",
+        "Paste the entire JSON file contents into the textarea."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "azure",
@@ -410,7 +461,17 @@
       { "key": "client_id", "label": "Client ID", "type": "text", "required": true },
       { "key": "client_secret", "label": "Client Secret", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
+    "setupGuide": {
+      "steps": [
+        "In the Azure Portal, open Microsoft Entra ID (Azure AD) → App registrations → New registration.",
+        "Once registered, copy the Application (client) ID and Directory (tenant) ID.",
+        "Open Certificates & secrets → New client secret. Copy the value (only shown once).",
+        "Grant the app the right Azure RBAC roles on the resources / subscription it needs to manage (Subscriptions → Access control → Add role assignment)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "digitalocean",
@@ -422,7 +483,17 @@
     "configFields": [
       { "key": "api_token", "label": "API Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://cloud.digitalocean.com/account/api/tokens",
+    "setupGuide": {
+      "steps": [
+        "Sign in to cloud.digitalocean.com.",
+        "Open API → Tokens/Keys → Generate New Token.",
+        "Pick Full Access (read + write) or scope to specific permissions.",
+        "Copy the token (only shown once)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "postgresql",

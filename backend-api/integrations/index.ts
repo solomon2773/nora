@@ -67,6 +67,13 @@ export { elasticsearchProvider } from "./providers/elasticsearch";
 export { pineconeProvider } from "./providers/pinecone";
 export { weaviateProvider } from "./providers/weaviate";
 export { algoliaProvider } from "./providers/algolia";
+export { openaiProvider } from "./providers/openai";
+export { anthropicProvider } from "./providers/anthropic";
+export { huggingfaceProvider } from "./providers/huggingface";
+export { digitaloceanProvider } from "./providers/digitalocean";
+export { awsProvider } from "./providers/aws";
+export { gcpProvider } from "./providers/gcp";
+export { azureProvider } from "./providers/azure";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

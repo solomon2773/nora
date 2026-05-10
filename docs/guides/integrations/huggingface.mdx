@@ -1,0 +1,45 @@
+# Hugging Face
+
+> Where to issue a Hugging Face access token and connect it to Nora.
+
+Hugging Face integrations let your agents query the Inference API, push to model/dataset repos, and fetch private model weights.
+
+## Where to apply for credentials
+
+<Card
+  title="Hugging Face Access Tokens"
+  href="https://huggingface.co/settings/tokens"
+  icon="brain"
+  arrow
+>
+  https://huggingface.co/settings/tokens
+</Card>
+
+<Steps>
+  <Step title="Sign in">
+    Open [huggingface.co](https://huggingface.co) and sign in.
+  </Step>
+
+<Step title="Create a token">
+  Settings → Access Tokens → **New token**. Pick: - **Read** — for inference API calls + downloading
+  public/private models you have access to. - **Write** — additionally allows pushing to your repos.
+</Step>
+
+  <Step title="Copy the token">
+    Starts with `hf_...`.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token, optionally set a default model ID (e.g. `meta-llama/Llama-3-8B-Instruct`), and click **Connect**. Nora calls `GET https://huggingface.co/api/whoami-v2` and reports your username on success.
+
+## MCP server
+
+No official Hugging Face MCP server today. Community servers exist for specific use cases (e.g. local Inference Endpoints).
+
+## Environment variables Nora injects
+
+| Variable   | Source          |
+| ---------- | --------------- |
+| `HF_TOKEN` | API Token field |
