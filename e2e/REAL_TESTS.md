@@ -73,7 +73,7 @@ up.
 | Cell                | Enabled by                                | Extra host requirements                                                                                                                |
 | ------------------- | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | OpenClaw + Docker   | `REAL_ENABLE_OPENCLAW_DOCKER=1` (default) | Docker socket reachable from `backend-api` / `worker-provisioner` (already wired in the default compose)                               |
-| OpenClaw + K8s      | `REAL_ENABLE_OPENCLAW_K8S=1`              | Control plane started via `docker compose -f docker-compose.yml -f docker-compose.kind.yml up -d`, with `kind` + `kubectl` on the host |
+| OpenClaw + K8s      | `REAL_ENABLE_OPENCLAW_K8S=1`              | Control plane started with `docker-compose.kind.yml` for local Kind, or `docker-compose.aks.yml` / `docker-compose.gke.yml` / `docker-compose.eks.yml` for managed Kubernetes |
 | OpenClaw + NemoClaw | `REAL_ENABLE_OPENCLAW_NEMOCLAW=1`         | `NVIDIA_API_KEY` set in `.env` for the stack                                                                                           |
 | Hermes + Docker     | `REAL_ENABLE_HERMES_DOCKER=1`             | First run pulls a large Hermes image — warm the cache or raise `REAL_PROVISION_TIMEOUT_MS`                                             |
 
@@ -108,7 +108,7 @@ If either passes the SSRF guard, the assertion will flip red.
   `ENABLED_SANDBOX_PROFILES=standard,nemoclaw`.
 - **`[L2] reach running` times out.** `docker compose logs worker-provisioner`
   and `docker compose logs backend-api` are the primary signal. For k8s, also
-  `kubectl -n default get pods`.
+  `kubectl -n openclaw-agents get pods`.
 - **`[L4] chat roundtrip` times out on Hermes.** First-run image pull can
   exceed 2 minutes; raise `REAL_CHAT_TIMEOUT_MS`.
 - **Discord/Telegram test says delivered: true but you see nothing.** Confirm

@@ -171,6 +171,7 @@ Read when `ENABLED_BACKENDS` includes `k3s` or `k8s`. Requires a kubeconfig moun
 
 | Variable                              | Required | Default           | Description                                                                                                                                   |
 | ------------------------------------- | -------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KUBECONFIG`                          | No       | —                 | Path to kubeconfig visible inside `backend-api` and `worker-provisioner`; cloud Compose overlays set this to `/kubeconfig/config`.            |
 | `K8S_NAMESPACE`                       | No       | `openclaw-agents` | Namespace where agent workloads are created.                                                                                                  |
 | `K8S_EXPOSURE_MODE`                   | No       | `cluster-ip`      | How agent services are exposed. Use `cluster-ip` for standard deployments, `node-port` for Kind-based local verification, or `load-balancer`. |
 | `K8S_RUNTIME_NODE_PORT`               | No       | —                 | Node port for the agent runtime service (`node-port` mode only).                                                                              |
@@ -181,6 +182,24 @@ Read when `ENABLED_BACKENDS` includes `k3s` or `k8s`. Requires a kubeconfig moun
 | `K8S_LOAD_BALANCER_CLASS`             | No       | —                 | `loadBalancerClass` value passed through to created Services.                                                                                 |
 | `K8S_LOAD_BALANCER_READY_TIMEOUT_MS`  | No       | `600000`          | Max time to wait for a load-balancer Service to become ready.                                                                                 |
 | `K8S_LOAD_BALANCER_READY_INTERVAL_MS` | No       | `5000`            | Polling interval while waiting for the load-balancer.                                                                                         |
+
+### Cloud Kubernetes Compose overlays
+
+`docker-compose.aks.yml`, `docker-compose.gke.yml`, and `docker-compose.eks.yml` are examples for running the Nora control plane in Compose while provisioning agents into managed Kubernetes. These variables are Compose helper inputs; the overlays translate them into `KUBECONFIG` and `K8S_*` inside `backend-api` and `worker-provisioner`.
+
+| Variable pattern | Description |
+| ---------------- | ----------- |
+| `<PROVIDER>_KUBECONFIG_PATH` | Host path to the kubeconfig mounted at `/kubeconfig/config` inside Nora containers. Providers: `AKS`, `GKE`, `EKS`. |
+| `<PROVIDER>_ENABLED_BACKENDS` | Enabled deploy targets for that overlay. Defaults to `k8s`; set `docker,k8s` if you want both Docker and cloud Kubernetes visible. |
+| `<PROVIDER>_K8S_NAMESPACE` | Namespace used for agent workloads. Defaults to `openclaw-agents`. |
+| `<PROVIDER>_K8S_EXPOSURE_MODE` | Exposure mode passed to `K8S_EXPOSURE_MODE`. Defaults to `load-balancer` for managed-cloud overlays. |
+| `<PROVIDER>_K8S_SERVICE_ANNOTATIONS_JSON` | JSON object of provider-specific Service annotations. |
+| `<PROVIDER>_K8S_LOAD_BALANCER_SOURCE_RANGES` | Comma-separated CIDRs allowed to reach the per-agent cloud load balancers. |
+| `<PROVIDER>_K8S_LOAD_BALANCER_CLASS` | Provider-specific `loadBalancerClass`, such as `networking.gke.io/l4-rbs` or `eks.amazonaws.com/nlb`. |
+| `<PROVIDER>_K8S_LOAD_BALANCER_READY_TIMEOUT_MS` | Cloud load-balancer readiness timeout. Defaults to `1200000` in the provider overlays. |
+| `<PROVIDER>_K8S_LOAD_BALANCER_READY_INTERVAL_MS` | Cloud load-balancer readiness polling interval. Defaults to `5000`. |
+| `<PROVIDER>_DEPLOYMENT_JOB_TIMEOUT_MS` | Deployment queue job timeout for cloud provisioning. Defaults to `1800000`. |
+| `<PROVIDER>_PROVISION_TIMEOUT_MS` | Worker-side provision timeout for cloud provisioning. Defaults to `1740000`. |
 
 ## Gateway proxy SSRF guard
 

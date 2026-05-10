@@ -80,7 +80,7 @@ If you are evaluating Nora or have just started self-hosting it, the questions b
     Yes. Nora supports Kubernetes as a provisioner backend. Set the following variable in your `.env` file to switch from the default Docker backend to Kubernetes:
 
     ```bash theme={null}
-    PROVISIONER_BACKEND=k8s
+    ENABLED_BACKENDS=k8s
     ```
 
     For local Kubernetes verification using `kind`, also set:
@@ -89,7 +89,7 @@ If you are evaluating Nora or have just started self-hosting it, the questions b
     K8S_EXPOSURE_MODE=node-port
     ```
 
-    This allows the Compose-hosted control plane to reach the runtime and gateway through Docker-mapped host ports during local testing.
+    This allows the Compose-hosted control plane to reach the runtime and gateway through Docker-mapped host ports during local testing. For managed Kubernetes, use `docker-compose.aks.yml`, `docker-compose.gke.yml`, or `docker-compose.eks.yml`; those overlays mount a provider kubeconfig and default agent Services to cloud `LoadBalancer` exposure.
   </Accordion>
 
   <Accordion title="How do I get support?">

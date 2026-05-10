@@ -2,7 +2,7 @@
 
 > Compare Docker, Proxmox, and Kubernetes provisioner backends to pick the right agent isolation and scaling strategy for your Nora deployment.
 
-Nora supports three provisioner backends that determine how agent runtime environments are created and isolated. You select a backend by setting `PROVISIONER_BACKEND` in your `.env` file. Docker is the default and requires no additional configuration, making it the fastest path to a running deployment. Proxmox and Kubernetes unlock stronger isolation and horizontal scale for production environments.
+Nora provisions agent runtimes onto execution targets selected through `ENABLED_BACKENDS`. Docker is the default and requires no additional infrastructure. Proxmox and Kubernetes unlock stronger isolation, cloud-native placement, and larger rollout footprints without changing the operator workflow.
 
 <CardGroup cols={3}>
   <Card title="Docker" icon="docker" href="#docker">
@@ -23,17 +23,17 @@ Nora supports three provisioner backends that determine how agent runtime enviro
 |                        | Docker                                  | Proxmox                                                       | Kubernetes                                 |
 | ---------------------- | --------------------------------------- | ------------------------------------------------------------- | ------------------------------------------ |
 | **Deployment scale**   | Single host                             | Private VM fleet                                              | Multi-node cluster                         |
-| **Agent isolation**    | Container                               | Full VM                                                       | Container (namespace-scoped)               |
+| **Agent isolation**    | Container                               | Full VM / LXC                                                 | Container (namespace-scoped)               |
 | **Setup complexity**   | Low — no extra vars required            | Medium — Proxmox API credentials and a VM template            | Medium to high — existing cluster required |
 | **Best for**           | Local dev, evaluation, lean self-hosted | On-prem, security-conscious operators, private infrastructure | Cloud-native teams, AWS/Azure/GCP rollouts |
 | **Horizontal scaling** | No                                      | Limited (manual fleet)                                        | Yes                                        |
 
 ## Docker
 
-Docker is the default backend. When `PROVISIONER_BACKEND` is unset or set to `docker`, Nora provisions each agent runtime as an isolated Docker container on the same host running the Nora stack.
+Docker is the default backend. When `ENABLED_BACKENDS` is unset or set to `docker`, Nora provisions each agent runtime as an isolated Docker container on the same host running the Nora stack.
 
 ```bash theme={null}
-PROVISIONER_BACKEND=docker
+ENABLED_BACKENDS=docker
 ```
 
 No additional variables are required. Resource limits applied to each agent are controlled by the [self-hosted resource limit variables](/configuration/environment-variables#self-hosted-resource-limits) (`MAX_VCPU`, `MAX_RAM_MB`, `MAX_DISK_GB`, `MAX_AGENTS`).
@@ -44,89 +44,187 @@ No additional variables are required. Resource limits applied to each agent are 
 
 ## Proxmox
 
-The Proxmox backend provisions each agent runtime as a full virtual machine on a Proxmox VE node. This gives you stronger isolation than containers and full control over the underlying VM configuration.
+The Proxmox backend provisions each agent runtime as a Proxmox-managed LXC or VM-style runtime target. This gives you stronger isolation than local Docker containers while keeping the Nora control plane in Docker Compose.
 
 Set the following variables in your `.env`:
 
 ```bash theme={null}
-PROVISIONER_BACKEND=proxmox
+ENABLED_BACKENDS=proxmox
 
 PROXMOX_API_URL=https://proxmox.local:8006/api2/json
 PROXMOX_TOKEN_ID=user@pam!tokenname
 PROXMOX_TOKEN_SECRET=<your-token-secret>
 PROXMOX_NODE=pve
-PROXMOX_TEMPLATE=ubuntu-22.04-standard
+PROXMOX_TEMPLATE=local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst
+PROXMOX_SSH_HOST=proxmox.local
+PROXMOX_SSH_USER=root
+PROXMOX_SSH_PRIVATE_KEY_PATH=/run/secrets/proxmox_key
 ```
 
-| Variable               | Description                                                                                   |
-| ---------------------- | --------------------------------------------------------------------------------------------- |
-| `PROXMOX_API_URL`      | Full URL to your Proxmox API endpoint.                                                        |
-| `PROXMOX_TOKEN_ID`     | API token identifier in `user@pam!tokenname` format.                                          |
-| `PROXMOX_TOKEN_SECRET` | Secret for the API token above.                                                               |
-| `PROXMOX_NODE`         | Name of the Proxmox node where VMs are created. Defaults to `pve`.                            |
-| `PROXMOX_TEMPLATE`     | VM template cloned as the base image for each new agent. Defaults to `ubuntu-22.04-standard`. |
+| Variable                       | Description                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------------- |
+| `PROXMOX_API_URL`              | Full URL to your Proxmox API endpoint.                                           |
+| `PROXMOX_TOKEN_ID`             | API token identifier in `user@pam!tokenname` format.                             |
+| `PROXMOX_TOKEN_SECRET`         | Secret for the API token above.                                                  |
+| `PROXMOX_NODE`                 | Name of the Proxmox node where runtimes are created. Defaults to `pve`.          |
+| `PROXMOX_TEMPLATE`             | LXC template used for OpenClaw agents.                                           |
+| `PROXMOX_SSH_HOST`             | SSH host used for `pct` bootstrap operations.                                    |
+| `PROXMOX_SSH_USER`             | SSH user used for bootstrap operations.                                          |
+| `PROXMOX_SSH_PRIVATE_KEY_PATH` | Path to a private key mounted into `backend-api` and `worker-provisioner`.        |
 
 <Note>
-  Create an API token in the Proxmox web UI under **Datacenter → Permissions → API Tokens**. The token user needs sufficient privileges to clone VMs from the configured template and manage VM lifecycle on the target node.
+  Create an API token in the Proxmox web UI under **Datacenter → Permissions → API Tokens**. The token user needs sufficient privileges to clone from the configured template and manage runtime lifecycle on the target node.
 </Note>
-
-### When to choose Proxmox
-
-Choose Proxmox when you need:
-
-* VM-level isolation between agent workloads
-* An existing Proxmox cluster you want to leverage
-* On-premises infrastructure where you control the hardware
-* Stronger security boundaries than container namespaces provide
 
 ## Kubernetes
 
-The Kubernetes backend schedules agent workloads as pods inside a Kubernetes cluster. It is best suited for cloud-native operators already running Kubernetes on AWS, Azure, GCP, or on-premises.
+The Kubernetes backend schedules agent workloads as pods inside a Kubernetes cluster. It is best suited for cloud-native operators already running Kubernetes on AKS, GKE, EKS, K3s, or another conformant cluster.
 
 Set the following variables in your `.env`:
 
 ```bash theme={null}
-PROVISIONER_BACKEND=k8s
+ENABLED_BACKENDS=k8s
 K8S_NAMESPACE=openclaw-agents
 K8S_EXPOSURE_MODE=cluster-ip
 ```
 
-| Variable                | Required | Default           | Description                                                                                                                          |
-| ----------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `K8S_NAMESPACE`         | No       | `openclaw-agents` | Namespace where agent pods and services are created.                                                                                 |
-| `K8S_EXPOSURE_MODE`     | No       | `cluster-ip`      | How agent services are exposed. Use `cluster-ip` for standard in-cluster access and `node-port` for local `kind`-based verification. |
-| `K8S_RUNTIME_NODE_PORT` | No       | —                 | Node port for the agent runtime service. Only applicable in `node-port` mode.                                                        |
-| `K8S_GATEWAY_NODE_PORT` | No       | —                 | Node port for the agent gateway service. Only applicable in `node-port` mode.                                                        |
-| `K8S_RUNTIME_HOST`      | No       | —                 | Hostname or IP that the Nora control plane uses to reach agent runtimes in `node-port` mode.                                         |
+| Variable                              | Required | Default           | Description                                                                                                                                   |
+| ------------------------------------- | -------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KUBECONFIG`                          | No       | —                 | Path visible inside `backend-api` and `worker-provisioner`; cloud overlays set it to `/kubeconfig/config`.                                    |
+| `K8S_NAMESPACE`                       | No       | `openclaw-agents` | Namespace where agent pods and services are created.                                                                                          |
+| `K8S_EXPOSURE_MODE`                   | No       | `cluster-ip`      | How agent services are exposed. Use `cluster-ip`, `node-port`, or `load-balancer`.                                                            |
+| `K8S_RUNTIME_NODE_PORT`               | No       | —                 | Node port for the agent runtime service. Only applicable in `node-port` mode.                                                                 |
+| `K8S_GATEWAY_NODE_PORT`               | No       | —                 | Node port for the agent gateway service. Only applicable in `node-port` mode.                                                                 |
+| `K8S_RUNTIME_HOST`                    | No       | —                 | Hostname or IP that the Nora control plane uses to reach agent runtimes in `node-port` mode.                                                  |
+| `K8S_SERVICE_ANNOTATIONS_JSON`        | No       | —                 | JSON object of annotations applied to created agent Services.                                                                                 |
+| `K8S_LOAD_BALANCER_SOURCE_RANGES`     | No       | —                 | Comma-separated CIDRs passed to `loadBalancerSourceRanges` in `load-balancer` mode.                                                           |
+| `K8S_LOAD_BALANCER_CLASS`             | No       | —                 | `loadBalancerClass` value passed through to created Services in `load-balancer` mode.                                                         |
+| `K8S_LOAD_BALANCER_READY_TIMEOUT_MS`  | No       | `600000`          | Max time to wait for a cloud load balancer address.                                                                                           |
+| `K8S_LOAD_BALANCER_READY_INTERVAL_MS` | No       | `5000`            | Polling interval while waiting for a cloud load balancer address.                                                                             |
 
 ### Exposure modes
 
 <Tabs>
-  <Tab title="cluster-ip (default)">
-    Agent services use `ClusterIP` and are reachable only from within the cluster. Use this for all standard cloud and on-premises Kubernetes deployments where the Nora control plane runs inside the same cluster.
+  <Tab title="cluster-ip">
+    Agent services use `ClusterIP` and are reachable only from within the cluster. Use this when the Nora control plane itself runs inside the same cluster or when another in-cluster networking path reaches agent Services.
 
     ```bash theme={null}
     K8S_EXPOSURE_MODE=cluster-ip
     ```
   </Tab>
 
-  <Tab title="node-port (local kind)">
-    Agent services use `NodePort` so that the Nora control plane, running in Docker Compose outside the cluster, can reach them through Docker-mapped host ports. Use this for local verification with `kind`.
+  <Tab title="node-port">
+    Agent services use `NodePort` so that the Compose-hosted control plane can reach them through node ports. Use this for local `kind` verification.
 
     ```bash theme={null}
     K8S_EXPOSURE_MODE=node-port
-    K8S_RUNTIME_NODE_PORT=30080
-    K8S_GATEWAY_NODE_PORT=30081
+    K8S_RUNTIME_NODE_PORT=30909
+    K8S_GATEWAY_NODE_PORT=31879
     K8S_RUNTIME_HOST=host.docker.internal
     ```
   </Tab>
+
+  <Tab title="load-balancer">
+    Agent services use cloud-provider `LoadBalancer` Services. Use this for AKS, GKE, and EKS when Nora is running outside the cluster.
+
+    ```bash theme={null}
+    K8S_EXPOSURE_MODE=load-balancer
+    K8S_LOAD_BALANCER_SOURCE_RANGES=<nora-control-plane-egress-cidr>
+    K8S_LOAD_BALANCER_READY_TIMEOUT_MS=1200000
+    ```
+  </Tab>
 </Tabs>
+
+### Local Kind
+
+The Kind overlay is for local verification. It mounts a generated Kind kubeconfig and exposes the agent runtime and gateway through node ports.
+
+```bash theme={null}
+cd e2e
+npm run smoke:k8s-kind
+```
+
+Or run the stack directly:
+
+```bash theme={null}
+docker compose -f docker-compose.yml -f docker-compose.kind.yml up -d --build
+```
+
+### Managed Kubernetes overlays
+
+Nora ships provider-specific Compose overlays for managed Kubernetes. Each overlay mounts a kubeconfig into `backend-api` and `worker-provisioner`, then maps provider-prefixed helper variables into the generic `K8S_*` variables the Kubernetes adapter reads.
+
+<Note>
+  The Kubernetes API server address, resource group, project, subscription, account, and region are used by cloud CLIs to create the kubeconfig. Nora itself controls the cluster through the kubeconfig and the generic Kubernetes API.
+</Note>
+
+<CodeGroup>
+  ```bash AKS theme={null}
+  mkdir -p .secrets
+  az account set --subscription <subscription-id>
+  az aks get-credentials \
+    --resource-group <resource-group> \
+    --name <cluster-name> \
+    --admin \
+    --file ./.secrets/aks-kubeconfig \
+    --overwrite-existing
+
+  AKS_KUBECONFIG_PATH=./.secrets/aks-kubeconfig \
+    docker compose -f docker-compose.yml -f docker-compose.aks.yml up -d --build
+  ```
+
+  ```bash GKE theme={null}
+  mkdir -p .secrets
+  KUBECONFIG=./.secrets/gke-kubeconfig \
+    gcloud container clusters get-credentials <cluster-name> \
+      --region <region> \
+      --project <project-id>
+
+  GKE_KUBECONFIG_PATH=./.secrets/gke-kubeconfig \
+    docker compose -f docker-compose.yml -f docker-compose.gke.yml up -d --build
+  ```
+
+  ```bash EKS theme={null}
+  mkdir -p .secrets
+  aws eks update-kubeconfig \
+    --name <cluster-name> \
+    --region <region> \
+    --kubeconfig ./.secrets/eks-kubeconfig
+
+  EKS_KUBECONFIG_PATH=./.secrets/eks-kubeconfig \
+    docker compose -f docker-compose.yml -f docker-compose.eks.yml up -d --build
+  ```
+</CodeGroup>
+
+Provider overlay defaults:
+
+| Overlay                  | Kubeconfig helper        | Default exposure | Useful optional settings                                                                                  |
+| ------------------------ | ------------------------ | ---------------- | --------------------------------------------------------------------------------------------------------- |
+| `docker-compose.aks.yml` | `AKS_KUBECONFIG_PATH`    | `load-balancer`  | `AKS_K8S_SERVICE_ANNOTATIONS_JSON`, `AKS_K8S_LOAD_BALANCER_SOURCE_RANGES`                                 |
+| `docker-compose.gke.yml` | `GKE_KUBECONFIG_PATH`    | `load-balancer`  | `GKE_K8S_LOAD_BALANCER_CLASS`, `GKE_K8S_LOAD_BALANCER_SOURCE_RANGES`                                      |
+| `docker-compose.eks.yml` | `EKS_KUBECONFIG_PATH`    | `load-balancer`  | `EKS_K8S_SERVICE_ANNOTATIONS_JSON`, `EKS_K8S_LOAD_BALANCER_CLASS`, `EKS_K8S_LOAD_BALANCER_SOURCE_RANGES`  |
+
+Examples:
+
+```bash theme={null}
+# AKS internal load balancer
+AKS_K8S_SERVICE_ANNOTATIONS_JSON='{"service.beta.kubernetes.io/azure-load-balancer-internal":"true"}'
+
+# GKE external passthrough Network Load Balancer RBS
+GKE_K8S_LOAD_BALANCER_CLASS=networking.gke.io/l4-rbs
+
+# EKS Auto Mode NLB
+EKS_K8S_LOAD_BALANCER_CLASS=eks.amazonaws.com/nlb
+
+# AWS Load Balancer Controller / NLB
+EKS_K8S_SERVICE_ANNOTATIONS_JSON='{"service.beta.kubernetes.io/aws-load-balancer-scheme":"internet-facing","service.beta.kubernetes.io/aws-load-balancer-nlb-target-type":"ip"}'
+```
 
 ### When to choose Kubernetes
 
 Choose Kubernetes when you need:
 
 * Horizontal scaling of agent workloads across multiple nodes
-* Native integration with cloud provider managed services (EKS, AKE, GKE)
+* Native integration with cloud provider managed services (EKS, AKS, GKE)
 * Container-native deployment on infrastructure already managed by Kubernetes
 * Standard Kubernetes tooling for observability, autoscaling, and policy enforcement
