@@ -1,7 +1,7 @@
 // Provider registry. Resolves a provider id to its concrete strategy
-// implementation, falling back to a LegacyProviderAdapter for any
-// provider id that has not yet been migrated. Registered providers
-// always win over the legacy adapter.
+// implementation, with a fallback factory for any id that doesn't have
+// a strategy registered (e.g. a catalog entry added before its provider
+// file exists). Registered providers always win over the fallback.
 
 import type { Provider } from "../../types/provider";
 
@@ -12,9 +12,13 @@ export interface ProviderRegistry {
   list(): Provider[];
 }
 
-export type LegacyFactory = (providerId: string) => Provider;
+export type FallbackFactory = (providerId: string) => Provider;
 
-export function createProviderRegistry(legacyFactory: LegacyFactory): ProviderRegistry {
+// Re-exported for backward compatibility with callers that imported the
+// legacy name during the migration. Prefer FallbackFactory in new code.
+export type LegacyFactory = FallbackFactory;
+
+export function createProviderRegistry(fallbackFactory: FallbackFactory): ProviderRegistry {
   const registered = new Map<string, Provider>();
 
   return {
@@ -25,7 +29,7 @@ export function createProviderRegistry(legacyFactory: LegacyFactory): ProviderRe
       return registered.has(providerId);
     },
     resolve(providerId) {
-      return registered.get(providerId) ?? legacyFactory(providerId);
+      return registered.get(providerId) ?? fallbackFactory(providerId);
     },
     list() {
       return Array.from(registered.values());

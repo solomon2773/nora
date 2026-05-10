@@ -130,27 +130,20 @@ Nora calls the provider's API using the stored credentials and reports success o
 
 Removing an integration deletes the stored credentials. It does not restart the agent — the environment variables will no longer be injected on the next deployment or sync.
 
-## Popular integrations by category
+## Per-provider guides
 
-<AccordionGroup>
-  <Accordion title="Developer tools">
-    GitHub, GitLab, Jira, Linear, Bitbucket, Confluence, Jenkins, CircleCI, Vercel, Terraform
-  </Accordion>
+Every supported integration has a dedicated page that documents where to apply for the credential, which scopes/permissions to grant, and how to connect it to Nora. The same `credentialsUrl` and `setupGuide` content surfaces inline in the dashboard's integration modal, so docs and dashboard stay in sync.
 
-<Accordion title="Communication">Slack, Discord, Twilio, SendGrid, Email (SMTP)</Accordion>
+<Card
+  title="Browse all per-provider integration guides"
+  href="/guides/integrations/"
+  icon="grid"
+  arrow
+>
+  /guides/integrations/
+</Card>
 
-<Accordion title="Data and AI">Hugging Face, Pinecone, Weaviate, Elasticsearch, Supabase</Accordion>
-
-<Accordion title="Cloud infrastructure">AWS, Azure, DigitalOcean, S3</Accordion>
-
-<Accordion title="CRM and sales">HubSpot, Salesforce, Pipedrive</Accordion>
-
-  <Accordion title="Analytics and monitoring">
-    Datadog, Sentry, Grafana, Segment, Mixpanel
-  </Accordion>
-</AccordionGroup>
-
-For the full list of supported integrations, browse the catalog from the **Integrations** tab on any agent's detail page, or call `GET /integrations/catalog`.
+For the live, authoritative list of supported providers, call `GET /api/integrations/catalog` or open the **Integrations** tab on any agent's detail page.
 
 ## Inbound webhooks
 

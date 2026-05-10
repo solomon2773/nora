@@ -1,30 +1,48 @@
 // @ts-nocheck
 const { createProviderRegistry } = require("../integrations/providers/base/registry");
-const { createLegacyProviderAdapter } = require("../integrations/providers/legacy");
+
+// A minimal stub fallback that mirrors what the integrations service
+// installs when a catalog id has no strategy registered yet.
+function makeStubFallback(providerId) {
+  return {
+    id: providerId,
+    authType: "custom",
+    async test() {
+      return {
+        success: true,
+        message: "Credentials stored — no strategy registered for this provider yet",
+      };
+    },
+    mapToEnv() {
+      return { primary: null, config: {} };
+    },
+  };
+}
 
 describe("createProviderRegistry", () => {
-  it("falls back to the legacy adapter for unregistered providers", () => {
-    const legacyFactory = (id) =>
-      createLegacyProviderAdapter(id, {
-        envMap: { github: "GITHUB_TOKEN" },
-        configEnvMap: { "github.org": "GITHUB_ORG" },
-      });
-    const registry = createProviderRegistry(legacyFactory);
+  it("falls back to the stub provider for unregistered ids", async () => {
+    const registry = createProviderRegistry(makeStubFallback);
 
-    const provider = registry.resolve("github");
-    expect(provider.id).toBe("github");
+    const provider = registry.resolve("unknown-id");
+    expect(provider.id).toBe("unknown-id");
     expect(provider.authType).toBe("custom");
 
     const env = provider.mapToEnv({
-      row: { provider: "github" },
+      row: { provider: "unknown-id" },
       token: null,
-      config: { org: "openai", other: "x" },
+      config: { whatever: "x" },
     });
-    expect(env.primary).toBe("GITHUB_TOKEN");
-    expect(env.config).toEqual({ org: "GITHUB_ORG" });
+    expect(env).toEqual({ primary: null, config: {} });
+
+    const result = await provider.test(
+      { row: { provider: "unknown-id" }, token: "x", config: {} },
+      { fetch: jest.fn(), assertSafeUrl: async (u) => u },
+    );
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("no strategy registered");
   });
 
-  it("registered providers override the legacy adapter", () => {
+  it("registered providers override the fallback", () => {
     const stub = {
       id: "github",
       authType: "api_key",
@@ -35,12 +53,7 @@ describe("createProviderRegistry", () => {
         return { primary: "STUB_PRIMARY", config: { stubKey: "STUB_ENV" } };
       },
     };
-    const legacyFactory = (id) =>
-      createLegacyProviderAdapter(id, {
-        envMap: { github: "GITHUB_TOKEN" },
-        configEnvMap: {},
-      });
-    const registry = createProviderRegistry(legacyFactory);
+    const registry = createProviderRegistry(makeStubFallback);
 
     expect(registry.has("github")).toBe(false);
     registry.register(stub);
@@ -57,41 +70,8 @@ describe("createProviderRegistry", () => {
     expect(env.primary).toBe("STUB_PRIMARY");
   });
 
-  it("returns a fallback connectivity message when the provider has no test", async () => {
-    const legacyFactory = (id) => createLegacyProviderAdapter(id, { envMap: {}, configEnvMap: {} });
-    const registry = createProviderRegistry(legacyFactory);
-
-    const provider = registry.resolve("unknown-provider");
-    const result = await provider.test(
-      { row: { provider: "unknown-provider" }, token: "t", config: {} },
-      { fetch, assertSafeUrl: async (u) => u },
-    );
-    expect(result).toEqual({
-      success: true,
-      message: "Credentials stored (connectivity not verified for this provider)",
-    });
-  });
-
-  it("returns the no-tester fallback for unknown providers (legacy connectivity table is now empty)", async () => {
-    // After PR 8 every catalog provider has a strategy and the legacy
-    // connectivityTests object is effectively empty. Unknown ids resolve
-    // through LegacyProviderAdapter and report the "credentials stored
-    // (not verified)" shape.
-    const legacyFactory = (id) => createLegacyProviderAdapter(id, { envMap: {}, configEnvMap: {} });
-    const registry = createProviderRegistry(legacyFactory);
-
-    const provider = registry.resolve("not-a-real-provider");
-    const result = await provider.test(
-      { row: { provider: "not-a-real-provider" }, token: "x", config: {} },
-      { fetch: jest.fn(), assertSafeUrl: async (u) => u },
-    );
-    expect(result.success).toBe(true);
-    expect(result.message).toContain("connectivity not verified");
-  });
-
   it("lists registered providers", () => {
-    const legacyFactory = (id) => createLegacyProviderAdapter(id, { envMap: {}, configEnvMap: {} });
-    const registry = createProviderRegistry(legacyFactory);
+    const registry = createProviderRegistry(makeStubFallback);
     const a = {
       id: "a",
       authType: "api_key",

@@ -32,9 +32,8 @@ export { buildIntegrationToolCatalogEntries } from "./services/toolCatalogBuilde
 export type { BuildToolCatalogOptions } from "./services/toolCatalogBuilder";
 
 export { createProviderRegistry } from "./providers/base/registry";
-export type { ProviderRegistry, LegacyFactory } from "./providers/base/registry";
+export type { ProviderRegistry, FallbackFactory, LegacyFactory } from "./providers/base/registry";
 export { BaseProvider } from "./providers/base/provider";
-export { createLegacyProviderAdapter } from "./providers/legacy";
 export { githubProvider } from "./providers/github";
 export { slackProvider } from "./providers/slack";
 export { linearProvider } from "./providers/linear";

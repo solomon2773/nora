@@ -25,8 +25,6 @@ type IntegrationsModule = {
   getIntegrationsForSync: (...args: unknown[]) => Promise<unknown>;
   getIntegrationEnvVars: (...args: unknown[]) => Promise<unknown>;
   integrationProviderAffectsLlmAuth: (provider: string) => boolean;
-  INTEGRATION_ENV_MAP: Record<string, string>;
-  INTEGRATION_CONFIG_ENV_MAP: Record<string, string>;
   stripSensitiveConfig: (...args: unknown[]) => unknown;
 };
 
@@ -46,8 +44,6 @@ const exported: IntegrationsModule = {
   getIntegrationsForSync: service.getIntegrationsForSync,
   getIntegrationEnvVars: service.getIntegrationEnvVars,
   integrationProviderAffectsLlmAuth: service.integrationProviderAffectsLlmAuth,
-  INTEGRATION_ENV_MAP: service.INTEGRATION_ENV_MAP,
-  INTEGRATION_CONFIG_ENV_MAP: service.INTEGRATION_CONFIG_ENV_MAP,
   stripSensitiveConfig: service.stripSensitiveConfig,
 };
 

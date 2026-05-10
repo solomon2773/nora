@@ -3,7 +3,7 @@
 //   - repository (data access)
 //   - secretEncryption (catalog-aware secret hygiene)
 //   - catalogLoader (catalog data + hydration)
-//   - providerRegistry (Provider strategy + legacy fallback)
+//   - providerRegistry (Provider strategy)
 //   - integrationTools runtime helpers (tool catalog + sync entry)
 //
 // All exported functions preserve the contract previously exposed by
@@ -12,17 +12,65 @@
 const db = require("../../db");
 const { encrypt, decrypt, ensureEncryptionConfigured } = require("../../crypto");
 const { assertSafeUrlAsync } = require("../../networkSafety");
+const llmProviders = require("../../llmProviders");
 const { createIntegrationsRepository } = require("../repository/integrationsRepository");
 const catalogLoader = require("../catalog/catalogLoader");
 const { createSecretEncryption } = require("../crypto/secretEncryption");
 const { buildIntegrationToolCatalogEntries } = require("./toolCatalogBuilder");
 const { createProviderRegistry } = require("../providers/base/registry");
-const { createLegacyProviderAdapter } = require("../providers/legacy");
-const {
-  INTEGRATION_ENV_MAP,
-  INTEGRATION_CONFIG_ENV_MAP,
-  integrationProviderAffectsLlmAuth,
-} = require("../providers/legacy/envMaps");
+
+// Stub provider returned by the registry when a catalog id has no
+// strategy registered. Stores the credential without verifying connectivity
+// and emits no env vars — agents using the provider get told the feature
+// isn't wired up yet rather than getting a hard crash.
+function createStubProvider(providerId) {
+  return {
+    id: providerId,
+    authType: "custom",
+    async test() {
+      return {
+        success: true,
+        message: "Credentials stored — no strategy registered for this provider yet",
+      };
+    },
+    mapToEnv() {
+      return { primary: null, config: {} };
+    },
+  };
+}
+
+// Provider IDs whose primary credential affects LLM auth (and therefore
+// require the agent's auth profile to refresh after connect/disconnect).
+const LLM_AUTH_PROVIDER_IDS = new Set(["openai", "anthropic", "huggingface"]);
+
+const LLM_AUTH_ENV_VARS = new Set(
+  (Array.isArray(llmProviders.PROVIDERS) ? llmProviders.PROVIDERS : [])
+    .map((p) => p.envVar)
+    .filter(Boolean),
+);
+
+function integrationProviderAffectsLlmAuth(provider) {
+  const providerId = String(provider || "").trim();
+  if (!providerId) return false;
+  if (LLM_AUTH_PROVIDER_IDS.has(providerId)) return true;
+  // Defensive: if a future provider's mapToEnv emits an LLM_AUTH env var,
+  // this still catches it without forcing every change to update the set.
+  const reg = providerRegistry;
+  if (reg && typeof reg.has === "function" && reg.has(providerId)) {
+    try {
+      const provider = reg.resolve(providerId);
+      const env = provider.mapToEnv({
+        row: { provider: providerId },
+        token: null,
+        config: {},
+      });
+      if (env.primary && LLM_AUTH_ENV_VARS.has(env.primary)) return true;
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
 const { githubProvider } = require("../providers/github");
 const { slackProvider } = require("../providers/slack");
 const { linearProvider } = require("../providers/linear");
@@ -105,14 +153,7 @@ const {
   stripSensitiveConfig,
 } = secretCrypto;
 
-const legacyEnvMaps = {
-  envMap: INTEGRATION_ENV_MAP,
-  configEnvMap: INTEGRATION_CONFIG_ENV_MAP,
-};
-
-const providerRegistry = createProviderRegistry((providerId) =>
-  createLegacyProviderAdapter(providerId, legacyEnvMaps),
-);
+const providerRegistry = createProviderRegistry(createStubProvider);
 
 // Register concrete providers that have moved off the legacy adapter.
 // Adding a new provider is a single-line change here once its strategy
@@ -447,10 +488,8 @@ module.exports = {
   testIntegration,
   getIntegrationsForSync,
   getIntegrationEnvVars,
-  // LLM auth + env maps
+  // LLM auth helpers
   integrationProviderAffectsLlmAuth,
-  INTEGRATION_ENV_MAP,
-  INTEGRATION_CONFIG_ENV_MAP,
   // Internals exposed for tests
   providerRegistry,
 };
