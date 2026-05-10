@@ -46,6 +46,10 @@
           "guides/deploy-agent",
           "guides/manage-providers",
           "guides/integrations",
+          {
+            "group": "Per-provider integrations",
+            "pages": ["guides/integrations/index"]
+          },
           "guides/channels",
           "guides/monitoring",
           "guides/alert-rules",

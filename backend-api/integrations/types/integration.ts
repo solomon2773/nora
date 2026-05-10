@@ -52,6 +52,21 @@ export interface CatalogToolSpec {
   capabilities?: string[];
 }
 
+export interface CatalogSetupGuide {
+  steps: string[];
+  scopes?: string[];
+}
+
+export interface CatalogMcpInfo {
+  available: boolean;
+  transport?: "stdio" | "sse" | "http";
+  npmPackage?: string;
+  pyPackage?: string;
+  serverUrl?: string;
+  docsUrl?: string;
+  notes?: string;
+}
+
 export interface CatalogItem {
   id: string;
   name: string;
@@ -63,8 +78,10 @@ export interface CatalogItem {
   capabilities?: string[];
   toolSpecs?: CatalogToolSpec[];
   api?: Record<string, unknown> | null;
-  mcp?: Record<string, unknown> | null;
+  mcp?: CatalogMcpInfo | Record<string, unknown> | null;
   usageHints?: string[];
+  credentialsUrl?: string;
+  setupGuide?: CatalogSetupGuide;
 }
 
 export interface SyncEntry {

@@ -16,7 +16,9 @@ coverage/
 !.env.example
 !.env.test
 !e2e/.env.real.example
+!e2e/integrations/.env.providers.example
 e2e/.env.real
+e2e/integrations/.env.providers
 docker-compose.override.yml
 nginx.public.conf
 nginx.conf.tls

@@ -16,7 +16,8 @@
     "capture:operator-readme": "tsx ./scripts/capture-operator-screenshots.mts",
     "smoke:k8s-kind": "bash ./scripts/run-kind-k8s-smoke.sh",
     "smoke:dashboard-runtime": "tsx ./scripts/dashboard-runtime-smoke.mts",
-    "smoke:runtime-path": "tsx ./scripts/runtime-path-smoke.mts"
+    "smoke:runtime-path": "tsx ./scripts/runtime-path-smoke.mts",
+    "smoke:integrations": "tsx ./integrations/run-all.mts"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

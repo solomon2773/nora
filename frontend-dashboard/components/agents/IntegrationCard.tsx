@@ -1,5 +1,16 @@
 import { useState } from "react";
-import { Puzzle, X, Loader2, CheckCircle, XCircle, RefreshCw, Copy, Check } from "lucide-react";
+import {
+  Puzzle,
+  X,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  RefreshCw,
+  Copy,
+  Check,
+  ExternalLink,
+  Cpu,
+} from "lucide-react";
 
 type IntegrationCardProps = {
   item: any;
@@ -42,6 +53,12 @@ export default function IntegrationCard({
   const isOAuth2 = item.authType === "oauth2";
   const redirectUri = isOAuth2 ? computeOAuthRedirectUri(item.id || item.provider) : "";
   const usageHints = Array.isArray(item.usageHints) ? item.usageHints : [];
+  const credentialsUrl: string = typeof item.credentialsUrl === "string" ? item.credentialsUrl : "";
+  const setupSteps: string[] = Array.isArray(item.setupGuide?.steps) ? item.setupGuide.steps : [];
+  const setupScopes: string[] = Array.isArray(item.setupGuide?.scopes)
+    ? item.setupGuide.scopes
+    : [];
+  const mcpAvailable = item.mcp && item.mcp.available === true;
 
   async function copyRedirectUri() {
     if (!redirectUri || typeof navigator === "undefined" || !navigator.clipboard) return;
@@ -138,13 +155,24 @@ export default function IntegrationCard({
             </div>
             <div>
               <h4 className="text-sm font-bold text-slate-900">{name}</h4>
-              {category && (
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${categoryColors[category] || "bg-slate-50 text-slate-500"}`}
-                >
-                  {category.replace(/-/g, " ")}
-                </span>
-              )}
+              <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                {category && (
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${categoryColors[category] || "bg-slate-50 text-slate-500"}`}
+                  >
+                    {category.replace(/-/g, " ")}
+                  </span>
+                )}
+                {mcpAvailable && (
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 inline-flex items-center gap-1"
+                    title={item.mcp?.notes || "MCP server available for this provider"}
+                  >
+                    <Cpu size={10} />
+                    MCP
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           {isInstalled ? (
@@ -221,6 +249,73 @@ export default function IntegrationCard({
               </button>
             </div>
             <div className="p-4 space-y-3">
+              {(credentialsUrl || setupSteps.length > 0 || setupScopes.length > 0) && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-slate-600">
+                    Where to apply for credentials
+                  </div>
+                  {credentialsUrl && (
+                    <a
+                      href={credentialsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-800 hover:underline break-all"
+                    >
+                      <ExternalLink size={11} />
+                      {credentialsUrl}
+                    </a>
+                  )}
+                  {setupSteps.length > 0 && (
+                    <ol className="list-decimal pl-4 text-[11px] leading-relaxed text-slate-700 space-y-0.5">
+                      {setupSteps.map((step, idx) => (
+                        <li key={idx}>{step}</li>
+                      ))}
+                    </ol>
+                  )}
+                  {setupScopes.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      <span className="text-[10px] text-slate-500 font-semibold">
+                        Required scopes:
+                      </span>
+                      {setupScopes.map((scope) => (
+                        <span
+                          key={scope}
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white border border-slate-200 text-slate-700"
+                        >
+                          {scope}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {item.mcp && item.mcp.available === true && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 space-y-1">
+                  <div className="text-[10px] font-bold uppercase tracking-widest text-violet-700 inline-flex items-center gap-1">
+                    <Cpu size={11} />
+                    MCP server available
+                  </div>
+                  {item.mcp.notes && (
+                    <p className="text-[11px] leading-relaxed text-violet-900">{item.mcp.notes}</p>
+                  )}
+                  {(item.mcp.npmPackage || item.mcp.pyPackage || item.mcp.serverUrl) && (
+                    <code className="block break-all rounded border border-violet-200 bg-white px-2 py-1 font-mono text-[11px] text-slate-700">
+                      {item.mcp.npmPackage || item.mcp.pyPackage || item.mcp.serverUrl}
+                    </code>
+                  )}
+                  {item.mcp.docsUrl && (
+                    <a
+                      href={item.mcp.docsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-violet-700 hover:underline"
+                    >
+                      <ExternalLink size={10} />
+                      MCP docs
+                    </a>
+                  )}
+                </div>
+              )}
               {isOAuth2 && redirectUri && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-2">
                   <div className="text-[10px] font-bold uppercase tracking-widest text-blue-700">

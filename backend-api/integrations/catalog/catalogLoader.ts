@@ -9,7 +9,13 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import type { CatalogConfigField, CatalogItem, CatalogToolSpec } from "../types/integration";
+import type {
+  CatalogConfigField,
+  CatalogItem,
+  CatalogMcpInfo,
+  CatalogSetupGuide,
+  CatalogToolSpec,
+} from "../types/integration";
 import type { IntegrationsRepository } from "../repository/integrationsRepository";
 
 const SECRET_CONFIG_KEY_RE =
@@ -95,9 +101,11 @@ export interface HydratedCatalogRow extends Record<string, any> {
   capabilities: string[];
   authType?: string | null;
   toolSpecs: CatalogToolSpec[];
-  mcp: Record<string, unknown> | null;
+  mcp: CatalogMcpInfo | Record<string, unknown> | null;
   api: Record<string, unknown> | null;
   usageHints: string[];
+  credentialsUrl: string | null;
+  setupGuide: CatalogSetupGuide | null;
 }
 
 export function hydrateRow(row: Record<string, any> = {}): HydratedCatalogRow {
@@ -111,6 +119,8 @@ export function hydrateRow(row: Record<string, any> = {}): HydratedCatalogRow {
     mcp: schema.mcp || null,
     api: schema.api || null,
     usageHints: schema.usageHints || [],
+    credentialsUrl: schema.credentialsUrl || null,
+    setupGuide: schema.setupGuide || null,
   };
 }
 

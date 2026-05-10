@@ -1,0 +1,71 @@
+# Per-provider integration guides
+
+> Where to apply for credentials, which scopes to request, and how to wire each integration into Nora.
+
+The main [integrations guide](/guides/integrations) covers the connection workflow that every provider follows — opening the integration modal, pasting credentials, and syncing to the running agent. This index links to one page per provider with the bits that differ between platforms: where the developer console lives, the exact scopes Nora expects, and any gotchas.
+
+## How to use these guides
+
+1. Find the provider you want to connect in the catalog below.
+2. Open the linked guide and follow the **Where to apply for credentials** section.
+3. Copy the credentials into the Nora dashboard's integration modal — the modal also surfaces the `credentialsUrl` and setup steps inline, so you can keep the docs and the dashboard side-by-side.
+4. For OAuth providers, register the redirect URI shown in the modal **before** clicking _Authorize_.
+
+<Note>
+  Many providers also publish a Model Context Protocol (MCP) server. Where one exists, the
+  per-provider page lists the npm/PyPI package and a link to its documentation. Nora's catalog
+  surfaces this as an "MCP" badge on the integration card, but the runtime does not auto-launch the
+  MCP server today — you bring it up alongside the integration if you want it.
+</Note>
+
+## Catalog
+
+The list below mirrors the categories in the Nora dashboard. Provider pages are added as each provider is migrated to the strategy interface.
+
+<AccordionGroup>
+  <Accordion title="Developer tools">
+    [GitHub](/guides/integrations/github), GitLab, Bitbucket, [Jira](/guides/integrations/jira),
+    [Linear](/guides/integrations/linear), [Slack](/guides/integrations/slack), Discord, Telegram, Confluence
+  </Accordion>
+
+<Accordion title="Communication">
+  [Slack](/guides/integrations/slack), Discord, Telegram, Microsoft Teams, Email (SMTP), Twilio,
+  SendGrid
+</Accordion>
+
+<Accordion title="AI / ML">OpenAI, Anthropic, Hugging Face</Accordion>
+
+<Accordion title="Cloud">AWS, GCP, Azure, DigitalOcean</Accordion>
+
+<Accordion title="Data, storage, and search">
+  PostgreSQL, MongoDB, Redis, Supabase, Firebase, Google Drive, Dropbox, S3, Elasticsearch,
+  Pinecone, Weaviate, Algolia
+</Accordion>
+
+<Accordion title="Monitoring and observability">Datadog, PagerDuty, Sentry, Grafana</Accordion>
+
+<Accordion title="Productivity">
+  Notion, Airtable, Google Sheets, Trello, Asana, Monday, ClickUp, Google Calendar, Confluence
+</Accordion>
+
+<Accordion title="CRM, payments, analytics">
+  Salesforce, HubSpot, Pipedrive, Zendesk, Stripe, PayPal, Google Analytics, Mixpanel, Segment
+</Accordion>
+
+  <Accordion title="Social, e-commerce, automation, devops">
+    [Twitter / X](/guides/integrations/twitter), [LinkedIn](/guides/integrations/linkedin),
+    Facebook, Instagram, Shopify, WooCommerce, Zapier, Make, n8n, Terraform, Jenkins, CircleCI,
+    Vercel, Docker Hub, Kubernetes
+  </Accordion>
+</AccordionGroup>
+
+## Per-provider page template
+
+Each provider page follows the same outline so you always know where to look:
+
+1. **Where to apply for credentials** — the developer console URL and the exact UI path.
+2. **Required scopes / permissions** — what the credential needs to grant.
+3. **Connect in Nora** — what to paste into the modal.
+4. **Verify the connection** — what `Test connection` calls under the hood.
+5. **MCP server** (if one exists) — package name + link.
+6. **Troubleshooting** — common errors and what they mean.
