@@ -1,0 +1,50 @@
+# Google Analytics
+
+> How to set up a service account for Google Analytics 4 and connect it to Nora.
+
+Google Analytics integrations let your agents query the GA4 Data API for pageviews, sessions, conversions, and custom events. Nora authenticates with a Google Cloud service account (same shape as [Firebase](/guides/integrations/firebase) and [Google Drive](/guides/integrations/google-drive)).
+
+## Where to apply for credentials
+
+<Card
+  title="GCP — Service Accounts"
+  href="https://console.cloud.google.com/iam-admin/serviceaccounts"
+  icon="bar-chart-2"
+  arrow
+>
+  https://console.cloud.google.com/iam-admin/serviceaccounts
+</Card>
+
+<Steps>
+  <Step title="Create a service account in GCP">
+    Generate a JSON key. Treat it as secret.
+  </Step>
+
+<Step title="Enable the GA4 Data API">
+  GCP Console → APIs & Services → Library → **Google Analytics Data API** → Enable.
+</Step>
+
+<Step title="Grant access in Google Analytics">
+  Open Google Analytics → Admin (gear icon) → Property Access Management → **Add user**. Use the
+  SA's `client_email` and grant **Viewer** access (or higher if your agent writes events).
+</Step>
+
+  <Step title="Find the GA4 Property ID">
+    Admin → Property Settings — the numeric Property ID is at the top.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the JSON contents. Set the GA4 Property ID (required for the Data API).
+
+## MCP server
+
+No official Google Analytics MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                              | Source                |
+| ------------------------------------- | --------------------- |
+| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | Service Account JSON  |
+| `GA4_PROPERTY_ID`                     | GA4 Property ID field |

@@ -1,0 +1,35 @@
+# Segment
+
+> Where to find your Segment Source Write Key and connect it to Nora.
+
+Segment integrations let your agents send events into Segment for routing to downstream destinations (warehouses, analytics tools, marketing platforms). Nora stores the Source Write Key — Segment's write keys are **write-only** and have no validation endpoint.
+
+## Where to apply for credentials
+
+<Card title="Segment app" href="https://app.segment.com/" icon="git-branch" arrow>
+  https://app.segment.com/
+</Card>
+
+<Steps>
+  <Step title="Pick a Source">
+    Each Segment Source has its own write key. For server-side agents, create or pick a **Node.js** source.
+  </Step>
+
+  <Step title="Copy the Write Key">
+    Source → Settings → **API Keys** → copy the Write Key.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the Write Key. Nora stores it without making any network call (Segment doesn't expose a validation endpoint for write keys). End-to-end verification happens when your agent sends its first event.
+
+## MCP server
+
+No official Segment MCP server today.
+
+## Environment variables Nora injects
+
+| Variable            | Source          |
+| ------------------- | --------------- |
+| `SEGMENT_WRITE_KEY` | Write Key field |

@@ -24,9 +24,9 @@ const INTEGRATION_ENV_MAP = {
   // anthropic → migrated to providers/anthropic.ts
   // airtable → migrated to providers/airtable.ts
   // asana → migrated to providers/asana.ts
-  stripe: "STRIPE_SECRET_KEY",
-  hubspot: "HUBSPOT_ACCESS_TOKEN",
-  pipedrive: "PIPEDRIVE_API_KEY",
+  // stripe → migrated to providers/stripe.ts
+  // hubspot → migrated to providers/hubspot.ts
+  // pipedrive → migrated to providers/pipedrive.ts
   // pinecone → migrated to providers/pinecone.ts
   // vercel → migrated to providers/vercel.ts
   // circleci → migrated to providers/circleci.ts
@@ -38,13 +38,13 @@ const INTEGRATION_ENV_MAP = {
   shopify: "SHOPIFY_ACCESS_TOKEN",
   // linkedin → migrated to providers/linkedin.ts
   instagram: "INSTAGRAM_ACCESS_TOKEN",
-  salesforce: "SALESFORCE_ACCESS_TOKEN",
+  // salesforce → migrated to providers/salesforce.ts
   // twitter → migrated to providers/twitter.ts
   // digitalocean → migrated to providers/digitalocean.ts
   // algolia → migrated to providers/algolia.ts
   // clickup → migrated to providers/clickup.ts
   // monday → migrated to providers/monday.ts
-  zendesk: "ZENDESK_API_TOKEN",
+  // zendesk → migrated to providers/zendesk.ts
   // docker-hub → migrated to providers/dockerHub.ts
   // bitbucket → migrated to providers/bitbucket.ts
   // confluence → migrated to providers/confluence.ts
@@ -66,10 +66,10 @@ const INTEGRATION_ENV_MAP = {
   // redis → migrated to providers/redis.ts
   // postgresql → migrated to providers/postgresql.ts
   // Payments
-  paypal: "PAYPAL_CLIENT_SECRET",
+  // paypal → migrated to providers/paypal.ts
   // Analytics / automation
-  segment: "SEGMENT_WRITE_KEY",
-  mixpanel: "MIXPANEL_API_SECRET",
+  // segment → migrated to providers/segment.ts
+  // mixpanel → migrated to providers/mixpanel.ts
   // Vector DBs
   // weaviate → migrated to providers/weaviate.ts
   // Communication
@@ -139,23 +139,20 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   //   confluence → providers/confluence.ts
   //   google-sheets → providers/googleSheets.ts
   //   google-calendar → providers/googleCalendar.ts
-  // CRM
-  "salesforce.instance_url": "SALESFORCE_INSTANCE_URL",
-  "zendesk.subdomain": "ZENDESK_SUBDOMAIN",
-  "zendesk.email": "ZENDESK_EMAIL",
-  "pipedrive.company_domain": "PIPEDRIVE_DOMAIN",
-  // Payment
-  "paypal.client_id": "PAYPAL_CLIENT_ID",
-  "stripe.webhook_secret": "STRIPE_WEBHOOK_SECRET",
+  // CRM / Payment — all migrated:
+  //   salesforce → providers/salesforce.ts
+  //   zendesk → providers/zendesk.ts
+  //   pipedrive → providers/pipedrive.ts
+  //   stripe → providers/stripe.ts
+  //   paypal → providers/paypal.ts
   // Social
   // twitter.api_key/api_secret/default_username → providers/twitter.ts
   "facebook.page_id": "FACEBOOK_PAGE_ID",
   "instagram.business_account_id": "INSTAGRAM_BUSINESS_ACCOUNT_ID",
   "instagram.page_id": "INSTAGRAM_PAGE_ID",
-  // Analytics
-  "mixpanel.project_token": "MIXPANEL_PROJECT_TOKEN",
-  "google-analytics.service_account_json": "GOOGLE_ANALYTICS_SA_JSON",
-  "google-analytics.property_id": "GA4_PROPERTY_ID",
+  // Analytics — all migrated:
+  //   mixpanel → providers/mixpanel.ts
+  //   google-analytics → providers/googleAnalytics.ts
   // E-commerce
   "shopify.shop_domain": "SHOPIFY_SHOP_DOMAIN",
   "woocommerce.site_url": "WOOCOMMERCE_STORE_URL",

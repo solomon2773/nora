@@ -1,0 +1,46 @@
+# Salesforce
+
+> How to OAuth into Salesforce and connect the resulting access token + instance URL to Nora.
+
+Salesforce integrations let your agents query and update CRM records. Nora authenticates with a Bearer access token against your **instance URL** (which Salesforce returns as part of the OAuth flow).
+
+## Where to apply for credentials
+
+Salesforce uses OAuth 2.0 — there's no static "API key" page. The flow:
+
+<Steps>
+  <Step title="Create a Connected App">
+    Setup → App Manager → **New Connected App**. Set **Enable OAuth Settings** = on. Pick scopes: `api`, `refresh_token offline_access`, `full` (or tighter as needed). Set a callback URL pointing at any HTTPS endpoint you control.
+  </Step>
+
+<Step title="Get the consumer key + secret">
+  Once the Connected App is created, copy its **Consumer Key** + **Consumer Secret**.
+</Step>
+
+<Step title="Run the OAuth Web Server flow">
+  Use a script or [the Salesforce OAuth
+  playground](https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/intro_oauth_and_connected_apps.htm)
+  to swap an authorization code for an access token. The response also includes `instance_url`.
+</Step>
+
+  <Step title="Paste into Nora">
+    Paste **Access Token** and **Instance URL** into Nora. The instance URL goes through the SSRF guard (must be a public Salesforce host).
+  </Step>
+</Steps>
+
+<Note>
+  Salesforce access tokens expire (typically 2 hours). For production, you need to also store the
+  refresh_token outside Nora and refresh proactively. This integration uses a single static token —
+  fine for dev and prototyping; not for long-running production agents.
+</Note>
+
+## MCP server
+
+No official Salesforce MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                  | Source             |
+| ------------------------- | ------------------ |
+| `SALESFORCE_ACCESS_TOKEN` | Access Token field |
+| `SALESFORCE_INSTANCE_URL` | Instance URL field |

@@ -73,46 +73,10 @@ function buildConnectivityTests(integration, token, deps) {
     // confluence → migrated to providers/confluence.ts
     // digitalocean → migrated to providers/digitalocean.ts
     // supabase → migrated to providers/supabase.ts
-    stripe: async () => {
-      const res = await fetch("https://api.stripe.com/v1/balance", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Stripe API returned ${res.status}`);
-      return { success: true, message: "Balance verified" };
-    },
-    hubspot: async () => {
-      const res = await fetch("https://api.hubapi.com/crm/v3/objects/contacts?limit=1", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`HubSpot API returned ${res.status}`);
-      return { success: true, message: "Connected to HubSpot" };
-    },
-    pipedrive: async () => {
-      const res = await fetch(
-        `https://api.pipedrive.com/v1/users/me?api_token=${encodeURIComponent(token)}`,
-      );
-      if (!res.ok) throw new Error(`Pipedrive API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.data?.name || "verified"}` };
-    },
-    zendesk: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const subdomain = config.subdomain;
-      const email = config.email;
-      if (!subdomain) throw new Error("Zendesk subdomain not configured");
-      if (!email) throw new Error("Zendesk email not configured");
-      const res = await fetch(`https://${subdomain}.zendesk.com/api/v2/users/me.json`, {
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${email}/token:${token}`).toString("base64")}`,
-        },
-      });
-      if (!res.ok) throw new Error(`Zendesk API returned ${res.status}`);
-      const data = await res.json();
-      return { success: true, message: `Connected as ${data.user?.name || "verified"}` };
-    },
+    // stripe → migrated to providers/stripe.ts
+    // hubspot → migrated to providers/hubspot.ts
+    // pipedrive → migrated to providers/pipedrive.ts
+    // zendesk → migrated to providers/zendesk.ts
     // elasticsearch → migrated to providers/elasticsearch.ts
     // pinecone → migrated to providers/pinecone.ts
     // algolia → migrated to providers/algolia.ts
@@ -207,20 +171,7 @@ function buildConnectivityTests(integration, token, deps) {
       };
     },
     // docker-hub → migrated to providers/dockerHub.ts
-    salesforce: async () => {
-      const config =
-        typeof integration.config === "string"
-          ? JSON.parse(integration.config)
-          : integration.config || {};
-      const rawUrl = config.instance_url;
-      if (!rawUrl) throw new Error("Salesforce instance URL not configured");
-      const instanceUrl = await assertSafeUrl(rawUrl, "Salesforce instance URL");
-      const res = await fetch(`${instanceUrl}/services/data/v59.0/`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`Salesforce API returned ${res.status}`);
-      return { success: true, message: "Connected to Salesforce" };
-    },
+    // salesforce → migrated to providers/salesforce.ts
   };
 }
 

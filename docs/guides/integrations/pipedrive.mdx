@@ -1,0 +1,33 @@
+# Pipedrive
+
+> Where to find your Pipedrive API token and connect it to Nora.
+
+Pipedrive integrations let your agents read and update deals, contacts, and pipelines.
+
+## Where to apply for credentials
+
+<Card
+  title="Pipedrive — Personal API token"
+  href="https://app.pipedrive.com/settings/api"
+  icon="trending-up"
+  arrow
+>
+  Settings → Personal preferences → API
+</Card>
+
+The page shows your Personal API Token directly — copy it. (For team-scoped agents, use OAuth apps instead.)
+
+## Connect in Nora
+
+Paste the token. Optionally set your **Company Domain** (the slug before `.pipedrive.com`). Nora calls `GET /v1/users/me` and reports the username.
+
+## MCP server
+
+No official Pipedrive MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                   | Source                  |
+| -------------------------- | ----------------------- |
+| `PIPEDRIVE_API_KEY`        | API Token field         |
+| `PIPEDRIVE_COMPANY_DOMAIN` | Company Domain (if set) |

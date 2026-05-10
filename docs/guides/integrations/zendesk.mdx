@@ -1,0 +1,48 @@
+# Zendesk
+
+> Where to issue a Zendesk API token and connect it to Nora.
+
+Zendesk integrations let your agents read and update tickets, users, and organizations. Nora authenticates with HTTP Basic using Zendesk's special `<email>/token:<api_token>` shape.
+
+## Where to apply for credentials
+
+<Card
+  title="Zendesk — API Tokens"
+  href="https://docs.zendesk.com/api-reference/introduction/security-and-auth/#api-token"
+  icon="help-circle"
+  arrow
+>
+  Admin Center → Apps and integrations → Zendesk APIs → Settings
+</Card>
+
+<Steps>
+  <Step title="Enable token access">
+    In Admin Center, open **Apps and integrations → Zendesk APIs → Settings**. Make sure **Token access** is enabled.
+  </Step>
+
+  <Step title="Create a token">
+    Click **Add API token**, give it a description, copy the value (only shown once).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+| Field     | Value                                                               |
+| --------- | ------------------------------------------------------------------- |
+| Subdomain | The slug before `.zendesk.com` (e.g. `acme` for `acme.zendesk.com`) |
+| Email     | The agent account's email — Zendesk uses it for `email/token` auth  |
+| API Token | The token from above                                                |
+
+Nora calls `GET /api/v2/users/me.json` and reports the agent's name on success.
+
+## MCP server
+
+No official Zendesk MCP server today.
+
+## Environment variables Nora injects
+
+| Variable            | Source          |
+| ------------------- | --------------- |
+| `ZENDESK_API_TOKEN` | API Token field |
+| `ZENDESK_SUBDOMAIN` | Subdomain field |
+| `ZENDESK_EMAIL`     | Email field     |

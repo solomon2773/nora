@@ -83,6 +83,15 @@ export { trelloProvider } from "./providers/trello";
 export { confluenceProvider } from "./providers/confluence";
 export { googleSheetsProvider } from "./providers/googleSheets";
 export { googleCalendarProvider } from "./providers/googleCalendar";
+export { salesforceProvider } from "./providers/salesforce";
+export { hubspotProvider } from "./providers/hubspot";
+export { pipedriveProvider } from "./providers/pipedrive";
+export { zendeskProvider } from "./providers/zendesk";
+export { stripeProvider } from "./providers/stripe";
+export { paypalProvider } from "./providers/paypal";
+export { googleAnalyticsProvider } from "./providers/googleAnalytics";
+export { mixpanelProvider } from "./providers/mixpanel";
+export { segmentProvider } from "./providers/segment";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

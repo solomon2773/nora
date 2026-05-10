@@ -1,0 +1,48 @@
+# Stripe
+
+> Where to issue a Stripe secret key and connect it to Nora.
+
+Stripe integrations let your agents create charges, manage subscriptions, refund customers, and read transaction history. Nora authenticates with a Bearer secret key.
+
+## Where to apply for credentials
+
+<Card
+  title="Stripe Dashboard — API Keys"
+  href="https://dashboard.stripe.com/apikeys"
+  icon="credit-card"
+  arrow
+>
+  https://dashboard.stripe.com/apikeys
+</Card>
+
+<Steps>
+  <Step title="Pick a key type">
+    - **Restricted Key** (recommended for production) — pick only the resources the agent needs.
+    - **Standard Secret Key** (`sk_live_...`) — full access. Easier for dev, dangerous for production.
+  </Step>
+
+<Step title="Copy the key">Stripe shows it once. Test mode keys start with `sk_test_`.</Step>
+
+  <Step title="(Optional) Webhook secret">
+    For event-driven agents, generate a webhook signing secret under **Developers → Webhooks**.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the secret key. Optionally paste a webhook signing secret. Nora calls `GET /v1/balance` to verify.
+
+## MCP server
+
+Stripe ships an official MCP server:
+
+- **Package:** `@stripe/mcp`
+- **Docs:** [github.com/stripe/agent-toolkit](https://github.com/stripe/agent-toolkit/tree/main/typescript/examples/mcp)
+- **Env:** `STRIPE_SECRET_KEY` (which Nora injects).
+
+## Environment variables Nora injects
+
+| Variable                | Source                          |
+| ----------------------- | ------------------------------- |
+| `STRIPE_SECRET_KEY`     | Secret Key field                |
+| `STRIPE_WEBHOOK_SECRET` | Webhook Signing Secret (if set) |

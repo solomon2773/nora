@@ -1,0 +1,40 @@
+# HubSpot
+
+> Where to issue a HubSpot Private App access token and connect it to Nora.
+
+HubSpot integrations let your agents read and write contacts, deals, tickets, and marketing campaigns. Nora authenticates with a private-app access token (Bearer auth) — HubSpot's preferred replacement for the deprecated API key.
+
+## Where to apply for credentials
+
+<Card title="HubSpot — Private Apps" href="https://app.hubspot.com/private-apps" icon="users" arrow>
+  Settings → Integrations → Private Apps
+</Card>
+
+<Steps>
+  <Step title="Create a private app">
+    Settings → Integrations → Private Apps → **Create a private app**. Name it (e.g. "Nora").
+  </Step>
+
+<Step title="Pick scopes">
+  On the **Scopes** tab, tick the CRM scopes the agent needs (e.g. `crm.objects.contacts.read`,
+  `crm.objects.contacts.write`, `crm.objects.deals.write`).
+</Step>
+
+  <Step title="Copy the access token">
+    Click **Create app** → **Show token**. Copy it (starts with `pat-na1-...` or your region prefix).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token. Nora calls `GET /crm/v3/objects/contacts?limit=1` to verify it.
+
+## MCP server
+
+No official HubSpot MCP server today.
+
+## Environment variables Nora injects
+
+| Variable               | Source                   |
+| ---------------------- | ------------------------ |
+| `HUBSPOT_ACCESS_TOKEN` | Private App Access Token |

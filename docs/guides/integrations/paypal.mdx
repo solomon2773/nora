@@ -1,0 +1,50 @@
+# PayPal
+
+> How to register a PayPal REST API app and connect its Client ID + Secret to Nora.
+
+PayPal integrations let your agents create orders, capture payments, issue refunds, and inspect transactions. Nora uses the **Client Credentials** OAuth grant — `client_id` + `client_secret` swapped for an access token at `/v1/oauth2/token`.
+
+## Where to apply for credentials
+
+<Card
+  title="PayPal Developer Dashboard"
+  href="https://developer.paypal.com/dashboard/applications/sandbox"
+  icon="dollar-sign"
+  arrow
+>
+  developer.paypal.com → Apps & Credentials
+</Card>
+
+<Steps>
+  <Step title="Pick environment">
+    Toggle between **Sandbox** and **Live** — develop with sandbox credentials, switch to live for production.
+  </Step>
+
+<Step title="Create an app">Apps & Credentials → **Create App**. Name it (e.g. "Nora").</Step>
+
+  <Step title="Copy Client ID + Secret">
+    Both visible on the app's detail page. Treat the secret as a password.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+| Field         | Value                                           |
+| ------------- | ----------------------------------------------- |
+| Client ID     | The PayPal app's client ID                      |
+| Client Secret | The PayPal app's client secret                  |
+| Use Sandbox   | `true` for sandbox apps, blank/`false` for live |
+
+Nora POSTs `grant_type=client_credentials` against `/v1/oauth2/token` (sandbox or live host) to verify.
+
+## MCP server
+
+No official PayPal MCP server today.
+
+## Environment variables Nora injects
+
+| Variable               | Source              |
+| ---------------------- | ------------------- |
+| `PAYPAL_CLIENT_SECRET` | Client Secret field |
+| `PAYPAL_CLIENT_ID`     | Client ID field     |
+| `PAYPAL_SANDBOX`       | Use Sandbox flag    |

@@ -807,7 +807,17 @@
         "placeholder": "https://your-instance.salesforce.com"
       }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://help.salesforce.com/s/articleView?id=sf.security_access_token.htm",
+    "setupGuide": {
+      "steps": [
+        "In Salesforce, open Setup → App Manager → New Connected App. Set OAuth scopes (api, refresh_token, full).",
+        "Run the OAuth 2.0 Web Server flow against your org and capture the access_token + instance_url from the response.",
+        "Paste the access_token and instance_url into Nora.",
+        "Tokens expire — for production, store the refresh_token outside Nora and rotate."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "hubspot",
@@ -824,7 +834,17 @@
         "required": true
       }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.hubspot.com/private-apps",
+    "setupGuide": {
+      "steps": [
+        "In HubSpot, open Settings → Integrations → Private Apps.",
+        "Click Create a private app, name it, and on the Scopes tab pick the CRM scopes you need.",
+        "Click Create app → Show token → Copy.",
+        "Token starts with pat-na1- (or similar region prefix)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "pipedrive",
@@ -837,7 +857,16 @@
       { "key": "api_token", "label": "API Token", "type": "password", "required": true },
       { "key": "company_domain", "label": "Company Domain", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.pipedrive.com/settings/api",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Pipedrive and open Settings → Personal preferences → API.",
+        "Copy the API Token shown there.",
+        "(Optional) Find your company domain (the slug before .pipedrive.com)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "zendesk",
@@ -851,7 +880,17 @@
       { "key": "email", "label": "Email", "type": "email", "required": true },
       { "key": "api_token", "label": "API Token", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://docs.zendesk.com/api-reference/introduction/security-and-auth/#api-token",
+    "setupGuide": {
+      "steps": [
+        "In Zendesk Admin Center, open Apps and integrations → Zendesk APIs → Settings.",
+        "Enable Token access if it isn't already, then click Add API token.",
+        "Copy the token (only shown once).",
+        "Subdomain = the slug before .zendesk.com. Email = the agent's account email."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "google-drive",
@@ -956,7 +995,24 @@
         "required": false
       }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://dashboard.stripe.com/apikeys",
+    "setupGuide": {
+      "steps": [
+        "Sign in to dashboard.stripe.com.",
+        "Open Developers → API keys.",
+        "Use a Restricted Key for production agents — pick only the resources the agent needs.",
+        "Copy the secret key (sk_live_... or sk_test_...).",
+        "(Optional) Generate a webhook signing secret under Developers → Webhooks if your agent listens for events."
+      ]
+    },
+    "mcp": {
+      "available": true,
+      "transport": "stdio",
+      "npmPackage": "@stripe/mcp",
+      "docsUrl": "https://github.com/stripe/agent-toolkit/tree/main/typescript/examples/mcp",
+      "notes": "Official Stripe MCP server. Reads STRIPE_SECRET_KEY env var."
+    }
   },
   {
     "id": "paypal",
@@ -970,7 +1026,17 @@
       { "key": "client_secret", "label": "Client Secret", "type": "password", "required": true },
       { "key": "sandbox", "label": "Use Sandbox", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://developer.paypal.com/dashboard/applications/sandbox",
+    "setupGuide": {
+      "steps": [
+        "Sign in to developer.paypal.com.",
+        "Open Apps & Credentials → Sandbox or Live tab.",
+        "Click Create App, give it a name, choose the right environment.",
+        "Copy the Client ID and Client Secret. For testing, use sandbox = true."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "twitter",
@@ -1191,7 +1257,17 @@
       },
       { "key": "property_id", "label": "GA4 Property ID", "type": "text", "required": true }
     ],
-    "capabilities": ["read"]
+    "capabilities": ["read"],
+    "credentialsUrl": "https://console.cloud.google.com/iam-admin/serviceaccounts",
+    "setupGuide": {
+      "steps": [
+        "Create a service account in GCP and generate a JSON key.",
+        "Enable the Google Analytics Data API for the project.",
+        "In Google Analytics Admin → Property Access Management, add the SA's client_email as a Viewer.",
+        "Find your GA4 Property ID under Property Settings."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "mixpanel",
@@ -1204,7 +1280,16 @@
       { "key": "project_token", "label": "Project Token", "type": "text", "required": true },
       { "key": "api_secret", "label": "API Secret", "type": "password", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://mixpanel.com/settings/project",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Mixpanel and open Project settings.",
+        "Copy the Project Token (used for ingestion).",
+        "(Optional) For server-side / query API access, create a Service Account under Access security and copy its secret."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "segment",
@@ -1216,7 +1301,16 @@
     "configFields": [
       { "key": "write_key", "label": "Write Key", "type": "password", "required": true }
     ],
-    "capabilities": ["write"]
+    "capabilities": ["write"],
+    "credentialsUrl": "https://app.segment.com/",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Segment.",
+        "Pick the Source you want to write into (or create a new one).",
+        "Copy the Write Key from the source's Settings → API Keys."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "elasticsearch",

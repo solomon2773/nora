@@ -71,6 +71,15 @@ const { trelloProvider } = require("../providers/trello");
 const { confluenceProvider } = require("../providers/confluence");
 const { googleSheetsProvider } = require("../providers/googleSheets");
 const { googleCalendarProvider } = require("../providers/googleCalendar");
+const { salesforceProvider } = require("../providers/salesforce");
+const { hubspotProvider } = require("../providers/hubspot");
+const { pipedriveProvider } = require("../providers/pipedrive");
+const { zendeskProvider } = require("../providers/zendesk");
+const { stripeProvider } = require("../providers/stripe");
+const { paypalProvider } = require("../providers/paypal");
+const { googleAnalyticsProvider } = require("../providers/googleAnalytics");
+const { mixpanelProvider } = require("../providers/mixpanel");
+const { segmentProvider } = require("../providers/segment");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -146,6 +155,15 @@ const providerRegistry = createProviderRegistry((providerId) =>
   confluenceProvider,
   googleSheetsProvider,
   googleCalendarProvider,
+  salesforceProvider,
+  hubspotProvider,
+  pipedriveProvider,
+  zendeskProvider,
+  stripeProvider,
+  paypalProvider,
+  googleAnalyticsProvider,
+  mixpanelProvider,
+  segmentProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`
