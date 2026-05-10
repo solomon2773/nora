@@ -25,5 +25,5 @@ nginx.conf.tls
 testing-report/
 e2e/artifacts/
 
-# Claude Code per-user state — skills + shared settings stay tracked
-.claude/settings.local.json
+# Local-only tooling and per-user state
+.claude/
