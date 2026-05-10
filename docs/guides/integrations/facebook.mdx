@@ -1,0 +1,47 @@
+# Facebook
+
+> How to mint a Facebook Page Access Token and connect it to Nora.
+
+## Where to apply for credentials
+
+<Card
+  title="Meta for Developers"
+  href="https://developers.facebook.com/apps/"
+  icon="facebook"
+  arrow
+>
+  developers.facebook.com/apps
+</Card>
+
+<Steps>
+  <Step title="Create a Business app">
+    Click **Create App** → choose **Business** type. Name it.
+  </Step>
+
+<Step title="Add Products">Add **Pages** and **Facebook Login** products.</Step>
+
+<Step title="Mint a long-lived Page Access Token">
+  Use the [Graph API Explorer](https://developers.facebook.com/tools/explorer/): get a User Access
+  Token with `pages_show_list`, `pages_manage_posts`, `pages_read_engagement` scopes; use the
+  `/me/accounts` endpoint to swap it for a long-lived Page token.
+</Step>
+
+  <Step title="Find the Page ID">
+    The page's About tab shows it. Copy it into Nora.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the Page Access Token + Page ID. Nora calls `GET /me?access_token=...` to verify.
+
+## MCP server
+
+No official Facebook MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                | Source            |
+| ----------------------- | ----------------- |
+| `FACEBOOK_ACCESS_TOKEN` | Page Access Token |
+| `FACEBOOK_PAGE_ID`      | Page ID field     |

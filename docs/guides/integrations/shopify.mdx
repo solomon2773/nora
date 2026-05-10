@@ -1,0 +1,51 @@
+# Shopify
+
+> How to provision a Shopify Admin API access token from a custom app and connect it to Nora.
+
+## Where to apply for credentials
+
+<Card
+  title="Shopify — Custom apps"
+  href="https://help.shopify.com/en/manual/apps/app-types/custom-apps"
+  icon="shopping-cart"
+  arrow
+>
+  Settings → Apps and sales channels → Develop apps
+</Card>
+
+<Steps>
+  <Step title="Enable custom app development">
+    Shopify Admin → Settings → Apps and sales channels → **Develop apps**. (Requires shop owner permission once.)
+  </Step>
+
+<Step title="Create a custom app">Click **Create an app**, give it a name.</Step>
+
+<Step title="Configure Admin API scopes">
+  On the app's Configuration tab, click **Configure Admin API scopes** and tick what your agent
+  needs (e.g. `read_products`, `write_orders`, `read_customers`).
+</Step>
+
+  <Step title="Install + copy the token">
+    Click **Install app**. The Admin API access token (`shpat_...`) is shown once on the API credentials tab.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+| Field        | Value                                                 |
+| ------------ | ----------------------------------------------------- |
+| Shop Domain  | `acme` (Nora appends `.myshopify.com`) or full domain |
+| Access Token | The `shpat_...` token from above                      |
+
+Nora calls `GET /admin/api/2024-01/shop.json` with `X-Shopify-Access-Token`.
+
+## MCP server
+
+No official Shopify MCP server today.
+
+## Environment variables Nora injects
+
+| Variable               | Source             |
+| ---------------------- | ------------------ |
+| `SHOPIFY_ACCESS_TOKEN` | Access Token field |
+| `SHOPIFY_SHOP_DOMAIN`  | Shop Domain field  |

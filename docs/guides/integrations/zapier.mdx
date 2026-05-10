@@ -1,0 +1,46 @@
+# Zapier
+
+> How to set up a Zapier Catch Hook and connect it to Nora.
+
+Zapier integrations are write-only: Nora POSTs events to your Zap's webhook URL. Zapier then routes them to whichever downstream apps your Zap is configured for.
+
+## Where to apply for credentials
+
+<Card
+  title="Zapier — Webhooks by Zapier"
+  href="https://zapier.com/apps/webhook/integrations"
+  icon="zap"
+  arrow
+>
+  Zapier app builder → Webhooks by Zapier
+</Card>
+
+<Steps>
+  <Step title="Create a Zap">
+    Pick **Webhooks by Zapier** as the Trigger.
+  </Step>
+
+<Step title="Pick Catch Hook">
+  Trigger event: **Catch Hook**. Zapier generates a unique webhook URL.
+</Step>
+
+<Step title="Copy the URL">Use it in Nora.</Step>
+
+  <Step title="Finish your Zap">
+    Add downstream Action steps (Slack, Sheets, etc.) and turn the Zap on.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the URL. Nora validates it's HTTPS and stores it. **No test message** — that would deliver to your Zap.
+
+## MCP server
+
+No MCP for Zapier (webhook integrations don't expose a query API).
+
+## Environment variables Nora injects
+
+| Variable             | Source            |
+| -------------------- | ----------------- |
+| `ZAPIER_WEBHOOK_URL` | Webhook URL field |

@@ -1,0 +1,44 @@
+# n8n
+
+> How to expose an n8n webhook for Nora to send events into.
+
+## Where to apply for credentials
+
+<Card
+  title="n8n — Webhook node docs"
+  href="https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/"
+  icon="git-merge"
+  arrow
+>
+  n8n Webhook trigger
+</Card>
+
+<Steps>
+  <Step title="Create a workflow">
+    In your n8n instance (n8n.cloud or self-hosted), open Workflows → New.
+  </Step>
+
+<Step title="Add a Webhook trigger">
+  First node: **Webhook**. Configure the path, HTTP method (POST), and authentication mode.
+</Step>
+
+<Step title="Save + activate">
+  Save the workflow and toggle **Active**. n8n shows two URLs — use the **Production** URL (not
+  Test).
+</Step>
+
+  <Step title="(n8n Cloud only) Generate an API key">
+    For management calls beyond webhooks, get an API key from your n8n Cloud account settings.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the production webhook URL. Optionally paste an API key. Nora validates the URL shape and stores both encrypted.
+
+## Environment variables Nora injects
+
+| Variable          | Source            |
+| ----------------- | ----------------- |
+| `N8N_API_KEY`     | API Key (if set)  |
+| `N8N_WEBHOOK_URL` | Webhook URL field |

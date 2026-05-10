@@ -72,29 +72,21 @@ describe("createProviderRegistry", () => {
     });
   });
 
-  it("captures errors thrown by the legacy connectivity test as success=false", async () => {
+  it("returns the no-tester fallback for unknown providers (legacy connectivity table is now empty)", async () => {
+    // After PR 8 every catalog provider has a strategy and the legacy
+    // connectivityTests object is effectively empty. Unknown ids resolve
+    // through LegacyProviderAdapter and report the "credentials stored
+    // (not verified)" shape.
     const legacyFactory = (id) => createLegacyProviderAdapter(id, { envMap: {}, configEnvMap: {} });
     const registry = createProviderRegistry(legacyFactory);
 
-    const originalFetch = global.fetch;
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: false,
-      status: 401,
-      json: async () => ({}),
-    });
-    try {
-      // datadog is still in the legacy connectivity-test switch
-      // (github/slack/linear/jira/twitter migrated to strategy in PR 4).
-      const provider = registry.resolve("datadog");
-      const result = await provider.test(
-        { row: { provider: "datadog" }, token: "bad-token", config: {} },
-        { fetch, assertSafeUrl: async (u) => u },
-      );
-      expect(result.success).toBe(false);
-      expect(result.error).toContain("Datadog API returned 401");
-    } finally {
-      global.fetch = originalFetch;
-    }
+    const provider = registry.resolve("not-a-real-provider");
+    const result = await provider.test(
+      { row: { provider: "not-a-real-provider" }, token: "x", config: {} },
+      { fetch: jest.fn(), assertSafeUrl: async (u) => u },
+    );
+    expect(result.success).toBe(true);
+    expect(result.message).toContain("connectivity not verified");
   });
 
   it("lists registered providers", () => {

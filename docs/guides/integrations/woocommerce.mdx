@@ -1,0 +1,51 @@
+# WooCommerce
+
+> Where to issue WooCommerce REST API keys and connect them to Nora.
+
+## Where to apply for credentials
+
+<Card
+  title="WooCommerce REST API docs"
+  href="https://woocommerce.com/document/woocommerce-rest-api/"
+  icon="shopping-bag"
+  arrow
+>
+  WooCommerce → Settings → Advanced → REST API
+</Card>
+
+<Steps>
+  <Step title="Open the REST API tab">
+    WordPress Admin → WooCommerce → Settings → **Advanced → REST API**.
+  </Step>
+
+<Step title="Generate keys">
+  Click **Add Key**. Pick a user (the API operates with that user's permissions), choose
+  **Read/Write** if your agent updates products/orders.
+</Step>
+
+  <Step title="Copy">
+    Consumer Key starts with `ck_`. Consumer Secret starts with `cs_`. Both shown once.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+| Field           | Value                                              |
+| --------------- | -------------------------------------------------- |
+| Site URL        | `https://shop.example.com` (your WordPress origin) |
+| Consumer Key    | `ck_...`                                           |
+| Consumer Secret | `cs_...`                                           |
+
+Nora calls `/wp-json/wc/v3/system_status` with HTTP Basic.
+
+## MCP server
+
+No official WooCommerce MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                      | Source             |
+| ----------------------------- | ------------------ |
+| `WOOCOMMERCE_CONSUMER_SECRET` | Consumer Secret    |
+| `WOOCOMMERCE_STORE_URL`       | Site URL field     |
+| `WOOCOMMERCE_CONSUMER_KEY`    | Consumer Key field |

@@ -1,0 +1,45 @@
+# Make (Integromat)
+
+> How to set up a Make custom webhook and connect it to Nora.
+
+Make.com (formerly Integromat) integrations are write-only: Nora POSTs events to your scenario's webhook URL.
+
+## Where to apply for credentials
+
+<Card
+  title="Make — Webhooks docs"
+  href="https://www.make.com/en/help/tools/webhooks"
+  icon="repeat"
+  arrow
+>
+  Make.com → Webhooks
+</Card>
+
+<Steps>
+  <Step title="Create a Scenario">
+    In Make, click Create a new scenario. Add a **Webhooks → Custom webhook** trigger.
+  </Step>
+
+<Step title="Generate the URL">
+  Click **Add** in the trigger config. Make generates a unique webhook URL.
+</Step>
+
+<Step title="Run once">
+  Click Run once on the scenario so it's listening, then send a test payload to the URL — Make will
+  pick up the data structure for downstream modules.
+</Step>
+
+  <Step title="Activate">
+    Build out the rest of the scenario and turn it on.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the URL. Stored without a test message.
+
+## Environment variables Nora injects
+
+| Variable           | Source            |
+| ------------------ | ----------------- |
+| `MAKE_WEBHOOK_URL` | Webhook URL field |

@@ -1,0 +1,39 @@
+# PagerDuty
+
+> Where to issue a PagerDuty API key (and optional routing key) and connect them to Nora.
+
+## Where to apply for credentials
+
+<Card
+  title="PagerDuty — API Access Keys"
+  href="https://support.pagerduty.com/docs/api-access-keys"
+  icon="bell"
+  arrow
+>
+  Integrations → API Access Keys
+</Card>
+
+<Steps>
+  <Step title="Create an API access key">
+    Sign in as admin → Integrations → API Access Keys → **Create New API Key**. Pick read-only or read-write scope.
+  </Step>
+
+  <Step title="(Optional) Get a routing key for Events API">
+    Services → pick a Service → Integrations tab → add a Generic API integration. Copy the Integration Key (a.k.a. routing key).
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the API Key. Optionally paste a Routing Key for Events API v2 ingestion. Nora calls `GET /users/me` with the `Token token=<key>` Authorization header.
+
+## MCP server
+
+No official PagerDuty MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                | Source               |
+| ----------------------- | -------------------- |
+| `PAGERDUTY_TOKEN`       | API Key field        |
+| `PAGERDUTY_ROUTING_KEY` | Routing Key (if set) |

@@ -80,6 +80,17 @@ const { paypalProvider } = require("../providers/paypal");
 const { googleAnalyticsProvider } = require("../providers/googleAnalytics");
 const { mixpanelProvider } = require("../providers/mixpanel");
 const { segmentProvider } = require("../providers/segment");
+const { datadogProvider } = require("../providers/datadog");
+const { sentryProvider } = require("../providers/sentry");
+const { grafanaProvider } = require("../providers/grafana");
+const { pagerdutyProvider } = require("../providers/pagerduty");
+const { shopifyProvider } = require("../providers/shopify");
+const { woocommerceProvider } = require("../providers/woocommerce");
+const { facebookProvider } = require("../providers/facebook");
+const { instagramProvider } = require("../providers/instagram");
+const { zapierProvider } = require("../providers/zapier");
+const { makeProvider } = require("../providers/make");
+const { n8nProvider } = require("../providers/n8n");
 
 const repo = createIntegrationsRepository(db);
 const secretCrypto = createSecretEncryption({
@@ -164,6 +175,17 @@ const providerRegistry = createProviderRegistry((providerId) =>
   googleAnalyticsProvider,
   mixpanelProvider,
   segmentProvider,
+  datadogProvider,
+  sentryProvider,
+  grafanaProvider,
+  pagerdutyProvider,
+  shopifyProvider,
+  woocommerceProvider,
+  facebookProvider,
+  instagramProvider,
+  zapierProvider,
+  makeProvider,
+  n8nProvider,
 ].forEach((p) => providerRegistry.register(p));
 
 // Resolve fetch at call time so test mocks reassigning `global.fetch`

@@ -92,6 +92,17 @@ export { paypalProvider } from "./providers/paypal";
 export { googleAnalyticsProvider } from "./providers/googleAnalytics";
 export { mixpanelProvider } from "./providers/mixpanel";
 export { segmentProvider } from "./providers/segment";
+export { datadogProvider } from "./providers/datadog";
+export { sentryProvider } from "./providers/sentry";
+export { grafanaProvider } from "./providers/grafana";
+export { pagerdutyProvider } from "./providers/pagerduty";
+export { shopifyProvider } from "./providers/shopify";
+export { woocommerceProvider } from "./providers/woocommerce";
+export { facebookProvider } from "./providers/facebook";
+export { instagramProvider } from "./providers/instagram";
+export { zapierProvider } from "./providers/zapier";
+export { makeProvider } from "./providers/make";
+export { n8nProvider } from "./providers/n8n";
 
 // The orchestration service is the recommended import for callers that
 // need the high-level operations (connect, list, test, sync, env-vars).

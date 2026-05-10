@@ -1,0 +1,34 @@
+# Datadog
+
+> Where to issue Datadog API + application keys and connect them to Nora.
+
+## Where to apply for credentials
+
+<Card
+  title="Datadog — API Keys"
+  href="https://app.datadoghq.com/organization-settings/api-keys"
+  icon="activity"
+  arrow
+>
+  Organization Settings → API Keys
+</Card>
+
+The same admin page lists Application Keys under a separate tab. Both are required if your agent issues query API calls; only the API key is needed for ingestion.
+
+## Connect in Nora
+
+Paste the **API Key**. Optionally add an **Application Key** (for query-time access) and **Datadog Site** (`datadoghq.com`, `datadoghq.eu`, `us3.datadoghq.com`, etc.).
+
+Nora calls `GET /api/v1/validate` with `DD-API-KEY` to verify.
+
+## MCP server
+
+No official Datadog MCP server today.
+
+## Environment variables Nora injects
+
+| Variable     | Source                   |
+| ------------ | ------------------------ |
+| `DD_API_KEY` | API Key field            |
+| `DD_APP_KEY` | Application Key (if set) |
+| `DD_SITE`    | Datadog Site (if set)    |

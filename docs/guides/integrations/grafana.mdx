@@ -1,0 +1,43 @@
+# Grafana
+
+> How to issue a Grafana service-account token and connect it to Nora.
+
+## Where to apply for credentials
+
+<Card
+  title="Grafana — Service accounts docs"
+  href="https://grafana.com/docs/grafana/latest/administration/service-accounts/"
+  icon="bar-chart"
+  arrow
+>
+  https://grafana.com/docs/grafana/latest/administration/service-accounts/
+</Card>
+
+<Steps>
+  <Step title="Open Service accounts">
+    Your Grafana instance → **Administration → Service accounts** → **Add service account**.
+  </Step>
+
+<Step title="Pick a role">
+  Viewer for read-only agents, Editor for dashboard authorship, Admin for cluster-level changes.
+</Step>
+
+  <Step title="Add a token to the SA">
+    Click the new SA → **Add service account token**. Set an expiration (or none). Copy the value.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Set **Grafana URL** to your instance origin (must be public — RFC1918 hosts rejected). Paste the **API Key**. Nora calls `GET <url>/api/org` with Bearer auth and reports the org name.
+
+## MCP server
+
+No official Grafana MCP server today.
+
+## Environment variables Nora injects
+
+| Variable        | Source            |
+| --------------- | ----------------- |
+| `GRAFANA_TOKEN` | API Key field     |
+| `GRAFANA_URL`   | Grafana URL field |

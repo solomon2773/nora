@@ -17,8 +17,8 @@ const INTEGRATION_ENV_MAP = {
   // discord → migrated to providers/discord.ts
   // notion → migrated to providers/notion.ts
   // linear → migrated to providers/linear.ts
-  datadog: "DD_API_KEY",
-  sentry: "SENTRY_AUTH_TOKEN",
+  // datadog → migrated to providers/datadog.ts
+  // sentry → migrated to providers/sentry.ts
   // sendgrid → migrated to providers/sendgrid.ts
   // openai → migrated to providers/openai.ts
   // anthropic → migrated to providers/anthropic.ts
@@ -31,13 +31,13 @@ const INTEGRATION_ENV_MAP = {
   // vercel → migrated to providers/vercel.ts
   // circleci → migrated to providers/circleci.ts
   // terraform → migrated to providers/terraform.ts
-  pagerduty: "PAGERDUTY_TOKEN",
+  // pagerduty → migrated to providers/pagerduty.ts
   // dropbox → migrated to providers/dropbox.ts
   // twilio → migrated to providers/twilio.ts
   // telegram → migrated to providers/telegram.ts
-  shopify: "SHOPIFY_ACCESS_TOKEN",
+  // shopify → migrated to providers/shopify.ts
   // linkedin → migrated to providers/linkedin.ts
-  instagram: "INSTAGRAM_ACCESS_TOKEN",
+  // instagram → migrated to providers/instagram.ts
   // salesforce → migrated to providers/salesforce.ts
   // twitter → migrated to providers/twitter.ts
   // digitalocean → migrated to providers/digitalocean.ts
@@ -50,12 +50,12 @@ const INTEGRATION_ENV_MAP = {
   // confluence → migrated to providers/confluence.ts
   // jira → migrated to providers/jira.ts
   // jenkins → migrated to providers/jenkins.ts
-  grafana: "GRAFANA_TOKEN",
-  woocommerce: "WOOCOMMERCE_SECRET_KEY",
+  // grafana → migrated to providers/grafana.ts
+  // woocommerce → migrated to providers/woocommerce.ts
   // trello → migrated to providers/trello.ts
   // elasticsearch → migrated to providers/elasticsearch.ts
   // supabase → migrated to providers/supabase.ts
-  facebook: "FACEBOOK_ACCESS_TOKEN",
+  // facebook → migrated to providers/facebook.ts
   // Cloud / infra
   // aws → migrated to providers/aws.ts
   // azure → migrated to providers/azure.ts
@@ -114,20 +114,16 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   //   weaviate → providers/weaviate.ts
   //   pinecone → providers/pinecone.ts
   //   algolia → providers/algolia.ts
-  // Monitoring
-  "datadog.app_key": "DD_APP_KEY",
-  "datadog.site": "DD_SITE",
-  "pagerduty.routing_key": "PAGERDUTY_ROUTING_KEY",
-  "sentry.organization": "SENTRY_ORG",
-  "sentry.project": "SENTRY_PROJECT",
-  "grafana.url": "GRAFANA_URL",
-  // DevOps
-  "jenkins.url": "JENKINS_URL",
-  "jenkins.username": "JENKINS_USERNAME",
-  "vercel.team_id": "VERCEL_TEAM_ID",
-  "terraform.organization": "TF_ORGANIZATION",
-  "kubernetes.kubeconfig": "KUBECONFIG_CONTENT",
-  "kubernetes.context": "KUBE_CONTEXT",
+  // Monitoring — all migrated:
+  //   datadog → providers/datadog.ts
+  //   pagerduty → providers/pagerduty.ts
+  //   sentry → providers/sentry.ts
+  //   grafana → providers/grafana.ts
+  // DevOps — all migrated:
+  //   jenkins → providers/jenkins.ts
+  //   vercel → providers/vercel.ts
+  //   terraform → providers/terraform.ts
+  //   kubernetes → providers/kubernetes.ts
   // Productivity
   // Productivity — all migrated to per-provider strategies:
   //   notion → providers/notion.ts
@@ -145,25 +141,20 @@ const INTEGRATION_CONFIG_ENV_MAP = {
   //   pipedrive → providers/pipedrive.ts
   //   stripe → providers/stripe.ts
   //   paypal → providers/paypal.ts
-  // Social
-  // twitter.api_key/api_secret/default_username → providers/twitter.ts
-  "facebook.page_id": "FACEBOOK_PAGE_ID",
-  "instagram.business_account_id": "INSTAGRAM_BUSINESS_ACCOUNT_ID",
-  "instagram.page_id": "INSTAGRAM_PAGE_ID",
+  // Social — all migrated:
+  //   twitter → providers/twitter.ts
+  //   facebook → providers/facebook.ts
+  //   instagram → providers/instagram.ts
   // Analytics — all migrated:
   //   mixpanel → providers/mixpanel.ts
   //   google-analytics → providers/googleAnalytics.ts
-  // E-commerce
-  "shopify.shop_domain": "SHOPIFY_SHOP_DOMAIN",
-  "woocommerce.site_url": "WOOCOMMERCE_STORE_URL",
-  "woocommerce.consumer_key": "WOOCOMMERCE_CONSUMER_KEY",
-  // Automation webhooks
-  "zapier.webhook_url": "ZAPIER_WEBHOOK_URL",
-  "make.webhook_url": "MAKE_WEBHOOK_URL",
-  "n8n.webhook_url": "N8N_WEBHOOK_URL",
-  "n8n.api_key": "N8N_API_KEY",
-  // DevOps
-  "docker-hub.username": "DOCKER_HUB_USERNAME",
+  // E-commerce / Automation — all migrated:
+  //   shopify → providers/shopify.ts
+  //   woocommerce → providers/woocommerce.ts
+  //   zapier → providers/zapier.ts
+  //   make → providers/make.ts
+  //   n8n → providers/n8n.ts
+  // DevOps — docker-hub migrated to providers/dockerHub.ts
 };
 
 const LLM_AUTH_ENV_VARS = new Set(

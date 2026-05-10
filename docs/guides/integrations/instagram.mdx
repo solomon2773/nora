@@ -1,0 +1,48 @@
+# Instagram (Graph API)
+
+> How to set up Instagram Graph access through a Meta Business app and connect it to Nora.
+
+Instagram's API runs on top of the Facebook Graph API — same Meta Business app, same access tokens, additional `instagram_*` scopes. The integration covers Instagram Business and Creator accounts (not personal accounts).
+
+## Where to apply for credentials
+
+Same flow as [Facebook](/guides/integrations/facebook):
+
+<Steps>
+  <Step title="Convert your Instagram account">
+    Switch to a Business or Creator account in the Instagram app.
+  </Step>
+
+<Step title="Connect to a Facebook Page">
+  Link the Instagram account to a Facebook Page (via Instagram → Settings → Account → Linked
+  accounts).
+</Step>
+
+  <Step title="Find the Business Account ID">
+    Use Graph API Explorer: `GET /<page-id>?fields=instagram_business_account` returns the Instagram business account ID.
+  </Step>
+
+  <Step title="Mint a token">
+    Long-lived User or Page token with `instagram_basic`, `instagram_content_publish`, `pages_show_list`.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+| Field               | Value                                       |
+| ------------------- | ------------------------------------------- |
+| Access Token        | The long-lived token                        |
+| Business Account ID | `17841...` (numeric IG Business account ID) |
+| Facebook Page ID    | (Optional) the linked Page's ID             |
+
+## MCP server
+
+No official Instagram MCP server today.
+
+## Environment variables Nora injects
+
+| Variable                        | Source                    |
+| ------------------------------- | ------------------------- |
+| `INSTAGRAM_ACCESS_TOKEN`        | Access Token field        |
+| `INSTAGRAM_BUSINESS_ACCOUNT_ID` | Business Account ID       |
+| `INSTAGRAM_PAGE_ID`             | Facebook Page ID (if set) |

@@ -588,7 +588,17 @@
       { "key": "app_key", "label": "Application Key", "type": "password", "required": false },
       { "key": "site", "label": "Datadog Site", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://app.datadoghq.com/organization-settings/api-keys",
+    "setupGuide": {
+      "steps": [
+        "Sign in to Datadog and open Organization Settings → API Keys.",
+        "Click New Key, name it (e.g. 'Nora'), copy the value.",
+        "(Optional) Generate an Application Key under Application Keys for query-time access.",
+        "Set Datadog Site if you're not on us1 (e.g. 'datadoghq.eu', 'us3.datadoghq.com')."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "pagerduty",
@@ -606,7 +616,17 @@
         "required": false
       }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://support.pagerduty.com/docs/api-access-keys",
+    "setupGuide": {
+      "steps": [
+        "Sign in to PagerDuty as an admin.",
+        "Open Integrations → API Access Keys → Create New API Key.",
+        "Pick read-only or read-write scope.",
+        "(Optional) For Events API v2, also create a service integration to get a routing key."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "notion",
@@ -1220,7 +1240,18 @@
       },
       { "key": "page_id", "label": "Page ID", "type": "text", "required": true }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://developers.facebook.com/apps/",
+    "setupGuide": {
+      "steps": [
+        "Open Meta for Developers (developers.facebook.com/apps) and create a Business app.",
+        "Add the Facebook Login + Pages product.",
+        "Use the Graph API Explorer to mint a long-lived Page Access Token (get a User Access Token first, then exchange).",
+        "Find the Page ID via the page's About tab."
+      ],
+      "scopes": ["pages_show_list", "pages_manage_posts", "pages_read_engagement"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "instagram",
@@ -1239,7 +1270,18 @@
       },
       { "key": "page_id", "label": "Facebook Page ID", "type": "text", "required": false }
     ],
-    "capabilities": ["read"]
+    "capabilities": ["read"],
+    "credentialsUrl": "https://developers.facebook.com/apps/",
+    "setupGuide": {
+      "steps": [
+        "Instagram Graph requires a Meta business app — same flow as Facebook.",
+        "Convert your Instagram account to a Business or Creator account.",
+        "Connect it to a Facebook Page; copy the Page's Instagram Business Account ID via the Graph API.",
+        "Use a long-lived User or Page Access Token with instagram_basic + instagram_content_publish scopes."
+      ],
+      "scopes": ["instagram_basic", "instagram_content_publish", "pages_show_list"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "google-analytics",
@@ -1586,7 +1628,18 @@
       { "key": "organization", "label": "Organization Slug", "type": "text", "required": false },
       { "key": "project", "label": "Project Slug", "type": "text", "required": false }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://sentry.io/settings/account/api/auth-tokens/",
+    "setupGuide": {
+      "steps": [
+        "Sign in to sentry.io.",
+        "Open Settings → Account → API → Auth Tokens.",
+        "Click Create New Token. Pick scopes (project:read, project:write, org:read).",
+        "Copy the token (only shown once)."
+      ],
+      "scopes": ["project:read", "project:write", "org:read"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "grafana",
@@ -1599,7 +1652,17 @@
       { "key": "url", "label": "Grafana URL", "type": "url", "required": true },
       { "key": "api_key", "label": "API Key", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write"]
+    "capabilities": ["read", "write"],
+    "credentialsUrl": "https://grafana.com/docs/grafana/latest/administration/service-accounts/",
+    "setupGuide": {
+      "steps": [
+        "Open your Grafana instance → Administration → Service accounts → Add service account.",
+        "Pick a role (Viewer, Editor, Admin) and click Add service account token.",
+        "Copy the token.",
+        "Set the Grafana URL to your instance origin (must be reachable from Nora; loopback rejected)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "zapier",
@@ -1611,7 +1674,16 @@
     "configFields": [
       { "key": "webhook_url", "label": "Webhook URL", "type": "url", "required": true }
     ],
-    "capabilities": ["write"]
+    "capabilities": ["write"],
+    "credentialsUrl": "https://zapier.com/apps/webhook/integrations",
+    "setupGuide": {
+      "steps": [
+        "In Zapier, create a new Zap and pick Webhooks by Zapier as the Trigger.",
+        "Choose Catch Hook as the trigger event. Zapier generates a unique webhook URL.",
+        "Copy the URL into Nora and finish the Zap."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "make",
@@ -1623,7 +1695,16 @@
     "configFields": [
       { "key": "webhook_url", "label": "Webhook URL", "type": "url", "required": true }
     ],
-    "capabilities": ["write"]
+    "capabilities": ["write"],
+    "credentialsUrl": "https://www.make.com/en/help/tools/webhooks",
+    "setupGuide": {
+      "steps": [
+        "In Make, create a new Scenario and add a Webhooks → Custom webhook trigger.",
+        "Click Add to generate the webhook URL.",
+        "Copy the URL into Nora and finish your scenario."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "n8n",
@@ -1636,7 +1717,17 @@
       { "key": "webhook_url", "label": "Webhook URL", "type": "url", "required": true },
       { "key": "api_key", "label": "API Key (optional)", "type": "password", "required": false }
     ],
-    "capabilities": ["write"]
+    "capabilities": ["write"],
+    "credentialsUrl": "https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/",
+    "setupGuide": {
+      "steps": [
+        "In your n8n instance, create a workflow with a Webhook trigger node.",
+        "Configure the path and HTTP method, save the workflow, and activate it.",
+        "Copy the production webhook URL n8n shows.",
+        "(Optional) For n8n Cloud, also paste your API key for management calls."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "shopify",
@@ -1654,7 +1745,18 @@
         "required": true
       }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://help.shopify.com/en/manual/apps/app-types/custom-apps",
+    "setupGuide": {
+      "steps": [
+        "In Shopify Admin, open Settings → Apps and sales channels → Develop apps.",
+        "Create a custom app, configure Admin API scopes (read_products, write_orders, etc.).",
+        "Click Install app, then copy the Admin API access token (starts with shpat_).",
+        "Shop Domain = your store slug (e.g. 'my-shop' for my-shop.myshopify.com)."
+      ],
+      "scopes": ["read_products", "write_products", "read_orders", "write_orders"]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "woocommerce",
@@ -1668,7 +1770,17 @@
       { "key": "consumer_key", "label": "Consumer Key", "type": "text", "required": true },
       { "key": "consumer_secret", "label": "Consumer Secret", "type": "password", "required": true }
     ],
-    "capabilities": ["read", "write", "webhook"]
+    "capabilities": ["read", "write", "webhook"],
+    "credentialsUrl": "https://woocommerce.com/document/woocommerce-rest-api/",
+    "setupGuide": {
+      "steps": [
+        "In WordPress Admin, open WooCommerce → Settings → Advanced → REST API.",
+        "Click Add Key. Pick Read/Write permissions and select a user.",
+        "Copy the Consumer Key (ck_...) and Consumer Secret (cs_...).",
+        "Site URL = your WordPress site origin (e.g. https://shop.example.com)."
+      ]
+    },
+    "mcp": { "available": false }
   },
   {
     "id": "google-calendar",

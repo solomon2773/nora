@@ -1,0 +1,40 @@
+# Sentry
+
+> Where to issue a Sentry auth token and connect it to Nora.
+
+## Where to apply for credentials
+
+<Card
+  title="Sentry — Auth Tokens"
+  href="https://sentry.io/settings/account/api/auth-tokens/"
+  icon="alert-triangle"
+  arrow
+>
+  Settings → Account → API → Auth Tokens
+</Card>
+
+<Steps>
+  <Step title="Click Create New Token">
+    Pick scopes — `project:read`, `project:write`, `org:read` are the common minimum.
+  </Step>
+
+  <Step title="Copy">
+    Sentry shows the token once.
+  </Step>
+</Steps>
+
+## Connect in Nora
+
+Paste the token. Optionally set the Organization Slug + Project Slug. Nora calls `GET /api/0/` with Bearer auth to verify.
+
+## MCP server
+
+No official Sentry MCP server today.
+
+## Environment variables Nora injects
+
+| Variable            | Source                |
+| ------------------- | --------------------- |
+| `SENTRY_AUTH_TOKEN` | Auth Token field      |
+| `SENTRY_ORG`        | Organization (if set) |
+| `SENTRY_PROJECT`    | Project (if set)      |
