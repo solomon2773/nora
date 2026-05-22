@@ -133,6 +133,7 @@
               "guides/integrations/twitter",
               "guides/integrations/vercel",
               "guides/integrations/weaviate",
+              "guides/integrations/wecom",
               "guides/integrations/woocommerce",
               "guides/integrations/zapier",
               "guides/integrations/zendesk"

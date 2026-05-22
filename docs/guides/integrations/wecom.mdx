@@ -1,0 +1,222 @@
+# WeCom
+
+> How to connect WeCom to Nora using the official OpenClaw plugin in Bot mode, Agent mode, or Both.
+
+WeCom is a Nora integration for **OpenClaw agents**. When you save the integration on a running OpenClaw agent, Nora installs and configures the official `@wecom/wecom-openclaw-plugin` for you. In this first Nora version, **Bot mode uses the default WebSocket transport** and **Agent mode uses encrypted HTTP callbacks**.
+
+## Before you start
+
+You will need:
+
+- An OpenClaw agent. WeCom is not a generic webhook integration — Nora configures the OpenClaw WeCom plugin on the agent runtime.
+- A WeCom bot if you want **Bot** mode.
+- A WeCom self-built app if you want **Agent** mode.
+- A public URL for your Nora / OpenClaw deployment if you want **Agent** mode, because WeCom must be able to reach Nora over the internet.
+
+<Note>
+  Nora keeps previously entered Bot and Agent credentials, but it only activates the mode you select
+  in the integration UI. Switching from **Both** to **Agent**, for example, disables the Bot path in
+  the live OpenClaw config without deleting the Bot credentials you already saved.
+</Note>
+
+## Where to apply for credentials
+
+Use the official WeCom plugin docs as the starting point for the raw WeCom setup flow:
+
+<Card
+  title="WeCom OpenClaw plugin"
+  href="https://github.com/WecomTeam/wecom-openclaw-plugin"
+  icon="message-square-share"
+  arrow
+>
+  GitHub — WeComTeam/wecom-openclaw-plugin
+</Card>
+
+For Nora, the credential split is:
+
+- **Bot mode**: `Bot ID` and `Secret`
+- **Agent mode**: `Corp ID`, `Corp Secret`, `Agent ID`, `Token`, and `Encoding AES Key`
+
+If you are using **Agent** mode, create a **self-built app** in the WeCom admin console first, then open the app's **API Receive** settings to generate or copy the callback `Token` and `EncodingAESKey`.
+
+## Choose a connection mode
+
+Nora supports three WeCom modes:
+
+| Mode    | What Nora configures                                      | Best for                                                     |
+| ------- | --------------------------------------------------------- | ------------------------------------------------------------ |
+| `Bot`   | WeCom bot over WebSocket                                  | Fastest setup, DM/group chat, streaming-style replies        |
+| `Agent` | WeCom self-built app with encrypted callback verification | Enterprise app flows, API-driven replies, scheduled delivery |
+| `Both`  | Bot + Agent together                                      | Bot chat UX plus Agent callbacks / outbound API delivery     |
+
+In this Nora version, Bot mode is intentionally simplified to the **default WebSocket path**. Nora does **not** expose Bot webhook mode.
+
+## Connect in Nora
+
+<Steps>
+  <Step title="Open the WeCom integration">
+    From an agent's detail page, open **Integrations** and select **WeCom**.
+  </Step>
+
+<Step title="Choose Bot, Agent, or Both">
+  Pick the connection mode that matches how you want WeCom to work. The form changes based on the
+  selected mode.
+</Step>
+
+  <Step title="Fill in the required credentials">
+    For **Bot**, paste the WeCom **Bot ID** and **Secret**.
+
+    For **Agent**, paste **Corp ID**, **Corp Secret**, **Agent ID**, **Callback Token**, and
+    **Encoding AES Key**.
+
+    For **Both**, fill in both sections. Nora separates them in the UI so it is clear which fields
+    belong to the Bot path and which belong to the Agent path.
+
+  </Step>
+
+  <Step title="Save the integration">
+    Click **Connect** or **Save**. On a running OpenClaw agent, Nora installs the official WeCom
+    plugin if needed, writes the selected mode into `channels.wecom`, and reloads the OpenClaw
+    gateway so the runtime matches the saved config.
+  </Step>
+</Steps>
+
+## Bot mode setup
+
+Bot mode is the easier path. It uses the WeCom bot account over WebSocket, which is the same default transport the upstream plugin recommends for quick setup.
+
+### Fields in Nora
+
+| Field                       | Required | Notes                                                           |
+| --------------------------- | -------- | --------------------------------------------------------------- |
+| `Default Bot ID`            | Yes      | WeCom bot identifier                                            |
+| `Default Bot Secret`        | Yes      | Bot secret from the WeCom bot setup flow                        |
+| `Bot Display Name`          | No       | Friendly label inside Nora / OpenClaw                           |
+| `Bot WebSocket URL`         | No       | Advanced override; default is `wss://openws.work.weixin.qq.com` |
+| `Send Thinking Placeholder` | No       | Sends a temporary "thinking" message before the final reply     |
+
+### When to use Bot mode
+
+- You want the simplest Nora + WeCom chat setup.
+- You want direct messages and group chat without exposing a callback URL.
+- You want the Bot chat UX without configuring a self-built WeCom app.
+
+## Agent mode setup
+
+Agent mode uses a WeCom **self-built app** and an encrypted callback URL. This is the mode to use when you want WeCom to call back into Nora / OpenClaw directly.
+
+### Fields in Nora
+
+| Field                 | Required | Notes                                                        |
+| --------------------- | -------- | ------------------------------------------------------------ |
+| `Corp ID`             | Yes      | Enterprise Corp ID                                           |
+| `Corp Secret`         | Yes      | Secret for the self-built app                                |
+| `Agent ID`            | Yes      | Needed for the Agent outbound API path Nora uses             |
+| `Callback Token`      | Yes      | Verification token from WeCom API Receive settings           |
+| `Encoding AES Key`    | Yes      | 43-character callback encryption key                         |
+| `Agent Callback Path` | No       | Advanced override; default is `/plugins/wecom/agent/default` |
+
+### Callback URL flow
+
+Agent mode has one important ordering requirement:
+
+1. Save the WeCom integration in Nora first, so the OpenClaw runtime has the callback credentials.
+2. Then go back to the WeCom admin console and save the callback URL there.
+
+That ordering matters because WeCom verifies the callback immediately when you save it.
+
+### What callback URL should you paste into WeCom?
+
+Use:
+
+```text
+https://<your-public-nora-host>/plugins/wecom/agent/default
+```
+
+If you changed the advanced callback path, use that path instead of `/plugins/wecom/agent/default`.
+
+<Note>
+  The callback URL must use the **public host that WeCom can reach**, not necessarily the same host
+  your browser is using locally. If you access Nora on `localhost` but expose it through a tunnel or
+  reverse proxy, paste the public tunnel / domain into WeCom.
+</Note>
+
+### When to use Agent mode
+
+- You are connecting a WeCom self-built app rather than only a bot account.
+- You need the encrypted callback flow from WeCom into Nora.
+- You want the Agent outbound API path for scheduled or proactive delivery.
+
+## Both mode
+
+`Both` combines the two flows:
+
+- **Bot** handles the WebSocket chat path.
+- **Agent** handles the encrypted callback and Agent API path.
+
+This is the right choice if you want the easiest day-to-day chat experience while still enabling the WeCom app callback flow.
+
+## Access control in Nora
+
+Nora exposes the WeCom access controls that are reasonable for a first version:
+
+| Setting                       | What it does                                                |
+| ----------------------------- | ----------------------------------------------------------- |
+| `Direct Message Policy`       | `pairing`, `open`, `allowlist`, or `disabled`               |
+| `Direct Message Allowlist`    | Comma- or newline-separated allowed user IDs                |
+| `Group Policy`                | `open`, `allowlist`, or `disabled`                          |
+| `Group Allowlist`             | Comma- or newline-separated allowed group IDs               |
+| `Per-Group Sender Allowlists` | Advanced JSON for sender restrictions inside allowed groups |
+
+Example per-group sender allowlist:
+
+```json
+{
+  "group_id_1": {
+    "allowFrom": ["user_a", "user_b"]
+  }
+}
+```
+
+## Verify the connection
+
+After saving the integration, click **Test**.
+
+For WeCom, Nora's test flow is runtime-aware:
+
+- it validates the saved WeCom fields for the selected mode
+- it checks that the OpenClaw runtime is reachable
+- it verifies that the WeCom plugin is installed
+- it compares the live `channels.wecom` config with the integration you saved
+
+If the agent is stopped, Nora saves the config but reports a **pending activation** state until the agent is running again.
+
+## Troubleshooting
+
+### Agent callback verification fails in WeCom
+
+Usually one of these is wrong:
+
+- the callback URL is using a local or private host that WeCom cannot reach
+- the `Token` or `Encoding AES Key` in Nora does not match WeCom
+- the integration was not saved before you clicked **Save** in the WeCom admin console
+
+### I switched modes but both Bot and Agent still respond
+
+Save the integration again after changing the mode. Nora keeps both credential sets in storage, but the live runtime should only activate the selected mode.
+
+### Test says pending activation
+
+That usually means the agent is stopped. Start the OpenClaw agent, then run **Test** again.
+
+### Disconnect did not seem to remove WeCom
+
+Disconnect removes the live WeCom channel config and tears down the WeCom plugin from the running OpenClaw agent. If the runtime is still responding, refresh the integration state and verify the agent finished reloading.
+
+## MCP server
+
+No Nora-managed MCP server for WeCom today. The integration configures the official OpenClaw WeCom plugin on the runtime instead.
+
+## Environment variables Nora injects
+
+WeCom does not behave like Nora's token-based integrations that simply inject environment variables into the runtime. Instead, Nora writes the selected config into the OpenClaw WeCom plugin configuration under `channels.wecom`.
