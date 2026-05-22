@@ -1,62 +1,176 @@
-# Email (SMTP)
+# Email (IMAP + SMTP)
 
-> Where to get SMTP credentials and how to connect them to Nora.
+> Where to get mailbox credentials and how to connect an IMAP + SMTP account to Nora.
 
-Email integrations let your agents send messages via any SMTP relay — your own Postfix server, Google Workspace SMTP, AWS SES, Mailgun, SendGrid (via SMTP), Mailtrap, etc. Nora stores the credentials encrypted and the agent runtime sends mail through the configured relay.
+The Email integration gives your agent a full mailbox credential set:
+
+- **IMAP** for reading inbox contents
+- **SMTP** for sending mail
+
+Nora stores the mailbox password encrypted, injects the normalized IMAP / SMTP settings into the runtime, and can optionally register a reminder cron on the agent after you connect the mailbox.
 
 ## Where to apply for credentials
 
-Pick whichever SMTP provider you already have an account with:
+Use any mailbox provider that offers both IMAP and SMTP access. Common choices:
 
-| Provider              | SMTP host                           | Where to get credentials                                                                |
-| --------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
-| Google Workspace      | `smtp.gmail.com`                    | [Create an app password](https://myaccount.google.com/apppasswords)                     |
-| AWS SES               | `email-smtp.<region>.amazonaws.com` | [SES SMTP credentials](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html) |
-| Mailgun               | `smtp.mailgun.org`                  | [Mailgun domain dashboard](https://app.mailgun.com/)                                    |
-| SendGrid (SMTP)       | `smtp.sendgrid.net`                 | [SendGrid API Keys](https://app.sendgrid.com/settings/api_keys) — username is `apikey`  |
-| Postmark              | `smtp.postmarkapp.com`              | [Postmark Servers](https://account.postmarkapp.com/)                                    |
-| Self-hosted (Postfix) | your hostname                       | `/etc/postfix/main.cf`                                                                  |
+| Provider                  | IMAP host               | SMTP host                           | Where to get credentials                                                                |
+| ------------------------- | ----------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
+| Gmail / Google Workspace  | `imap.gmail.com`        | `smtp.gmail.com`                    | [Google app passwords](https://myaccount.google.com/apppasswords)                       |
+| Outlook / Microsoft 365   | `outlook.office365.com` | `smtp.office365.com`                | Microsoft 365 mailbox credentials or app password                                       |
+| AWS SES                   | —                       | `email-smtp.<region>.amazonaws.com` | [SES SMTP credentials](https://docs.aws.amazon.com/ses/latest/dg/smtp-credentials.html) |
+| Mailgun                   | —                       | `smtp.mailgun.org`                  | [Mailgun domain settings](https://app.mailgun.com/)                                     |
+| Postmark                  | —                       | `smtp.postmarkapp.com`              | [Postmark Servers](https://account.postmarkapp.com/)                                    |
+| Custom IMAP / SMTP server | your host               | your host                           | Your mail provider or self-hosted mail server                                           |
 
-For Google Workspace and other 2FA-protected accounts, use an **app password** — not your account password.
+<Note>
+  Gmail and other 2FA-protected mailbox providers usually require an **app password**, not your
+  normal login password.
+</Note>
 
 ## Connect in Nora
 
 <Steps>
-  <Step title="Open the Email (SMTP) integration">
-    From an agent's detail page, open the **Integrations** tab and find **Email (SMTP)**.
+  <Step title="Open the Email integration">
+    From an agent's detail page, open **Integrations** and choose **Email (IMAP + SMTP)**.
   </Step>
 
-<Step title="Fill in the SMTP fields">
-  | Field | Example | | -------------- | -------------------------------- | | SMTP Host |
-  `smtp.gmail.com` | | SMTP Port | `587` (STARTTLS) or `465` (TLS) | | Username | `you@example.com`
-  or `apikey` | | Password | the app password / API secret | | From Address | `you@example.com` |
-</Step>
+  <Step title="Choose a provider preset">
+    Nora currently supports three presets:
 
-  <Step title="Connect">
-    Click **Connect**. Nora validates the field shapes (port range, email format, public-host check) and stores the credentials encrypted. **It does not perform an SMTP handshake** from the control plane — that happens in the agent runtime.
+    - `Gmail`
+    - `Outlook`
+    - `Custom`
+
+    Gmail and Outlook prefill the IMAP / SMTP server settings. Custom leaves the raw host and port
+    fields editable.
+
+  </Step>
+
+  <Step title="Enter the mailbox credentials">
+    Fill in the username and password, then confirm the IMAP and SMTP settings. The required Nora
+    fields are:
+
+    | Field | Notes |
+    | ----- | ----- |
+    | `Username / Email` | Mailbox login name |
+    | `Password / App Password` | Stored encrypted by Nora |
+    | `IMAP Host` | Prefilled for Gmail / Outlook |
+    | `IMAP Port` | Usually `993` |
+    | `Use TLS for IMAP` | Enabled for Gmail / Outlook presets |
+    | `SMTP Host` | Prefilled for Gmail / Outlook |
+    | `SMTP Port` | Usually `465` or `587` |
+    | `Use TLS for SMTP` | `465` is usually implicit TLS; `587` is usually STARTTLS |
+    | `From Address` | Email address your agent sends from |
+    | `From Name` | Optional display name on outbound mail |
+
+  </Step>
+
+  <Step title="(Optional) Enable the reminder cron">
+    If you turn on **Create reminder cron**, Nora will register a recurring cron job on the target
+    agent after the integration is saved. You can configure:
+
+    - `Run Every (minutes)`
+    - `Cron Prompt`
+
+    The default prompt asks the agent to look for new emails or calendar invites and summarize
+    anything important.
+
+  </Step>
+
+  <Step title="Save the integration">
+    Click **Connect**. Nora normalizes the config into the current IMAP / SMTP shape, stores the
+    password encrypted, and syncs the settings to the agent runtime. If the cron is enabled, Nora
+    also creates or updates the linked cron job for this integration.
   </Step>
 </Steps>
 
+## Presets
+
+Nora applies these built-in defaults:
+
+| Preset    | IMAP                                 | SMTP                                          |
+| --------- | ------------------------------------ | --------------------------------------------- |
+| `Gmail`   | `imap.gmail.com:993` with TLS        | `smtp.gmail.com:465` with TLS                 |
+| `Outlook` | `outlook.office365.com:993` with TLS | `smtp.office365.com:587` without implicit TLS |
+| `Custom`  | blank host, port `993`, TLS enabled  | blank host, port `587`, TLS disabled          |
+
+If you choose `Custom`, fill in the exact IMAP / SMTP values from your mail provider.
+
 ## Verify the connection
 
-The **Test** button runs the same structural validation. End-to-end verification happens when your agent sends its first message; failures usually surface as `EAUTH`, `ECONNREFUSED`, or `ETIMEOUT` in the agent logs.
+After saving the integration, click **Test**.
 
-<Note>
-  Nora rejects RFC1918 / loopback SMTP hosts (e.g. `127.0.0.1`, `10.x.x.x`) as a defense-in-depth
-  measure. If you really do want to relay through localhost, the agent's container needs network
-  access to that host — set up an SSH tunnel or VPN at the runtime layer.
-</Note>
+Unlike some Nora integrations that only validate field shape, the Email test performs a **live connection check**:
+
+- IMAP login is attempted with the configured host, port, and TLS setting
+- SMTP authentication is verified using the configured host, port, and auth credentials
+
+On success, Nora reports:
+
+- IMAP authentication verified
+- SMTP authentication verified
+
+If either side fails, the Email test returns an error such as:
+
+- `invalid_mail_credentials`
+- `tls_mismatch`
+- `imap_disabled`
+- `imap_unreachable`
+- `smtp_unreachable`
+
+## Cron behavior
+
+The optional Email cron is managed as part of the integration lifecycle:
+
+- enabling it on connect registers a cron job on the agent
+- editing the cron settings reconciles the existing job
+- disabling it removes the linked cron job
+- deleting the integration also removes its linked cron job
+
+This is useful when you want a mailbox-connected agent to perform a recurring “check my inbox” or “summarize recent mail” workflow without wiring a separate scheduler by hand.
+
+## Troubleshooting
+
+### Gmail says the credentials are wrong
+
+Use an **app password**, not your normal Google account password, and make sure IMAP is enabled for the mailbox.
+
+### IMAP works but SMTP fails
+
+This usually means one of:
+
+- the SMTP host or port is wrong
+- the SMTP security flag does not match the provider
+- the mailbox provider requires a different SMTP credential than the IMAP login
+
+### Test fails with `tls_mismatch`
+
+The `secure` flag probably does not match the port you chose. Typical combinations are:
+
+- `993` + TLS for IMAP
+- `465` + TLS for SMTP
+- `587` + STARTTLS / non-implicit TLS for SMTP
+
+### The cron did not appear
+
+The cron is created against the target agent runtime. If the agent is unavailable or the runtime RPC path fails, save the integration again after the agent is healthy.
 
 ## MCP server
 
-No MCP server — SMTP isn't a query API.
+No MCP server. Nora treats Email as a credential + runtime-sync integration, not as a separate MCP-backed provider.
 
 ## Environment variables Nora injects
 
-| Variable            | Source             |
-| ------------------- | ------------------ |
-| `SMTP_PASS`         | Password field     |
-| `SMTP_HOST`         | SMTP Host field    |
-| `SMTP_PORT`         | SMTP Port field    |
-| `SMTP_USER`         | Username field     |
-| `SMTP_FROM_ADDRESS` | From Address field |
+| Variable                | Source                  |
+| ----------------------- | ----------------------- |
+| `EMAIL_PASSWORD`        | Password / App Password |
+| `EMAIL_PROVIDER_PRESET` | Provider preset         |
+| `EMAIL_USERNAME`        | Username / Email        |
+| `EMAIL_IMAP_HOST`       | IMAP Host               |
+| `EMAIL_IMAP_PORT`       | IMAP Port               |
+| `EMAIL_IMAP_SECURE`     | Use TLS for IMAP        |
+| `EMAIL_SMTP_HOST`       | SMTP Host               |
+| `EMAIL_SMTP_PORT`       | SMTP Port               |
+| `EMAIL_SMTP_SECURE`     | Use TLS for SMTP        |
+| `EMAIL_FROM_ADDRESS`    | From Address            |
+| `EMAIL_FROM_NAME`       | From Name               |
