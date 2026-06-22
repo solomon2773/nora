@@ -42,6 +42,18 @@ export function registerAgentTools(server, api, { allowDestructive = false } = {
   );
 
   server.registerTool(
+    "get_agent_stats",
+    {
+      title: "Get agent statistics",
+      description:
+        "Fetch real-time agent resource utilization and execution statistics (CPU, memory, disk, network, active tasks, error counts).",
+      inputSchema: { id: agentId },
+      annotations: { readOnlyHint: true },
+    },
+    withApi(async ({ id }) => jsonResult(await api.get(`/api/agents/${id}/stats`))),
+  );
+
+  server.registerTool(
     "get_agent_versions",
     {
       title: "List agent config versions",

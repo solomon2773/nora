@@ -43,6 +43,7 @@ test("registers read and write tools; delete_agent only when destructive is allo
   assert.ok(safeNames.includes("list_agents"));
   assert.ok(safeNames.includes("deploy_agent"));
   assert.ok(safeNames.includes("get_agent_cost"));
+  assert.ok(safeNames.includes("get_agent_stats"));
   assert.ok(!safeNames.includes("delete_agent"));
 
   const destructive = await connect(
@@ -152,11 +153,13 @@ test("per-agent observability tools use the /api/agents/:id paths", async () => 
   });
   await client.callTool({ name: "get_agent_metrics_summary", arguments: { id: AID } });
   await client.callTool({ name: "get_agent_cost", arguments: { id: AID, periodDays: 7 } });
+  await client.callTool({ name: "get_agent_stats", arguments: { id: AID } });
   assert.equal(api.calls[0].path, `/api/agents/${AID}/metrics`);
   assert.deepEqual(api.calls[0].opts.query, { type: "token_usage" });
   assert.equal(api.calls[1].path, `/api/agents/${AID}/metrics/summary`);
   assert.equal(api.calls[2].path, `/api/agents/${AID}/cost`);
   assert.deepEqual(api.calls[2].opts.query, { periodDays: 7 });
+  assert.equal(api.calls[3].path, `/api/agents/${AID}/stats`);
 });
 
 test("API errors surface as isError tool results with status and message", async () => {
