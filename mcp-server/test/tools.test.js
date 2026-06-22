@@ -43,6 +43,7 @@ test("registers read and write tools; delete_agent only when destructive is allo
   assert.ok(safeNames.includes("list_agents"));
   assert.ok(safeNames.includes("deploy_agent"));
   assert.ok(safeNames.includes("get_agent_cost"));
+  assert.ok(safeNames.includes("get_fleet_status"));
   assert.ok(!safeNames.includes("delete_agent"));
 
   const destructive = await connect(
@@ -175,6 +176,16 @@ test("tool annotations mark reads read-only and destructive writes destructive",
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.list_agents.annotations.readOnlyHint, true);
   assert.equal(byName.get_platform_metrics.annotations.readOnlyHint, true);
+  assert.equal(byName.get_fleet_status.annotations.readOnlyHint, true);
   assert.equal(byName.stop_agent.annotations.destructiveHint, true);
   assert.equal(byName.deploy_agent.annotations.destructiveHint, false);
+});
+
+test("monitoring fleet and platform status tools call the expected endpoints", async () => {
+  const api = mockApi();
+  const client = await connect(createServer({ api, env: {} }));
+  await client.callTool({ name: "get_platform_metrics", arguments: {} });
+  await client.callTool({ name: "get_fleet_status", arguments: {} });
+  assert.equal(api.calls[0].path, "/api/monitoring/metrics");
+  assert.equal(api.calls[1].path, "/api/monitoring/fleet-status");
 });
