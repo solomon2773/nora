@@ -159,6 +159,20 @@ test("per-agent observability tools use the /api/agents/:id paths", async () => 
   assert.deepEqual(api.calls[2].opts.query, { periodDays: 7 });
 });
 
+test("get_fleet_status calls the monitoring fleet-status endpoint", async () => {
+  const fleetStatus = { agentsNeedingAttention: 2, degradedComponents: [] };
+  const api = mockApi({ "GET /api/monitoring/fleet-status": fleetStatus });
+  const client = await connect(createServer({ api, env: {} }));
+  const result = await client.callTool({ name: "get_fleet_status", arguments: {} });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(JSON.parse(result.content[0].text), fleetStatus);
+  assert.deepEqual(api.calls[0], {
+    method: "GET",
+    path: "/api/monitoring/fleet-status",
+    opts: undefined,
+  });
+});
+
 test("API errors surface as isError tool results with status and message", async () => {
   const api = mockApi({
     [`GET /api/agents/${AID}`]: new ApiError(404, "Agent not found"),
@@ -175,6 +189,7 @@ test("tool annotations mark reads read-only and destructive writes destructive",
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.list_agents.annotations.readOnlyHint, true);
   assert.equal(byName.get_platform_metrics.annotations.readOnlyHint, true);
+  assert.equal(byName.get_fleet_status.annotations.readOnlyHint, true);
   assert.equal(byName.stop_agent.annotations.destructiveHint, true);
   assert.equal(byName.deploy_agent.annotations.destructiveHint, false);
 });
