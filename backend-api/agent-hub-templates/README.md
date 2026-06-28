@@ -11,6 +11,7 @@ Credentials are not part of an Agent Hub template. When a preset needs provider 
 ## Templates
 
 ### Customer Support & FAQ Claw
+
 **Category:** Support
 
 Most support queues are dominated by the same questions — pricing, how something works, refund policies, account issues. The answers are known; the problem is the time it takes to write them out for every person who asks.
@@ -22,6 +23,7 @@ The Customer Support & FAQ Claw handles tier-1 support work. It takes a business
 ---
 
 ### Lead Outreach Drafter Claw
+
 **Category:** Sales
 
 Cold outreach is time-consuming, and generic messages get ignored. The difference between a message that gets a reply and one that gets deleted is usually whether it reflects any genuine understanding of the recipient.
@@ -33,6 +35,7 @@ The Lead Outreach Drafter Claw takes prospect information — role, company, rec
 ---
 
 ### Invoice Follow-Up Claw
+
 **Category:** Finance
 
 Late invoices are one of the most common cash flow problems for small businesses and freelancers. Following up is uncomfortable and easy to delay, which makes the problem worse.
@@ -44,6 +47,7 @@ The Invoice Follow-Up Claw drafts payment reminder messages calibrated to where 
 ---
 
 ### Email Nurture Builder Claw
+
 **Category:** Marketing
 
 Email remains one of the highest-ROI channels for small businesses, but building a proper multi-step sequence takes time. The default for most businesses is a single welcome email, then silence — or an irregular newsletter that gets written when someone finds a spare hour.
@@ -55,6 +59,7 @@ The Email Nurture Builder Claw builds complete sequences for any stage of the cu
 ---
 
 ### Document Data Extractor Claw
+
 **Category:** Operations
 
 A large amount of operational time goes toward reading documents and manually copying information into somewhere else — invoices into spreadsheets, applications into a CRM, contract details into a tracker. It's repetitive, error-prone work.
@@ -66,6 +71,7 @@ The Document Data Extractor Claw takes pasted document content — invoices, con
 ---
 
 ### Client Intelligence & Sales Momentum Claw
+
 **Category:** Sales
 
 Client relationships are built across many conversations over time, and context gets lost between them. When a follow-up finally happens weeks after a promising discussion, it often starts from scratch — what was said, what was promised, and what the next step was supposed to be has faded.
@@ -77,6 +83,7 @@ The Client Intelligence & Sales Momentum Claw maintains a living profile for eac
 ---
 
 ### Social Media & Market Signal Claw
+
 **Category:** Marketing
 
 Maintaining a consistent social media presence takes time that most small business owners and solo developers don't have. The bottleneck is rarely a lack of things to say — it's the time required to turn a relevant trend or idea into something polished enough to publish.
@@ -88,6 +95,7 @@ The Social Media & Market Signal Claw researches trending topics in a defined sp
 ---
 
 ### Chief-of-Staff Claw
+
 **Category:** Operations
 
 Ideas and commitments get lost between meetings, chats, and working docs. The bottleneck is rarely effort — it's that work never gets normalized into a clear owner, a next step, and a status everyone can see.
@@ -99,6 +107,7 @@ The Chief-of-Staff Claw turns conversations, notes, and updates into owned execu
 ---
 
 ### Communication Intelligence Claw
+
 **Category:** Communication
 
 High-signal messages drown in high-volume chats. Watching every channel is exhausting, but missing a direct ask, a decision, or a deadline is costly.
@@ -110,6 +119,7 @@ The Communication Intelligence Claw is a triage filter. It watches the chats you
 ---
 
 ### Iris Instagram Manager
+
 **Category:** Marketing
 
 Instagram rewards consistency, strong hooks, and a real understanding of the audience, but most operators do not have time to keep a full content system running every week. The work is not just writing captions; it is planning formats, watching trends, tracking performance, and keeping reply drafts ready without sliding into bot-like engagement.
@@ -121,10 +131,11 @@ Iris Instagram Manager is a single-account Instagram operator built around that 
 ---
 
 ### Echo Personal Branding
+
 **Category:** Marketing
 
 Personal branding breaks down when every post sounds generic or the operator cannot keep a steady cadence across platforms. The missing layer is usually not ideas alone; it is a system that remembers how the operator actually sounds, adapts that voice to each platform, and keeps drafts moving without taking over publishing.
 
-Echo Personal Branding is a ghostwriting-oriented preset for X and LinkedIn. It runs a bootstrap flow, builds `VOICE.md` from real writing samples, tracks what lands, drafts multiple post angles, prepares engagement replies for review, and keeps platform-specific playbooks close to the daily workflow. The operator stays the publisher and final decision-maker the whole time. Manage **X, LinkedIn, or both** — the platform you pick during bootstrap drives every workflow. Full setup walkthrough: [Echo setup guide](https://noradocs.solomontsao.com/guides/echo-personal-branding).
+Echo Personal Branding is a ghostwriting-oriented preset for X and LinkedIn. It runs a bootstrap flow, builds `VOICE.md` from real writing samples, tracks what lands, drafts multiple post angles, prepares engagement replies for review, and keeps platform-specific playbooks close to the daily workflow. The operator approves final text every time; Echo can then publish original posts through connected X/LinkedIn integrations. Manage **X, LinkedIn, or both** — the platform you pick during bootstrap drives every workflow. Full setup walkthrough: [Echo setup guide](https://noradocs.solomontsao.com/guides/echo-personal-branding).
 
-**Good for:** Founders, consultants, engineers, and operators building a public voice on X, LinkedIn, or both without handing the account to an autoposting bot.
+**Good for:** Founders, consultants, engineers, and operators building a public voice on X, LinkedIn, or both while keeping every post approval-gated.

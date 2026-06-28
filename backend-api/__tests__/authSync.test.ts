@@ -35,6 +35,7 @@ jest.mock("../healthChecks", () => ({
 }));
 
 const {
+  buildDefaultModelCommand,
   buildHermesEnvWriteCommand,
   runContainerCommand,
   syncAuthToUserAgents,
@@ -110,6 +111,16 @@ describe("auth sync", () => {
     delete global.fetch;
   });
 
+  it("sets Microsoft Foundry defaults through azure-openai-responses even when the saved model has an OpenAI prefix", () => {
+    const command = buildDefaultModelCommand({
+      provider: "microsoft-foundry",
+      model: "openai/gpt-5.5-1",
+    });
+
+    expect(command).toContain('"models" "set" "azure-openai-responses/gpt-5.5-1"');
+    expect(command).not.toContain('"models" "set" "openai/gpt-5.5-1"');
+  });
+
   it("syncs auth through the runtime endpoint and restarts supported non-docker agents", async () => {
     mockDb.query
       .mockResolvedValueOnce({
@@ -148,6 +159,10 @@ describe("auth sync", () => {
       }),
     );
     expect(JSON.parse(global.fetch.mock.calls[0][1].body).command).toContain("auth-profiles.json");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).command).toContain("paste-api-key");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body).command).toContain(
+      "__NORA_OPENCLAW_AUTH_SQLITE_IMPORT__",
+    );
     expect(mockRestart).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "agent-k8s-1",

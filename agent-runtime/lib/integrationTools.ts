@@ -30,6 +30,7 @@ const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com";
 const GITHUB_API_VERSION = "2022-11-28";
 const MAX_GITHUB_FILE_CONTENT_CHARS = 120000;
 const DEFAULT_TWITTER_API_BASE_URL = "https://api.x.com/2";
+const DEFAULT_LINKEDIN_API_BASE_URL = "https://api.linkedin.com";
 const NORA_AGENT_STATE_ROOT = "/mnt/nora-agent-state";
 const OPENCLAW_AGENT_LOG_FILE = "/var/log/openclaw-agent.log";
 const OPENCLAW_CONFIG_FILE = "/root/.openclaw/openclaw.json";
@@ -69,6 +70,7 @@ function getSanitizeHtml() {
 const SUPPORTED_INTEGRATION_TOOL_OPERATIONS = Object.freeze({
   github: new Set(["repos.list", "repos.contents.get", "pulls.list", "issues.create"]),
   twitter: new Set(["users.me", "users.tweets.list", "tweets.create"]),
+  linkedin: new Set(["userinfo", "ugcPosts.create"]),
   email: new Set([]),
 });
 
@@ -750,6 +752,29 @@ function getTwitterBaseUrl(integration = {}) {
 
   if (!/^https?:$/.test(url.protocol)) {
     throw new Error(`Unsupported Twitter/X API protocol: ${url.protocol}`);
+  }
+
+  return url;
+}
+
+function getLinkedInToken(integration = {}) {
+  const config = normalizeIntegrationConfig(integration);
+  return (
+    normalizeString(config.access_token) ||
+    normalizeString(config.token) ||
+    normalizeString(process.env.LINKEDIN_ACCESS_TOKEN)
+  );
+}
+
+function getLinkedInBaseUrl(integration = {}) {
+  const configuredBaseUrl =
+    normalizeString(integration?.api?.baseUrl) ||
+    normalizeString(normalizeIntegrationConfig(integration).base_url) ||
+    DEFAULT_LINKEDIN_API_BASE_URL;
+  const url = new URL(configuredBaseUrl);
+
+  if (!/^https?:$/.test(url.protocol)) {
+    throw new Error(`Unsupported LinkedIn API protocol: ${url.protocol}`);
   }
 
   return url;
@@ -1486,6 +1511,29 @@ function buildTwitterRequestUrl(integration, requestPath, query = {}) {
   return baseUrl.toString();
 }
 
+function buildLinkedInRequestUrl(integration, requestPath, query = {}) {
+  const baseUrl = getLinkedInBaseUrl(integration);
+  const normalizedPath = requestPath.startsWith("/") ? requestPath : `/${requestPath}`;
+  const basePath =
+    baseUrl.pathname && baseUrl.pathname !== "/" ? baseUrl.pathname.replace(/\/+$/, "") : "";
+  baseUrl.pathname = `${basePath}${normalizedPath}`;
+
+  for (const [key, value] of Object.entries(query)) {
+    if (value == null || value === "") continue;
+    if (Array.isArray(value)) {
+      const joined = value
+        .map((entry) => normalizeString(entry))
+        .filter(Boolean)
+        .join(",");
+      if (joined) baseUrl.searchParams.set(key, joined);
+      continue;
+    }
+    baseUrl.searchParams.set(key, String(value));
+  }
+
+  return baseUrl.toString();
+}
+
 async function twitterRequest({
   integration,
   requestPath,
@@ -1525,6 +1573,51 @@ async function twitterRequest({
   }
 
   return data ?? rawText;
+}
+
+async function linkedInRequest({
+  integration,
+  requestPath,
+  query,
+  method = "GET",
+  body = null,
+  fetchImpl,
+}) {
+  const token = getLinkedInToken(integration);
+  if (!token) {
+    throw new Error("LinkedIn access token is not configured for this agent");
+  }
+
+  const fetcher = assertRuntimeFetch(fetchImpl);
+  const url = buildLinkedInRequestUrl(integration, requestPath, query);
+  const response = await fetcher(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": "Nora-Agent-Runtime",
+      ...(body
+        ? {
+            "Content-Type": "application/json",
+            "X-Restli-Protocol-Version": "2.0.0",
+          }
+        : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  const { rawText, data } = await readResponseBody(response);
+  if (!response.ok) {
+    const message =
+      normalizeString(data?.message) ||
+      normalizeString(data?.error_description) ||
+      normalizeString(data?.error) ||
+      normalizeString(data?.serviceErrorCode) ||
+      normalizeString(rawText) ||
+      `LinkedIn API returned ${response.status}`;
+    throw new Error(`${message} (${response.status})`);
+  }
+
+  return { data: data ?? rawText, response };
 }
 
 function mapGitHubRepository(repo = {}) {
@@ -1593,6 +1686,56 @@ function mapTwitterTweet(tweet = {}) {
       : [],
     public_metrics: tweet.public_metrics || null,
   };
+}
+
+function mapLinkedInUser(profile = {}) {
+  return {
+    sub: profile.sub || null,
+    name: profile.name || null,
+    given_name: profile.given_name || null,
+    family_name: profile.family_name || null,
+    email: profile.email || null,
+    picture: profile.picture || null,
+  };
+}
+
+function normalizeLinkedInVisibility(value) {
+  const normalized = normalizeString(value).toUpperCase();
+  return normalized === "CONNECTIONS" ? "CONNECTIONS" : "PUBLIC";
+}
+
+function getResponseHeader(response, name) {
+  if (!response?.headers) return "";
+  if (typeof response.headers.get === "function") {
+    return normalizeString(response.headers.get(name));
+  }
+  const lowerName = String(name || "").toLowerCase();
+  for (const [key, value] of Object.entries(response.headers || {})) {
+    if (String(key).toLowerCase() === lowerName) return normalizeString(value);
+  }
+  return "";
+}
+
+async function resolveLinkedInAuthorUrn(integration, input, fetchImpl) {
+  const directUrn = normalizeString(input.author_urn || input.authorUrn);
+  if (directUrn) return directUrn;
+
+  const config = normalizeIntegrationConfig(integration);
+  const configuredUrn = normalizeString(config.author_urn || config.authorUrn || config.person_urn);
+  if (configuredUrn) return configuredUrn;
+
+  const configuredSub = normalizeString(config.sub || config.person_id || config.personId);
+  if (configuredSub) return `urn:li:person:${configuredSub}`;
+
+  const { data } = await linkedInRequest({
+    integration,
+    requestPath: "/v2/userinfo",
+    fetchImpl,
+  });
+  const profileSub = normalizeString(data?.sub);
+  if (profileSub) return `urn:li:person:${profileSub}`;
+
+  throw new Error("LinkedIn person id could not be resolved");
 }
 
 async function resolveGitHubOwnerType(integration, owner, fetchImpl) {
@@ -1973,6 +2116,70 @@ async function executeTwitterOperation({ integration, spec, input, fetchImpl }) 
 
     default:
       throw new Error(`Unsupported Twitter/X integration operation: ${operation}`);
+  }
+}
+
+async function executeLinkedInOperation({ integration, spec, input, fetchImpl }) {
+  const normalizedInput = normalizeIntegrationToolInput(input);
+  const operation = normalizeString(spec.operation);
+
+  switch (operation) {
+    case "userinfo": {
+      const { data } = await linkedInRequest({
+        integration,
+        requestPath: "/v2/userinfo",
+        fetchImpl,
+      });
+      return { user: mapLinkedInUser(data || {}) };
+    }
+
+    case "ugcPosts.create": {
+      const text = normalizeString(normalizedInput.text);
+      if (!text) {
+        throw new Error("LinkedIn post text is required");
+      }
+
+      const visibility = normalizeLinkedInVisibility(normalizedInput.visibility);
+      const author = await resolveLinkedInAuthorUrn(integration, normalizedInput, fetchImpl);
+      const body = {
+        author,
+        lifecycleState: "PUBLISHED",
+        specificContent: {
+          "com.linkedin.ugc.ShareContent": {
+            shareCommentary: { text },
+            shareMediaCategory: "NONE",
+          },
+        },
+        visibility: {
+          "com.linkedin.ugc.MemberNetworkVisibility": visibility,
+        },
+      };
+
+      const { data, response } = await linkedInRequest({
+        integration,
+        requestPath: "/v2/ugcPosts",
+        method: "POST",
+        body,
+        fetchImpl,
+      });
+
+      return {
+        share: {
+          id:
+            normalizeString(data?.id) ||
+            getResponseHeader(response, "x-restli-id") ||
+            getResponseHeader(response, "X-RestLi-Id") ||
+            null,
+          author,
+          text,
+          visibility,
+          raw: data && typeof data === "object" ? data : null,
+        },
+      };
+    }
+
+    default:
+      throw new Error(`Unsupported LinkedIn integration operation: ${operation}`);
   }
 }
 
@@ -2865,6 +3072,14 @@ async function executeIntegrationToolInvocation({
         break;
       case "twitter":
         result = await executeTwitterOperation({
+          integration: match.integration,
+          spec: match.spec,
+          input,
+          fetchImpl,
+        });
+        break;
+      case "linkedin":
+        result = await executeLinkedInOperation({
           integration: match.integration,
           spec: match.spec,
           input,

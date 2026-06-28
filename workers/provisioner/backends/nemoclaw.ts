@@ -8,6 +8,7 @@ const ProvisionerBackend = require("./interface");
 const crypto = require("crypto");
 const path = require("path");
 const {
+  buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
   buildTemplatePayloadBootstrapCommand,
   buildRuntimeBootstrapFiles,
@@ -180,6 +181,7 @@ class NemoClawBackend extends ProvisionerBackend {
       "touch /var/log/openclaw-agent.log",
       '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/agent.ts >> /var/log/openclaw-agent.log 2>&1 &',
       '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js',
+      buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
       `exec "$OPENCLAW_BIN" gateway --port ${OPENCLAW_GATEWAY_PORT} --password ${gatewayToken}`,
       "",
     ].join("\n");

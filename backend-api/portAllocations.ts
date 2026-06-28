@@ -86,7 +86,7 @@ async function allocateGatewayPort({
       const result = await db.query(
         `INSERT INTO gateway_port_allocations (host_key, agent_id, port, purpose)
          SELECT $1, $2, candidate.port, $5
-           FROM generate_series($3, $4) AS candidate(port)
+           FROM generate_series($3::integer, $4::integer) AS candidate(port)
           WHERE NOT EXISTS (
             SELECT 1 FROM gateway_port_allocations existing
              WHERE existing.host_key = $1 AND existing.port = candidate.port

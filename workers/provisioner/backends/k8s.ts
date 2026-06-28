@@ -3,6 +3,7 @@ const k8s = require("@kubernetes/client-node");
 const crypto = require("crypto");
 const ProvisionerBackend = require("./interface");
 const {
+  buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
   buildRuntimeBootstrapCommand,
   buildTemplatePayloadBootstrapCommand,
@@ -380,6 +381,7 @@ function buildOpenClawRuntimeAuthBootstrapCommand() {
     "fs.mkdirSync('/root/.openclaw', { recursive: true });",
     "fs.writeFileSync(configPath, JSON.stringify(config, null, 2));",
     "__NORA_OPENCLAW_AUTH_BOOTSTRAP__",
+    buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
     "",
   ].join("\n");
 }

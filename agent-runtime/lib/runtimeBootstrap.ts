@@ -53,6 +53,7 @@ const INTEGRATION_TOOL_WRAPPER_B64 = Buffer.from(INTEGRATION_TOOL_WRAPPER_SOURCE
 
 const OPENCLAW_WORKSPACE_ROOT = "/root/.openclaw/workspace";
 const OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT = "/root/.openclaw/agents/main/agent";
+const OPENCLAW_AUTH_PROFILES_PATH = `${OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`;
 const NORA_INTEGRATIONS_CONTEXT_FILE = "integrations/NORA_INTEGRATIONS.md";
 const NORA_INTEGRATIONS_PROMPT_BEGIN = "<!-- NORA_INTEGRATIONS_BEGIN -->";
 const NORA_INTEGRATIONS_PROMPT_END = "<!-- NORA_INTEGRATIONS_END -->";
@@ -351,12 +352,21 @@ const FOUNDRY_DEFAULT_MODELS = [
 // saved provider's model/config). Fall back to the canonical "gpt-5.5" when
 // unset so existing single-deployment setups keep working.
 const FOUNDRY_FALLBACK_DEPLOYMENT = "gpt-5.5";
+const FOUNDRY_MODEL_PROVIDER_PREFIXES = Object.freeze([
+  FOUNDRY_OPENCLAW_PROVIDER_ID,
+  "microsoft-foundry",
+  "openai",
+  "openai-responses",
+]);
 
 function normalizeFoundryDeployment(value) {
   let deployment = String(value || "").trim();
-  const providerPrefix = `${FOUNDRY_OPENCLAW_PROVIDER_ID}/`;
-  if (deployment.startsWith(providerPrefix)) {
-    deployment = deployment.slice(providerPrefix.length).trim();
+  for (const providerId of FOUNDRY_MODEL_PROVIDER_PREFIXES) {
+    const providerPrefix = `${providerId}/`;
+    if (deployment.startsWith(providerPrefix)) {
+      deployment = deployment.slice(providerPrefix.length).trim();
+      break;
+    }
   }
   return deployment && !deployment.includes("/") ? deployment : "";
 }
@@ -498,6 +508,98 @@ const NORA_TO_OPENCLAW_PROVIDER_ID = Object.freeze({
 function mapNoraProviderIdToOpenClaw(noraProviderId) {
   if (!noraProviderId) return noraProviderId;
   return NORA_TO_OPENCLAW_PROVIDER_ID[noraProviderId] || noraProviderId;
+}
+
+function buildOpenClawModelForProvider(noraProviderId, modelId) {
+  const providerId = String(noraProviderId || "").trim();
+  const rawModelId = String(modelId || "").trim();
+  if (!providerId || !rawModelId) return null;
+
+  if (providerId === "microsoft-foundry") {
+    const deployment = normalizeFoundryDeployment(rawModelId);
+    return deployment ? `${FOUNDRY_OPENCLAW_PROVIDER_ID}/${deployment}` : null;
+  }
+
+  const openclawProvider = mapNoraProviderIdToOpenClaw(providerId);
+  return rawModelId.includes("/") ? rawModelId : `${openclawProvider}/${rawModelId}`;
+}
+
+const OPENCLAW_SQLITE_AUTH_SKIP_PROVIDERS = Object.freeze([
+  "microsoft-foundry",
+  FOUNDRY_OPENCLAW_PROVIDER_ID,
+  "demo",
+  DEMO_OPENCLAW_PROVIDER_ID,
+]);
+
+function buildOpenClawAuthImportFromFileCommand(options = {}) {
+  const authPath = options.authPath || OPENCLAW_AUTH_PROFILES_PATH;
+  const agentId = options.agentId || "main";
+  const requireCli = options.requireCli === true;
+
+  return [
+    'OPENCLAW_BIN="${OPENCLAW_CLI_PATH:-/usr/local/bin/openclaw}"',
+    'if [ ! -x "$OPENCLAW_BIN" ]; then OPENCLAW_BIN="$(command -v openclaw 2>/dev/null || true)"; fi',
+    requireCli
+      ? '[ -n "$OPENCLAW_BIN" ] && [ -x "$OPENCLAW_BIN" ] || exit 127'
+      : 'if [ -n "$OPENCLAW_BIN" ] && [ -x "$OPENCLAW_BIN" ]; then',
+    "export HOME=/root",
+    "export OPENCLAW_BIN",
+    "node <<'__NORA_OPENCLAW_AUTH_SQLITE_IMPORT__'",
+    "const fs = require('fs');",
+    "const { spawnSync } = require('child_process');",
+    `const authPath = ${JSON.stringify(authPath)};`,
+    `const agentId = ${JSON.stringify(agentId)};`,
+    `const skipProviders = new Set(${JSON.stringify(OPENCLAW_SQLITE_AUTH_SKIP_PROVIDERS)});`,
+    "let auth = {};",
+    "try { auth = JSON.parse(fs.readFileSync(authPath, 'utf8')); } catch { process.exit(0); }",
+    "const profiles = auth && auth.profiles && typeof auth.profiles === 'object' ? auth.profiles : {};",
+    "for (const [profileId, profile] of Object.entries(profiles)) {",
+    "  if (!profile || profile.type !== 'api_key' || !profile.key) continue;",
+    "  const provider = String(profile.provider || '').trim();",
+    "  if (!provider || skipProviders.has(provider)) continue;",
+    "  const result = spawnSync(process.env.OPENCLAW_BIN, [",
+    "    'models',",
+    "    'auth',",
+    "    '--agent',",
+    "    agentId,",
+    "    'paste-api-key',",
+    "    '--provider',",
+    "    provider,",
+    "    '--profile-id',",
+    "    String(profileId),",
+    "  ], {",
+    "    input: `${String(profile.key)}\\n`,",
+    "    encoding: 'utf8',",
+    "    stdio: ['pipe', 'pipe', 'pipe'],",
+    "    env: process.env,",
+    "  });",
+    "  if (result.status !== 0) {",
+    "    if (result.stderr) process.stderr.write(result.stderr);",
+    "    if (result.stdout) process.stderr.write(result.stdout);",
+    "    process.exit(result.status || 1);",
+    "  }",
+    "}",
+    "__NORA_OPENCLAW_AUTH_SQLITE_IMPORT__",
+    requireCli ? "" : "fi",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function buildOpenClawAuthProfilesWriteCommand(authProfiles, options = {}) {
+  const authPath = options.authPath || OPENCLAW_AUTH_PROFILES_PATH;
+  const authDir = authPath.slice(0, authPath.lastIndexOf("/")) || ".";
+  const authJsonB64 = Buffer.from(
+    JSON.stringify(authProfiles || { version: 1, profiles: {} }),
+  ).toString("base64");
+
+  return [
+    "set -eu",
+    `mkdir -p ${shellSingleQuote(authDir)}`,
+    `printf '%s' '${authJsonB64}' | base64 -d > ${shellSingleQuote(authPath)}`,
+    `chmod 0600 ${shellSingleQuote(authPath)}`,
+    buildOpenClawAuthImportFromFileCommand({ ...options, authPath }),
+  ].join("\n");
 }
 
 function buildOpenClawConfigMergeScript(gatewayConfig) {
@@ -666,9 +768,12 @@ module.exports = {
   buildIntegrationToolWrapperScript,
   buildOpenClawConfigMergeScript,
   buildOpenClawConfigMergeCommand,
+  buildOpenClawAuthImportFromFileCommand,
+  buildOpenClawAuthProfilesWriteCommand,
   buildMcpServersConfig,
   buildOpenClawCustomProviders,
   mapNoraProviderIdToOpenClaw,
+  buildOpenClawModelForProvider,
   FOUNDRY_OPENCLAW_PROVIDER_ID,
   DEMO_OPENCLAW_PROVIDER_ID,
   DEMO_OPENCLAW_MODEL_ID,

@@ -1,7 +1,7 @@
 {
   "templateKey": "personal-branding",
   "name": "Echo Personal Branding",
-  "description": "Learns the operator's voice for X and LinkedIn, drafts posts and replies in that voice, and keeps publishing fully human-approved.",
+  "description": "Learns the operator's voice for X and LinkedIn, drafts posts and replies in that voice, and publishes original posts only after approval.",
   "price": "Free",
   "category": "Marketing",
   "starterType": "marketing",

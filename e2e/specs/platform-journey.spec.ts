@@ -329,8 +329,11 @@ test.describe("Complete platform journey", () => {
     await listingRow.getByRole("button", { name: /approve/i }).click();
     await expect(listingRow).toContainText(/published/i);
 
-    await waitForAdminAuditEvent(request, admin.token, (event) =>
-      String(event.message || "").includes(publishedListing.name),
+    const publishedAuditMessage = `Agent Hub listing "${publishedListing.name}" marked published`;
+    await waitForAdminAuditEvent(
+      request,
+      admin.token,
+      (event) => String(event.message || "") === publishedAuditMessage,
     );
 
     await page.goto("/admin/audit", { waitUntil: "domcontentloaded" });
@@ -338,11 +341,7 @@ test.describe("Complete platform journey", () => {
     await page
       .getByPlaceholder(/message, source, actor, owner, request, or error/i)
       .fill(publishedListing.name);
-    await expect(
-      page.getByText(`Agent Hub listing "${publishedListing.name}" marked published`, {
-        exact: true,
-      }),
-    ).toBeVisible();
+    await expect(page.getByText(publishedAuditMessage, { exact: true })).toBeVisible();
 
     await page.goto("/admin/settings", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: /^platform settings$/i })).toBeVisible();

@@ -3,6 +3,7 @@ const ProvisionerBackend = require("./interface");
 const crypto = require("crypto");
 const path = require("path");
 const {
+  buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
   buildOpenClawConfigMergeScript,
   buildMcpServersConfig,
@@ -254,6 +255,7 @@ class DockerBackend extends ProvisionerBackend {
       "if [ ! -f /root/.openclaw/agents/main/agent/auth-profiles.json ]; then",
       '  "$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js',
       "fi",
+      buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
       `exec "$OPENCLAW_BIN" gateway --port ${OPENCLAW_GATEWAY_PORT}`,
       "",
     ].join("\n");

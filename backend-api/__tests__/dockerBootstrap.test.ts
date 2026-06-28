@@ -1,7 +1,9 @@
 // @ts-nocheck
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const {
+  buildOpenClawAuthProfilesWriteCommand,
   buildOpenClawConfigMergeScript,
   buildOpenClawConfigMergeCommand,
   buildMcpServersConfig,
@@ -10,7 +12,9 @@ const {
   buildRuntimeBootstrapCommand,
   buildTemplatePayloadBootstrapFiles,
   mapNoraProviderIdToOpenClaw,
+  buildOpenClawModelForProvider,
   FOUNDRY_OPENCLAW_PROVIDER_ID,
+  resolveFoundryDeployment,
 } = require("../../workers/provisioner/runtimeBootstrap");
 const DockerBackend = require("../../workers/provisioner/backends/docker");
 const tar = require(
@@ -78,6 +82,54 @@ describe("OpenClaw bootstrap helpers", () => {
     expect(cmd).toContain("hash -r 2>/dev/null || true");
     expect(cmd).toContain('export OPENCLAW_CLI_PATH="$OPENCLAW_BIN"');
     expect(cmd).toContain('export OPENCLAW_TSX_BIN="$OPENCLAW_TSX_BIN"');
+  });
+
+  it("imports API-key auth profiles into OpenClaw's per-agent store", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nora-openclaw-auth-"));
+    try {
+      const fakeOpenClaw = path.join(tmpDir, "openclaw");
+      const argsLog = path.join(tmpDir, "args.log");
+      const stdinLog = path.join(tmpDir, "stdin.log");
+      fs.writeFileSync(
+        fakeOpenClaw,
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$OPENCLAW_ARGS_LOG"\ncat >> "$OPENCLAW_STDIN_LOG"\n',
+        { mode: 0o755 },
+      );
+
+      const command = buildOpenClawAuthProfilesWriteCommand(
+        {
+          version: 1,
+          profiles: {
+            "openai:default": { type: "api_key", provider: "openai", key: "sk-openai" },
+            "microsoft-foundry:default": {
+              type: "api_key",
+              provider: "microsoft-foundry",
+              key: "ms-key",
+            },
+          },
+        },
+        { authPath: path.join(tmpDir, "auth-profiles.json") },
+      );
+      const result = require("child_process").spawnSync("/bin/sh", ["-c", command], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCLAW_CLI_PATH: fakeOpenClaw,
+          OPENCLAW_ARGS_LOG: argsLog,
+          OPENCLAW_STDIN_LOG: stdinLog,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(argsLog, "utf8")).toContain(
+        "models auth --agent main paste-api-key --provider openai --profile-id openai:default",
+      );
+      expect(fs.readFileSync(argsLog, "utf8")).not.toContain("microsoft-foundry");
+      expect(fs.readFileSync(stdinLog, "utf8")).toBe("sk-openai\n");
+      expect(fs.existsSync(path.join(tmpDir, "auth-profiles.json"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("disables Bonjour in managed runtime environments by default", () => {
@@ -257,6 +309,41 @@ describe("OpenClaw bootstrap helpers", () => {
     });
   });
 
+  describe("buildOpenClawModelForProvider", () => {
+    it("rewrites prefixed Foundry deployment strings to OpenClaw's Azure provider id", () => {
+      expect(buildOpenClawModelForProvider("microsoft-foundry", "gpt-5.5-1")).toBe(
+        "azure-openai-responses/gpt-5.5-1",
+      );
+      expect(buildOpenClawModelForProvider("microsoft-foundry", "openai/gpt-5.5-1")).toBe(
+        "azure-openai-responses/gpt-5.5-1",
+      );
+      expect(
+        buildOpenClawModelForProvider("microsoft-foundry", "microsoft-foundry/gpt-5.5-1"),
+      ).toBe("azure-openai-responses/gpt-5.5-1");
+      expect(
+        buildOpenClawModelForProvider("microsoft-foundry", "azure-openai-responses/gpt-5.5-1"),
+      ).toBe("azure-openai-responses/gpt-5.5-1");
+    });
+
+    it("preserves normal prefixed models for non-Foundry providers", () => {
+      expect(buildOpenClawModelForProvider("openai", "openai/gpt-5.5-1")).toBe("openai/gpt-5.5-1");
+      expect(buildOpenClawModelForProvider("anthropic", "claude-sonnet-4-5")).toBe(
+        "anthropic/claude-sonnet-4-5",
+      );
+    });
+  });
+
+  describe("resolveFoundryDeployment", () => {
+    it("accepts legacy OpenAI-prefixed Foundry model values as deployment names", () => {
+      expect(resolveFoundryDeployment({ MICROSOFT_FOUNDRY_DEPLOYMENT: "openai/gpt-5.5-1" })).toBe(
+        "gpt-5.5-1",
+      );
+      expect(resolveFoundryDeployment({ NORA_DEFAULT_OPENCLAW_MODEL: "openai/gpt-5.5-1" })).toBe(
+        "gpt-5.5-1",
+      );
+    });
+  });
+
   describe("buildOpenClawConfigMergeCommand", () => {
     it("returns a single-string shell command equivalent to the merge script", () => {
       const command = buildOpenClawConfigMergeCommand({
@@ -320,6 +407,8 @@ describe("Provisioner backends", () => {
       "mkdir -p /var/log /root/.openclaw/workspace /root/.openclaw/agents/main/agent",
     );
     expect(startupScript.content).toContain("__NORA_MERGE_OPENCLAW_CONFIG__");
+    expect(startupScript.content).toContain("__NORA_OPENCLAW_AUTH_SQLITE_IMPORT__");
+    expect(startupScript.content).toContain("paste-api-key");
     expect(startupScript.content).toContain(
       '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/agent.ts >> /var/log/openclaw-agent.log 2>&1 &',
     );

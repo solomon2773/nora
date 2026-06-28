@@ -317,6 +317,8 @@ describe("provisioning runtime/gateway contracts", () => {
     const container = deployment.spec.template.spec.containers[0];
 
     expect(configMap.data["bootstrap.sh"]).toContain("openclaw@latest");
+    expect(configMap.data["bootstrap.sh"]).toContain("__NORA_OPENCLAW_AUTH_SQLITE_IMPORT__");
+    expect(configMap.data["bootstrap.sh"]).toContain("paste-api-key");
     expect(container.command).toEqual(["/bin/sh", "-c"]);
     expect(container.args).toEqual([". /opt/nora-bootstrap/bootstrap.sh"]);
     expect(container.volumeMounts).toEqual(

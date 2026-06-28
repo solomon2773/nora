@@ -1,6 +1,6 @@
 # Echo — Personal Branding Agent for X & LinkedIn
 
-One agent that helps you ghostwrite for yourself on X and LinkedIn. Learns your voice from real samples, drafts posts and replies in it, tracks what works, never publishes without you.
+One agent that helps you ghostwrite for yourself on X and LinkedIn. Learns your voice from real samples, drafts posts and replies in it, tracks what works, and can publish approved original posts through your connected account.
 
 **Renamable.** Echo is just the default — the agent will ask what you want to call it during bootstrap.
 
@@ -10,7 +10,7 @@ One agent that helps you ghostwrite for yourself on X and LinkedIn. Learns your 
 - **Voice training:** you paste 5+ of your real writings (posts, emails, texts). The agent extracts your patterns into `VOICE.md` and references it on every draft.
 - **Pick one platform or both:** manage X only, LinkedIn only, or both. Your choice cascades through everything — a LinkedIn-only operator never gets X drafts, scans, or heartbeats.
 - **Platform-aware:** knows the X vs. LinkedIn playbooks are different and adapts format without losing your voice.
-- **Draft-only by design:** zero auto-publishing, zero auto-engagement. You post. The agent drafts, you post.
+- **Approval-gated publishing:** zero auto-publishing, zero auto-engagement. The agent drafts, you approve final text, then it can publish the approved original post through X or LinkedIn.
 - **Channel-flexible:** bootstrap walks you through connecting one channel (WhatsApp recommended) so the agent can reach you.
 
 ## Files
@@ -85,7 +85,7 @@ You can bail halfway through and resume later. You can also re-run bootstrap any
 
 **Morning:** Agent sends a brief. 4–5 bullets. Anything notable from overnight, today's schedule, one content idea.
 
-**When you want to post:** Tell the agent what you're thinking. It drafts 2–3 variants with different angles. You pick, edit, post.
+**When you want to post:** Tell the agent what you're thinking. It drafts 2–3 variants with different angles. You pick or edit one, approve the final text, and Echo posts it through the connected platform.
 
 **When you want to reply to something:** Forward or describe it. Agent drafts a reply. You send.
 
@@ -95,20 +95,17 @@ You can bail halfway through and resume later. You can also re-run bootstrap any
 
 ## The Guardrails That Matter
 
-The `openclaw.json` blocks all publishing and engagement APIs by default:
+Echo can publish only after explicit approval on the final text in the current conversation. Approval of a topic, outline, or earlier variant is not enough.
 
-- `x-post`, `x-reply`, `x-dm-send`, `x-follow`, `x-like`, `x-repost` — denied
-- `linkedin-post`, `linkedin-comment`, `linkedin-dm-send`, `linkedin-connect` — denied
+Approved publishing is limited to original X or LinkedIn posts on platforms you enabled in bootstrap and connected in the Integrations tab. Replies, DMs, follows, likes, reposts, connection actions, profile edits, and scheduling remain draft/recommend-only.
 
-These aren't hidden behind a "careful!" warning. They're structurally off. To enable any of them, you'd have to edit the `deniedSkills` list, which means you'd see what you were doing.
-
-**This is the point.** Automated engagement is how accounts get suspended. Automated posting is how voices drift into AI-generic. Draft-only keeps you in the loop, which is what personal branding actually requires.
+**This is the point.** The agent can remove the paste-and-post chore without turning personal branding into unsupervised automation. Your review stays in the loop; Echo handles the final platform call after approval.
 
 ## Honest Limits
 
 - **X API (X-only concern):** the free tier gives very limited read access. Analytics pulls work with Premium API ($100/mo) or by scraping your own analytics dashboard.
 - **LinkedIn API (LinkedIn-only concern):** restrictive. Most people fall back to semi-manual analytics (operator pastes screenshots, agent parses).
-- **If the API is unavailable for your platform:** the agent still works for drafting — it just won't auto-pull analytics. You paste your numbers during the weekly review.
+- **If the API is unavailable for your platform:** the agent still works for drafting, but analytics pulls and approval-gated posting stay unavailable. You paste your numbers during the weekly review and publish manually.
 - **Credential setup:** platform providers (X, LinkedIn) connect from the **Integrations** tab; your channel (WhatsApp, etc.) connects from the **Channels** tab. Never put secrets in the template files.
 
 ## First Week Expectations

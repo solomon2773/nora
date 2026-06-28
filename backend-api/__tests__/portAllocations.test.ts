@@ -49,9 +49,11 @@ describe("allocateGatewayPort", () => {
   });
 
   it("claims the lowest free port for a fresh agent", async () => {
-    fakeDb({ existing: [], insertResponses: [{ rows: [{ port: 19000 }] }] });
+    const { calls } = fakeDb({ existing: [], insertResponses: [{ rows: [{ port: 19000 }] }] });
     const port = await allocateGatewayPort({ hostKey: "remote:my-vps", agentId: "a2" });
     expect(port).toBe(19000);
+    const insert = calls.find((c) => c.sql.includes("INSERT INTO gateway_port_allocations"));
+    expect(insert.sql).toContain("generate_series($3::integer, $4::integer)");
   });
 
   it("retries on a UNIQUE-violation race and succeeds", async () => {

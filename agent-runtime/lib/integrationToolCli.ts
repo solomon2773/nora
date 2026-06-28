@@ -23,8 +23,9 @@ function printHelp() {
       `  ${NORA_INTEGRATION_TOOL_COMMAND} github_list_repositories '{"owner":"openai","per_page":10}'`,
       `  ${NORA_INTEGRATION_TOOL_COMMAND} github_get_file_contents '{"owner":"openai","repo":"openai-node","path":"README.md"}'`,
       `  ${NORA_INTEGRATION_TOOL_COMMAND} twitter_post_tweet '{"text":"Hello from Nora"}'`,
+      `  ${NORA_INTEGRATION_TOOL_COMMAND} linkedin_post_share '{"text":"Hello from Nora","visibility":"PUBLIC"}'`,
       "",
-    ].join("\n")
+    ].join("\n"),
   );
 }
 

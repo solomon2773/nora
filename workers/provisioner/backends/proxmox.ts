@@ -7,6 +7,7 @@ const { PassThrough } = require("stream");
 const { URL } = require("url");
 const ProvisionerBackend = require("./interface");
 const {
+  buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
   buildOpenClawConfigMergeScript,
   buildOpenClawCustomProviders,
@@ -527,6 +528,7 @@ class ProxmoxBackend extends ProvisionerBackend {
       "touch /var/log/openclaw-agent.log",
       '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/agent.ts >> /var/log/openclaw-agent.log 2>&1 &',
       'if [ ! -f /root/.openclaw/agents/main/agent/auth-profiles.json ]; then "$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js; fi',
+      buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
       `exec "$OPENCLAW_CLI_PATH" gateway --port ${OPENCLAW_GATEWAY_PORT}`,
       "",
     ].join("\n");
