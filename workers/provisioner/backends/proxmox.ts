@@ -7,6 +7,7 @@ const { PassThrough } = require("stream");
 const { URL } = require("url");
 const ProvisionerBackend = require("./interface");
 const {
+  buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
   buildOpenClawConfigMergeScript,
   buildOpenClawCustomProviders,
@@ -22,6 +23,7 @@ const {
 } = require("../../../agent-runtime/lib/contracts");
 const { shellSingleQuote } = require("../../../agent-runtime/lib/containerCommand");
 const { isProxmoxApiTokenId } = require("../../../agent-runtime/lib/backendCatalog");
+const { getNemoClawDefaultModel } = require("../../../agent-runtime/lib/nemoclawDefaults");
 const {
   buildTelemetry,
   buildUnavailableTelemetry,
@@ -444,10 +446,7 @@ class ProxmoxBackend extends ProvisionerBackend {
       ...(isNemoClaw
         ? {
             HOME: "/sandbox",
-            NEMOCLAW_MODEL:
-              env.NEMOCLAW_MODEL ||
-              process.env.NEMOCLAW_DEFAULT_MODEL ||
-              "nvidia/nemotron-3-super-120b-a12b",
+            NEMOCLAW_MODEL: env.NEMOCLAW_MODEL || getNemoClawDefaultModel(process.env),
             ...(process.env.NVIDIA_API_KEY && !env.NVIDIA_API_KEY
               ? { NVIDIA_API_KEY: process.env.NVIDIA_API_KEY }
               : {}),
@@ -529,6 +528,7 @@ class ProxmoxBackend extends ProvisionerBackend {
       "touch /var/log/openclaw-agent.log",
       '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/agent.ts >> /var/log/openclaw-agent.log 2>&1 &',
       'if [ ! -f /root/.openclaw/agents/main/agent/auth-profiles.json ]; then "$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js; fi',
+      buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
       `exec "$OPENCLAW_CLI_PATH" gateway --port ${OPENCLAW_GATEWAY_PORT}`,
       "",
     ].join("\n");

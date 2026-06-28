@@ -1894,7 +1894,7 @@ describe("GET /agents/:id/stats", () => {
           ok: true,
           json: async () => ({
             sandbox: "nemoclaw",
-            model: "nvidia/nvidia/nemotron-3-super-120b-a12b",
+            model: "nvidia/nemotron-3-super-120b-a12b",
             inferenceConfigured: true,
             policyActive: true,
             uptime: 120,
@@ -1967,7 +1967,7 @@ describe("GET /agents/:id/stats", () => {
     expect(res.body.nemo).toEqual(
       expect.objectContaining({
         available: true,
-        model: "nvidia/nvidia/nemotron-3-super-120b-a12b",
+        model: "nvidia/nemotron-3-super-120b-a12b",
         inferenceConfigured: true,
         policyActive: true,
         policyRuleCount: 2,

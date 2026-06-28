@@ -2,7 +2,9 @@
 const path = require("path");
 
 const RemoteDockerBackend = require("../../workers/provisioner/backends/remote-docker");
+const RemoteNemoClawBackend = require("../../workers/provisioner/backends/remote-nemoclaw");
 const DockerBackend = require("../../workers/provisioner/backends/docker");
+const NemoClawBackend = require("../../workers/provisioner/backends/nemoclaw");
 const { buildRemoteDockerOptions } = RemoteDockerBackend;
 
 function keyProfile(overrides = {}) {
@@ -40,6 +42,25 @@ describe("buildRemoteDockerOptions", () => {
     );
     expect(opts.sshOptions.password).toBe("hunter2");
     expect(opts.sshOptions.privateKey).toBeUndefined();
+  });
+
+  describe("hostVerifier (host-key pinning)", () => {
+    it("accepts any key when no pin exists yet (trust-on-first-use)", () => {
+      const opts = buildRemoteDockerOptions(keyProfile({ sshHostKey: null }));
+      expect(opts.sshOptions.hostVerifier(Buffer.from("anything"))).toBe(true);
+    });
+
+    it("accepts a matching pinned key", () => {
+      const pin = Buffer.from("GOOD-KEY").toString("base64");
+      const opts = buildRemoteDockerOptions(keyProfile({ sshHostKey: pin }));
+      expect(opts.sshOptions.hostVerifier(Buffer.from("GOOD-KEY"))).toBe(true);
+    });
+
+    it("rejects a key that differs from the pin (MITM)", () => {
+      const pin = Buffer.from("GOOD-KEY").toString("base64");
+      const opts = buildRemoteDockerOptions(keyProfile({ sshHostKey: pin }));
+      expect(opts.sshOptions.hostVerifier(Buffer.from("EVIL-KEY"))).toBe(false);
+    });
   });
 
   it("defaults the SSH port to 22 when unset", () => {
@@ -102,6 +123,7 @@ describe("RemoteDockerBackend.create", () => {
       gatewayToken: "tok",
       containerName: "oclaw-agent-x",
       gatewayHostPort: 19042,
+      runtimeHostPort: 19043,
     });
     const backend = new RemoteDockerBackend(keyProfile());
 
@@ -109,6 +131,8 @@ describe("RemoteDockerBackend.create", () => {
 
     expect(result.gatewayHost).toBe("laptop.tail-scale.ts.net");
     expect(result.gatewayPort).toBe(19042);
+    expect(result.runtimeHost).toBe("laptop.tail-scale.ts.net");
+    expect(result.runtimePort).toBe(19043);
     // base fields preserved
     expect(result.containerId).toBe("oclaw-agent-x");
     expect(result.gatewayHostPort).toBe(19042);
@@ -121,10 +145,41 @@ describe("RemoteDockerBackend.create", () => {
       gatewayToken: "t",
       containerName: "c",
       gatewayHostPort: 19000,
+      runtimeHostPort: 19001,
     });
     const backend = new RemoteDockerBackend(keyProfile({ gatewayHost: "" }));
 
     const result = await backend.create({ id: "x" });
     expect(result.gatewayHost).toBe("100.64.0.5");
+  });
+});
+
+describe("RemoteNemoClawBackend", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("uses the NemoClaw backend path and advertises the remote gateway endpoint", async () => {
+    jest.spyOn(NemoClawBackend.prototype, "create").mockResolvedValue({
+      containerId: "nemo-agent-x",
+      host: "172.18.0.5",
+      gatewayToken: "tok",
+      containerName: "nemo-agent-x",
+      gatewayHostPort: 19077,
+      runtimeHostPort: 19078,
+    });
+    const backend = new RemoteNemoClawBackend(keyProfile());
+
+    const result = await backend.create({ id: "x", name: "Nemo" });
+
+    expect(result.host).toBe("laptop.tail-scale.ts.net");
+    expect(result.gatewayHost).toBe("laptop.tail-scale.ts.net");
+    expect(result.gatewayPort).toBe(19077);
+    expect(result.runtimeHost).toBe("laptop.tail-scale.ts.net");
+    expect(result.runtimePort).toBe(19078);
+    expect(result.containerId).toBe("nemo-agent-x");
+  });
+
+  it("never discovers a compose network on the remote daemon", async () => {
+    const backend = new RemoteNemoClawBackend(keyProfile());
+    await expect(backend._findComposeNetwork()).resolves.toBeNull();
   });
 });

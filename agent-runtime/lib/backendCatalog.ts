@@ -1,5 +1,10 @@
 // @ts-nocheck
 const DEFAULT_RUNTIME_FAMILY = "openclaw";
+const {
+  NEMOCLAW_DEFAULT_MODEL,
+  getNemoClawDefaultModel,
+  getNemoClawSandboxImage,
+} = require("./nemoclawDefaults");
 const KNOWN_RUNTIME_FAMILIES = Object.freeze(["openclaw", "hermes"]);
 const KNOWN_DEPLOY_TARGETS = Object.freeze(["docker", "k8s", "remote-docker", "proxmox"]);
 const KNOWN_BACKENDS = KNOWN_DEPLOY_TARGETS;
@@ -161,7 +166,7 @@ const SANDBOX_PROFILE_METADATA = Object.freeze({
 });
 
 const NEMOCLAW_MODELS = Object.freeze([
-  "nvidia/nemotron-3-super-120b-a12b",
+  NEMOCLAW_DEFAULT_MODEL,
   "nvidia/llama-3.1-nemotron-ultra-253b-v1",
   "nvidia/llama-3.3-nemotron-super-49b-v1.5",
   "nvidia/nemotron-3-nano-30b-a3b",
@@ -767,14 +772,8 @@ function buildSandboxProfileOption(runtimeFamily, deployTarget, sandboxProfile, 
     selectionId: `${normalizedRuntimeFamily}:${normalizedDeployTarget}:${normalizedSandboxProfile}`,
     selectionType: "sandbox_profile",
     models: normalizedSandboxProfile === "nemoclaw" ? [...NEMOCLAW_MODELS] : [],
-    defaultModel:
-      normalizedSandboxProfile === "nemoclaw"
-        ? env.NEMOCLAW_DEFAULT_MODEL || NEMOCLAW_MODELS[0]
-        : null,
-    sandboxImage:
-      normalizedSandboxProfile === "nemoclaw"
-        ? env.NEMOCLAW_SANDBOX_IMAGE || "ghcr.io/nvidia/openshell-community/sandboxes/openclaw"
-        : null,
+    defaultModel: normalizedSandboxProfile === "nemoclaw" ? getNemoClawDefaultModel(env) : null,
+    sandboxImage: normalizedSandboxProfile === "nemoclaw" ? getNemoClawSandboxImage(env) : null,
     availableForOnboarding: maturityFields.onboardingVisible && status.available,
     ...maturityFields,
   };
@@ -1001,12 +1000,8 @@ function getSandboxProfileCatalog(env = process.env, options = {}) {
           : null,
       executionTargets: relatedTargets.map((target) => target.id),
       models: sandboxProfile === "nemoclaw" ? [...NEMOCLAW_MODELS] : [],
-      defaultModel:
-        sandboxProfile === "nemoclaw" ? env.NEMOCLAW_DEFAULT_MODEL || NEMOCLAW_MODELS[0] : null,
-      sandboxImage:
-        sandboxProfile === "nemoclaw"
-          ? env.NEMOCLAW_SANDBOX_IMAGE || "ghcr.io/nvidia/openshell-community/sandboxes/openclaw"
-          : null,
+      defaultModel: sandboxProfile === "nemoclaw" ? getNemoClawDefaultModel(env) : null,
+      sandboxImage: sandboxProfile === "nemoclaw" ? getNemoClawSandboxImage(env) : null,
       availableForOnboarding:
         maturityFields.onboardingVisible && relatedOptions.some((option) => option.available),
       ...maturityFields,

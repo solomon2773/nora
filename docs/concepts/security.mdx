@@ -31,6 +31,7 @@ Nora is built to be trustworthy in real operator environments: you run it on you
 - **The gateway proxy is the only path to a runtime's API**, and it restricts which upstream addresses can be proxied to an allowlist of ranges.
 - **Live exec, log, and metrics WebSocket streams enforce access control** — runtime terminal and log streaming are authenticated, not open sockets.
 - **Proxied agent assets are token-validated** before they are served.
+- **BYOC remote hosts pin their SSH host key.** The first successful connection test records the remote host's SSH public key (trust-on-first-use); every later connection — connection tests and deploys alike — rejects a host presenting a different key, so a changed/spoofed host (man-in-the-middle) fails closed rather than silently connecting.
 
 ## Runtime isolation
 

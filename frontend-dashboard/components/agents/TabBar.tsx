@@ -9,6 +9,7 @@ import {
   BarChart3,
   FolderTree,
   Archive,
+  CalendarClock,
 } from "lucide-react";
 import { runtimeSupportsGateway } from "../../lib/runtime";
 
@@ -21,6 +22,7 @@ const baseTabs = [
   { id: "hermes-webui", label: "Hermes WebUI", icon: Bot, hermesOnly: true },
   { id: "nemoclaw", label: "NemoClaw", icon: ShieldCheck, needsNemoClaw: true },
   { id: "files", label: "Files", icon: FolderTree },
+  { id: "schedules", label: "Schedules", icon: CalendarClock },
   { id: "backups", label: "Backups", icon: Archive },
   { id: "settings", label: "Settings", icon: Settings },
 ];

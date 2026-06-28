@@ -1615,4 +1615,6 @@ module.exports = {
   resolveSafeGatewayHttpTarget,
   resolveSafeHermesDashboardTarget,
   assertExternalEndpointReachable,
+  resolveGatewayHostForProxy,
+  allowedGatewayHostsForAgent,
 };

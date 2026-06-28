@@ -258,6 +258,37 @@ const tail = {
       ["agents:write"],
     ),
   },
+  "/agents/{id}/schedules": {
+    get: summarize("Schedules", "List the agent's scheduled runs", [agentParam], ["agents:read"]),
+    post: summarize(
+      "Schedules",
+      "Create a scheduled run (cron prompt or lifecycle action)",
+      [agentParam],
+      ["agents:write"],
+    ),
+  },
+  "/agents/{id}/schedules/{scheduleId}": {
+    put: summarize(
+      "Schedules",
+      "Update or enable/disable a schedule",
+      [agentParam, { name: "scheduleId", in: "path", required: true, schema: { type: "string" } }],
+      ["agents:write"],
+    ),
+    delete: summarize(
+      "Schedules",
+      "Delete a schedule",
+      [agentParam, { name: "scheduleId", in: "path", required: true, schema: { type: "string" } }],
+      ["agents:write"],
+    ),
+  },
+  "/agents/{id}/schedules/{scheduleId}/runs": {
+    get: summarize(
+      "Schedules",
+      "List recent runs for a schedule",
+      [agentParam, { name: "scheduleId", in: "path", required: true, schema: { type: "string" } }],
+      ["agents:read"],
+    ),
+  },
   "/agents/{id}/versions": {
     get: summarize("Agents", "List configuration version history", [agentParam], ["agents:read"]),
   },

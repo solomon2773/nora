@@ -17,6 +17,9 @@
 #                         Comma-separated runtime families to deploy.
 #                         Defaults to openclaw in the script; smoke:k8s-aks
 #                         defaults to openclaw,hermes.
+#   K8S_SMOKE_CELLS       Optional runtime:sandbox pairs. Example:
+#                         openclaw:standard,openclaw:nemoclaw,hermes:standard.
+#                         NemoClaw cells require NVIDIA_API_KEY.
 #   CONTAINER_KUBECONFIG_PATH
 #                         Defaults to KUBECONFIG_PATH (use this when the API server
 #                         URL in the kubeconfig differs between host and containers).

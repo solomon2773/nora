@@ -107,6 +107,8 @@ jobs:
             dockerfile: workers/provisioner/Dockerfile.prod
           - image: nora-worker-backup
             dockerfile: workers/backup/Dockerfile.prod
+          - image: nora-nemoclaw-agent
+            dockerfile: agent-runtime/Dockerfile.nemoclaw-agent
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

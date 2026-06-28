@@ -21,6 +21,18 @@ export function registerMonitoringTools(server, api) {
   );
 
   server.registerTool(
+    "get_fleet_status",
+    {
+      title: "Get fleet status",
+      description:
+        "Fleet-wide needs-attention roll-up for agents and platform components.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    withApi(async () => jsonResult(await api.get("/api/monitoring/fleet-status"))),
+  );
+
+  server.registerTool(
     "list_monitoring_events",
     {
       title: "List monitoring events",

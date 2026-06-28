@@ -36,6 +36,10 @@ function buildOpenApiDocument() {
     tags: [
       { name: "Agents", description: "Agent lifecycle: deploy, start/stop, versions." },
       { name: "Budgets", description: "Per-agent LLM spend caps with auto-pause." },
+      {
+        name: "Schedules",
+        description: "Recurring cron triggers for agent prompts and lifecycle actions.",
+      },
       { name: "Monitoring", description: "Metrics, events, cost, and the fleet roll-up." },
       { name: "LLM Providers", description: "Encrypted provider key management." },
       { name: "Auth", description: "Session endpoints (JWT + HttpOnly cookie)." },

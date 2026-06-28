@@ -1,13 +1,10 @@
-# Supply-chain security: per-image container CVE scanning (Trivy) + SBOM (Syft).
-# Builds each release image locally, scans it for OS/library CVEs (results go to
-# the GitHub Security tab as SARIF), and publishes an SPDX SBOM artifact.
+# Supply-chain inventory: per-image SBOM (Syft).
+# Builds each release image locally and publishes an SPDX SBOM artifact.
 #
-# Posture: REPORT-FIRST. Findings (HIGH+CRITICAL) upload to code scanning for
-# visibility but do NOT fail the build, so introducing scanning over a known
-# CVE backlog (e.g. the OpenClaw build bundled in the NemoClaw agent image, which
-# currently carries fixable CRITICALs pending an upstream version bump) doesn't
-# perpetually red CI. Flip to a hard gate once images are clean — see the
-# commented "Trivy gate" step below.
+# Container CVE scanning is intentionally not run or uploaded to GitHub Code Scanning:
+# the image matrix includes upstream sandbox/base-image layers that are outside
+# Nora's source tree and create noisy third-party alerts in the Security tab.
+# Keep Nora-owned source and dependency security checks in CI Security + CodeQL.
 #
 # The image matrix MUST stay in sync with the publish-images matrix in
 # release-docker.yml — including nora-nemoclaw-agent (the NemoClaw sandbox agent).
@@ -23,9 +20,6 @@ on:
       - ".github/workflows/ci-supply-chain.yml"
   push:
     branches: [master]
-  schedule:
-    # Weekly re-scan so newly-disclosed CVEs in unchanged images still surface.
-    - cron: "0 7 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -36,12 +30,11 @@ permissions:
   contents: read
 
 jobs:
-  image-scan:
-    name: "scan (${{ matrix.image }})"
+  image-sbom:
+    name: "sbom (${{ matrix.image }})"
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write # upload Trivy SARIF to code scanning
     strategy:
       fail-fast: false
       matrix:
@@ -77,40 +70,6 @@ jobs:
           tags: ${{ matrix.image }}:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      # Full CVE report (HIGH+CRITICAL) -> SARIF for the Security tab. Non-blocking
-      # so unfixable base-image CVEs stay visible without permanently reddening CI.
-      - name: Trivy scan (report)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ${{ matrix.image }}:scan
-          format: sarif
-          output: trivy-${{ matrix.image }}.sarif
-          severity: HIGH,CRITICAL
-          exit-code: "0"
-          scanners: vuln
-
-      - name: Upload Trivy SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@7fc6561ed893d15cec696e062df840b21db27eb0 # v4.35.2
-        with:
-          sarif_file: trivy-${{ matrix.image }}.sarif
-          category: container-${{ matrix.image }}
-
-      # Hard gate (disabled while the known backlog is remediated): fail on
-      # FIXABLE CRITICALs. Re-enable once `Trivy scan (report)` is clean — notably
-      # after the NemoClaw agent image's bundled OpenClaw is bumped past the
-      # patched release (>= 2026.4.15).
-      # - name: Trivy gate (fixable CRITICAL)
-      #   uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-      #   with:
-      #     image-ref: ${{ matrix.image }}:scan
-      #     format: table
-      #     severity: CRITICAL
-      #     ignore-unfixed: true
-      #     exit-code: "1"
-      #     scanners: vuln
-      #     skip-setup-trivy: true
 
       # SPDX SBOM for the image, published as a build artifact.
       - name: Generate SBOM (Syft)

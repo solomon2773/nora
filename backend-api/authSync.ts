@@ -1,7 +1,8 @@
 // @ts-nocheck
-// Syncs auth-profiles.json to running agents via the runtime sidecar.
-// After writing, restarts the backend so the OpenClaw gateway process
-// re-reads the file on startup (it does not hot-reload from disk).
+// Syncs OpenClaw auth to running agents via the runtime sidecar.
+// Writes the legacy auth-profiles.json file, imports API-key profiles into
+// OpenClaw's per-agent SQLite auth store, then restarts the backend so the
+// gateway process re-reads auth on startup (it does not hot-reload from disk).
 // Called whenever LLM provider keys or LLM-relevant integrations change.
 
 const db = require("./db");
@@ -13,11 +14,13 @@ const { waitForAgentReadiness } = require("./healthChecks");
 const { resolveAgentRuntimeFamily } = require("./agentRuntimeFields");
 const { shellSingleQuote } = require("../agent-runtime/lib/containerCommand");
 const {
+  buildOpenClawAuthProfilesWriteCommand,
   buildOpenClawConfigMergeCommand,
   buildOpenClawCustomProviders,
-  mapNoraProviderIdToOpenClaw,
+  buildOpenClawModelForProvider,
 } = require("../agent-runtime/lib/runtimeBootstrap");
 const { buildHermesRuntimeBootstrapEnv } = require("../agent-runtime/lib/hermesRuntimeBootstrap");
+const { NEMOCLAW_DEFAULT_MODEL } = require("../agent-runtime/lib/nemoclawDefaults");
 
 const providerCatalog = Array.isArray(llmProviders.PROVIDERS)
   ? llmProviders.PROVIDERS
@@ -38,12 +41,12 @@ const PROVIDER_MODEL_DEFAULTS = {
   together: "together/moonshotai/Kimi-K2.5",
   cohere: "command-r-plus",
   xai: "grok-4",
-  nvidia: "nvidia/nvidia/nemotron-3-super-120b-a12b",
+  nvidia: NEMOCLAW_DEFAULT_MODEL,
   moonshot: "kimi-k2.5",
   zai: "glm-5",
   minimax: "MiniMax-M2.7",
   // Bare deployment name — buildDefaultModelCommand prefixes it with the
-  // OpenClaw provider id (azure-openai-responses) via mapNoraProviderIdToOpenClaw.
+  // OpenClaw provider id (azure-openai-responses) via buildOpenClawModelForProvider.
   "microsoft-foundry": "gpt-5.5-1",
 };
 
@@ -271,12 +274,7 @@ async function buildHermesManagedEnvForAgent(userId, agentId) {
 }
 
 function buildAuthProfilesWriteCommand(authProfiles) {
-  const authJsonB64 = Buffer.from(JSON.stringify(authProfiles)).toString("base64");
-  return (
-    `mkdir -p /root/.openclaw/agents/main/agent && ` +
-    `printf '%s' '${authJsonB64}' | base64 -d > /root/.openclaw/agents/main/agent/auth-profiles.json && ` +
-    `chmod 0600 /root/.openclaw/agents/main/agent/auth-profiles.json`
-  );
+  return buildOpenClawAuthProfilesWriteCommand(authProfiles);
 }
 
 function buildDefaultModelCommand(defaultProvider = null) {
@@ -299,9 +297,7 @@ function buildDefaultOpenClawModel(defaultProvider = null) {
   const modelId = defaultProvider.model || PROVIDER_MODEL_DEFAULTS[defaultProvider.provider];
   if (!modelId) return null;
 
-  // Translate Nora provider id → OpenClaw provider id (Foundry → azure-openai-responses).
-  const openclawProvider = mapNoraProviderIdToOpenClaw(defaultProvider.provider);
-  return modelId.includes("/") ? modelId : `${openclawProvider}/${modelId}`;
+  return buildOpenClawModelForProvider(defaultProvider.provider, modelId);
 }
 
 function buildCustomProviderEnv(baseEnv = {}, defaultProvider = null) {
@@ -525,7 +521,7 @@ async function restartAgentAndRefreshAddress(agent) {
 }
 
 /**
- * Sync auth-profiles.json to all running agents of a user.
+ * Sync OpenClaw auth to all running agents of a user.
  * If agentId is provided, syncs only that agent.
  *
  * Returns an array of { agentId, status, error? } results.
@@ -704,7 +700,7 @@ async function syncAuthToUserAgents(userId, agentId = null, options = {}) {
         await runRuntimeCommand(agent, modelCommand, { timeout: 60000 });
       }
 
-      console.log(`[authSync] Synced auth-profiles.json to agent ${agent.id} (backend restarted)`);
+      console.log(`[authSync] Synced OpenClaw auth to agent ${agent.id} (backend restarted)`);
       results.push({ agentId: agent.id, status: "synced" });
     } catch (e) {
       console.warn(`[authSync] Failed for agent ${agent.id}:`, e.message);

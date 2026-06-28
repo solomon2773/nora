@@ -1,7 +1,8 @@
-# Reproducible build for `nora-nemoclaw-agent:local` — an overlay on top of
-# the upstream NVIDIA OpenShell sandbox that adds `tsx` (already has openclaw
-# preinstalled) so the runtime bootstrap's fast-path check succeeds at the
-# non-root, Landlock-restricted user that the sandbox runs as.
+# Reproducible build for `nora-nemoclaw-agent` — an overlay on top of the
+# upstream NVIDIA OpenShell sandbox that adds `tsx` and upgrades the base's
+# bundled `openclaw` to a patched release (the base ships an older OpenClaw with
+# sandbox-escape CVEs), so the runtime bootstrap's fast-path check succeeds at
+# the non-root, Landlock-restricted user that the sandbox runs as.
 #
 # Why this is necessary: the OpenShell base image ships with `openclaw`
 # installed globally but NOT `tsx`. Our bootstrap's `ensureOpenClawCmd` tries
@@ -14,19 +15,31 @@
 #
 # Build (once per host, or after bumping upstream):
 #   docker build \
-#     --build-arg NEMOCLAW_SANDBOX_BASE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest \
 #     --build-arg TSX_VERSION=4.21.0 \
+#     --build-arg OPENCLAW_VERSION=2026.6.9 \
 #     -f agent-runtime/Dockerfile.nemoclaw-agent \
 #     -t nora-nemoclaw-agent:local \
 #     agent-runtime/
+# (the base is digest-pinned in the ARG below; override NEMOCLAW_SANDBOX_BASE
+#  only to deliberately move to a newer OpenShell sandbox build)
 #
-# Override the tag the NemoClaw adapter reads via:
+# The production default is the GHCR-published nora-nemoclaw-agent image.
+# Use the local tag only for offline hosts or private cluster preloads:
 #   NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local
 
-ARG NEMOCLAW_SANDBOX_BASE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest
+# Base pinned by digest for reproducibility AND CVE control. The floating
+# :latest tag currently ships OpenClaw 2026.3.11, which carries fixable CRITICAL
+# sandbox-escape CVEs (CVE-2026-41296 / -41329 / -41294 / -43585 / -44109). We
+# pin the digest for a deterministic build and upgrade OpenClaw to a patched
+# release below. Re-resolve the digest after an intentional base bump with:
+#   docker buildx imagetools inspect ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest
+ARG NEMOCLAW_SANDBOX_BASE=ghcr.io/nvidia/openshell-community/sandboxes/openclaw:latest@sha256:c116946b3f9e84791630f21f115ac35c9c9f669af70ec0eef3035d79833a9550
 FROM ${NEMOCLAW_SANDBOX_BASE}
 
 ARG TSX_VERSION=4.21.0
+# Patched OpenClaw: >= 2026.4.15 clears the base image's sandbox-escape CVEs.
+# Pinned exactly (not a floating tag) so the build stays reproducible.
+ARG OPENCLAW_VERSION=2026.6.9
 
 # Need to install as root; the base image's final layer is `USER sandbox`.
 USER root
@@ -35,8 +48,9 @@ USER root
 # uses `/usr` as its global prefix (not `/usr/local`) — `which openclaw` on
 # the base resolves to `/usr/bin/openclaw` for the same reason.  We inherit
 # that prefix and let the install drop `tsx` alongside.
-RUN npm install -g "tsx@${TSX_VERSION}" \
+RUN npm install -g "tsx@${TSX_VERSION}" "openclaw@${OPENCLAW_VERSION}" \
  && /usr/bin/tsx --version \
+ && /usr/bin/openclaw --version \
  && npm cache clean --force \
  && rm -rf /root/.npm
 

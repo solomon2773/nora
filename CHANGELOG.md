@@ -4,6 +4,39 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
+## [v1.13.0](https://github.com/solomon2773/nora/releases/tag/v1.13.0) — 2026-06-23
+
+Scheduled agent operations, production-ready NemoClaw placement, GenAI observability,
+and stronger release supply-chain evidence.
+
+### Added
+
+- **Scheduled agent runs**: operators can create recurring cron schedules for agents,
+  trigger them through the control plane, and manage schedules from the agent detail
+  page. The scheduler includes queue retries, paused-agent skipping, sweep guards, and
+  OpenAPI/docs coverage. (#239)
+- **OpenTelemetry GenAI export**: backend spans and metrics now emit `gen_ai.*`
+  telemetry with bounded attributes, fail-open startup behavior, and documentation for
+  collector setup. (#233)
+- **Supply-chain image evidence**: CI now publishes per-image Trivy reports and Syft
+  SBOMs in a non-blocking supply-chain workflow. (#234)
+
+### Changed
+
+- **NemoClaw production readiness**: NemoClaw now ships as a GHCR image and can be used
+  through remote NemoClaw and Kubernetes placement paths with CVE-patched bases, updated
+  backend catalog handling, setup/docs coverage, and real deploy-matrix smoke support.
+  (#238)
+- Launch and security docs now surface the MCP/A2A/OTel story and the current isolation
+  model on the first-screen adoption path. (#232)
+
+### Fixed
+
+- Shortened MCP Registry metadata so registry validation stays within the current
+  description-length limit.
+- Hardened scheduled Hermes runs against SSRF-relevant URL handling and improved retry
+  and sweep behavior for scheduled enqueue paths. (#239)
+
 ## [v1.12.0](https://github.com/solomon2773/nora/releases/tag/v1.12.0) — 2026-06-21
 
 Remote-host/BYOC expansion, adopted runtime operations, stronger runtime/gateway security,

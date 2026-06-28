@@ -12,6 +12,7 @@ const {
 const scheduler = require("../scheduler");
 const containerManager = require("../containerManager");
 const agentBudgets = require("../agentBudgets");
+const agentSchedules = require("../agentSchedules");
 const monitoring = require("../monitoring");
 const metrics = require("../metrics");
 const workspaces = require("../workspaces");
@@ -2133,6 +2134,107 @@ router.delete(
       agentAuditMetadata(req, agent, { result: { budgetId: req.params.budgetId } }),
     );
     res.json({ success: true });
+  }),
+);
+
+// ── Scheduled runs (recurring cron triggers) ─────────────────────────────────
+
+router.get(
+  "/:id/schedules",
+  asyncHandler(async (req, res) => {
+    const agent = await findAccessibleAgent(req.params.id, req.user.id, "viewer");
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.json(await agentSchedules.listSchedules(agent.id));
+  }),
+);
+
+router.post(
+  "/:id/schedules",
+  asyncHandler(async (req, res) => {
+    const agent = await findAccessibleAgent(req.params.id, req.user.id, "editor");
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, { ownerEmail: req.user.email || null });
+    let schedule;
+    try {
+      schedule = await agentSchedules.createSchedule(agent.id, req.user.id, req.body || {});
+    } catch (err) {
+      if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+    await monitoring.logEvent(
+      "agent.schedule_created",
+      `Schedule "${schedule.name}" (${schedule.action_type}, ${schedule.cron} ${schedule.timezone}) created on agent "${agent.name}"`,
+      agentAuditMetadata(req, agent, {
+        result: { scheduleId: schedule.id, actionType: schedule.action_type, cron: schedule.cron },
+      }),
+    );
+    res.status(201).json(schedule);
+  }),
+);
+
+router.put(
+  "/:id/schedules/:scheduleId",
+  asyncHandler(async (req, res) => {
+    const agent = await findAccessibleAgent(req.params.id, req.user.id, "editor");
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, { ownerEmail: req.user.email || null });
+    let schedule;
+    try {
+      schedule = await agentSchedules.updateSchedule(
+        agent.id,
+        req.params.scheduleId,
+        req.body || {},
+      );
+    } catch (err) {
+      if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+    if (!schedule) return res.status(404).json({ error: "Schedule not found" });
+    await monitoring.logEvent(
+      "agent.schedule_updated",
+      `Schedule "${schedule.name}" updated on agent "${agent.name}"`,
+      agentAuditMetadata(req, agent, {
+        result: { scheduleId: schedule.id, enabled: schedule.enabled },
+      }),
+    );
+    res.json(schedule);
+  }),
+);
+
+router.delete(
+  "/:id/schedules/:scheduleId",
+  asyncHandler(async (req, res) => {
+    const agent = await findAccessibleAgent(req.params.id, req.user.id, "editor");
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    res.locals.auditContext = buildAgentContext(agent, { ownerEmail: req.user.email || null });
+    const deleted = await agentSchedules.deleteSchedule(agent.id, req.params.scheduleId);
+    if (!deleted) return res.status(404).json({ error: "Schedule not found" });
+    await monitoring.logEvent(
+      "agent.schedule_removed",
+      `Schedule removed from agent "${agent.name}"`,
+      agentAuditMetadata(req, agent, { result: { scheduleId: req.params.scheduleId } }),
+    );
+    res.json({ success: true });
+  }),
+);
+
+router.get(
+  "/:id/schedules/:scheduleId/runs",
+  asyncHandler(async (req, res) => {
+    const agent = await findAccessibleAgent(req.params.id, req.user.id, "viewer");
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 25));
+    // Runs are recorded as agent.schedule.run events (audit-integrated).
+    const result = await db.query(
+      `SELECT type, message, metadata, created_at
+         FROM events
+        WHERE type = 'agent.schedule.run'
+          AND metadata #>> '{result,scheduleId}' = $1
+        ORDER BY created_at DESC
+        LIMIT $2`,
+      [req.params.scheduleId, limit],
+    );
+    res.json(result.rows);
   }),
 );
 

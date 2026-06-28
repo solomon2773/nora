@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS remote_hosts (
   ssh_passphrase_encrypted TEXT,
   gateway_host TEXT NOT NULL DEFAULT '',
   docker_host TEXT NOT NULL DEFAULT '',
+  -- Pinned SSH host public key (base64), captured trust-on-first-use during the
+  -- connection test and verified on every subsequent connect (MITM protection).
+  ssh_host_key TEXT,
   last_test_status TEXT,
   last_test_message TEXT,
   last_tested_at TIMESTAMPTZ,
@@ -561,6 +564,33 @@ CREATE TABLE IF NOT EXISTS agent_budgets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_budgets_agent ON agent_budgets(agent_id);
+
+-- Control-plane scheduled agent runs (recurring cron triggers). The backend
+-- sweep claims due rows (FOR UPDATE SKIP LOCKED), computes the next fire, and
+-- enqueues each run; the worker executes the action (a prompt or a lifecycle op)
+-- and records an agent.schedule.run event. min_interval is enforced in the app
+-- so a too-frequent cron can't thrash an agent.
+CREATE TABLE IF NOT EXISTS agent_schedules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  name TEXT NOT NULL,
+  cron TEXT NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  action_type TEXT NOT NULL DEFAULT 'prompt'
+    CHECK (action_type IN ('prompt', 'restart', 'stop', 'start', 'redeploy')),
+  prompt TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  last_run_at TIMESTAMPTZ,
+  last_status TEXT,
+  next_run_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_schedules_due
+  ON agent_schedules(next_run_at) WHERE enabled;
+CREATE INDEX IF NOT EXISTS idx_agent_schedules_agent ON agent_schedules(agent_id);
 
 CREATE TABLE IF NOT EXISTS integration_catalog (
   id VARCHAR(50) PRIMARY KEY,

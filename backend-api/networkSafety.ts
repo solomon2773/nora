@@ -51,7 +51,9 @@ function assertSafeUrl(rawUrl, label = "URL") {
   }
 
   const hostname = parsed.hostname;
-  if (PRIVATE_IP_RE.test(hostname)) {
+  const cleanHostname =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  if (PRIVATE_IP_RE.test(cleanHostname)) {
     throw new Error(`${label} must not target internal or private network addresses`);
   }
 
@@ -84,14 +86,14 @@ async function assertSafeUrlAsync(rawUrl, label = "URL") {
     // is pointing at a made-up name. Refuse — a later `fetch` would fail
     // anyway, and refusing here gives a cleaner error.
     throw new Error(
-      `${label} hostname ${hostname} could not be resolved (${err.code || err.message})`
+      `${label} hostname ${hostname} could not be resolved (${err.code || err.message})`,
     );
   }
 
   const offending = addresses.find((addr) => PRIVATE_IP_RE.test(addr.address));
   if (offending) {
     throw new Error(
-      `${label} resolves to a private/internal address (${offending.address}) and cannot be used`
+      `${label} resolves to a private/internal address (${offending.address}) and cannot be used`,
     );
   }
 

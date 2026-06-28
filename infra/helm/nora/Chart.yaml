@@ -5,8 +5,8 @@ description: >-
   (nginx edge, marketing/operator/admin frontends, backend API, provisioner and
   backup workers) plus optional in-chart PostgreSQL and Redis.
 type: application
-version: 0.3.0
-appVersion: "1.12.0"
+version: 0.4.0
+appVersion: "1.13.0"
 home: https://github.com/solomon2773/nora
 sources:
   - https://github.com/solomon2773/nora

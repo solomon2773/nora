@@ -44,6 +44,7 @@ function requireEnv(name: string) {
 }
 
 const llmProviderId = requireEnv("REAL_LLM_PROVIDER_ID") || "anthropic";
+const nvidiaProviderId = "nvidia";
 
 function providerMatchedLlmKey(providerId: string) {
   const generic = requireEnv("REAL_LLM_API_KEY");
@@ -61,6 +62,10 @@ function providerMatchedLlmKey(providerId: string) {
     return requireEnv("REAL_GOOGLE_API_KEY") || generic;
   }
 
+  if (normalized.includes("nvidia")) {
+    return requireEnv("REAL_NVIDIA_API_KEY") || requireEnv("NVIDIA_API_KEY") || generic;
+  }
+
   return (
     generic ||
     requireEnv("REAL_ANTHROPIC_API_KEY") ||
@@ -74,6 +79,9 @@ const real = {
   llmProviderId,
   llmApiKey: providerMatchedLlmKey(llmProviderId),
   llmModel: requireEnv("REAL_LLM_MODEL"),
+  nvidiaProviderId,
+  nvidiaApiKey: requireEnv("REAL_NVIDIA_API_KEY") || requireEnv("NVIDIA_API_KEY"),
+  nvidiaModel: requireEnv("REAL_NVIDIA_MODEL") || "nvidia/nemotron-3-super-120b-a12b",
 
   // Integrations (any subset is fine — each spec skips when its cred is empty)
   githubToken: requireEnv("REAL_GITHUB_TOKEN"),
@@ -110,8 +118,14 @@ const real = {
   enableOpenclawDocker: (requireEnv("REAL_ENABLE_OPENCLAW_DOCKER") || "1") !== "0",
   enableOpenclawK8s: (requireEnv("REAL_ENABLE_OPENCLAW_K8S") || "0") === "1",
   enableOpenclawNemoclaw: (requireEnv("REAL_ENABLE_OPENCLAW_NEMOCLAW") || "0") === "1",
+  enableOpenclawNemoclawRemoteDocker:
+    (requireEnv("REAL_ENABLE_OPENCLAW_NEMOCLAW_REMOTE_DOCKER") || "0") === "1",
+  enableOpenclawNemoclawK8s: (requireEnv("REAL_ENABLE_OPENCLAW_NEMOCLAW_K8S") || "0") === "1",
   enableHermesDocker: (requireEnv("REAL_ENABLE_HERMES_DOCKER") || "0") === "1",
   enableHermesK8s: (requireEnv("REAL_ENABLE_HERMES_K8S") || "0") === "1",
+  remoteDockerExecutionTargetId:
+    requireEnv("REAL_REMOTE_DOCKER_EXECUTION_TARGET_ID") || "remote:real-smoke",
+  k8sExecutionTargetId: requireEnv("REAL_K8S_EXECUTION_TARGET_ID"),
 
   // Timeouts (ms)
   provisionTimeoutMs: Number.parseInt(requireEnv("REAL_PROVISION_TIMEOUT_MS") || "600000", 10),

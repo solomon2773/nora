@@ -73,7 +73,7 @@ If you are evaluating Nora or have just started self-hosting it, the questions b
   <Accordion title="What is NemoClaw?">
     NemoClaw is an experimental sandbox profile with OpenShell policy controls, powered by NVIDIA Nemotron models. It provides a secure, isolated execution environment for agent runtimes that require tighter operational controls.
 
-    NemoClaw is disabled by default. To enable it, add `nemoclaw` to `ENABLED_SANDBOX_PROFILES` (e.g. `ENABLED_SANDBOX_PROFILES=standard,nemoclaw`) and provide a valid `NVIDIA_API_KEY` in your `.env` file. See the [troubleshooting guide](/support/troubleshooting) if NemoClaw fails to start after enabling it.
+    NemoClaw is disabled by default. To enable it, add `nemoclaw` to `ENABLED_SANDBOX_PROFILES` (e.g. `ENABLED_SANDBOX_PROFILES=standard,nemoclaw`) and save an NVIDIA provider key in **Settings** or provide a platform fallback with `NVIDIA_API_KEY`. It can deploy to local Docker, remote Docker hosts, k3s, and managed Kubernetes targets once those execution targets are connected. See the [troubleshooting guide](/support/troubleshooting) if NemoClaw fails to start after enabling it.
 
   </Accordion>
 

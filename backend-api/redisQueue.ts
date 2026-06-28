@@ -83,8 +83,27 @@ const alertDeliveryQueue = new Queue("alert-deliveries", {
   },
 });
 
+// Scheduled agent runs (recurring cron triggers). The backend sweep claims due
+// schedules and enqueues one job per run; the worker executes the prompt /
+// lifecycle action. Retries are bounded — a missed run is re-fired on the next
+// sweep once next_run_at comes due, so we don't want long retry storms.
+const agentScheduleQueue = new Queue("agent-schedules", {
+  connection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: { count: 200, age: 86400 },
+    removeOnFail: { count: 200, age: 86400 },
+  },
+});
+
 async function addDeploymentJob(agent) {
   await deployQueue.add("deploy-agent", agent);
+}
+
+async function addScheduleRunJob(payload) {
+  const jobId = payload?.runId || randomUUID();
+  return agentScheduleQueue.add("run-schedule", { ...payload, runId: jobId }, { jobId });
 }
 
 async function addAlertDeliveryJob(payload) {
@@ -215,7 +234,9 @@ module.exports = {
   clawhubJobsQueue,
   backupsQueue,
   alertDeliveryQueue,
+  agentScheduleQueue,
   addDeploymentJob,
+  addScheduleRunJob,
   addClawhubJob,
   addClawhubInstallJob,
   addBackupJob,

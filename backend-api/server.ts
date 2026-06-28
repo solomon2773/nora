@@ -24,6 +24,8 @@ const {
   reconcileExternalAgentStatuses,
 } = require("./backgroundTasks");
 const agentBudgets = require("./agentBudgets");
+const agentSchedules = require("./agentSchedules");
+const { addScheduleRunJob } = require("./redisQueue");
 // OpenTelemetry GenAI exporter — self-initializes on require (no-op unless
 // NORA_OTEL_ENABLED=true; fail-open). Wrapped so even a module load/parse error
 // (e.g. a corrupted dependency) disables OTel rather than crashing boot — the
@@ -1374,6 +1376,10 @@ async function migrateDB() {
      )`,
     `CREATE INDEX IF NOT EXISTS idx_remote_hosts_owner
        ON remote_hosts(owner_user_id, enabled, is_default, label)`,
+    `DO $$ BEGIN
+       ALTER TABLE remote_hosts ADD COLUMN ssh_host_key TEXT;
+     EXCEPTION WHEN duplicate_column THEN NULL;
+     END $$`,
     `CREATE TABLE IF NOT EXISTS gateway_port_allocations (
        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
        host_key TEXT NOT NULL,
@@ -1852,6 +1858,27 @@ async function migrateDB() {
        UNIQUE(agent_id, period)
      )`,
     `CREATE INDEX IF NOT EXISTS idx_agent_budgets_agent ON agent_budgets(agent_id)`,
+    // ─── Control-plane scheduled agent runs (recurring cron triggers) ───
+    `CREATE TABLE IF NOT EXISTS agent_schedules (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+       created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+       name TEXT NOT NULL,
+       cron TEXT NOT NULL,
+       timezone TEXT NOT NULL DEFAULT 'UTC',
+       action_type TEXT NOT NULL DEFAULT 'prompt'
+         CHECK (action_type IN ('prompt', 'restart', 'stop', 'start', 'redeploy')),
+       prompt TEXT,
+       enabled BOOLEAN NOT NULL DEFAULT TRUE,
+       last_run_at TIMESTAMPTZ,
+       last_status TEXT,
+       next_run_at TIMESTAMPTZ,
+       created_at TIMESTAMPTZ DEFAULT NOW(),
+       updated_at TIMESTAMPTZ DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_schedules_due
+       ON agent_schedules(next_run_at) WHERE enabled`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_schedules_agent ON agent_schedules(agent_id)`,
     `DO $$ BEGIN
        ALTER TABLE agents ADD COLUMN paused_reason TEXT;
      EXCEPTION WHEN duplicate_column THEN NULL;
@@ -2114,6 +2141,27 @@ if (require.main === module) {
     setInterval(async () => {
       await agentBudgets.sweepAgentBudgets({ dbClient: db });
     }, BUDGET_SWEEP_INTERVAL);
+
+    // ── Schedule sweep: claim due agent_schedules and enqueue each run for the
+    // worker to execute. Replica-safe (FOR UPDATE SKIP LOCKED in the module).
+    // The re-entrancy guard prevents a slow sweep from overlapping the next
+    // tick (setInterval doesn't await), bounding concurrent enqueue load. ──
+    const SCHEDULE_SWEEP_INTERVAL = 30000;
+    let scheduleSweepRunning = false;
+    setInterval(async () => {
+      if (scheduleSweepRunning) return;
+      scheduleSweepRunning = true;
+      try {
+        await agentSchedules.sweepDueSchedules({
+          dbClient: db,
+          enqueue: addScheduleRunJob,
+        });
+      } catch (err) {
+        console.error("[schedules] sweep failed:", err?.message || err);
+      } finally {
+        scheduleSweepRunning = false;
+      }
+    }, SCHEDULE_SWEEP_INTERVAL);
   });
 
   attachLogStream(server);

@@ -23,9 +23,17 @@ class FakeStream extends EventEmitter {
 }
 
 class FakeSshClient extends EventEmitter {
-  connect() {
+  connect(config) {
     const scenario = sshScenario || { type: "connect-error", message: "no scenario configured" };
     process.nextTick(() => {
+      // Mimic ssh2: run hostVerifier with the presented key; reject on false.
+      if (config && typeof config.hostVerifier === "function" && scenario.hostKey !== undefined) {
+        const accepted = config.hostVerifier(Buffer.from(scenario.hostKey));
+        if (!accepted) {
+          this.emit("error", new Error("host key verification failed"));
+          return;
+        }
+      }
       if (scenario.type === "connect-error") {
         this.emit("error", new Error(scenario.message || "connection refused"));
         return;
@@ -158,6 +166,9 @@ describe("updateRemoteHost", () => {
     const update = mockDb.query.mock.calls[1];
     expect(update[0]).toMatch(/UPDATE remote_hosts/);
     expect(update[1][14]).toBe(true); // resetTest flag → wipes last_test_*
+    // The host-key pin is also cleared on a connection-input change so the next
+    // test re-pins the (now different) host instead of failing as a false MITM.
+    expect(update[0]).toMatch(/ssh_host_key = CASE WHEN \$15 THEN NULL ELSE ssh_host_key END/);
   });
 
   it("keeps the prior test result when only the label changes", async () => {
@@ -238,6 +249,34 @@ describe("testRemoteHost", () => {
 
     expect(mockDb.query.mock.calls[1][1][1]).toBe("failed");
     expect(mockDb.query.mock.calls[1][1][2]).toMatch(/private key/i);
+  });
+
+  it("pins the SSH host key on first successful test (trust-on-first-use)", async () => {
+    sshScenario = { type: "ready", stdout: "24.0.7\n", code: 0, hostKey: "HOSTKEY-BYTES" };
+    mockDb.query.mockResolvedValueOnce({ rows: [remoteHostRow({ ssh_host_key: null })] }); // getHostRow
+    mockDb.query.mockResolvedValueOnce({ rows: [remoteHostRow()] }); // UPDATE
+
+    await remoteHosts.testRemoteHost("my-laptop");
+
+    const update = mockDb.query.mock.calls[1];
+    expect(update[1][1]).toBe("ok");
+    // 4th param is the captured host key (base64) persisted via COALESCE.
+    expect(update[1][3]).toBe(Buffer.from("HOSTKEY-BYTES").toString("base64"));
+  });
+
+  it("fails the test when the host key no longer matches the pin (MITM guard)", async () => {
+    const pinned = Buffer.from("ORIGINAL-KEY").toString("base64");
+    sshScenario = { type: "ready", stdout: "24.0.7\n", code: 0, hostKey: "ATTACKER-KEY" };
+    mockDb.query.mockResolvedValueOnce({ rows: [remoteHostRow({ ssh_host_key: pinned })] }); // getHostRow
+    mockDb.query.mockResolvedValueOnce({ rows: [remoteHostRow({ last_test_status: "failed" })] }); // UPDATE
+
+    await remoteHosts.testRemoteHost("my-laptop");
+
+    const update = mockDb.query.mock.calls[1];
+    expect(update[1][1]).toBe("failed");
+    expect(update[1][2]).toMatch(/host key does not match|man-in-the-middle/i);
+    // The pin is NOT overwritten on mismatch.
+    expect(update[1][3]).toBeNull();
   });
 });
 

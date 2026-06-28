@@ -108,8 +108,13 @@ async function recordTokenUsage(agentOrId, userId, payload = {}, defaults = {}) 
   if (!agentId || !userId) return null;
   const runtimeFamily =
     defaults.runtimeFamily || (typeof agentOrId === "object" ? agentOrId?.runtime_family : null);
+  const sandboxProfile =
+    defaults.sandboxProfile || (typeof agentOrId === "object" ? agentOrId?.sandbox_profile : null);
   const usage = extractTokenUsage(payload, { ...defaults, runtimeFamily });
   if (!usage) return null;
+  if (sandboxProfile) {
+    usage.metadata.sandbox_profile = String(sandboxProfile);
+  }
   await recordMetric(agentId, userId, "tokens_used", usage.totalTokens, usage.metadata);
   // Mirror the exchange to the OpenTelemetry GenAI exporter (no-op when
   // disabled; never throws). Cost is estimated in-process from the same pricing
@@ -121,6 +126,7 @@ async function recordTokenUsage(agentOrId, userId, payload = {}, defaults = {}) 
       model: m.model,
       provider: m.provider,
       runtimeFamily,
+      sandboxProfile: m.sandbox_profile,
       source: m.source,
       sessionId: m.session_id,
       inputTokens: m.input_tokens,

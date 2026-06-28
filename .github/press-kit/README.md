@@ -39,7 +39,7 @@ licensed for editorial use. Questions: open an issue on
 ## Facts
 
 - **License:** Apache-2.0 (commercial self-hosting allowed)
-- **Current release:** v1.12.0
+- **Current release:** v1.13.0
 - **Install:** one-line installer (`curl … | bash` / `iwr … | iex`) or Docker Compose
 - **Stack:** Node 24 LTS; Express control plane; Next.js operator/admin/marketing UIs;
   PostgreSQL 15; Redis 7 + BullMQ; worker-provisioner with pluggable backend adapters

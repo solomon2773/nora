@@ -4,6 +4,7 @@
 const db = require("./db");
 const { encrypt, decrypt, ensureEncryptionConfigured } = require("./crypto");
 const { DEMO_PROVIDER_ID, DEMO_MODEL_ID, deriveDemoToken, demoLlmBaseUrl } = require("./demoLlm");
+const { NEMOCLAW_DEFAULT_MODEL } = require("../agent-runtime/lib/nemoclawDefaults");
 
 // Approved LLM providers and their env var names
 // Models updated per https://docs.openclaw.ai/providers (April 2026)
@@ -62,7 +63,7 @@ const PROVIDERS = [
     envVar: "NVIDIA_API_KEY",
     endpoint: "https://integrate.api.nvidia.com/v1",
     models: [
-      "nvidia/nvidia/nemotron-3-super-120b-a12b",
+      NEMOCLAW_DEFAULT_MODEL,
       "nvidia/moonshotai/kimi-k2.5",
       "nvidia/minimaxai/minimax-m2.5",
       "nvidia/z-ai/glm5",

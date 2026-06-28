@@ -27,7 +27,7 @@ const QUICKSTART_URL = `${OSS_REPO_URL}#quick-start`;
 const RAW_REPO_BASE_URL = "https://raw.githubusercontent.com/solomon2773/nora/master";
 const SETUP_SH_URL = `${RAW_REPO_BASE_URL}/setup.sh`;
 const SETUP_PS1_URL = `${RAW_REPO_BASE_URL}/setup.ps1`;
-const LATEST_VERSION = "v1.12.0";
+const LATEST_VERSION = "v1.13.0";
 
 const TRUST_ITEMS = [
   {

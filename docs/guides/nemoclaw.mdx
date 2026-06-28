@@ -33,9 +33,25 @@ NemoClaw agents use NVIDIA's Nemotron family of models via the NVIDIA API. The f
 | `nvidia/nemotron-3-nano-30b-a3b`           | Lightweight 30B Nemotron Nano                    |
 
 <Note>
-  To use these models you must have an NVIDIA API key saved in **Settings** under the NVIDIA
-  provider. See [Add and sync LLM provider keys](/guides/manage-providers).
+  To use these models, save an NVIDIA API key in **Settings** under the NVIDIA provider. If no user
+  key is saved, self-hosted operators may provide a platform fallback with `NVIDIA_API_KEY`, but
+  user keys are preferred because they keep usage attribution tied to the deploying account.
 </Note>
+
+## Supported deploy targets
+
+NemoClaw runs as an OpenClaw sandbox profile on these deploy targets:
+
+| Target           | Status    | Notes                                                                                                                    |
+| ---------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Local Docker     | Supported | Uses the local Docker socket and the NemoClaw sandbox image.                                                             |
+| Remote Docker    | Supported | Requires a connected remote host target such as `remote:gpu-vps`; Nora publishes the gateway port on that host.          |
+| K3s / Kubernetes | Supported | Uses the Kubernetes adapter with `sandbox_profile=nemoclaw`; API keys are injected through per-agent Kubernetes Secrets. |
+| AKS / GKE / EKS  | Supported | Same Kubernetes adapter as K3s; use LoadBalancer exposure or the cluster exposure mode configured in Admin.              |
+
+The default sandbox image is `ghcr.io/solomon2773/nora-nemoclaw-agent:latest`. For air-gapped
+hosts or private clusters, build `nora-nemoclaw-agent:local`, preload it onto the target nodes, and
+set `NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local`.
 
 ## Deploy a NemoClaw agent
 

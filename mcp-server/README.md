@@ -37,7 +37,7 @@ Fallbacks: `NORA_HOST`/`NORA_TOKEN` env vars, then the Nora CLI's `~/.nora/confi
 
 ## Tools
 
-Read: `list_agents`, `get_agent`, `get_agent_versions`, `get_platform_metrics`, `list_monitoring_events`, `get_agent_metrics`, `get_agent_metrics_summary`, `get_agent_cost`.
+Read: `list_agents`, `get_agent`, `get_agent_versions`, `get_platform_metrics`, `get_fleet_status`, `list_monitoring_events`, `get_agent_metrics`, `get_agent_metrics_summary`, `get_agent_cost`.
 
 Write: `deploy_agent`, `start_agent`, `stop_agent`, `restart_agent`, `redeploy_agent` — and `delete_agent`, which is only registered when `NORA_MCP_ALLOW_DESTRUCTIVE=true`.
 

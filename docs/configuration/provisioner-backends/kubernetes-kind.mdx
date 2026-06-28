@@ -82,14 +82,14 @@ docker compose -f docker-compose.yml -f docker-compose.kubernetes.yml -f docker-
 
 Then register the Kind cluster in **Admin -> Kubernetes**:
 
-| Field | Value |
-| ----- | ----- |
-| Credential mode | `Mounted kubeconfig path` |
-| Kubeconfig path | `/kubeconfigs/nora-kind.container.kubeconfig` |
-| Exposure mode | `NodePort` |
-| Runtime host | `host.docker.internal`, or the Kind control-plane container name on Linux |
-| Runtime node port | `30909` |
-| Gateway node port | `31879` |
+| Field             | Value                                                                     |
+| ----------------- | ------------------------------------------------------------------------- |
+| Credential mode   | `Mounted kubeconfig path`                                                 |
+| Kubeconfig path   | `/kubeconfigs/nora-kind.container.kubeconfig`                             |
+| Exposure mode     | `NodePort`                                                                |
+| Runtime host      | `host.docker.internal`, or the Kind control-plane container name on Linux |
+| Runtime node port | `30909`                                                                   |
+| Gateway node port | `31879`                                                                   |
 
 The Admin **Runtime host** must be reachable from the Compose containers. On Linux without `host.docker.internal` support, set it to the Kind control-plane container name (`nora-kind-control-plane` by default) and join the `kind` Docker network.
 
@@ -123,6 +123,9 @@ docker compose -f docker-compose.yml -f docker-compose.kubernetes.yml -f docker-
 ```
 
 The smoke script exits with `{"ok":true,...}` on success. Per-agent objects follow the generated naming convention `nora-oclaw-<agent-name>-<suffix>` in the `openclaw-agents` namespace.
+
+To smoke NemoClaw on the same Kind adapter path, run the script with
+`K8S_SMOKE_CELLS=openclaw:nemoclaw` and `NVIDIA_API_KEY` set in the shell that starts the stack.
 
 If the agent reaches `running` but the gateway is unreachable, confirm the NodePort values match the port mappings in `infra/kind/nora-kind.yaml`.
 

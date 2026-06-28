@@ -134,8 +134,8 @@ async function getBackendInstance(type, agent = {}) {
   const cacheKey =
     type === "k8s" || type === "k3s" || type === "kubernetes" || type === "remote-docker"
       ? resolveAgentExecutionTargetId(agent)
-      : type === "remote-hermes"
-        ? `hermes:${resolveAgentExecutionTargetId(agent)}`
+      : type === "remote-hermes" || type === "remote-nemoclaw"
+        ? `${type}:${resolveAgentExecutionTargetId(agent)}`
         : type;
   if (backendCache[cacheKey]) return backendCache[cacheKey];
 
@@ -187,6 +187,21 @@ async function getBackendInstance(type, agent = {}) {
       backendCache[cacheKey] = new RemoteDockerBackend(profile);
       break;
     }
+    case "remote-nemoclaw": {
+      const RemoteNemoClawBackend = require(resolveBackendPath("remote-nemoclaw"));
+      const executionTargetId = resolveAgentExecutionTargetId(agent);
+      const profile = await getRemoteHostProfile(executionTargetId);
+      if (!profile) {
+        throw new Error(
+          "Remote NemoClaw lifecycle operations require a registered remote host execution target.",
+        );
+      }
+      if (!profile.configured) {
+        throw new Error(profile.issue || "Remote host is not configured for lifecycle operations.");
+      }
+      backendCache[cacheKey] = new RemoteNemoClawBackend(profile);
+      break;
+    }
     case "remote-hermes": {
       const RemoteHermesBackend = require(resolveBackendPath("remote-hermes"));
       const executionTargetId = resolveAgentExecutionTargetId(agent);
@@ -226,6 +241,9 @@ async function backendFor(agent) {
   }
   if (type === "remote-docker" && resolveAgentRuntimeFamily(agent) === "hermes") {
     return getBackendInstance("remote-hermes", agent);
+  }
+  if (type === "remote-docker" && resolveAgentSandboxProfile(agent) === "nemoclaw") {
+    return getBackendInstance("remote-nemoclaw", agent);
   }
   return getBackendInstance(type, agent);
 }

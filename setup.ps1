@@ -1379,9 +1379,9 @@ PROXMOX_SSH_PASSWORD=$PROXMOX_SSH_PASSWORD
 # ── NemoClaw / NVIDIA (when ENABLED_SANDBOX_PROFILES includes nemoclaw) ──
 NVIDIA_API_KEY=$NVIDIA_API_KEY
 NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
-# For K3s/Kubernetes targets, use a registry image your nodes can pull
-# or preload nora-nemoclaw-agent:local onto the target nodes.
-NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local
+# Defaults to the Nora-published GHCR image. For offline hosts or private
+# clusters, build/preload nora-nemoclaw-agent:local and override this value.
+NEMOCLAW_SANDBOX_IMAGE=ghcr.io/solomon2773/nora-nemoclaw-agent:latest
 
 # ── Security ─────────────────────────────────────────────────
 CORS_ORIGINS=$CORS_ORIGINS
@@ -1481,17 +1481,20 @@ docker build -f agent-runtime/Dockerfile.openclaw-agent -t nora-openclaw-agent:l
 if ($LASTEXITCODE -ne 0) { Write-Err "Failed to build nora-openclaw-agent:local"; exit 1 }
 Write-Ok "OpenClaw agent image ready"
 
-# Only build the NemoClaw variant when the operator enabled the sandbox profile.
-# The NemoClaw adapter pulls (never builds) nora-nemoclaw-agent:local, so without
-# this build a nemoclaw deploy fails — unlike the standard OpenClaw image, which
-# the Docker backend builds on demand.
+# Only build the NemoClaw fallback image when the operator enables the sandbox
+# and explicitly points NEMOCLAW_SANDBOX_IMAGE at the local tag.
 if (($ENABLED_SANDBOX_PROFILES -split ',') -contains 'nemoclaw') {
-    Write-Host ""
-    Write-Info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
-    Write-Host ""
-    docker build -f agent-runtime/Dockerfile.nemoclaw-agent -t nora-nemoclaw-agent:local agent-runtime/
-    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to build nora-nemoclaw-agent:local"; exit 1 }
-    Write-Ok "NemoClaw sandbox image ready"
+    $nemoclawImageLine = Select-String -Path $ENV_FILE -Pattern '^NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local$' -Quiet
+    if ($nemoclawImageLine) {
+        Write-Host ""
+        Write-Info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
+        Write-Host ""
+        docker build -f agent-runtime/Dockerfile.nemoclaw-agent -t nora-nemoclaw-agent:local agent-runtime/
+        if ($LASTEXITCODE -ne 0) { Write-Err "Failed to build nora-nemoclaw-agent:local"; exit 1 }
+        Write-Ok "NemoClaw sandbox image ready"
+    } else {
+        Write-Info "Using GHCR NemoClaw sandbox image from NEMOCLAW_SANDBOX_IMAGE"
+    }
 }
 Start-NoraComposeStack
 

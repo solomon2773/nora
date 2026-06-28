@@ -39,6 +39,7 @@ type DeployAgentOptions = {
   name?: string;
   runtimeFamily?: string;
   backend?: string;
+  executionTargetId?: string;
   sandboxProfile?: string;
   vcpu?: number;
   ramMb?: number;
@@ -72,6 +73,12 @@ type ChannelOptions = {
 
 type IntegrationRecord = {
   id: string;
+  provider?: string;
+  [key: string]: unknown;
+};
+
+type ProviderKeyRecord = {
+  id?: string;
   provider?: string;
   [key: string]: unknown;
 };
@@ -190,12 +197,15 @@ async function getPlatformConfig(request: APIRequestContext, token: string) {
   return normalizePlatformConfig(body);
 }
 
-function backendSupported(platform: PlatformConfig, backendId: string) {
+function backendSupported(platform: PlatformConfig, backendId: string, executionTargetId?: string) {
   if (Array.isArray(platform.executionTargets)) {
-    const target = platform.executionTargets.find((entry) => entry?.id === backendId);
+    const target = platform.executionTargets.find(
+      (entry) => entry?.id === (executionTargetId || backendId),
+    );
     if (target) {
       return target.available !== false && target.configured !== false;
     }
+    if (executionTargetId) return false;
   }
 
   const enabled = platform.enabledBackends || platform.enabledDeployTargets || [];
@@ -219,6 +229,7 @@ async function deployAgent(
     name,
     runtimeFamily = "openclaw",
     backend = "docker",
+    executionTargetId,
     sandboxProfile = "standard",
     vcpu = 1,
     ramMb = 1024,
@@ -227,6 +238,7 @@ async function deployAgent(
     model,
   }: DeployAgentOptions = {},
 ) {
+  const target = executionTargetId || backend;
   const { body } = await apiJson<AgentRecord>(request, "/api/agents/deploy", {
     method: "POST",
     token,
@@ -234,7 +246,8 @@ async function deployAgent(
       name,
       runtime_family: runtimeFamily,
       backend_type: backend,
-      deploy_target: backend,
+      deploy_target: target,
+      execution_target_id: executionTargetId,
       sandbox_profile: sandboxProfile,
       vcpu,
       ram_mb: ramMb,
@@ -388,12 +401,21 @@ async function saveProviderKey(
   token: string,
   { provider, apiKey, model }: SaveProviderKeyOptions,
 ) {
-  const { body } = await apiJson(request, "/api/llm-providers", {
+  const { body } = await apiJson<ProviderKeyRecord>(request, "/api/llm-providers", {
     method: "POST",
     token,
     data: { provider, apiKey, model },
   });
-  return body;
+  return assertJsonRecord<ProviderKeyRecord>(body, "/api/llm-providers");
+}
+
+async function setProviderDefault(request: APIRequestContext, token: string, providerId: string) {
+  const { body } = await apiJson<ProviderKeyRecord>(request, `/api/llm-providers/${providerId}`, {
+    method: "PUT",
+    token,
+    data: { is_default: true },
+  });
+  return assertJsonRecord<ProviderKeyRecord>(body, `/api/llm-providers/${providerId}`);
 }
 
 async function listProviders(request: APIRequestContext, token: string) {
@@ -613,6 +635,7 @@ export {
   chatOpenClaw,
   chatHermes,
   saveProviderKey,
+  setProviderDefault,
   listProviders,
   connectIntegration,
   testIntegration,

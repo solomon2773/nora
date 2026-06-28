@@ -24,6 +24,10 @@ const mockCreateNamespacedConfigMap = jest.fn();
 const mockReadNamespacedConfigMap = jest.fn();
 const mockReplaceNamespacedConfigMap = jest.fn();
 const mockDeleteNamespacedConfigMap = jest.fn();
+const mockCreateNamespacedSecret = jest.fn();
+const mockReadNamespacedSecret = jest.fn();
+const mockReplaceNamespacedSecret = jest.fn();
+const mockDeleteNamespacedSecret = jest.fn();
 const mockGetNamespacedCustomObject = jest.fn();
 const mockLoadKubeconfigFromFile = jest.fn();
 
@@ -68,6 +72,10 @@ jest.mock(
             readNamespacedConfigMap: mockReadNamespacedConfigMap,
             replaceNamespacedConfigMap: mockReplaceNamespacedConfigMap,
             deleteNamespacedConfigMap: mockDeleteNamespacedConfigMap,
+            createNamespacedSecret: mockCreateNamespacedSecret,
+            readNamespacedSecret: mockReadNamespacedSecret,
+            replaceNamespacedSecret: mockReplaceNamespacedSecret,
+            deleteNamespacedSecret: mockDeleteNamespacedSecret,
           };
         }
         if (api === AppsV1Api) {
@@ -118,6 +126,12 @@ describe("provisioning runtime/gateway contracts", () => {
     });
     mockReplaceNamespacedConfigMap.mockReset().mockResolvedValue({});
     mockDeleteNamespacedConfigMap.mockReset().mockResolvedValue({});
+    mockCreateNamespacedSecret.mockReset().mockResolvedValue({});
+    mockReadNamespacedSecret.mockReset().mockResolvedValue({
+      body: { metadata: { resourceVersion: "secret-rv" } },
+    });
+    mockReplaceNamespacedSecret.mockReset().mockResolvedValue({});
+    mockDeleteNamespacedSecret.mockReset().mockResolvedValue({});
     mockGetNamespacedCustomObject.mockReset().mockResolvedValue({});
     mockLoadKubeconfigFromFile.mockReset().mockReturnValue(undefined);
     delete process.env.GATEWAY_HOST;
@@ -303,6 +317,8 @@ describe("provisioning runtime/gateway contracts", () => {
     const container = deployment.spec.template.spec.containers[0];
 
     expect(configMap.data["bootstrap.sh"]).toContain("openclaw@latest");
+    expect(configMap.data["bootstrap.sh"]).toContain("__NORA_OPENCLAW_AUTH_SQLITE_IMPORT__");
+    expect(configMap.data["bootstrap.sh"]).toContain("paste-api-key");
     expect(container.command).toEqual(["/bin/sh", "-c"]);
     expect(container.args).toEqual([". /opt/nora-bootstrap/bootstrap.sh"]);
     expect(container.volumeMounts).toEqual(
@@ -579,8 +595,14 @@ describe("provisioning runtime/gateway contracts", () => {
 
     const deployment = mockCreateNamespacedDeployment.mock.calls[0][0].body;
     const configMap = mockCreateNamespacedConfigMap.mock.calls[0][0].body;
+    const secret = mockCreateNamespacedSecret.mock.calls[0][0].body;
     const container = deployment.spec.template.spec.containers[0];
     const envVars = Object.fromEntries(container.env.map((entry) => [entry.name, entry.value]));
+    const secretEnvVars = Object.fromEntries(
+      container.env
+        .filter((entry) => entry.valueFrom?.secretKeyRef)
+        .map((entry) => [entry.name, entry.valueFrom.secretKeyRef]),
+    );
 
     expect(container.image).toBe("registry.example.com/nora-nemoclaw-agent:stable");
     expect(container.workingDir).toBe("/sandbox");
@@ -590,9 +612,19 @@ describe("provisioning runtime/gateway contracts", () => {
         OPENCLAW_CLI_PATH: "/usr/bin/openclaw",
         OPENCLAW_TSX_BIN: "/usr/bin/tsx",
         NEMOCLAW_MODEL: "nvidia/test-model",
+      }),
+    );
+    expect(envVars.NVIDIA_API_KEY).toBeUndefined();
+    expect(secret.metadata.name).toBe("nora-oclaw-nemo-loadbalancer-qa-nemo-env");
+    expect(secret.stringData).toEqual(
+      expect.objectContaining({
         NVIDIA_API_KEY: "test-nvidia-key",
       }),
     );
+    expect(secretEnvVars.NVIDIA_API_KEY).toEqual({
+      name: "nora-oclaw-nemo-loadbalancer-qa-nemo-env",
+      key: "NVIDIA_API_KEY",
+    });
     expect(container.args).toEqual([". /opt/nora-bootstrap/bootstrap.sh"]);
     expect(configMap.data["bootstrap.sh"]).toContain("nemoclaw@latest");
   });
@@ -784,9 +816,11 @@ describe("provisioning runtime/gateway contracts", () => {
     mockDeleteNamespacedDeployment.mockImplementation(deleteIfLegacyNamespace);
     mockDeleteNamespacedService.mockImplementation(deleteIfLegacyNamespace);
     mockDeleteNamespacedConfigMap.mockImplementation(deleteIfLegacyNamespace);
+    mockDeleteNamespacedSecret.mockImplementation(deleteIfLegacyNamespace);
     mockReadNamespacedDeployment.mockRejectedValue(notFound);
     mockReadNamespacedService.mockRejectedValue(notFound);
     mockReadNamespacedConfigMap.mockRejectedValue(notFound);
+    mockReadNamespacedSecret.mockRejectedValue(notFound);
 
     const K8sBackend = require("../../workers/provisioner/backends/k8s");
     const backend = new K8sBackend(
@@ -818,6 +852,13 @@ describe("provisioning runtime/gateway contracts", () => {
     expect(mockDeleteNamespacedConfigMap).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "nora-oclaw-legacy-agent-bootstrap",
+        namespace: "openclaw-agents",
+        propagationPolicy: "Foreground",
+      }),
+    );
+    expect(mockDeleteNamespacedSecret).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "nora-oclaw-legacy-agent-env",
         namespace: "openclaw-agents",
         propagationPolicy: "Foreground",
       }),

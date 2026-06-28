@@ -149,6 +149,7 @@
           "guides/mcp-server",
           "guides/monitoring",
           "guides/opentelemetry",
+          "guides/scheduled-agents",
           "guides/doctor",
           "guides/alert-rules",
           "guides/backups",

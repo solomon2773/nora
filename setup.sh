@@ -1422,9 +1422,9 @@ PROXMOX_SSH_PASSWORD=${PROXMOX_SSH_PASSWORD}
 # ── NemoClaw / NVIDIA (when ENABLED_SANDBOX_PROFILES includes nemoclaw) ──
 NVIDIA_API_KEY=${NVIDIA_API_KEY}
 NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
-# For K3s/Kubernetes targets, use a registry image your nodes can pull
-# or preload nora-nemoclaw-agent:local onto the target nodes.
-NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local
+# Defaults to the Nora-published GHCR image. For offline hosts or private
+# clusters, build/preload nora-nemoclaw-agent:local and override this value.
+NEMOCLAW_SANDBOX_IMAGE=ghcr.io/solomon2773/nora-nemoclaw-agent:latest
 
 # ── Security ─────────────────────────────────────────────────
 CORS_ORIGINS=${CORS_ORIGINS}
@@ -1524,18 +1524,22 @@ docker build \
   agent-runtime/
 ok "OpenClaw agent image ready"
 
-# Only build the NemoClaw variant when the operator actually enables the
-# sandbox profile — pulling the 2.4GB OpenShell base on every install is wasteful.
+# Only build the NemoClaw fallback image when the operator enables the sandbox
+# and explicitly points NEMOCLAW_SANDBOX_IMAGE at the local tag.
 case ",${ENABLED_SANDBOX_PROFILES:-}," in
   *,nemoclaw,*)
-    echo ""
-    info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
-    echo ""
-    docker build \
-      -f agent-runtime/Dockerfile.nemoclaw-agent \
-      -t nora-nemoclaw-agent:local \
-      agent-runtime/
-    ok "NemoClaw sandbox image ready"
+    if grep -Eq '^NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local$' "$ENV_FILE"; then
+      echo ""
+      info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
+      echo ""
+      docker build \
+        -f agent-runtime/Dockerfile.nemoclaw-agent \
+        -t nora-nemoclaw-agent:local \
+        agent-runtime/
+      ok "NemoClaw sandbox image ready"
+    else
+      info "Using GHCR NemoClaw sandbox image from NEMOCLAW_SANDBOX_IMAGE"
+    fi
     ;;
 esac
 

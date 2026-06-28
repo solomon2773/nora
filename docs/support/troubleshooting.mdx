@@ -147,7 +147,7 @@ When digging into a specific failure, scope the log view to errors only — the 
 
     **NemoClaw sandbox fails to start**
 
-    NemoClaw is disabled by default. To enable it, add `nemoclaw` to the enabled sandbox profiles and provide a valid NVIDIA API key in your `.env` file:
+    NemoClaw is disabled by default. To enable it, add `nemoclaw` to the enabled sandbox profiles and provide a valid NVIDIA API key either as a user provider key in **Settings** or as a platform fallback in `.env`:
 
     ```bash theme={null}
     ENABLED_SANDBOX_PROFILES=standard,nemoclaw
@@ -155,6 +155,8 @@ When digging into a specific failure, scope the log view to errors only — the 
     ```
 
     Restart the stack after making these changes. If NemoClaw still fails, confirm that your NVIDIA API key is active and has access to the NVIDIA NIM endpoints Nora uses.
+
+    For Kubernetes, also confirm `NEMOCLAW_SANDBOX_IMAGE` points to an image your nodes can pull. The default is Nora's GHCR image; offline clusters must preload `nora-nemoclaw-agent:local` and override the env var.
 
     <Warning>
       Do not paste your NVIDIA API key into GitHub Issues or Discussions. Share only masked or redacted values when asking for help.

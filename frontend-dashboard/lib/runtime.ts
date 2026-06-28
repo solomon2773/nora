@@ -267,21 +267,21 @@ function remoteHostTargetLabel(host: any = {}) {
 }
 
 // Clone a generic execution-target template into a concrete per-host entry that
-// the deploy picker can render and select. remote-docker only supports the
-// standard sandbox profile in this phase.
+// the deploy picker can render and select. Remote Docker now supports both the
+// standard OpenClaw path and NemoClaw through a dedicated remote sandbox backend.
 function buildRemoteHostTarget(template: any = {}, host: any = {}) {
   const sandboxProfiles = (template.sandboxProfiles || []).map((profile: any) => {
-    const isStandard = profile.id === "standard";
+    const enabled = profile.enabled !== false;
     return {
       ...profile,
       executionTargetId: host.executionTargetId,
       deployTargetLabel: host.label,
-      enabled: isStandard,
-      configured: isStandard,
-      available: isStandard,
-      availableForOnboarding: isStandard,
-      isDefault: isStandard,
-      issue: isStandard ? null : profile.issue || null,
+      enabled,
+      configured: enabled,
+      available: enabled,
+      availableForOnboarding: enabled && profile.onboardingVisible !== false,
+      isDefault: profile.id === "standard",
+      issue: enabled ? null : profile.issue || null,
       // remote-docker is experimental in this phase regardless of which template
       // was cloned (don't inherit a fallback docker template's "ga").
       maturityTier: "experimental",

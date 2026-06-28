@@ -210,7 +210,7 @@ cd e2e
 KUBECONFIG_PATH=$PWD/../.secrets/aks-kubeconfig npm run smoke:k8s-aks
 ```
 
-This script is operator-run only — it provisions real workloads against a live AKS cluster and is not part of CI. Set `K8S_SMOKE_RUNTIME_FAMILIES=openclaw` for a single-runtime check, or `KEEP_ENV=true` to leave the stack running after the script finishes.
+This script is operator-run only — it provisions real workloads against a live AKS cluster and is not part of CI. Set `K8S_SMOKE_RUNTIME_FAMILIES=openclaw` for a single-runtime check, `K8S_SMOKE_CELLS=openclaw:nemoclaw` plus `NVIDIA_API_KEY` for a NemoClaw run, or `KEEP_ENV=true` to leave the stack running after the script finishes.
 
 ## Promote to production
 

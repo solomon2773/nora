@@ -26,6 +26,7 @@ const mockK8sLogs = jest.fn();
 const mockK8sExec = jest.fn();
 const mockRemoteStart = jest.fn();
 const mockRemoteHermesStart = jest.fn();
+const mockRemoteNemoStart = jest.fn();
 const mockGetRemoteHostProfile = jest.fn();
 
 jest.mock("../remoteHosts", () => ({
@@ -125,6 +126,20 @@ describe("containerManager NemoClaw routing", () => {
     const localRemoteHermesPath = path.resolve(__dirname, "../backends/remote-hermes");
     jest.doMock(localRemoteHermesPath, remoteHermesFactory, { virtual: true });
     jest.doMock(`${localRemoteHermesPath}.ts`, remoteHermesFactory, { virtual: true });
+    const remoteNemoFactory = () =>
+      jest.fn().mockImplementation(() => ({
+        start: mockRemoteNemoStart,
+      }));
+    const remoteNemoPath = path.resolve(
+      __dirname,
+      "../../workers/provisioner/backends/remote-nemoclaw",
+    );
+    jest.doMock(remoteNemoPath, remoteNemoFactory);
+    jest.doMock(`${remoteNemoPath}.ts`, remoteNemoFactory);
+    const localRemoteNemoPath = path.resolve(__dirname, "../backends/remote-nemoclaw");
+    jest.doMock(localRemoteNemoPath, remoteNemoFactory, { virtual: true });
+    jest.doMock(`${localRemoteNemoPath}.ts`, remoteNemoFactory, { virtual: true });
+    mockRemoteNemoStart.mockReset().mockResolvedValue(undefined);
     mockRemoteHermesStart.mockReset().mockResolvedValue(undefined);
     mockRemoteStart.mockReset().mockResolvedValue(undefined);
     mockGetRemoteHostProfile.mockReset();
@@ -309,6 +324,31 @@ describe("containerManager NemoClaw routing", () => {
 
     expect(mockRemoteHermesStart).toHaveBeenCalledWith("hermes-agent-remote");
     // must NOT use the OpenClaw remote-docker backend or the local docker backend
+    expect(mockRemoteStart).not.toHaveBeenCalled();
+    expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  it("routes a remote NemoClaw agent to the remote-nemoclaw backend", async () => {
+    mockGetRemoteHostProfile.mockResolvedValue({
+      id: "my-laptop",
+      executionTargetId: "remote:my-laptop",
+      sshHost: "100.64.0.5",
+      sshUser: "operator",
+      configured: true,
+    });
+    const containerManager = require("../containerManager");
+    const agent = {
+      runtime_family: "openclaw",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:my-laptop",
+      sandbox_profile: "nemoclaw",
+      backend_type: "remote-docker",
+      container_id: "nemo-agent-remote",
+    };
+
+    await containerManager.start(agent);
+
+    expect(mockRemoteNemoStart).toHaveBeenCalledWith("nemo-agent-remote");
     expect(mockRemoteStart).not.toHaveBeenCalled();
     expect(mockStart).not.toHaveBeenCalled();
   });

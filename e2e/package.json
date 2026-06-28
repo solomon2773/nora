@@ -17,6 +17,7 @@
     "smoke:k8s-kind": "bash ./scripts/run-kind-k8s-smoke.sh",
     "smoke:k8s-cloud": "bash ./scripts/run-cloud-k8s-smoke.sh",
     "smoke:k8s-k3s": "NORA_K8S_PROVIDER=${NORA_K8S_PROVIDER:-k3s} bash ./scripts/run-cloud-k8s-smoke.sh",
+    "smoke:k8s-nemoclaw": "K8S_SMOKE_CELLS=${K8S_SMOKE_CELLS:-openclaw:nemoclaw} bash ./scripts/run-cloud-k8s-smoke.sh",
     "smoke:k8s-aks": "NORA_K8S_PROVIDER=${NORA_K8S_PROVIDER:-aks} K8S_SMOKE_RUNTIME_FAMILIES=${K8S_SMOKE_RUNTIME_FAMILIES:-openclaw,hermes} bash ./scripts/run-cloud-k8s-smoke.sh",
     "smoke:k8s-gke": "NORA_K8S_PROVIDER=${NORA_K8S_PROVIDER:-gke} bash ./scripts/run-cloud-k8s-smoke.sh",
     "smoke:k8s-eks": "NORA_K8S_PROVIDER=${NORA_K8S_PROVIDER:-eks} bash ./scripts/run-cloud-k8s-smoke.sh",

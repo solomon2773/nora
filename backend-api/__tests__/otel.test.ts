@@ -38,6 +38,7 @@ describe("otel GenAI exporter", () => {
         model: "gpt-5.5",
         provider: "openai",
         runtimeFamily: "openclaw",
+        sandboxProfile: "nemoclaw",
         source: "openclaw.gateway",
         sessionId: "sess-1",
         agentId: "agent-1",
@@ -48,6 +49,7 @@ describe("otel GenAI exporter", () => {
         "gen_ai.request.model": "gpt-5.5",
         "nora.agent.id": "agent-1",
         "nora.runtime.family": "openclaw",
+        "nora.sandbox.profile": "nemoclaw",
         "nora.source": "openclaw.gateway",
         "gen_ai.conversation.id": "sess-1",
       });

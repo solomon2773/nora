@@ -3,6 +3,7 @@ const k8s = require("@kubernetes/client-node");
 const crypto = require("crypto");
 const ProvisionerBackend = require("./interface");
 const {
+  buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
   buildRuntimeBootstrapCommand,
   buildTemplatePayloadBootstrapCommand,
@@ -14,6 +15,7 @@ const {
   HERMES_DASHBOARD_PORT,
 } = require("../../../agent-runtime/lib/contracts");
 const { getHermesDockerAgentImage } = require("../../../agent-runtime/lib/agentImages");
+const { getNemoClawDefaultModel } = require("../../../agent-runtime/lib/nemoclawDefaults");
 const { buildContainerBootstrap } = require("../../../agent-runtime/lib/containerCommand");
 const {
   HERMES_MANAGED_ENV_ENV,
@@ -49,6 +51,21 @@ const K8S_UNAVAILABLE_CAPABILITIES = Object.freeze({
   disk: false,
   pids: false,
 });
+const SENSITIVE_ENV_PATTERNS = Object.freeze([
+  /API_KEY/i,
+  /TOKEN/i,
+  /PASSWORD/i,
+  /_PASS$/i,
+  /SECRET/i,
+  /PRIVATE_KEY/i,
+  /PASSPHRASE/i,
+  /CREDENTIAL/i,
+  /SERVICE_ACCOUNT/i,
+  /KUBECONFIG/i,
+  /^PGPASSWORD$/i,
+  /^API_SERVER_KEY$/i,
+  /^OPENCLAW_GATEWAY_TOKEN$/i,
+]);
 
 function parseK8sCpuCores(value) {
   if (value == null) return null;
@@ -146,6 +163,33 @@ function safeHostname(name, fallback) {
 
 function safeK8sName(name, fallback) {
   return safeHostname(name, fallback).slice(0, 63) || fallback;
+}
+
+function isSensitiveEnvName(name) {
+  return SENSITIVE_ENV_PATTERNS.some((pattern) => pattern.test(String(name || "")));
+}
+
+function buildEnvEntries(envMap = {}, secretName = "") {
+  const env = [];
+  const stringData = {};
+  for (const [key, value] of Object.entries(envMap || {})) {
+    if (!key || value == null) continue;
+    if (isSensitiveEnvName(key)) {
+      stringData[key] = String(value);
+      env.push({
+        name: key,
+        valueFrom: {
+          secretKeyRef: {
+            name: secretName,
+            key,
+          },
+        },
+      });
+      continue;
+    }
+    env.push({ name: key, value: String(value) });
+  }
+  return { env, stringData };
 }
 
 function defaultDeployNameForRuntime(runtimeFamily, id, name) {
@@ -337,6 +381,7 @@ function buildOpenClawRuntimeAuthBootstrapCommand() {
     "fs.mkdirSync('/root/.openclaw', { recursive: true });",
     "fs.writeFileSync(configPath, JSON.stringify(config, null, 2));",
     "__NORA_OPENCLAW_AUTH_BOOTSTRAP__",
+    buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
     "",
   ].join("\n");
 }
@@ -629,6 +674,10 @@ class K8sBackend extends ProvisionerBackend {
     return `${deployName}-bootstrap`;
   }
 
+  _envSecretName(deployName) {
+    return `${deployName}-env`;
+  }
+
   _bootstrapLaunch(bootstrap) {
     const interpreter =
       Array.isArray(bootstrap?.interpreter) && bootstrap.interpreter.length > 0
@@ -695,6 +744,51 @@ class K8sBackend extends ProvisionerBackend {
       );
       body.metadata.resourceVersion = current?.metadata?.resourceVersion;
       await this.coreApi.replaceNamespacedConfigMap({
+        name,
+        namespace,
+        body,
+      });
+    }
+
+    return name;
+  }
+
+  async _upsertEnvSecret(deployName, stringData = {}, labels = {}, namespace = this.namespace) {
+    const name = this._envSecretName(deployName);
+    const body = {
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: {
+        name,
+        namespace,
+        labels: {
+          "nora.agent.id": this._agentIdFromDeployName(deployName),
+          "nora.env": "true",
+          "nora.execution.target": this.executionTargetLabelValue,
+          "nora.kubernetes.cluster": this.clusterId,
+          ...labels,
+        },
+      },
+      type: "Opaque",
+      stringData,
+    };
+
+    try {
+      await this.coreApi.createNamespacedSecret({
+        namespace,
+        body,
+      });
+    } catch (error) {
+      if (!this._isAlreadyExistsError(error)) throw error;
+
+      const current = this._serviceObject(
+        await this.coreApi.readNamespacedSecret({
+          name,
+          namespace,
+        }),
+      );
+      body.metadata.resourceVersion = current?.metadata?.resourceVersion;
+      await this.coreApi.replaceNamespacedSecret({
         name,
         namespace,
         body,
@@ -989,6 +1083,25 @@ class K8sBackend extends ProvisionerBackend {
     return true;
   }
 
+  async _deleteEnvSecretIfExists(deployName, namespace) {
+    const name = this._envSecretName(deployName);
+    try {
+      await this.coreApi.deleteNamespacedSecret({
+        name,
+        namespace,
+        propagationPolicy: "Foreground",
+      });
+    } catch (error) {
+      if (this._isNotFoundError(error)) return false;
+      throw error;
+    }
+
+    await this._waitForDeleted("Secret", name, namespace, () =>
+      this.coreApi.readNamespacedSecret({ name, namespace }),
+    );
+    return true;
+  }
+
   _isNodePortConflictError(error) {
     const text = this._errorBodyText(error);
     const status = this._errorStatus(error);
@@ -1037,7 +1150,7 @@ class K8sBackend extends ProvisionerBackend {
     );
     const hermesLaunchArgs = ["bash", "-lc", `. ${BOOTSTRAP_SCRIPT_PATH}`];
 
-    const envVars = Object.entries({
+    const hermesEnvMap = {
       ...(env || {}),
       HERMES_HOME,
       HOME: `${HERMES_HOME}/home`,
@@ -1048,7 +1161,24 @@ class K8sBackend extends ProvisionerBackend {
       GATEWAY_HEALTH_URL: `http://127.0.0.1:${HERMES_RUNTIME_PORT}`,
       MESSAGING_CWD: HERMES_WORKSPACE,
       TERMINAL_CWD: HERMES_WORKSPACE,
-    }).map(([key, value]) => ({ name: key, value: String(value) }));
+    };
+    const hermesSecretName = this._envSecretName(deployName);
+    const { env: envVars, stringData: hermesSecretData } = buildEnvEntries(
+      hermesEnvMap,
+      hermesSecretName,
+    );
+    if (Object.keys(hermesSecretData).length > 0) {
+      await this._upsertEnvSecret(
+        deployName,
+        hermesSecretData,
+        {
+          "nora.agent.id": String(id),
+          "nora.deployment.name": deployName,
+          "nora.runtime.family": "hermes",
+        },
+        namespace,
+      );
+    }
 
     const deployment = {
       apiVersion: "apps/v1",
@@ -1152,10 +1282,7 @@ class K8sBackend extends ProvisionerBackend {
     }
     const namespace = this._namespaceForRuntimeFamily("openclaw");
     const isNemoClaw = sandboxProfile === "nemoclaw";
-    const nemoModel =
-      env?.NEMOCLAW_MODEL ||
-      process.env.NEMOCLAW_DEFAULT_MODEL ||
-      "nvidia/nemotron-3-super-120b-a12b";
+    const nemoModel = env?.NEMOCLAW_MODEL || getNemoClawDefaultModel(process.env);
 
     await this._ensureNamespace(namespace);
 
@@ -1214,7 +1341,7 @@ class K8sBackend extends ProvisionerBackend {
       },
     });
 
-    const envVars = Object.entries({
+    const openClawEnvMap = {
       ...(env || {}),
       ...buildRuntimeEnv(),
       ...(isNemoClaw
@@ -1229,7 +1356,25 @@ class K8sBackend extends ProvisionerBackend {
           }
         : {}),
       OPENCLAW_GATEWAY_TOKEN: gatewayToken,
-    }).map(([k, v]) => ({ name: k, value: String(v) }));
+    };
+    const openClawSecretName = this._envSecretName(deployName);
+    const { env: envVars, stringData: openClawSecretData } = buildEnvEntries(
+      openClawEnvMap,
+      openClawSecretName,
+    );
+    if (Object.keys(openClawSecretData).length > 0) {
+      await this._upsertEnvSecret(
+        deployName,
+        openClawSecretData,
+        {
+          "nora.agent.id": String(id),
+          "nora.deployment.name": deployName,
+          "nora.runtime.family": "openclaw",
+          "nora.sandbox.profile": isNemoClaw ? "nemoclaw" : "standard",
+        },
+        namespace,
+      );
+    }
 
     // CMD: install openclaw, configure gateway with pre-paired device, start the
     // runtime sidecar, then launch the gateway.
@@ -1298,6 +1443,7 @@ class K8sBackend extends ProvisionerBackend {
         "nora.runtime.family": "openclaw",
         "nora.execution.target": this.executionTargetLabelValue,
         "nora.kubernetes.cluster": this.clusterId,
+        "nora.sandbox.profile": isNemoClaw ? "nemoclaw" : "standard",
         "openclaw.agent.id": String(id),
       },
       namespace,
@@ -1317,6 +1463,7 @@ class K8sBackend extends ProvisionerBackend {
           "nora.runtime.family": "openclaw",
           "nora.execution.target": this.executionTargetLabelValue,
           "nora.kubernetes.cluster": this.clusterId,
+          "nora.sandbox.profile": isNemoClaw ? "nemoclaw" : "standard",
           "openclaw.agent.id": String(id),
         },
       },
@@ -1334,6 +1481,7 @@ class K8sBackend extends ProvisionerBackend {
               "nora.runtime.family": "openclaw",
               "nora.execution.target": this.executionTargetLabelValue,
               "nora.kubernetes.cluster": this.clusterId,
+              "nora.sandbox.profile": isNemoClaw ? "nemoclaw" : "standard",
               "openclaw.agent.id": String(id),
             },
           },
@@ -1410,7 +1558,9 @@ class K8sBackend extends ProvisionerBackend {
       const deletedDeployment = await this._deleteDeploymentIfExists(deployName, namespace);
       const deletedService = await this._deleteServiceIfExists(deployName, namespace);
       const deletedConfigMap = await this._deleteBootstrapConfigMapIfExists(deployName, namespace);
-      deletedAny = deletedAny || deletedDeployment || deletedService || deletedConfigMap;
+      const deletedSecret = await this._deleteEnvSecretIfExists(deployName, namespace);
+      deletedAny =
+        deletedAny || deletedDeployment || deletedService || deletedConfigMap || deletedSecret;
     }
 
     console.log(

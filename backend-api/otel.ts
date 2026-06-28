@@ -37,6 +37,7 @@ const ATTR = Object.freeze({
   // Nora-scoped attribution
   AGENT_ID: "nora.agent.id",
   RUNTIME_FAMILY: "nora.runtime.family",
+  SANDBOX_PROFILE: "nora.sandbox.profile",
   SOURCE: "nora.source",
 });
 
@@ -72,7 +73,7 @@ function toCount(value) {
  * event, not an aggregated series), so the span path keeps it.
  */
 function chatAttributes(
-  { model, provider, runtimeFamily, source, sessionId, agentId } = {},
+  { model, provider, runtimeFamily, sandboxProfile, source, sessionId, agentId } = {},
   { includeConversation = true } = {},
 ) {
   const attrs = { [ATTR.GEN_AI_OPERATION]: "chat" };
@@ -80,6 +81,7 @@ function chatAttributes(
   if (model) attrs[ATTR.GEN_AI_REQUEST_MODEL] = String(model);
   if (agentId) attrs[ATTR.AGENT_ID] = String(agentId);
   if (runtimeFamily) attrs[ATTR.RUNTIME_FAMILY] = String(runtimeFamily);
+  if (sandboxProfile) attrs[ATTR.SANDBOX_PROFILE] = String(sandboxProfile);
   if (source) attrs[ATTR.SOURCE] = String(source);
   if (includeConversation && sessionId) attrs[ATTR.GEN_AI_CONVERSATION_ID] = String(sessionId);
   return attrs;
@@ -272,6 +274,7 @@ function recordChatExchange({
   model,
   provider,
   runtimeFamily,
+  sandboxProfile,
   source,
   sessionId,
   inputTokens,
@@ -284,7 +287,7 @@ function recordChatExchange({
   try {
     const input = toCount(inputTokens);
     const output = toCount(outputTokens);
-    const id = { model, provider, runtimeFamily, source, sessionId, agentId };
+    const id = { model, provider, runtimeFamily, sandboxProfile, source, sessionId, agentId };
     // Metric labels MUST be bounded — exclude the unbounded session id.
     const metricAttrs = chatAttributes(id, { includeConversation: false });
 

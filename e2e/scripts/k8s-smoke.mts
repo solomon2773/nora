@@ -35,6 +35,11 @@ const RUNTIME_FAMILIES = (process.env.K8S_SMOKE_RUNTIME_FAMILIES || "openclaw")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+const SMOKE_CELLS = (process.env.K8S_SMOKE_CELLS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const NEMOCLAW_MODEL = process.env.NEMOCLAW_DEFAULT_MODEL || "nvidia/nemotron-3-super-120b-a12b";
 
 const RUNTIMES = {
   openclaw: {
@@ -50,6 +55,23 @@ const RUNTIMES = {
       `/agents/${agentId}/hermes-ui/embed?token=${encodeURIComponent(token)}`,
   },
 };
+
+function parseSmokeCells() {
+  const entries =
+    SMOKE_CELLS.length > 0
+      ? SMOKE_CELLS
+      : RUNTIME_FAMILIES.map((runtimeFamily) => `${runtimeFamily}:standard`);
+  return entries.map((entry) => {
+    const [runtimeFamilyRaw, sandboxProfileRaw] = entry.split(":");
+    const runtimeFamily = String(runtimeFamilyRaw || "").trim();
+    const sandboxProfile = String(sandboxProfileRaw || "standard").trim() || "standard";
+    return {
+      key: `${runtimeFamily}:${sandboxProfile}`,
+      runtimeFamily,
+      sandboxProfile,
+    };
+  });
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,7 +99,9 @@ async function api(path, { method = "GET", token = null, body, expectOk = true }
   }
 
   if (expectOk && !response.ok) {
-    throw new Error(`${method} ${path} failed with ${response.status}: ${typeof parsed === "string" ? parsed : JSON.stringify(parsed)}`);
+    throw new Error(
+      `${method} ${path} failed with ${response.status}: ${typeof parsed === "string" ? parsed : JSON.stringify(parsed)}`,
+    );
   }
 
   return { response, body: parsed };
@@ -156,7 +180,9 @@ async function waitForAgentStatus(token, agentId, allowedStatuses) {
     await sleep(POLL_INTERVAL_MS);
   }
 
-  throw new Error(`Timed out waiting for agent ${agentId} to reach one of: ${allowedStatuses.join(", ")}`);
+  throw new Error(
+    `Timed out waiting for agent ${agentId} to reach one of: ${allowedStatuses.join(", ")}`,
+  );
 }
 
 async function waitForGateway(token, agentId) {
@@ -190,8 +216,8 @@ async function waitForHermesUi(token, agentId) {
 
   throw new Error(
     `Timed out waiting for Hermes UI readiness on agent ${agentId}; last response: ${JSON.stringify(
-      last
-    )}`
+      last,
+    )}`,
   );
 }
 
@@ -229,15 +255,29 @@ async function main() {
   let token = null;
   const agentIds = [];
   const results = [];
+  const cells = parseSmokeCells();
 
   try {
-    const unsupportedRuntime = RUNTIME_FAMILIES.find((runtimeFamily) => !RUNTIMES[runtimeFamily]);
+    const unsupportedRuntime = cells.find((cell) => !RUNTIMES[cell.runtimeFamily]);
     if (unsupportedRuntime) {
       throw new Error(
-        `Unsupported K8S_SMOKE_RUNTIME_FAMILIES entry: ${unsupportedRuntime}. Supported values: ${Object.keys(
-          RUNTIMES
-        ).join(", ")}`
+        `Unsupported K8s smoke runtime entry: ${unsupportedRuntime.runtimeFamily}. Supported values: ${Object.keys(
+          RUNTIMES,
+        ).join(", ")}`,
       );
+    }
+    const invalidSandbox = cells.find(
+      (cell) =>
+        cell.sandboxProfile !== "standard" &&
+        !(cell.runtimeFamily === "openclaw" && cell.sandboxProfile === "nemoclaw"),
+    );
+    if (invalidSandbox) {
+      throw new Error(
+        `Unsupported K8S_SMOKE_CELLS entry: ${invalidSandbox.key}. Use runtime:sandbox pairs such as openclaw:standard,openclaw:nemoclaw,hermes:standard.`,
+      );
+    }
+    if (cells.some((cell) => cell.sandboxProfile === "nemoclaw") && !process.env.NVIDIA_API_KEY) {
+      throw new Error("K8S_SMOKE_CELLS includes openclaw:nemoclaw but NVIDIA_API_KEY is not set");
     }
 
     await api("/auth/signup", {
@@ -253,17 +293,20 @@ async function main() {
 
     await registerKubernetesCluster(token);
 
-    for (const runtimeFamily of RUNTIME_FAMILIES) {
+    for (const cell of cells) {
+      const { runtimeFamily, sandboxProfile } = cell;
       const runtime = RUNTIMES[runtimeFamily];
       const deploy = await api("/agents/deploy", {
         method: "POST",
         token,
         body: {
-          name: `${runtime.label} K8s Smoke ${stamp}`,
+          name: `${runtime.label} ${sandboxProfile === "nemoclaw" ? "NemoClaw " : ""}K8s Smoke ${stamp}`,
           runtime_family: runtimeFamily,
           backend_type: "k8s",
           deploy_target: K8S_EXECUTION_TARGET_ID,
           execution_target_id: K8S_EXECUTION_TARGET_ID,
+          sandbox_profile: sandboxProfile,
+          ...(sandboxProfile === "nemoclaw" ? { model: NEMOCLAW_MODEL } : {}),
         },
       });
       const agentId = deploy.body.id;
@@ -279,11 +322,16 @@ async function main() {
       }
       if (runningAgent.runtime_family !== runtimeFamily) {
         throw new Error(
-          `Expected runtime_family=${runtimeFamily}, received ${runningAgent.runtime_family}`
+          `Expected runtime_family=${runtimeFamily}, received ${runningAgent.runtime_family}`,
         );
       }
       if (runningAgent.backend_type !== "k8s") {
         throw new Error(`Expected backend_type=k8s, received ${runningAgent.backend_type}`);
+      }
+      if ((runningAgent.sandbox_profile || "standard") !== sandboxProfile) {
+        throw new Error(
+          `Expected sandbox_profile=${sandboxProfile}, received ${runningAgent.sandbox_profile}`,
+        );
       }
 
       assertK8sResources(runtimeFamily, agentId);
@@ -319,18 +367,21 @@ async function main() {
 
       results.push({
         runtimeFamily,
+        sandboxProfile,
         agentId,
         surfaceUrl,
         deployment: runtime.deploymentName(agentId),
       });
     }
 
-    console.log(JSON.stringify({
-      ok: true,
-      agents: results,
-      namespace: K8S_NAMESPACE,
-      executionTarget: K8S_EXECUTION_TARGET_ID,
-    }));
+    console.log(
+      JSON.stringify({
+        ok: true,
+        agents: results,
+        namespace: K8S_NAMESPACE,
+        executionTarget: K8S_EXECUTION_TARGET_ID,
+      }),
+    );
   } finally {
     if (token) {
       for (const agentId of agentIds.reverse()) {

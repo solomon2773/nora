@@ -3,6 +3,7 @@ const ProvisionerBackend = require("./interface");
 const crypto = require("crypto");
 const path = require("path");
 const {
+  buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
   buildOpenClawConfigMergeScript,
   buildMcpServersConfig,
@@ -21,6 +22,7 @@ const {
   getStandardDockerAgentImage,
   getStandardDockerPackageSpec,
 } = require("../../../agent-runtime/lib/agentImages");
+const { NEMOCLAW_DEFAULT_MODEL } = require("../../../agent-runtime/lib/nemoclawDefaults");
 const {
   buildDockerTelemetry,
   buildUnavailableTelemetry,
@@ -253,6 +255,7 @@ class DockerBackend extends ProvisionerBackend {
       "if [ ! -f /root/.openclaw/agents/main/agent/auth-profiles.json ]; then",
       '  "$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js',
       "fi",
+      buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
       `exec "$OPENCLAW_BIN" gateway --port ${OPENCLAW_GATEWAY_PORT}`,
       "",
     ].join("\n");
@@ -335,6 +338,7 @@ class DockerBackend extends ProvisionerBackend {
       mcpServers: mcpServerEntries,
       abortSignal,
       gatewayHostPort: allocatedGatewayPort,
+      runtimeHostPort: allocatedRuntimePort,
     } = config;
     const containerName = container_name || safeContainerName("nora-oclaw", name, id);
     let container = null;
@@ -537,7 +541,7 @@ class DockerBackend extends ProvisionerBackend {
       together: "together/moonshotai/Kimi-K2.5",
       cohere: "cohere/command-r-plus",
       xai: "xai/grok-4",
-      nvidia: "nvidia/nvidia/nemotron-3-super-120b-a12b",
+      nvidia: NEMOCLAW_DEFAULT_MODEL,
       moonshot: "moonshot/kimi-k2.5",
       zai: "zai/glm-5",
       minimax: "minimax/MiniMax-M2.7",
@@ -571,6 +575,13 @@ class DockerBackend extends ProvisionerBackend {
       Number.isInteger(allocatedPort) && allocatedPort >= 1 && allocatedPort <= 65535
         ? allocatedPort
         : 19000 + ((parseInt(id.replace(/\D/g, "").slice(0, 4)) || 0) % 1000);
+    const allocatedRuntimePortNumber = Number(allocatedRuntimePort);
+    const runtimeHostPort =
+      Number.isInteger(allocatedRuntimePortNumber) &&
+      allocatedRuntimePortNumber >= 1 &&
+      allocatedRuntimePortNumber <= 65535
+        ? allocatedRuntimePortNumber
+        : null;
 
     const allowedOrigins = new Set([
       "http://localhost:8080",
@@ -695,7 +706,10 @@ class DockerBackend extends ProvisionerBackend {
           RestartPolicy: { Name: "unless-stopped" },
           // Publish gateway port for direct browser access (control UI).
           // Use a deterministic port based on agent ID to survive container restarts.
-          PortBindings: { "18789/tcp": [{ HostPort: String(hostPort) }] },
+          PortBindings: {
+            "18789/tcp": [{ HostPort: String(hostPort) }],
+            ...(runtimeHostPort ? { "9090/tcp": [{ HostPort: String(runtimeHostPort) }] } : {}),
+          },
           // DNS servers for internet access from within the container
           Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
           Binds: [`${volumeName}:/mnt/nora-agent-state`],
@@ -739,11 +753,20 @@ class DockerBackend extends ProvisionerBackend {
       // Get the published host port for the gateway (for direct browser access to control UI)
       const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
       const gatewayHostPort = portBindings?.[0]?.HostPort || null;
+      const runtimePortBindings = info.NetworkSettings?.Ports?.["9090/tcp"];
+      const publishedRuntimeHostPort = runtimePortBindings?.[0]?.HostPort || null;
 
       console.log(
-        `[docker] Container ${containerName} (${container.id}) started at ${host} (gateway port 18789, host port ${gatewayHostPort || "none"})`,
+        `[docker] Container ${containerName} (${container.id}) started at ${host} (gateway port 18789, host port ${gatewayHostPort || "none"}, runtime host port ${publishedRuntimeHostPort || "none"})`,
       );
-      return { containerId: containerName, host, gatewayToken, containerName, gatewayHostPort };
+      return {
+        containerId: containerName,
+        host,
+        gatewayToken,
+        containerName,
+        gatewayHostPort,
+        runtimeHostPort: publishedRuntimeHostPort,
+      };
     } catch (error) {
       if (container) {
         try {
