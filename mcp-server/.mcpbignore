@@ -1,4 +1,7 @@
 Dockerfile
+AGENTS.md
+MIGRATION_PLAN.md
+PUBLIC_PRIVATE_SPLIT.md
 server.json
 test/
 tsconfig.json
