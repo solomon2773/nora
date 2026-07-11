@@ -59,6 +59,12 @@ Tool output is the raw Nora REST JSON; the server is a pure API client and store
 
 Full guide: [noradocs.solomontsao.com/guides/mcp-server](https://noradocs.solomontsao.com/guides/mcp-server)
 
+## Privacy Policy
+
+The Nora MCP connector runs locally and does not collect telemetry or persist credentials, tool inputs, or API responses. It sends each tool request and the configured API key directly to the Nora deployment identified by `NORA_API_URL`; no separate connector service or advertising network receives that data.
+
+The connector retains no data after its process exits. Your Nora operator controls the storage and retention of account, agent, log, metric, and integration data in that deployment, and connected providers may apply their own policies when Nora invokes them. See the full [Nora Privacy Policy](https://nora.solomontsao.com/privacy) or contact [privacy@solomontsao.com](mailto:privacy@solomontsao.com).
+
 If Nora is useful to you, a ⭐ on the [GitHub repo](https://github.com/solomon2773/nora) helps other self-hosters find it.
 
 ## License
