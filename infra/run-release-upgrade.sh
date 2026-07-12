@@ -315,7 +315,7 @@ run_upgrade() {
   build_compose_args "$env_file" "$compose_files" || return $?
   if [ ! -f setup.sh ] || [ "${NORA_UPGRADE_USE_SETUP:-true}" = "false" ]; then
     echo "Pre-validating nginx configuration..."
-    docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps nginx nginx -t
+    docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps --interactive=false -T nginx nginx -t
     docker compose "${COMPOSE_ARGS[@]}" up -d --build
     echo "Recreating nginx so generated configuration mounts are refreshed..."
     docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --no-deps nginx

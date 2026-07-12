@@ -60,7 +60,7 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
     bind mount is guaranteed to use the current file inode:
 
     ```bash theme={null}
-    docker compose run --rm --no-deps nginx nginx -t
+    docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
     docker compose up -d
     docker compose up -d --force-recreate --no-deps nginx
     docker compose exec -T nginx nginx -t
@@ -123,7 +123,7 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
     `docker-compose.override.yml`:
 
     ```bash theme={null}
-    docker compose run --rm --no-deps nginx nginx -t
+    docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
     docker compose up -d
     docker compose up -d --force-recreate --no-deps nginx
     docker compose exec -T nginx nginx -t
@@ -136,7 +136,7 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
       -f docker-compose.yml \
       -f infra/docker-compose.public-tls.yml \
       -f <your-backend-overlay>.yml \
-      run --rm --no-deps nginx nginx -t
+      run --rm --no-deps --interactive=false -T nginx nginx -t
     docker compose \
       -f docker-compose.yml \
       -f infra/docker-compose.public-tls.yml \

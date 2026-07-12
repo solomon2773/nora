@@ -12,8 +12,8 @@ supported update path instead of remaining pinned to an older bind-mounted file 
 ### Changed
 
 - Production deploys, Bash/PowerShell setup updates, and direct release upgrades pre-validate
-  and refresh the generated nginx configuration, recreate only the edge container to remount it,
-  and then validate the active configuration.
+  the generated nginx configuration without attaching stdin, refresh it, recreate only the edge
+  container to remount it, and then validate the active configuration.
 - Infrastructure validation now executes the nginx/secret/release regression suite in CI, and
   TLS renewal validates then gracefully reloads nginx so renewed certificates take effect.
 - Release metadata advances the Gemini extension manifest to `1.16.2` and the Helm chart to
@@ -26,6 +26,8 @@ supported update path instead of remaining pinned to an older bind-mounted file 
   eligibility, and backend-owned API framing headers take effect in the same deployment.
 - Installer and direct-upgrade paths now refresh generated public nginx policy before recreating
   the edge instead of reactivating an old generated file.
+- SSH-driven deploys no longer let the one-off nginx validator consume the remaining remote
+  heredoc before the rebuild, health checks, and Docker-socket verification execute.
 
 ## [v1.16.1](https://github.com/solomon2773/nora/releases/tag/v1.16.1) — 2026-07-12
 

@@ -717,7 +717,7 @@ function Start-NoraComposeStack {
     Write-Info "Preserving Docker volumes and provisioned agent instances."
     Write-Host ""
     Write-Info "Pre-validating nginx configuration..."
-    docker compose run --rm --no-deps nginx nginx -t
+    docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
     if ($LASTEXITCODE -ne 0) { Write-Err "nginx configuration validation failed"; exit 1 }
     docker compose up -d --build
     if ($LASTEXITCODE -ne 0) { Write-Err "docker compose failed to start Nora"; exit 1 }

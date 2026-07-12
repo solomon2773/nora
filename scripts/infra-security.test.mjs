@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -652,7 +652,7 @@ test("production update paths activate refreshed nginx config without touching c
   );
   assert.match(
     deployWorkflow,
-    /docker compose "\$\{compose_args\[@\]\}" run --rm --no-deps nginx nginx -t[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{compose_args\[@\]\}" exec -T nginx nginx -t/,
+    /docker compose "\$\{compose_args\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{compose_args\[@\]\}" exec -T nginx nginx -t/,
   );
   assert.match(
     setupBash,
@@ -660,7 +660,7 @@ test("production update paths activate refreshed nginx config without touching c
   );
   assert.match(
     setupBash,
-    /docker compose run --rm --no-deps nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t/,
+    /docker compose run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t/,
   );
   assert.match(
     setupPowerShell,
@@ -668,7 +668,7 @@ test("production update paths activate refreshed nginx config without touching c
   );
   assert.match(
     setupPowerShell,
-    /docker compose run --rm --no-deps nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t/,
+    /docker compose run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t/,
   );
   assert.match(
     releaseUpgrade,
@@ -676,12 +676,47 @@ test("production update paths activate refreshed nginx config without touching c
   );
   assert.match(
     releaseUpgrade,
-    /docker compose "\$\{COMPOSE_ARGS\[@\]\}" run --rm --no-deps nginx nginx -t[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" exec -T nginx nginx -t/,
+    /docker compose "\$\{COMPOSE_ARGS\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" exec -T nginx nginx -t/,
   );
   assert.match(
     setupTls,
     /certbot renew --quiet[\s\S]*?docker compose exec -T nginx nginx -t[\s\S]*?docker compose exec -T nginx nginx -s reload/,
   );
+
+  const remoteValidation = deployWorkflow.match(
+    /^\s*(docker compose "\$\{compose_args\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t)\s*$/m,
+  );
+  assert.ok(remoteValidation, "deploy workflow must expose a non-interactive nginx preflight");
+  const stdinFixture = mkdtempSync(path.join(tmpdir(), "nora-nginx-preflight-stdin-"));
+  try {
+    const fakeDocker = path.join(stdinFixture, "docker");
+    const marker = path.join(stdinFixture, "continued");
+    writeFileSync(
+      fakeDocker,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ " $* " != *" --interactive=false "* ]]; then
+  cat >/dev/null
+fi
+`,
+    );
+    chmodSync(fakeDocker, 0o755);
+    const remoteScript = `set -euo pipefail
+compose_args=()
+${remoteValidation[1]}
+printf continued > ${JSON.stringify(marker)}
+`;
+    const result = spawnSync("bash", ["-s"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      input: remoteScript,
+      env: { ...process.env, PATH: `${stdinFixture}:${process.env.PATH}` },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(readFileSync(marker, "utf8"), "continued");
+  } finally {
+    rmSync(stdinFixture, { recursive: true, force: true });
+  }
 
   runChecked("bash", [
     "-c",

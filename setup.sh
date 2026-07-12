@@ -563,7 +563,7 @@ start_compose_stack() {
   info "Preserving Docker volumes and provisioned agent instances."
   echo ""
   info "Pre-validating nginx configuration..."
-  docker compose run --rm --no-deps nginx nginx -t
+  docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
   docker compose up -d --build
   info "Recreating nginx so generated configuration mounts are refreshed..."
   docker compose up -d --force-recreate --no-deps nginx
