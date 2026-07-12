@@ -398,6 +398,38 @@ describe("containerManager NemoClaw routing", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
+  it("reloads a remote host profile for each lifecycle operation", async () => {
+    mockGetRemoteHostProfile
+      .mockResolvedValueOnce({
+        id: "my-laptop",
+        executionTargetId: "remote:my-laptop",
+        sshHost: "198.51.100.10",
+        sshUser: "operator",
+        configured: true,
+      })
+      .mockResolvedValueOnce({
+        id: "my-laptop",
+        executionTargetId: "remote:my-laptop",
+        sshHost: "198.51.100.11",
+        sshUser: "operator",
+        configured: true,
+      });
+    const containerManager = require("../containerManager");
+    const agent = {
+      runtime_family: "openclaw",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:my-laptop",
+      backend_type: "remote-docker",
+      container_id: "oclaw-agent-remote",
+    };
+
+    await containerManager.start(agent);
+    await containerManager.start(agent);
+
+    expect(mockGetRemoteHostProfile).toHaveBeenCalledTimes(2);
+    expect(mockRemoteStart).toHaveBeenCalledTimes(2);
+  });
+
   it("routes a remote Hermes agent to the remote-hermes backend (not remote-docker)", async () => {
     mockGetRemoteHostProfile.mockResolvedValue({
       id: "my-laptop",

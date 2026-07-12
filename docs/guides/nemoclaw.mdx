@@ -42,12 +42,12 @@ NemoClaw agents use NVIDIA's Nemotron family of models via the NVIDIA API. The f
 
 NemoClaw runs as an OpenClaw sandbox profile on these deploy targets:
 
-| Target           | Status    | Notes                                                                                                                    |
-| ---------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Local Docker     | Supported | Uses the local Docker socket and the NemoClaw sandbox image.                                                             |
-| Remote Docker    | Supported | Requires a connected remote host target such as `remote:gpu-vps`; Nora publishes the gateway port on that host.          |
-| K3s / Kubernetes | Supported | Uses the Kubernetes adapter with `sandbox_profile=nemoclaw`; API keys are injected through per-agent Kubernetes Secrets. |
-| AKS / GKE / EKS  | Supported | Same Kubernetes adapter as K3s; use LoadBalancer exposure or the cluster exposure mode configured in Admin.              |
+| Target           | Status       | Notes                                                                                                                             |
+| ---------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Local Docker     | Supported    | Uses the local Docker socket and the NemoClaw sandbox image.                                                                      |
+| Remote Docker    | Experimental | Requires a connected self-hosted remote target such as `remote:gpu-vps`; keep its published ports on a private encrypted network. |
+| K3s / Kubernetes | Supported    | Uses the Kubernetes adapter with `sandbox_profile=nemoclaw`; API keys are injected through per-agent Kubernetes Secrets.          |
+| AKS / GKE / EKS  | Supported    | Same Kubernetes adapter as K3s; use LoadBalancer exposure or the cluster exposure mode configured in Admin.                       |
 
 The default sandbox image is `ghcr.io/solomon2773/nora-nemoclaw-agent:latest`. For air-gapped
 hosts or private clusters, build `nora-nemoclaw-agent:local`, preload it onto the target nodes, and

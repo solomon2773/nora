@@ -209,6 +209,13 @@ describe("ProxmoxBackend", () => {
       gatewayPort: 18789,
     });
     const onRuntimeIdentity = jest.fn().mockResolvedValue(undefined);
+    const mcpServers = [
+      {
+        name: "gitlab",
+        npmPackage: "@modelcontextprotocol/server-gitlab",
+        env: { GITLAB_PERSONAL_ACCESS_TOKEN: "glpat-proxmox" },
+      },
+    ];
 
     const result = await backend.create({
       id: "agent-1",
@@ -220,6 +227,7 @@ describe("ProxmoxBackend", () => {
       runtimeFamily: "openclaw",
       sandboxProfile: "standard",
       env: { AGENT_ID: "agent-1" },
+      mcpServers,
       onRuntimeIdentity,
     });
 
@@ -258,6 +266,10 @@ describe("ProxmoxBackend", () => {
       containerId: "101",
       containerName: "promo-agent",
     });
+    expect(backend._bootstrapOpenClaw).toHaveBeenCalledWith(
+      "101",
+      expect.objectContaining({ mcpServers }),
+    );
   });
 
   it("cleans up a partially created LXC and honors an already-aborted create", async () => {
@@ -566,7 +578,7 @@ describe("ProxmoxBackend", () => {
     ).rejects.toThrow(/does not provide the enforced OpenShell sandbox/i);
   });
 
-  it("keeps OpenClaw credentials out of the readable startup script", async () => {
+  it("keeps OpenClaw credentials out of the startup script and wires per-agent MCP", async () => {
     const backend = new ProxmoxBackend();
     jest.spyOn(backend, "_prepareOpenClawBase").mockResolvedValue(undefined);
     const writes = [];
@@ -583,6 +595,13 @@ describe("ProxmoxBackend", () => {
         AGENT_ID: "agent-3",
       },
       templatePayload: {},
+      mcpServers: [
+        {
+          name: "gitlab",
+          npmPackage: "@modelcontextprotocol/server-gitlab",
+          env: { GITLAB_PERSONAL_ACCESS_TOKEN: "glpat-proxmox-secret" },
+        },
+      ],
     });
 
     const envWrite = writes.find(([, targetPath]) => targetPath === "/etc/nora/openclaw.env.b64");
@@ -592,6 +611,9 @@ describe("ProxmoxBackend", () => {
     const customProviderWrite = writes.find(
       ([, targetPath]) => targetPath === "/etc/nora/openclaw-custom-providers.json",
     );
+    const gatewayConfigWrite = writes.find(
+      ([, targetPath]) => targetPath === "/etc/nora/openclaw-gateway-config.json",
+    );
     const serviceWrite = writes.find(
       ([, targetPath]) => targetPath === "/etc/systemd/system/nora-openclaw.service",
     );
@@ -600,14 +622,50 @@ describe("ProxmoxBackend", () => {
     expect(envWrite[3]).toBe("0600");
     expect(startWrite[2]).not.toContain("sk-live-secret");
     expect(startWrite[2]).not.toContain("foundry-secret");
+    expect(startWrite[2]).not.toContain("glpat-proxmox-secret");
     expect(startWrite[2]).toContain("openclaw.env.b64");
     expect(startWrite[2]).toContain(".nora-proxmox-bootstrap-complete");
+    expect(startWrite[2]).toContain('const replaceKeys = new Set(["mcpServers"])');
+    expect(startWrite[2]).toContain("delete next[key]");
     expect(startWrite[3]).toBe("0700");
+    expect(gatewayConfigWrite[3]).toBe("0600");
+    expect(JSON.parse(gatewayConfigWrite[2]).mcpServers).toEqual({
+      gitlab: {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-gitlab"],
+        env: { GITLAB_PERSONAL_ACCESS_TOKEN: "glpat-proxmox-secret" },
+      },
+    });
     expect(customProviderWrite[2]).toContain("foundry-secret");
     expect(customProviderWrite[3]).toBe("0600");
     expect(spawnSync("sh", ["-n"], { input: startWrite[2] }).status).toBe(0);
     expect(serviceWrite[2]).toContain("NoNewPrivileges=true");
     expect(serviceWrite[2]).toContain("UMask=0077");
+  });
+
+  it("removes template MCP entries when the agent has no enabled servers", async () => {
+    const backend = new ProxmoxBackend();
+    jest.spyOn(backend, "_prepareOpenClawBase").mockResolvedValue(undefined);
+    const writes = [];
+    jest.spyOn(backend, "_writeFile").mockImplementation(async (...args) => writes.push(args));
+    jest.spyOn(backend, "_pctExec").mockResolvedValue({ stdout: "", stderr: "", code: 0 });
+
+    await backend._bootstrapOpenClaw("103", {
+      id: "agent-without-mcp",
+      env: { AGENT_ID: "agent-without-mcp" },
+      templatePayload: {},
+      mcpServers: [],
+    });
+
+    const gatewayConfigWrite = writes.find(
+      ([, targetPath]) => targetPath === "/etc/nora/openclaw-gateway-config.json",
+    );
+    const startWrite = writes.find(
+      ([, targetPath]) => targetPath === "/opt/openclaw-runtime/start.sh",
+    );
+    expect(JSON.parse(gatewayConfigWrite[2]).mcpServers).toEqual({});
+    expect(startWrite[2]).toContain('const replaceKeys = new Set(["mcpServers"])');
+    expect(startWrite[2]).toContain("delete next[key]");
   });
 
   it("streams file contents over SSH stdin instead of exposing secrets in pct argv", async () => {

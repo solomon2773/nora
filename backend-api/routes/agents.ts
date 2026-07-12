@@ -1,5 +1,6 @@
 // @ts-nocheck
 const express = require("express");
+const { Client } = require("pg");
 const db = require("../db");
 const { encrypt, decrypt } = require("../crypto");
 const { addDeploymentJob, cancelDeploymentJobsForAgent } = require("../redisQueue");
@@ -80,6 +81,7 @@ const agentVersions = require("../agentVersions");
 const { assertKubernetesExecutionTargetAvailable } = require("../kubernetesClusters");
 const { assertRemoteHostExecutionTargetAvailable } = require("../remoteHosts");
 const { releaseGatewayPort } = require("../portAllocations");
+const { buildPostgresConfig } = require("../lib/connectionConfig");
 
 const router = express.Router();
 router.use(createMutationFailureAuditMiddleware("agent"));
@@ -88,6 +90,18 @@ router.use(createMutationFailureAuditMiddleware("agent"));
 router.use(scopeByMethod("agents:read", "agents:write"));
 
 const DEMO_ACTIVATION_MARKER = "local-docker-demo-v1";
+
+function createDemoActivationLockClient() {
+  const {
+    max: _max,
+    idleTimeoutMillis: _idleTimeoutMillis,
+    ...clientConfig
+  } = buildPostgresConfig({
+    ...process.env,
+    DB_APPLICATION_NAME: "nora-backend-demo-activation",
+  });
+  return new Client(clientConfig);
+}
 
 function demoActivationJobId(agentId) {
   return `demo-activation-${agentId}`;
@@ -1457,11 +1471,17 @@ router.post("/activate-demo", async (req, res) => {
   const userId = req.user.id;
   const lockKey = llmProviders.providerMutationLockKey(userId);
   let client;
+  let connected = false;
   let lockHeld = false;
   let transactionOpen = false;
 
   try {
-    client = await db.connect();
+    // The activation lock spans pool-backed capability, billing, scheduler,
+    // queue, and audit work. Keep it off the main pool so DB_POOL_MAX=1 does
+    // not self-deadlock while the session lock is held.
+    client = createDemoActivationLockClient();
+    await client.connect();
+    connected = true;
     await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
     lockHeld = true;
 
@@ -1612,7 +1632,7 @@ router.post("/activate-demo", async (req, res) => {
     }
     return res.status(error.statusCode || 500).json({ error: error.message });
   } finally {
-    if (client) {
+    if (connected && client) {
       if (lockHeld) {
         await client
           .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey])
@@ -1620,7 +1640,11 @@ router.post("/activate-demo", async (req, res) => {
             console.warn("[agents.activate-demo] Advisory unlock failed:", error.message),
           );
       }
-      client.release();
+      await client
+        .end()
+        .catch((error) =>
+          console.warn("[agents.activate-demo] Lock connection close failed:", error.message),
+        );
     }
   }
 });

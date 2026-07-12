@@ -11,6 +11,7 @@ const db = require("./db");
 const llmProviders = require("./llmProviders");
 const integrations = require("./integrations");
 const channels = require("./channels");
+const containerManager = require("./containerManager");
 const {
   buildTemplatePayloadFromAgent,
   ensureCoreTemplateFiles,
@@ -797,6 +798,19 @@ function manifestFromHermesSource({ name, workspaceFiles = [], snapshot = {}, so
   });
 }
 
+async function resolveHermesDockerContainer(agent, backendResolver = containerManager.backendFor) {
+  const backend = await backendResolver(agent);
+  if (!backend?.docker || typeof backend.docker.getContainer !== "function") {
+    const err = new Error(
+      `Hermes migration capture is not supported by the ${agent?.deploy_target || agent?.backend_type || "selected"} backend`,
+    );
+    err.statusCode = 409;
+    err.code = "MIGRATION_CAPTURE_UNSUPPORTED";
+    throw err;
+  }
+  return backend.docker.getContainer(agent.container_id);
+}
+
 async function buildLiveMigrationManifest(input = {}) {
   const runtimeFamily =
     String(input.runtime_family || input.runtimeFamily || "")
@@ -1038,7 +1052,7 @@ async function buildMigrationManifestFromAgent(agent, { userId }) {
     err.code = "NO_CONTAINER";
     throw err;
   }
-  const container = docker.getContainer(agent.container_id);
+  const container = await resolveHermesDockerContainer(agent);
   const [workspaceFiles, providerEntries, overrideMap, liveSnapshot, persistedState] =
     await Promise.all([
       getDockerArchiveFiles(container, "/opt/data/workspace"),
@@ -1316,5 +1330,6 @@ module.exports = {
   normalizeMigrationManifest,
   packMigrationBundle,
   parseUploadedMigrationBuffer,
+  resolveHermesDockerContainer,
   summarizeManifest,
 };

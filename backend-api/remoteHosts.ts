@@ -13,11 +13,15 @@
 
 const db = require("./db");
 const { decrypt, encrypt, ensureEncryptionConfigured } = require("./crypto");
+const dns = require("node:dns").promises;
+const net = require("node:net");
+const { PRIVATE_IP_RE } = require("./networkSafety");
 
 const AUTH_MODES = new Set(["key", "password"]);
 const DEFAULT_SSH_PORT = 22;
 const DEFAULT_TEST_TIMEOUT_MS = 10000;
 const DOCKER_VERSION_PROBE = "docker version --format '{{.Server.Version}}'";
+const REMOTE_HOSTNAME_RE = /^[A-Za-z0-9._-]+$/;
 
 let sshClientCtor = null;
 
@@ -30,6 +34,102 @@ function getSshClientCtor() {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isPaaSMode() {
+  return (
+    String(process.env.PLATFORM_MODE || "selfhosted")
+      .trim()
+      .toLowerCase() === "paas"
+  );
+}
+
+function assertRemoteHostsSupported() {
+  if (!isPaaSMode()) return;
+  const error = new Error(
+    "Remote Docker hosts are disabled in hosted mode because agent runtime traffic is not end-to-end encrypted; use a self-hosted Nora control plane on the same private network",
+  );
+  error.statusCode = 403;
+  error.code = "REMOTE_HOSTS_DISABLED_IN_PAAS";
+  throw error;
+}
+
+function normalizeRemoteAddress(value, label) {
+  const host = normalizeText(value);
+  if (!host) return "";
+  if (host.length > 253 || (!net.isIP(host) && !REMOTE_HOSTNAME_RE.test(host))) {
+    const error = new Error(
+      `${label} must be a plain hostname or IP address without a scheme or port`,
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  return host;
+}
+
+function isUnroutableRemoteAddress(address) {
+  const normalized = String(address || "")
+    .trim()
+    .toLowerCase();
+  if (PRIVATE_IP_RE.test(normalized)) return true;
+  if (normalized.startsWith("ff")) return true;
+  if (net.isIP(normalized) === 4) {
+    const first = Number.parseInt(normalized.split(".")[0], 10);
+    return first >= 224;
+  }
+  return false;
+}
+
+async function resolveRemoteAddressForRuntime(value, label, { publicOnly = isPaaSMode() } = {}) {
+  const host = normalizeRemoteAddress(value, label);
+  if (!host) return "";
+  if (net.isIP(host)) {
+    if (publicOnly && isUnroutableRemoteAddress(host)) {
+      const error = new Error(`${label} must use a public address in hosted mode`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return host;
+  }
+  if (!publicOnly) return host;
+
+  let addresses;
+  try {
+    addresses = await dns.lookup(host, { all: true, verbatim: true });
+  } catch (error) {
+    const validationError = new Error(
+      `${label} hostname ${host} could not be resolved (${error.code || error.message})`,
+    );
+    validationError.statusCode = 400;
+    throw validationError;
+  }
+  const unsafe = addresses.find((entry) => isUnroutableRemoteAddress(entry.address));
+  if (unsafe) {
+    const error = new Error(
+      `${label} must resolve only to public addresses in hosted mode (${unsafe.address} is private or unroutable)`,
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!addresses[0]?.address) {
+    const error = new Error(`${label} hostname ${host} did not resolve to an address`);
+    error.statusCode = 400;
+    throw error;
+  }
+  // Hosted-mode callers use the validated IP directly, closing the DNS
+  // rebinding window between registry lookup and SSH/readiness/proxy traffic.
+  return addresses[0].address;
+}
+
+async function resolveRemoteHostRuntimeProfile(profile) {
+  if (!profile) return null;
+  const rawSshHost = profile.sshHost;
+  const rawGatewayHost = profile.gatewayHost || profile.sshHost;
+  const [sshHost, gatewayHost] = await Promise.all([
+    resolveRemoteAddressForRuntime(rawSshHost, "Remote SSH host"),
+    resolveRemoteAddressForRuntime(rawGatewayHost, "Remote gateway address"),
+  ]);
+  return { ...profile, rawSshHost, rawGatewayHost, sshHost, gatewayHost };
 }
 
 function normalizeSlug(value) {
@@ -228,14 +328,20 @@ function normalizeHostInput(input = {}, existing = null) {
     label: label || id,
     enabled: normalizeBool(input.enabled, existing?.enabled ?? true),
     isDefault: normalizeBool(input.isDefault ?? input.is_default, existing?.is_default ?? false),
-    sshHost: normalizeText(input.sshHost ?? input.ssh_host ?? existing?.ssh_host),
+    sshHost: normalizeRemoteAddress(
+      input.sshHost ?? input.ssh_host ?? existing?.ssh_host,
+      "Remote SSH host",
+    ),
     sshPort: parsePort(input.sshPort ?? input.ssh_port, existing?.ssh_port ?? DEFAULT_SSH_PORT),
     sshUser: normalizeText(input.sshUser ?? input.ssh_user ?? existing?.ssh_user),
     sshAuthMode: authMode,
     sshPrivateKeyEncrypted: privateKeyEncrypted,
     sshPasswordEncrypted: passwordEncrypted,
     sshPassphraseEncrypted: passphraseEncrypted,
-    gatewayHost: normalizeText(input.gatewayHost ?? input.gateway_host ?? existing?.gateway_host),
+    gatewayHost: normalizeRemoteAddress(
+      input.gatewayHost ?? input.gateway_host ?? existing?.gateway_host,
+      "Remote gateway address",
+    ),
     dockerHost: normalizeText(input.dockerHost ?? input.docker_host ?? existing?.docker_host),
   };
 }
@@ -252,7 +358,16 @@ function connectionInputChanged(existing, host) {
     normalizeText(existing.ssh_password_encrypted) !== normalizeText(host.sshPasswordEncrypted) ||
     normalizeText(existing.ssh_passphrase_encrypted) !==
       normalizeText(host.sshPassphraseEncrypted) ||
+    normalizeText(existing.gateway_host) !== host.gatewayHost ||
     normalizeText(existing.docker_host) !== host.dockerHost
+  );
+}
+
+function sshHostIdentityChanged(existing, host) {
+  if (!existing) return false;
+  return (
+    normalizeText(existing.ssh_host) !== host.sshHost ||
+    parsePort(existing.ssh_port, DEFAULT_SSH_PORT) !== host.sshPort
   );
 }
 
@@ -287,6 +402,7 @@ async function listRemoteHosts(options = {}) {
 }
 
 async function listRemoteHostExecutionTargets(options = {}) {
+  if (isPaaSMode()) return [];
   const hosts = await listRemoteHosts({ ...options, includeDisabled: false });
   return hosts.filter((host) => host.available);
 }
@@ -298,10 +414,11 @@ async function getHostRow(hostId) {
 }
 
 async function getRemoteHostProfile(executionTargetId) {
+  if (isPaaSMode()) return null;
   const normalized = normalizeRemoteExecutionTargetId(executionTargetId);
   if (!normalized) return null;
   const row = await getHostRow(normalized.slice("remote:".length));
-  return rowToProfile(row, { includeSecret: true });
+  return resolveRemoteHostRuntimeProfile(rowToProfile(row, { includeSecret: true }));
 }
 
 // Masked single-host lookup by id (no secrets) — used by the route layer to
@@ -314,9 +431,11 @@ async function getRemoteHost(hostId) {
 // Masked lookup by execution target ("remote:<id>"), no secret decryption —
 // used by the gateway proxy to learn a remote host's advertised address.
 async function getRemoteHostByExecutionTarget(executionTargetId) {
+  if (isPaaSMode()) return null;
   const normalized = normalizeRemoteExecutionTargetId(executionTargetId);
   if (!normalized) return null;
-  return getRemoteHost(normalized.slice("remote:".length));
+  const host = await getRemoteHost(normalized.slice("remote:".length));
+  return resolveRemoteHostRuntimeProfile(host);
 }
 
 async function clearOtherDefaults(hostId, ownerUserId) {
@@ -330,7 +449,12 @@ async function clearOtherDefaults(hostId, ownerUserId) {
 }
 
 async function createRemoteHost(input = {}) {
+  assertRemoteHostsSupported();
   const host = normalizeHostInput(input);
+  await resolveRemoteHostRuntimeProfile({
+    sshHost: host.sshHost,
+    gatewayHost: host.gatewayHost || host.sshHost,
+  });
   const result = await db.query(
     `INSERT INTO remote_hosts(
        id, owner_user_id, label, enabled, is_default,
@@ -366,6 +490,7 @@ async function createRemoteHost(input = {}) {
 }
 
 async function updateRemoteHost(hostId, input = {}) {
+  assertRemoteHostsSupported();
   const existing = await getHostRow(hostId);
   if (!existing) {
     const error = new Error("Remote host not found");
@@ -374,6 +499,11 @@ async function updateRemoteHost(hostId, input = {}) {
   }
   const host = normalizeHostInput(input, existing);
   const resetTest = connectionInputChanged(existing, host);
+  const resetHostKey = sshHostIdentityChanged(existing, host);
+  await resolveRemoteHostRuntimeProfile({
+    sshHost: host.sshHost,
+    gatewayHost: host.gatewayHost || host.sshHost,
+  });
   const result = await db.query(
     `UPDATE remote_hosts
         SET label = $2,
@@ -392,11 +522,10 @@ async function updateRemoteHost(hostId, input = {}) {
             last_test_status = CASE WHEN $15 THEN NULL ELSE last_test_status END,
             last_test_message = CASE WHEN $15 THEN NULL ELSE last_test_message END,
             last_tested_at = CASE WHEN $15 THEN NULL ELSE last_tested_at END,
-            -- Clear the host-key pin too when connection inputs change, so the
-            -- next test re-pins (trust-on-first-use) the now-different host. A
-            -- key change WITHOUT a connection-input change keeps the pin, so a
-            -- silent MITM on the same target still fails closed.
-            ssh_host_key = CASE WHEN $15 THEN NULL ELSE ssh_host_key END,
+            -- The host-key pin belongs to the SSH network identity, not to the
+            -- credential. Rotating a password/key must retain the pin; only an
+            -- explicit SSH host/port change returns to trust-on-first-use.
+            ssh_host_key = CASE WHEN $16 THEN NULL ELSE ssh_host_key END,
             updated_at = NOW()
       WHERE id = $1
       RETURNING *`,
@@ -416,6 +545,7 @@ async function updateRemoteHost(hostId, input = {}) {
       host.gatewayHost,
       host.dockerHost,
       resetTest,
+      resetHostKey,
     ],
   );
   if (host.isDefault) await clearOtherDefaults(existing.id, host.ownerUserId);
@@ -558,6 +688,7 @@ function runRemoteDockerProbe(profile, { timeoutMs = DEFAULT_TEST_TIMEOUT_MS } =
 }
 
 async function testRemoteHost(hostId, options = {}) {
+  assertRemoteHostsSupported();
   const profile = await getRemoteHostProfile(`remote:${hostId}`);
   if (!profile) {
     const error = new Error("Remote host not found");
@@ -636,6 +767,7 @@ async function userCanUseRemoteHost(userId, hostId) {
 // belong to (read-only). Each entry is masked (no secrets) and annotated with the
 // access kind + whether the user may deploy (editor+).
 async function listAccessibleRemoteHosts(userId) {
+  if (isPaaSMode()) return [];
   const owned = (await listRemoteHosts({ ownerUserId: userId, includeDisabled: true })).map(
     (host) => ({
       ...host,
@@ -708,6 +840,7 @@ async function assertRemoteHostExecutionTargetAvailable(runtimeFields = {}, opti
   if (!isRemoteDockerTarget(runtimeFields.deploy_target ?? runtimeFields.deployTarget)) {
     return null;
   }
+  assertRemoteHostsSupported();
   const executionTargetId = normalizeRemoteExecutionTargetId(
     runtimeFields.execution_target_id || runtimeFields.executionTargetId,
   );
@@ -762,6 +895,7 @@ async function assertRemoteHostExecutionTargetAvailable(runtimeFields = {}, opti
 
 module.exports = {
   assertRemoteHostExecutionTargetAvailable,
+  assertRemoteHostsSupported,
   createRemoteHost,
   deleteRemoteHost,
   getRemoteHost,
@@ -772,6 +906,8 @@ module.exports = {
   listAccessibleRemoteHosts,
   listRemoteHostExecutionTargets,
   normalizeRemoteExecutionTargetId,
+  resolveRemoteAddressForRuntime,
+  resolveRemoteHostRuntimeProfile,
   rowToProfile,
   testRemoteHost,
   updateRemoteHost,

@@ -1278,6 +1278,31 @@ const LEGACY_COMPATIBILITY_REPAIRS = [
       END
     $nora$`,
   },
+  {
+    name: "repair-llm-provider-defaults",
+    sql: `DO $nora$
+      BEGIN
+        IF to_regclass('llm_providers') IS NOT NULL THEN
+          WITH ranked AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY user_id
+                     ORDER BY is_default DESC,
+                              CASE WHEN provider = 'demo' THEN 1 ELSE 0 END,
+                              created_at ASC NULLS LAST,
+                              id ASC
+                   ) AS provider_position
+              FROM llm_providers
+          )
+          UPDATE llm_providers AS provider
+             SET is_default = (ranked.provider_position = 1)
+            FROM ranked
+           WHERE provider.id = ranked.id
+             AND provider.is_default IS DISTINCT FROM (ranked.provider_position = 1);
+        END IF;
+      END
+    $nora$`,
+  },
 ];
 
 async function migrateDB(database = db, env = process.env) {

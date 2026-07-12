@@ -528,14 +528,70 @@ describe("provisioning runtime/gateway contracts", () => {
 
     // Deployment env references the Secret; only non-sensitive values inline.
     const patch = mockPatchNamespacedDeployment.mock.calls[0][0].body;
-    const envOps = patch.filter((op) => op.path.includes("/env"));
-    const sensitiveOp = envOps.find((op) => op.value?.name === "OPENAI_API_KEY");
-    expect(sensitiveOp.value.valueFrom).toEqual({
+    const envOp = patch.find((op) => op.path.includes("/env"));
+    const sensitiveEntry = envOp.value.find((entry) => entry.name === "OPENAI_API_KEY");
+    expect(sensitiveEntry.valueFrom).toEqual({
       secretKeyRef: { name: "nora-oclaw-nora-qa-123-env", key: "OPENAI_API_KEY" },
     });
-    expect(sensitiveOp.value.value).toBeUndefined();
-    const plainOp = envOps.find((op) => op.value?.name === "PLAIN_SETTING");
-    expect(plainOp.value).toEqual({ name: "PLAIN_SETTING", value: "value" });
+    expect(sensitiveEntry.value).toBeUndefined();
+    expect(envOp.value).toContainEqual({ name: "PLAIN_SETTING", value: "value" });
+  });
+
+  it("replaces provider-owned env and Secret keys without removing unrelated settings", async () => {
+    const K8sBackend = require("../../workers/provisioner/backends/k8s");
+    const backend = new K8sBackend(k8sProfile());
+
+    mockReadNamespacedDeployment.mockResolvedValue({
+      metadata: { name: "nora-oclaw-nora-qa-123" },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "agent",
+                env: [
+                  {
+                    name: "OPENAI_API_KEY",
+                    valueFrom: { secretKeyRef: { name: "env", key: "OPENAI_API_KEY" } },
+                  },
+                  { name: "OPENAI_BASE_URL", value: "https://old.example/v1" },
+                  { name: "UNRELATED_SETTING", value: "keep-me" },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    mockReadNamespacedSecret.mockResolvedValue({
+      metadata: { name: "nora-oclaw-nora-qa-123-env", resourceVersion: "secret-rv" },
+      type: "Opaque",
+      data: { OPENAI_API_KEY: "b2xk", UNRELATED_TOKEN: "a2VlcA==" },
+    });
+
+    await backend.updateEnv(
+      "nora-oclaw-nora-qa-123",
+      { GEMINI_API_KEY: "gm-new" },
+      {
+        managedEnvNames: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "GEMINI_API_KEY"],
+      },
+    );
+
+    const replacedSecret = mockReplaceNamespacedSecret.mock.calls[0][0].body;
+    expect(replacedSecret.data).toEqual({ UNRELATED_TOKEN: "a2VlcA==" });
+    expect(replacedSecret.stringData).toEqual({ GEMINI_API_KEY: "gm-new" });
+
+    const patch = mockPatchNamespacedDeployment.mock.calls[0][0].body;
+    const envOp = patch.find((op) => op.path.endsWith("/env"));
+    expect(envOp.value).toContainEqual({ name: "UNRELATED_SETTING", value: "keep-me" });
+    expect(envOp.value).toContainEqual({
+      name: "GEMINI_API_KEY",
+      valueFrom: {
+        secretKeyRef: { name: "nora-oclaw-nora-qa-123-env", key: "GEMINI_API_KEY" },
+      },
+    });
+    expect(envOp.value.some((entry) => entry.name === "OPENAI_API_KEY")).toBe(false);
+    expect(envOp.value.some((entry) => entry.name === "OPENAI_BASE_URL")).toBe(false);
   });
 
   it("returns node-port endpoints for docker-hosted kind verification", async () => {

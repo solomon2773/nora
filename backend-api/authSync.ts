@@ -20,7 +20,10 @@ const {
   buildOpenClawDefaultModelCommand,
   buildOpenClawModelForProvider,
 } = require("../agent-runtime/lib/runtimeBootstrap");
-const { buildHermesRuntimeBootstrapEnv } = require("../agent-runtime/lib/hermesRuntimeBootstrap");
+const {
+  HERMES_MODEL_CONFIG_ENV,
+  buildHermesRuntimeBootstrapEnv,
+} = require("../agent-runtime/lib/hermesRuntimeBootstrap");
 const { NEMOCLAW_DEFAULT_MODEL } = require("../agent-runtime/lib/nemoclawDefaults");
 
 const providerCatalog = Array.isArray(llmProviders.PROVIDERS)
@@ -120,8 +123,11 @@ function resolveHermesModelApiKey(defaultProvider = null, envVars = {}) {
 function attachHermesCustomApiKey(modelConfig = null, defaultProvider = null, envVars = {}) {
   if (!modelConfig || String(modelConfig.provider || "").trim() !== "custom") return modelConfig;
 
+  const sanitized = { ...modelConfig };
+  delete sanitized.apiKey;
+  delete sanitized.api_key;
   const apiKey = resolveHermesModelApiKey(defaultProvider, envVars);
-  if (!apiKey) return modelConfig;
+  if (!apiKey) return sanitized;
 
   const defaultBaseUrl = resolveHermesProviderBaseUrl(defaultProvider);
   const modelBaseUrl = String(modelConfig.baseUrl || "").trim();
@@ -130,10 +136,10 @@ function attachHermesCustomApiKey(modelConfig = null, defaultProvider = null, en
     defaultBaseUrl &&
     normalizeUrlForCompare(modelBaseUrl) !== normalizeUrlForCompare(defaultBaseUrl)
   ) {
-    return modelConfig;
+    return sanitized;
   }
 
-  return { ...modelConfig, apiKey };
+  return { ...sanitized, apiKey };
 }
 
 function resolveHermesProviderBaseUrl(defaultProvider = null) {
@@ -521,15 +527,29 @@ async function writeAuthToContainer(agent, authProfiles) {
   }
 }
 
-async function writeHermesEnvToContainer(agent, envVars) {
+async function writeHermesEnvToContainer(agent, envVars, modelConfig = undefined) {
   if (
     typeof containerManager.isKubernetesAgent === "function" &&
     containerManager.isKubernetesAgent(agent)
   ) {
-    return containerManager.updateEnv(agent, {
-      ...envVars,
-      ...buildHermesRuntimeBootstrapEnv({ envVars }),
-    });
+    const managedEnvNames = llmProviders.getManagedProviderEnvNames({ runtimeFamily: "hermes" });
+    // Channel-only writes intentionally omit modelConfig. Preserve the current
+    // Deployment model bootstrap in that case; provider synchronization passes
+    // either an object or null explicitly so it can replace or revoke it.
+    const replacementNames =
+      modelConfig === undefined
+        ? managedEnvNames.filter((name) => name !== HERMES_MODEL_CONFIG_ENV)
+        : managedEnvNames;
+    return containerManager.updateEnv(
+      agent,
+      {
+        ...envVars,
+        ...buildHermesRuntimeBootstrapEnv({ envVars, modelConfig }),
+      },
+      {
+        managedEnvNames: replacementNames,
+      },
+    );
   }
   return runContainerCommand(agent, buildHermesEnvWriteCommand(envVars));
 }
@@ -653,9 +673,11 @@ async function syncAuthToUserAgents(userId, agentId = null, options = {}) {
           hermesModelConfig = buildHermesModelConfig(defaultProvider, envVars);
           hasHermesModelConfig = true;
         }
-        const selectedHermesModelConfig = persistedModelConfig
-          ? attachHermesCustomApiKey(persistedModelConfig, defaultProvider, envVars)
-          : hermesModelConfig;
+        const selectedHermesModelConfig = defaultProvider
+          ? persistedModelConfig
+            ? attachHermesCustomApiKey(persistedModelConfig, defaultProvider, envVars)
+            : hermesModelConfig
+          : null;
         if (
           onlyIfAuthPresent &&
           Object.keys(envVars).length === 0 &&
@@ -665,11 +687,14 @@ async function syncAuthToUserAgents(userId, agentId = null, options = {}) {
           results.push({ agentId: agent.id, status: "skipped" });
           continue;
         }
-        if (selectedHermesModelConfig) {
+        const kubernetesAgent =
+          typeof containerManager.isKubernetesAgent === "function" &&
+          containerManager.isKubernetesAgent(agent);
+        if (!kubernetesAgent && (selectedHermesModelConfig || !defaultProvider)) {
           const { persistHermesModelConfig } = require("./hermesUi");
-          await persistHermesModelConfig(agent, selectedHermesModelConfig);
+          await persistHermesModelConfig(agent, selectedHermesModelConfig || {});
         }
-        await writeHermesEnvToContainer(agent, envVars);
+        await writeHermesEnvToContainer(agent, envVars, selectedHermesModelConfig);
         await restartAgentAndRefreshAddress(agent);
         const readiness = await waitForAgentReadiness({
           host: agent.host,
@@ -709,9 +734,11 @@ async function syncAuthToUserAgents(userId, agentId = null, options = {}) {
         typeof containerManager.updateEnv === "function"
       ) {
         const managedEnv = await buildOpenClawManagedEnvForAgent(userId, agent.id, defaultProvider);
-        if (Object.keys(managedEnv).length > 0) {
-          await containerManager.updateEnv(agent, managedEnv);
-        }
+        await containerManager.updateEnv(agent, managedEnv, {
+          managedEnvNames: llmProviders.getManagedProviderEnvNames({
+            runtimeFamily: "openclaw",
+          }),
+        });
       }
 
       await writeAuthToContainer(agent, authProfiles);
@@ -761,8 +788,19 @@ async function syncAuthToUserAgents(userId, agentId = null, options = {}) {
         }
       }
 
+      // Apply the default model before restarting as part of the same config
+      // reconciliation boundary. Writing it after readiness lets OpenClaw's
+      // config watcher reload an already-advertised gateway and makes the
+      // readiness result stale as soon as this function returns.
+      if (modelCommand) {
+        await runRuntimeCommand(agent, modelCommand, { timeout: 60000 });
+      }
+
       await restartAgentAndRefreshAddress(agent);
 
+      // Readiness is intentionally the final runtime operation. Every auth,
+      // provider, env, and default-model write above must be visible across
+      // the single restart before callers receive a successful sync result.
       const readiness = await waitForAgentReadiness({
         host: agent.host,
         runtimeHost: agent.runtime_host,
@@ -775,10 +813,6 @@ async function syncAuthToUserAgents(userId, agentId = null, options = {}) {
         throw new Error(
           `Agent runtime did not recover after auth sync restart (${readiness.runtime?.error || readiness.gateway?.error || "unreachable"})`,
         );
-      }
-
-      if (modelCommand) {
-        await runRuntimeCommand(agent, modelCommand, { timeout: 60000 });
       }
 
       console.log(`[authSync] Synced OpenClaw auth to agent ${agent.id} (backend restarted)`);

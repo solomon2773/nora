@@ -720,6 +720,8 @@ if api_key_present:
         model.pop("api_key", None)
 elif provider and provider != "custom":
     model.pop("api_key", None)
+elif not provider:
+    model.pop("api_key", None)
 
 if model:
     config["model"] = model

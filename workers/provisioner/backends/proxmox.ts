@@ -11,6 +11,7 @@ const ProvisionerBackend = require("./interface");
 const {
   buildOpenClawAuthImportFromFileCommand,
   buildOpenClawInstallCommand,
+  buildMcpServersConfig,
   buildOpenClawCustomProviders,
   buildIntegrationToolWrapperScript,
   buildRuntimeBootstrapFiles,
@@ -53,7 +54,7 @@ const PROXMOX_NEMOCLAW_UNSUPPORTED =
 const PROXMOX_AGENT_OWNERSHIP_MARKER_PREFIX = "nora-agent:";
 const PROXMOX_CREATE_OWNERSHIP_MARKER_PREFIX = "nora-owner:";
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const PROXMOX_TEMPLATE_RE = /^[A-Za-z0-9_.-]+:vztmpl\/[A-Za-z0-9._+~:-]+$/;
+const PROXMOX_TEMPLATE_RE = /^[A-Za-z0-9_.-]+:vztmpl\/[A-Za-z0-9._+~-]+\.tar\.zst$/;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -143,7 +144,10 @@ function environmentLoaderLines(filePath) {
   ];
 }
 
-function openClawManagedConfigMergeLines(filePath, { removeAfter = false } = {}) {
+function openClawManagedConfigMergeLines(filePath, { removeAfter = false, replaceKeys = [] } = {}) {
+  const normalizedReplaceKeys = Array.isArray(replaceKeys)
+    ? replaceKeys.map((key) => String(key)).filter(Boolean)
+    : [];
   return [
     `if [ -f ${shellSingleQuote(filePath)} ]; then`,
     "node <<'__NORA_PROXMOX_MANAGED_CONFIG__'",
@@ -151,11 +155,17 @@ function openClawManagedConfigMergeLines(filePath, { removeAfter = false } = {})
     "const path = require('path');",
     "const configPath = '/root/.openclaw/openclaw.json';",
     `const managedPath = ${JSON.stringify(filePath)};`,
+    `const replaceKeys = new Set(${JSON.stringify(normalizedReplaceKeys)});`,
     "function isPlainObject(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }",
     "function mergeConfig(current, managed) {",
     "  if (!isPlainObject(managed)) return managed;",
     "  const next = isPlainObject(current) ? { ...current } : {};",
     "  for (const [key, value] of Object.entries(managed)) {",
+    "    if (replaceKeys.has(key)) {",
+    "      if (isPlainObject(value) && Object.keys(value).length === 0) delete next[key];",
+    "      else next[key] = value;",
+    "      continue;",
+    "    }",
     "    next[key] = isPlainObject(value) ? mergeConfig(next[key], value) : value;",
     "  }",
     "  return next;",
@@ -703,6 +713,7 @@ class ProxmoxBackend extends ProvisionerBackend {
       env,
       container_name,
       templatePayload,
+      mcpServers,
       runtimeFamily = "openclaw",
       sandboxProfile = "standard",
       abortSignal,
@@ -787,6 +798,7 @@ class ProxmoxBackend extends ProvisionerBackend {
               id,
               env,
               templatePayload,
+              mcpServers,
               signal: abortSignal,
             });
       console.log(`[proxmox] LXC ${vmid} started at ${host}`);
@@ -981,11 +993,15 @@ class ProxmoxBackend extends ProvisionerBackend {
     await this._pctExec(vmid, command, { timeout: 300000, signal: options.signal });
   }
 
-  async _bootstrapOpenClaw(vmid, { id, env = {}, templatePayload = {}, signal } = {}) {
+  async _bootstrapOpenClaw(
+    vmid,
+    { id, env = {}, templatePayload = {}, mcpServers = [], signal } = {},
+  ) {
     await this._prepareOpenClawBase(vmid, { signal });
     throwIfAborted(signal, "OpenClaw Proxmox bootstrap");
     const gatewayToken = crypto.randomBytes(32).toString("hex");
     const pairedJson = derivePairedDevice(gatewayToken);
+    const managedMcpServers = buildMcpServersConfig(mcpServers);
     const runtimeEnv = normalizeEnv({
       ...(env || {}),
       ...buildRuntimeEnv(),
@@ -1008,6 +1024,10 @@ class ProxmoxBackend extends ProvisionerBackend {
             reload: { mode: "hot" },
             auth: { password: gatewayToken },
           },
+          // Nora owns this block. An empty object deliberately removes MCP
+          // entries baked into a prepared template; a populated object is the
+          // worker's credential-resolved per-agent selection.
+          mcpServers: managedMcpServers,
         },
         null,
         2,
@@ -1069,7 +1089,9 @@ class ProxmoxBackend extends ProvisionerBackend {
       ...environmentLoaderLines(OPENCLAW_ENV_FILE),
       buildOpenClawInstallCommand([openClawPackage]),
       "mkdir -p ~/.openclaw/devices /var/log /root/.openclaw/workspace /root/.openclaw/agents/main/agent",
-      ...openClawManagedConfigMergeLines(OPENCLAW_GATEWAY_CONFIG_FILE),
+      ...openClawManagedConfigMergeLines(OPENCLAW_GATEWAY_CONFIG_FILE, {
+        replaceKeys: ["mcpServers"],
+      }),
       "if [ ! -f /root/.openclaw/.nora-proxmox-bootstrap-complete ]; then",
       // Register provision-time custom providers once. Live auth sync owns
       // later provider changes; replaying the original env on every restart

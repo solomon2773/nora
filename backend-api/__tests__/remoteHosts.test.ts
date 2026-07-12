@@ -66,6 +66,7 @@ class FakeSshClient extends EventEmitter {
 jest.mock("ssh2", () => ({ Client: FakeSshClient }));
 
 const remoteHosts = require("../remoteHosts");
+const originalPlatformMode = process.env.PLATFORM_MODE;
 
 function remoteHostRow(overrides = {}) {
   return {
@@ -93,9 +94,15 @@ function remoteHostRow(overrides = {}) {
 }
 
 beforeEach(() => {
+  process.env.PLATFORM_MODE = "selfhosted";
   mockDb.query.mockReset();
   mockEnsureEncryptionConfigured.mockReset();
   sshScenario = null;
+});
+
+afterAll(() => {
+  if (originalPlatformMode === undefined) delete process.env.PLATFORM_MODE;
+  else process.env.PLATFORM_MODE = originalPlatformMode;
 });
 
 describe("rowToProfile", () => {
@@ -154,6 +161,21 @@ describe("createRemoteHost", () => {
     ).rejects.toThrow(/ENCRYPTION_KEY/);
     expect(mockDb.query).not.toHaveBeenCalled();
   });
+
+  it("disables Remote Docker registration in hosted mode", async () => {
+    process.env.PLATFORM_MODE = "paas";
+
+    await expect(
+      remoteHosts.createRemoteHost({
+        id: "internal-pivot",
+        ownerUserId: "user-1",
+        sshHost: "127.0.0.1",
+        sshUser: "operator",
+        sshPrivateKey: "PRIVATE-KEY",
+      }),
+    ).rejects.toMatchObject({ code: "REMOTE_HOSTS_DISABLED_IN_PAAS", statusCode: 403 });
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
 });
 
 describe("updateRemoteHost", () => {
@@ -166,9 +188,8 @@ describe("updateRemoteHost", () => {
     const update = mockDb.query.mock.calls[1];
     expect(update[0]).toMatch(/UPDATE remote_hosts/);
     expect(update[1][14]).toBe(true); // resetTest flag → wipes last_test_*
-    // The host-key pin is also cleared on a connection-input change so the next
-    // test re-pins the (now different) host instead of failing as a false MITM.
-    expect(update[0]).toMatch(/ssh_host_key = CASE WHEN \$15 THEN NULL ELSE ssh_host_key END/);
+    expect(update[1][15]).toBe(true); // SSH host identity changed → clear pin
+    expect(update[0]).toMatch(/ssh_host_key = CASE WHEN \$16 THEN NULL ELSE ssh_host_key END/);
   });
 
   it("keeps the prior test result when only the label changes", async () => {
@@ -178,6 +199,31 @@ describe("updateRemoteHost", () => {
     await remoteHosts.updateRemoteHost("my-laptop", { label: "Renamed" });
 
     expect(mockDb.query.mock.calls[1][1][14]).toBe(false);
+  });
+
+  it("requires a retest after credential rotation but preserves the SSH host-key pin", async () => {
+    mockDb.query.mockResolvedValueOnce({ rows: [remoteHostRow({ ssh_host_key: "pinned-key" })] });
+    mockDb.query.mockResolvedValueOnce({
+      rows: [remoteHostRow({ ssh_private_key_encrypted: "enc(NEW-KEY)", last_test_status: null })],
+    });
+
+    await remoteHosts.updateRemoteHost("my-laptop", { sshPrivateKey: "NEW-KEY" });
+
+    const update = mockDb.query.mock.calls[1];
+    expect(update[1][14]).toBe(true);
+    expect(update[1][15]).toBe(false);
+  });
+
+  it("requires a retest when the advertised gateway address changes", async () => {
+    mockDb.query.mockResolvedValueOnce({ rows: [remoteHostRow()] });
+    mockDb.query.mockResolvedValueOnce({
+      rows: [remoteHostRow({ gateway_host: "gateway.example.com", last_test_status: null })],
+    });
+
+    await remoteHosts.updateRemoteHost("my-laptop", { gatewayHost: "gateway.example.com" });
+
+    expect(mockDb.query.mock.calls[1][1][14]).toBe(true);
+    expect(mockDb.query.mock.calls[1][1][15]).toBe(false);
   });
 });
 

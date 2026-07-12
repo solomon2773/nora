@@ -7,13 +7,7 @@ import {
   ensureUserSession,
   isJsonRecord,
 } from "./support/app";
-import {
-  deleteAgent,
-  getAgent,
-  listProviders,
-  waitForAgentStatus,
-  waitForOpenClawGateway,
-} from "./support/agents";
+import { deleteAgent, listProviders, waitForAgentStatus } from "./support/agents";
 
 type AgentRecord = Record<string, unknown> & {
   id: string;
@@ -103,33 +97,33 @@ test.describe("Built-in demo activation", () => {
       const providers = await listProviders(request, operator.token);
       expect(providers.filter((provider) => provider?.provider === "demo")).toHaveLength(1);
 
-      await waitForAgentStatus(request, operator.token, agentId, ["running", "warning"], {
+      const runningAgent = await waitForAgentStatus(request, operator.token, agentId, "running", {
         timeoutMs: 10 * 60 * 1000,
-        intervalMs: 3000,
-      });
-      await waitForOpenClawGateway(request, operator.token, agentId, {
-        timeoutMs: 3 * 60 * 1000,
-        intervalMs: 3000,
-      });
-      await waitForAgentStatus(request, operator.token, agentId, "running", {
-        timeoutMs: 30_000,
         intervalMs: 1000,
       });
-      expect((await getAgent(request, operator.token, agentId)).status).toBe("running");
+      expect(runningAgent.status).toBe("running");
 
+      // This must be the first gateway request after the control plane publishes
+      // final readiness. Do not warm the connection with /gateway/status or retry
+      // chat here: either would mask a worker that marks the agent running before
+      // its post-deploy auth reconciliation restart has settled.
       const prompt = `demo activation e2e ${Date.now()}`;
-      const { body: chatBody } = await apiJson<string>(
+      const { response: chatResponse, body: chatBody } = await apiJson<unknown>(
         request,
         `/api/agents/${agentId}/gateway/chat`,
         {
           method: "POST",
           token: operator.token,
           data: { message: prompt, stream: true },
+          failOnStatus: false,
         },
       );
+      const rawChatBody =
+        typeof chatBody === "string" ? chatBody : JSON.stringify(chatBody ?? null);
+      expect(chatResponse.status(), `First chat response:\n${rawChatBody}`).toBe(200);
       expect(typeof chatBody).toBe("string");
-      const reply = finalAssistantText(String(chatBody));
-      expect(reply, `Raw gateway SSE:\n${String(chatBody)}`).toContain(
+      const reply = finalAssistantText(rawChatBody);
+      expect(reply, `Raw gateway SSE:\n${rawChatBody}`).toContain(
         "Hi! I'm Nora's demo agent, running on a built-in stub model — no API key required.",
       );
       // OpenClaw prepends sender metadata and a timestamp before the user text;

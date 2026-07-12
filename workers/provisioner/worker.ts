@@ -1,7 +1,7 @@
 // @ts-nocheck
 const { UnrecoverableError, Worker } = require("bullmq");
 const IORedis = require("ioredis");
-const { Pool } = require("pg");
+const { Client, Pool } = require("pg");
 const {
   buildPostgresConfig,
   createRedisClient,
@@ -20,7 +20,11 @@ const {
 } = require("../../agent-runtime/lib/backendCatalog");
 const { buildAgentRuntimeFields } = require("../../agent-runtime/lib/agentRuntimeFields");
 const { getAgentSecretEnvVars } = require("../../backend-api/agentSecretOverrides");
-const { getDeploymentProvider } = require("../../backend-api/llmProviders");
+const {
+  getDeploymentProvider,
+  getManagedProviderEnvNames,
+  providerMutationLockKey,
+} = require("../../backend-api/llmProviders");
 const {
   buildHermesSeedArchive,
   getMigrationManifestForAgent,
@@ -75,6 +79,17 @@ const {
 } = require("../../agent-runtime/lib/hermesRuntimeBootstrap");
 const { waitForAgentReadiness } = require("./healthChecks");
 const { buildReadinessWarningDetail, persistReadinessWarning } = require("./readinessWarning");
+const {
+  acquireDedicatedSessionLock,
+  finalizeProvisionedDeployment,
+  fingerprintEffectiveProviderState,
+  isBuiltInDemoActivation,
+  persistProvisionedRuntimeMetadata,
+  reconcileProviderStateUntilStable,
+  runProvisioningReadinessBarrier,
+  runRuntimeReconciliationBoundary,
+  shouldReconcileEffectiveProviderState,
+} = require("./deploymentLifecycle");
 const { shellSingleQuote } = require("../../agent-runtime/lib/containerCommand");
 const {
   computeMissingSavedSkills,
@@ -94,6 +109,18 @@ const db = new Pool(
     DB_APPLICATION_NAME: process.env.DB_APPLICATION_NAME || "nora-worker-provisioner",
   }),
 );
+
+function createProvisionerLockClient(scope) {
+  const {
+    max: _max,
+    idleTimeoutMillis: _idleTimeoutMillis,
+    ...clientConfig
+  } = buildPostgresConfig({
+    ...process.env,
+    DB_APPLICATION_NAME: `nora-worker-provisioner-${scope}`,
+  });
+  return new Client(clientConfig);
+}
 
 // Hash any agent ID (uuid string or integer) to a signed 64-bit BigInt suitable
 // for pg_try_advisory_lock(bigint). Uses FNV-1a over the string form. The lock
@@ -120,49 +147,69 @@ function advisoryLockKeyForAgent(agentId) {
  * lock is released by Postgres automatically.
  */
 async function acquireAgentProvisionLock(agentId) {
-  const client = await db.connect();
   const lockKey = advisoryLockKeyForAgent(agentId);
-  const res = await client.query("SELECT pg_try_advisory_lock($1) AS locked", [lockKey.toString()]);
-  if (!res.rows[0]?.locked) {
-    client.release();
-    const err = new Error(`Agent ${agentId} is already being provisioned by another worker`);
-    err.code = "PROVISION_LOCK_BUSY";
-    throw err;
-  }
-  let released = false;
-  return {
-    release: async () => {
-      if (released) return;
-      released = true;
-      try {
-        await client.query("SELECT pg_advisory_unlock($1)", [lockKey.toString()]);
-      } catch (e) {
-        console.warn(`[provisioner] advisory unlock failed for agent ${agentId}: ${e.message}`);
-      } finally {
-        client.release();
-      }
+  return acquireDedicatedSessionLock({
+    createClient: () => createProvisionerLockClient("agent-lock"),
+    acquire: (client) =>
+      client.query("SELECT pg_try_advisory_lock($1) AS locked", [lockKey.toString()]),
+    release: (client) => client.query("SELECT pg_advisory_unlock($1)", [lockKey.toString()]),
+    isAcquired: (result) => Boolean(result.rows[0]?.locked),
+    busyError: () => {
+      const error = new Error(`Agent ${agentId} is already being provisioned by another worker`);
+      error.code = "PROVISION_LOCK_BUSY";
+      return error;
     },
-  };
+    onReleaseError: (error) =>
+      console.warn(`[provisioner] advisory unlock failed for agent ${agentId}: ${error.message}`),
+    onCloseError: (error) =>
+      console.warn(
+        `[provisioner] advisory lock connection close failed for agent ${agentId}: ${error.message}`,
+      ),
+  });
+}
+
+async function withProviderMutationLock(userId, operation) {
+  if (!userId || typeof operation !== "function") {
+    throw new Error("userId and operation are required for the provider mutation lock");
+  }
+  const lockKey = providerMutationLockKey(userId);
+  const lock = await acquireDedicatedSessionLock({
+    createClient: () => createProvisionerLockClient("provider-mutation-lock"),
+    acquire: (client) =>
+      client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]),
+    release: (client) =>
+      client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey]),
+    onReleaseError: (error) =>
+      console.warn(
+        `[provisioner] provider advisory unlock failed for user ${userId}: ${error.message}`,
+      ),
+    onCloseError: (error) =>
+      console.warn(
+        `[provisioner] provider lock connection close failed for user ${userId}: ${error.message}`,
+      ),
+  });
+  try {
+    return await operation();
+  } finally {
+    await lock.release();
+  }
 }
 
 async function acquireKubernetesPolicyReconcileLock(clusterId) {
-  const client = await db.connect();
   const lockKey = advisoryLockKeyForAgent(`k8s-policy:${clusterId}`);
-  await client.query("SELECT pg_advisory_lock($1)", [lockKey.toString()]);
-  let released = false;
-  return {
-    release: async () => {
-      if (released) return;
-      released = true;
-      try {
-        await client.query("SELECT pg_advisory_unlock($1)", [lockKey.toString()]);
-      } catch (e) {
-        console.warn(`[k8s-policy-settings] advisory unlock failed for ${clusterId}: ${e.message}`);
-      } finally {
-        client.release();
-      }
-    },
-  };
+  return acquireDedicatedSessionLock({
+    createClient: () => createProvisionerLockClient("k8s-policy-lock"),
+    acquire: (client) => client.query("SELECT pg_advisory_lock($1)", [lockKey.toString()]),
+    release: (client) => client.query("SELECT pg_advisory_unlock($1)", [lockKey.toString()]),
+    onReleaseError: (error) =>
+      console.warn(
+        `[k8s-policy-settings] advisory unlock failed for ${clusterId}: ${error.message}`,
+      ),
+    onCloseError: (error) =>
+      console.warn(
+        `[k8s-policy-settings] lock connection close failed for ${clusterId}: ${error.message}`,
+      ),
+  });
 }
 
 function parseTimeoutMs(rawValue, fallbackMs) {
@@ -453,6 +500,38 @@ async function reconcileProvisioningFailureRuntime({
     persistIdentity: runtimeIdentity?.persistIdentity !== false,
   });
   return { ...cleanup, containerId: unresolvedContainerId };
+}
+
+async function cleanupCanceledProvisionedRuntime({
+  queryable = db,
+  provisioner,
+  agentId,
+  containerId,
+  reason,
+} = {}) {
+  const cleanup = await cleanupProvisionedRuntimeAfterFailure({
+    queryable,
+    provisioner,
+    agentId,
+    containerId,
+  });
+  if (!cleanup.retrySafe) {
+    const error = buildUnresolvedRuntimeError({
+      agentId,
+      containerId,
+      error:
+        cleanup.error ||
+        new Error(`Canceled deployment cleanup could not be verified (${cleanup.reason})`),
+    });
+    error.code = "CANCELED_RUNTIME_CLEANUP_FAILED";
+    error.cancellationReason = reason || "deployment-canceled";
+    throw error;
+  }
+  return { canceled: true, reason: reason || "deployment-canceled", cleanup };
+}
+
+function isCanceledRuntimeCleanupFailure(error) {
+  return error?.code === "CANCELED_RUNTIME_CLEANUP_FAILED";
 }
 
 const OPENCLAW_WORKSPACE_PATH = "/root/.openclaw/workspace";
@@ -972,6 +1051,33 @@ async function fetchDeploymentProvider(userId, providerId = null) {
   }
 }
 
+async function fetchEffectiveProviderState(userId, providerId = null) {
+  const [envVars, defaultProvider] = await Promise.all([
+    fetchUserLlmEnvVars(userId, providerId),
+    fetchDeploymentProvider(userId, providerId),
+  ]);
+  return {
+    envVars,
+    defaultProvider,
+    fingerprint: fingerprintEffectiveProviderState({ envVars, defaultProvider }),
+  };
+}
+
+function buildKubernetesProviderEnv(runtimeFamily, defaultProvider, llmEnvVars = {}) {
+  if (runtimeFamily === "hermes") {
+    return {
+      ...buildHermesRuntimeBootstrapEnvFor(defaultProvider, llmEnvVars),
+      ...llmEnvVars,
+    };
+  }
+
+  const defaultModel = buildDefaultOpenClawModel(defaultProvider);
+  return {
+    ...llmEnvVars,
+    ...(defaultModel ? { NORA_DEFAULT_OPENCLAW_MODEL: defaultModel } : {}),
+  };
+}
+
 async function runRuntimeCommand(agent, command, { timeout = 30000 } = {}) {
   const runtimeUrl = runtimeUrlForAgent(agent, "/exec");
   if (!runtimeUrl) {
@@ -1192,7 +1298,8 @@ function wrapCommandWithContainerTimeout(command, timeoutMs) {
  * @param {number|string} params.gatewayHostPort Gateway port exposed on the host.
  * @param {string} params.gatewayHost Gateway host used for readiness checks.
  * @param {number|string} params.gatewayPort Gateway port used for readiness checks.
- * @returns {Promise<{status: "skipped" | "synced"}>} `skipped` when there is
+ * @param {string} params.bootstrappedProviderFingerprint Canonical effective provider state injected before runtime creation.
+ * @returns {Promise<{status: "skipped" | "synced", reason?: string}>} `skipped` when there is
  * nothing to apply, otherwise `synced` after config write, restart, and
  * readiness verification succeed.
  */
@@ -1211,12 +1318,32 @@ async function reconcileRuntimeLlmAuth({
   gatewayHost,
   gatewayPort,
   gatewayToken,
+  bootstrappedProviderFingerprint,
 } = {}) {
-  const llmEnvVars = await fetchUserLlmEnvVars(userId, llmProviderId);
-  const defaultProvider = await fetchDeploymentProvider(userId, llmProviderId);
+  const providerState = await fetchEffectiveProviderState(userId, llmProviderId);
+  const { envVars: llmEnvVars, defaultProvider, fingerprint: providerFingerprint } = providerState;
+  if (!shouldReconcileEffectiveProviderState(bootstrappedProviderFingerprint, providerState)) {
+    return { status: "skipped", reason: "unchanged", providerFingerprint };
+  }
   const hasLlmKeys = Object.keys(llmEnvVars).length > 0;
   if (!hasLlmKeys && !defaultProvider) {
-    return { status: "skipped" };
+    const error = new Error(
+      "LLM provider state was removed while the runtime was provisioning; retrying from a clean bootstrap",
+    );
+    error.code = "PROVIDER_STATE_REMOVED_DURING_DEPLOYMENT";
+    throw error;
+  }
+
+  if (resolvedBackend === "k8s") {
+    if (typeof provisioner?.updateEnv !== "function") {
+      throw new Error("Kubernetes provider reconciliation requires updateEnv support");
+    }
+    const managedEnv = buildKubernetesProviderEnv(runtimeFamily, defaultProvider, llmEnvVars);
+    await provisioner.updateEnv(containerId, managedEnv, {
+      agentId,
+      runtimeFamily,
+      managedEnvNames: getManagedProviderEnvNames({ runtimeFamily }),
+    });
   }
 
   const agentRef = {
@@ -1284,24 +1411,28 @@ async function reconcileRuntimeLlmAuth({
         `Hermes runtime did not recover after auth reconcile (${readiness.runtime?.error || "unreachable"})`,
       );
     }
-    return { status: "synced" };
+    return { status: "synced", providerFingerprint };
   }
 
   const authProfiles = buildAuthProfiles(llmEnvVars);
   const modelCommand = buildDefaultModelCommand(defaultProvider);
   if (Object.keys(authProfiles).length === 0 && !modelCommand) {
-    return { status: "skipped" };
+    return { status: "skipped", providerFingerprint };
   }
 
   const authWriteCommand = buildAuthProfilesWriteCommand(authProfiles);
-  try {
-    await runRuntimeCommand(agentRef, authWriteCommand);
-  } catch (error) {
-    if (!DOCKER_EXEC_FALLBACK_BACKENDS.has(resolvedBackend)) {
-      throw error;
-    }
-    await runProvisionerExecCommand(provisioner, containerId, authWriteCommand, { agentId });
-  }
+  const reconciliationMutations = [
+    async () => {
+      try {
+        await runRuntimeCommand(agentRef, authWriteCommand);
+      } catch (error) {
+        if (!DOCKER_EXEC_FALLBACK_BACKENDS.has(resolvedBackend)) {
+          throw error;
+        }
+        await runProvisionerExecCommand(provisioner, containerId, authWriteCommand, { agentId });
+      }
+    },
+  ];
 
   // Merge custom-provider registrations (Microsoft Foundry) into openclaw.json
   // before the restart so model strings like `microsoft-foundry/<deployment>`
@@ -1321,26 +1452,41 @@ async function reconcileRuntimeLlmAuth({
     const providerMergeCommand = buildOpenClawConfigMergeCommand({
       models: { providers: customProviders },
     });
-    try {
-      await runRuntimeCommand(agentRef, providerMergeCommand);
-    } catch (error) {
-      if (!DOCKER_EXEC_FALLBACK_BACKENDS.has(resolvedBackend)) {
-        throw error;
+    reconciliationMutations.push(async () => {
+      try {
+        await runRuntimeCommand(agentRef, providerMergeCommand);
+      } catch (error) {
+        if (!DOCKER_EXEC_FALLBACK_BACKENDS.has(resolvedBackend)) {
+          throw error;
+        }
+        await runProvisionerExecCommand(provisioner, containerId, providerMergeCommand, {
+          agentId,
+        });
       }
-      await runProvisionerExecCommand(provisioner, containerId, providerMergeCommand, {
-        agentId,
-      });
-    }
+    });
   }
 
-  await provisioner.restart(containerId, { agentId });
-  const readiness = await waitForAgentReadiness({
-    host,
-    runtimeHost,
-    runtimePort,
-    gatewayHostPort,
-    gatewayHost,
-    gatewayPort,
+  // Apply the default model inside the same reconciliation boundary. Readiness
+  // must be the final runtime operation; otherwise the config watcher can reload
+  // a gateway immediately after the worker publishes it as running.
+  if (modelCommand) {
+    reconciliationMutations.push(() =>
+      runRuntimeCommand(agentRef, modelCommand, { timeout: 60000 }),
+    );
+  }
+
+  const readiness = await runRuntimeReconciliationBoundary({
+    mutations: reconciliationMutations,
+    restart: () => provisioner.restart(containerId, { agentId }),
+    checkReadiness: () =>
+      waitForAgentReadiness({
+        host,
+        runtimeHost,
+        runtimePort,
+        gatewayHostPort,
+        gatewayHost,
+        gatewayPort,
+      }),
   });
   if (!readiness.ok) {
     throw new Error(
@@ -1348,11 +1494,7 @@ async function reconcileRuntimeLlmAuth({
     );
   }
 
-  if (modelCommand) {
-    await runRuntimeCommand(agentRef, modelCommand, { timeout: 60000 });
-  }
-
-  return { status: "synced" };
+  return { status: "synced", providerFingerprint };
 }
 
 function sleep(ms) {
@@ -1387,11 +1529,16 @@ function backendInstanceKey(runtimeFields = {}) {
 
 async function loadBackend(runtimeFields = {}) {
   const key = backendInstanceKey(runtimeFields);
-  // Kubernetes execution targets are Admin-managed records whose exposure mode,
-  // namespaces, kube context, and policy metadata can change at runtime. Rebuild
-  // the adapter from the latest stored profile instead of reusing a stale cached
-  // instance across deploys.
-  if (backendInstances.has(key) && !key.startsWith("k8s:")) return backendInstances.get(key);
+  // Profile-backed targets can change at runtime. Rebuild from the latest
+  // stored profile so credential rotation, host-key pins, addresses, namespaces,
+  // and exposure settings take effect without restarting control-plane services.
+  const profileBacked =
+    key.startsWith("k8s:") ||
+    key.startsWith("remote:") ||
+    key.startsWith("hermes:remote:") ||
+    key.startsWith("nemoclaw:remote:");
+  if (backendInstances.has(key) && !profileBacked) return backendInstances.get(key);
+  if (profileBacked) backendInstances.delete(key);
 
   let instance;
   switch (key) {
@@ -2289,8 +2436,18 @@ const worker = new Worker(
       });
 
       // Fetch user's LLM provider keys from DB for injection into container
-      const llmEnvVars = await fetchUserLlmEnvVars(userId, llmProviderId);
-      const defaultLlmProvider = await fetchDeploymentProvider(userId, llmProviderId);
+      const bootstrappedProviderState = await fetchEffectiveProviderState(userId, llmProviderId);
+      const {
+        envVars: llmEnvVars,
+        defaultProvider: defaultLlmProvider,
+        fingerprint: bootstrappedProviderFingerprint,
+      } = bootstrappedProviderState;
+      const builtInDemoActivation = isBuiltInDemoActivation({
+        jobId: job.id,
+        agentId: id,
+        llmProviderId,
+        defaultProvider: defaultLlmProvider,
+      });
       const defaultOpenClawModel = buildDefaultOpenClawModel(defaultLlmProvider);
       const hermesRuntimeBootstrapEnv =
         resolvedRuntimeFields.runtime_family === "hermes"
@@ -2781,8 +2938,13 @@ const worker = new Worker(
               console.warn(
                 `[provisioner] Agent ${id} was deleted during create; removing runtime ${containerId}`,
               );
-              await provisioner.destroy(containerId, { agentId: id }).catch(() => {});
-              return { canceled: true, reason: "agent-deleted-during-create" };
+              return cleanupCanceledProvisionedRuntime({
+                queryable: db,
+                provisioner,
+                agentId: id,
+                containerId,
+                reason: "agent-deleted-during-create",
+              });
             }
           } catch (e) {
             console.error(
@@ -2881,6 +3043,7 @@ const worker = new Worker(
           }
         }
       } catch (err) {
+        if (isCanceledRuntimeCleanupFailure(err)) throw err;
         console.error(
           `[${resolvedBackend}] Provisioning failed for agent ${id} (attempt ${job.attemptsMade + 1}/${job.opts?.attempts || 1}):`,
           err.message,
@@ -2925,120 +3088,155 @@ const worker = new Worker(
       const { encrypt } = require("./crypto");
       const gatewayTokenForStorage = gatewayToken ? encrypt(gatewayToken) : gatewayToken;
       try {
-        const finalUpdate = await db.query(
-          `UPDATE agents
-          SET status = 'running',
-              container_id = $2,
-              host = $3,
-              backend_type = $4,
-              gateway_token = $5,
-              container_name = COALESCE($6, container_name),
-              gateway_host_port = $7,
-              runtime_host = $8,
-              runtime_port = $9,
-              gateway_host = $10,
-              gateway_port = $11,
-              image = COALESCE($12, image),
-              runtime_family = $13,
-              deploy_target = $14,
-              execution_target_id = $15,
-              sandbox_profile = $16,
-              sandbox_type = $17,
-              network_policy_status = $18,
-              dashboard_port = $19
-        WHERE id = $1
-        RETURNING id`,
-          [
-            id,
-            containerId,
-            host,
-            resolvedRuntimeFields.backend_type,
-            gatewayTokenForStorage,
-            containerName || null,
-            gatewayHostPort ? parseInt(gatewayHostPort, 10) : null,
-            runtimeHost || null,
-            runtimePort ? parseInt(runtimePort, 10) : null,
-            gatewayHost || null,
-            gatewayPort ? parseInt(gatewayPort, 10) : null,
-            resolvedImage || null,
-            resolvedRuntimeFields.runtime_family,
-            resolvedRuntimeFields.deploy_target,
-            resolvedRuntimeFields.execution_target_id,
-            resolvedRuntimeFields.sandbox_profile,
-            resolvedRuntimeFields.sandbox_type,
-            networkPolicyStatus,
-            dashboardPort ? parseInt(dashboardPort, 10) : null,
-          ],
-        );
-        if (!finalUpdate.rows[0]) {
-          console.warn(
-            `[provisioner] Agent ${id} was deleted before final persistence; removing runtime ${containerId}`,
-          );
-          if (containerId) {
-            await provisioner.destroy(containerId, { agentId: id }).catch(() => {});
-          }
-          return { canceled: true, reason: "agent-deleted-before-final-update" };
-        }
-        await db.query("UPDATE deployments SET status = 'completed' WHERE agent_id = $1", [id]);
-        await db.query("INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)", [
-          "agent_deployed",
-          `Agent "${name}" is now running on ${resolvedBackend}`,
-          JSON.stringify({ agentId: id, containerId, host }),
-        ]);
-        console.log(`Agent ${id} deployed: containerId=${containerId} host=${host}`);
-
-        // Post-deploy readiness check: verify both the runtime sidecar and the gateway.
-        // First boot may need time for npm installation and initial startup, so we allow
-        // generous bounded retries and emit a warning state with explicit component detail.
-        const readiness = await waitForAgentReadiness({
+        const metadataPersistence = await persistProvisionedRuntimeMetadata(db, {
+          agentId: id,
+          containerId,
           host,
+          backendType: resolvedRuntimeFields.backend_type,
+          gatewayToken: gatewayTokenForStorage,
+          containerName,
+          gatewayHostPort,
           runtimeHost,
           runtimePort,
           gatewayHost,
-          gatewayHostPort,
           gatewayPort,
-          checkGateway: resolvedRuntimeFields.runtime_family !== "hermes",
+          image: resolvedImage,
+          runtimeFamily: resolvedRuntimeFields.runtime_family,
+          deployTarget: resolvedRuntimeFields.deploy_target,
+          executionTargetId: resolvedRuntimeFields.execution_target_id,
+          sandboxProfile: resolvedRuntimeFields.sandbox_profile,
+          sandboxType: resolvedRuntimeFields.sandbox_type,
+          networkPolicyStatus,
+          dashboardPort,
         });
-        if (!readiness.ok) {
-          const detail = buildReadinessWarningDetail(readiness);
-          console.warn(`[provisioner] Readiness check failed for agent ${id}: ${detail}`);
-          await persistReadinessWarning(db, { agentId: id, name, host, readiness });
+        if (!metadataPersistence.persisted) {
+          console.warn(
+            `[provisioner] Agent ${id} was deleted or replaced before runtime metadata persistence; removing runtime ${containerId}`,
+          );
+          return cleanupCanceledProvisionedRuntime({
+            queryable: db,
+            provisioner,
+            agentId: id,
+            containerId,
+            reason: "agent-deleted-before-metadata-persistence",
+          });
         }
 
-        // Fresh deploys should land with the current control-plane LLM credentials
-        // and runtime model selection, not only the startup env captured earlier.
-        if (userId && readiness.ok) {
-          try {
-            const authSyncResult = await reconcileRuntimeLlmAuth({
-              agentId: id,
-              userId,
-              llmProviderId,
-              runtimeFamily: resolvedRuntimeFields.runtime_family,
-              resolvedBackend,
-              containerId,
-              provisioner,
+        // Keep the durable lifecycle in `deploying` until the first readiness
+        // check and any credential-drift restart have both settled. Gateway
+        // routes reject `deploying`, so operators cannot race the restart with
+        // their first chat request.
+        const readinessBarrier = await runProvisioningReadinessBarrier({
+          checkReadiness: () =>
+            waitForAgentReadiness({
               host,
               runtimeHost,
               runtimePort,
-              gatewayHostPort,
               gatewayHost,
+              gatewayHostPort,
               gatewayPort,
-              gatewayToken,
-            });
-            if (authSyncResult.status === "synced") {
-              console.log(`[provisioner] Post-deploy LLM auth sync completed for agent ${id}`);
-            }
-          } catch (e) {
-            console.warn(
-              `[provisioner] Failed to reconcile runtime LLM auth for agent ${id}:`,
-              e.message,
+              checkGateway: resolvedRuntimeFields.runtime_family !== "hermes",
+            }),
+          failClosedOnReadinessFailure: builtInDemoActivation,
+          onReadinessWarning: async (readiness) => {
+            const detail = buildReadinessWarningDetail(readiness);
+            console.warn(`[provisioner] Readiness check failed for agent ${id}: ${detail}`);
+            await persistReadinessWarning(db, { agentId: id, name, host, readiness });
+          },
+          reconcileAuth: userId
+            ? () =>
+                reconcileRuntimeLlmAuth({
+                  agentId: id,
+                  userId,
+                  llmProviderId,
+                  runtimeFamily: resolvedRuntimeFields.runtime_family,
+                  resolvedBackend,
+                  containerId,
+                  provisioner,
+                  host,
+                  runtimeHost,
+                  runtimePort,
+                  gatewayHostPort,
+                  gatewayHost,
+                  gatewayPort,
+                  gatewayToken,
+                  bootstrappedProviderFingerprint,
+                })
+            : null,
+          reconcileAndFinalize: userId
+            ? () =>
+                reconcileProviderStateUntilStable({
+                  bootstrappedFingerprint: bootstrappedProviderFingerprint,
+                  reconcile: (appliedFingerprint) =>
+                    reconcileRuntimeLlmAuth({
+                      agentId: id,
+                      userId,
+                      llmProviderId,
+                      runtimeFamily: resolvedRuntimeFields.runtime_family,
+                      resolvedBackend,
+                      containerId,
+                      provisioner,
+                      host,
+                      runtimeHost,
+                      runtimePort,
+                      gatewayHostPort,
+                      gatewayHost,
+                      gatewayPort,
+                      gatewayToken,
+                      bootstrappedProviderFingerprint: appliedFingerprint,
+                    }),
+                  readFingerprint: async () =>
+                    (await fetchEffectiveProviderState(userId, llmProviderId)).fingerprint,
+                  withMutationLock: (operation) => withProviderMutationLock(userId, operation),
+                  finalize: () =>
+                    finalizeProvisionedDeployment(db, {
+                      agentId: id,
+                      containerId,
+                      name,
+                      backend: resolvedBackend,
+                      host,
+                    }),
+                })
+            : null,
+          finalize: () =>
+            finalizeProvisionedDeployment(db, {
+              agentId: id,
+              containerId,
+              name,
+              backend: resolvedBackend,
+              host,
+            }),
+        });
+        const { readiness } = readinessBarrier;
+        if (readinessBarrier.status === "canceled") {
+          console.warn(
+            `[provisioner] Agent ${id} was deleted or its runtime changed before readiness finalization; removing runtime ${containerId}`,
+          );
+          return cleanupCanceledProvisionedRuntime({
+            queryable: db,
+            provisioner,
+            agentId: id,
+            containerId,
+            reason: "agent-deleted-before-readiness-finalization",
+          });
+        } else if (readinessBarrier.status === "running") {
+          if (readinessBarrier.reconciliation?.status === "synced") {
+            console.log(`[provisioner] Post-deploy LLM auth sync completed for agent ${id}`);
+          } else if (readinessBarrier.reconciliation?.reason === "unchanged") {
+            console.log(
+              `[provisioner] Post-deploy LLM auth sync skipped for agent ${id}; bootstrap state is current`,
             );
           }
+          console.log(`Agent ${id} deployed: containerId=${containerId} host=${host}`);
         }
 
         // Reseed persisted channel config before skills/integrations so a
         // redeploy comes back with its Telegram/Slack/Discord channels wired.
-        if (resolvedRuntimeFields.runtime_family === "openclaw" && readiness.ok) {
+        if (
+          !builtInDemoActivation &&
+          resolvedRuntimeFields.runtime_family === "openclaw" &&
+          readiness.ok
+        ) {
           try {
             const channelSeed = await reconcileOpenClawChannelState({
               agentId: id,
@@ -3063,7 +3261,11 @@ const worker = new Worker(
           }
         }
 
-        if (resolvedRuntimeFields.runtime_family === "openclaw" && containerId) {
+        if (
+          !builtInDemoActivation &&
+          resolvedRuntimeFields.runtime_family === "openclaw" &&
+          containerId
+        ) {
           try {
             await reconcileClawhubSkills({
               agentId: id,
@@ -3078,52 +3280,58 @@ const worker = new Worker(
           }
         }
 
-        // Sync integrations to newly deployed agent container
-        try {
-          const intResult = await db.query(
-            `SELECT i.id, i.provider, i.catalog_id, i.config, i.status,
+        // The built-in demo activation is deliberately mutation-free after
+        // readiness finalization. Its payload has no channels, skills, or
+        // integrations, and skipping these generic reseed passes guarantees
+        // the first chat cannot race a post-finalization gateway reload.
+        if (!builtInDemoActivation) {
+          try {
+            const intResult = await db.query(
+              `SELECT i.id, i.provider, i.catalog_id, i.config, i.status,
                 ic.name as catalog_name, ic.category as catalog_category,
                 ic.auth_type, ic.config_schema
          FROM integrations i
          LEFT JOIN integration_catalog ic ON i.catalog_id = ic.id
          WHERE i.agent_id = $1 AND i.status = 'active'`,
-            [id],
-          );
-          const syncData = intResult.rows.map(buildIntegrationSyncEntry);
-          if (resolvedRuntimeFields.runtime_family === "openclaw") {
-            const runtimeUrl = runtimeUrlForAgent(
-              {
-                host,
-                runtime_host: runtimeHost,
-                runtime_port: runtimePort,
-              },
-              "/integrations/sync",
+              [id],
             );
-            await fetch(runtimeUrl, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...buildRuntimeAuthHeaders(gatewayToken),
-              },
-              body: JSON.stringify({ integrations: syncData }),
-            });
-            console.log(`[provisioner] Synced ${syncData.length} integration(s) to agent ${id}`);
-          } else if (resolvedRuntimeFields.runtime_family === "hermes" && containerId) {
-            await runProvisionerExecCommand(
-              provisioner,
-              containerId,
-              buildHermesIntegrationInstallCommand(syncData),
-              { timeout: 30000, agentId: id },
-            );
-            console.log(
-              `[provisioner] Installed Nora integration skill with ${syncData.length} integration(s) to Hermes agent ${id}`,
-            );
+            const syncData = intResult.rows.map(buildIntegrationSyncEntry);
+            if (resolvedRuntimeFields.runtime_family === "openclaw") {
+              const runtimeUrl = runtimeUrlForAgent(
+                {
+                  host,
+                  runtime_host: runtimeHost,
+                  runtime_port: runtimePort,
+                },
+                "/integrations/sync",
+              );
+              await fetch(runtimeUrl, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...buildRuntimeAuthHeaders(gatewayToken),
+                },
+                body: JSON.stringify({ integrations: syncData }),
+              });
+              console.log(`[provisioner] Synced ${syncData.length} integration(s) to agent ${id}`);
+            } else if (resolvedRuntimeFields.runtime_family === "hermes" && containerId) {
+              await runProvisionerExecCommand(
+                provisioner,
+                containerId,
+                buildHermesIntegrationInstallCommand(syncData),
+                { timeout: 30000, agentId: id },
+              );
+              console.log(
+                `[provisioner] Installed Nora integration skill with ${syncData.length} integration(s) to Hermes agent ${id}`,
+              );
+            }
+          } catch (e) {
+            console.warn(`[provisioner] Failed to sync integrations for agent ${id}:`, e.message);
           }
-        } catch (e) {
-          console.warn(`[provisioner] Failed to sync integrations for agent ${id}:`, e.message);
         }
       } catch (err) {
-        console.error("Failed to update agent status:", err.message);
+        if (isCanceledRuntimeCleanupFailure(err)) throw err;
+        console.error("Failed to finalize provisioned runtime:", err.message);
         const cleanup = await reconcileProvisioningFailureRuntime({
           queryable: db,
           provisioner,

@@ -46,6 +46,7 @@
             "pages": [
               "configuration/provisioner-backends",
               "configuration/provisioner-backends/docker",
+              "configuration/provisioner-backends/remote-docker",
               "configuration/provisioner-backends/proxmox",
               {
                 "group": "Kubernetes",

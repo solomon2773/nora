@@ -10,6 +10,7 @@ Updates or appends:
   NORA_CURRENT_VERSION
   NORA_CURRENT_COMMIT
   NORA_GITHUB_REPO (when provided)
+  DOCKER_GID (from the live Docker socket)
   NORA_AGENT_HUB_API_KEY_HASH_SECRET (only when missing or empty)
 
 Removes retired release metadata token keys:
@@ -48,6 +49,30 @@ fi
 
 env_dir="$(dirname "$env_file")"
 
+resolve_docker_gid() {
+  socket_path="${NORA_DOCKER_SOCKET_PATH:-/var/run/docker.sock}"
+  if [ ! -S "$socket_path" ]; then
+    echo "Docker socket does not exist or is not a Unix socket: $socket_path" >&2
+    return 1
+  fi
+
+  socket_gid="$(
+    stat -c '%g' "$socket_path" 2>/dev/null ||
+      stat -f '%g' "$socket_path" 2>/dev/null ||
+      true
+  )"
+  case "$socket_gid" in
+    ''|*[!0-9]*)
+      echo "Could not determine the numeric Docker socket group for $socket_path" >&2
+      return 1
+      ;;
+  esac
+
+  printf '%s\n' "$socket_gid"
+}
+
+docker_gid="$(resolve_docker_gid)"
+
 env_has_agent_hub_hash_secret() {
   awk -F= '
     /^[[:space:]]*NORA_AGENT_HUB_API_KEY_HASH_SECRET[[:space:]]*=/ {
@@ -82,12 +107,14 @@ awk \
   -v version="$version" \
   -v commit="$commit" \
   -v github_repo="$github_repo" \
+  -v docker_gid="$docker_gid" \
   -v agent_hub_hash_secret="$agent_hub_hash_secret" \
   '
   BEGIN {
     saw_version = 0
     saw_commit = 0
     saw_repo = 0
+    saw_docker_gid = 0
     saw_agent_hub_hash_secret = 0
   }
 
@@ -113,6 +140,14 @@ awk \
     next
   }
 
+  /^DOCKER_GID=/ {
+    if (!saw_docker_gid) {
+      print "DOCKER_GID=" docker_gid
+      saw_docker_gid = 1
+    }
+    next
+  }
+
   /^[[:space:]]*NORA_AGENT_HUB_API_KEY_HASH_SECRET[[:space:]]*=/ && agent_hub_hash_secret != "" {
     if (!saw_agent_hub_hash_secret) {
       print "NORA_AGENT_HUB_API_KEY_HASH_SECRET=" agent_hub_hash_secret
@@ -134,6 +169,9 @@ awk \
     }
     if (github_repo != "" && !saw_repo) {
       print "NORA_GITHUB_REPO=" github_repo
+    }
+    if (!saw_docker_gid) {
+      print "DOCKER_GID=" docker_gid
     }
     if (agent_hub_hash_secret != "" && !saw_agent_hub_hash_secret) {
       print "NORA_AGENT_HUB_API_KEY_HASH_SECRET=" agent_hub_hash_secret

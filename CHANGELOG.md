@@ -4,6 +4,42 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
+## [v1.16.1](https://github.com/solomon2773/nora/releases/tag/v1.16.1) — 2026-07-12
+
+Activation-reliability patch: the zero-key first proof now stays behind a final readiness
+barrier, production deploys carry the hardened edge configuration forward, and Remote Docker
+has a complete operator guide.
+
+### Added
+
+- Provisioner lifecycle regression coverage for guarded runtime metadata persistence,
+  provider-state drift, restart ordering, readiness failure, and atomic deployment finalization.
+- A Remote Docker backend guide covering registered SSH hosts, pinned host keys, runtime support,
+  workspace sharing, networking, validation, and troubleshooting.
+
+### Changed
+
+- Provisioning persists runtime endpoints while the agent remains `deploying`, reconciles any
+  in-flight provider changes, and publishes `running` / `completed` in one guarded transaction
+  only after final readiness. Unchanged demo state skips the redundant restart entirely.
+- Live OpenClaw auth sync applies auth, custom-provider, and default-model writes before one
+  restart, with readiness as the final runtime operation.
+- Production deploys refresh the host Docker socket GID, regenerate the ignored public nginx
+  config from the tracked template, verify Docker API access from every socket-using service,
+  and serve hardened browser headers plus short shared caching for the public homepage only.
+- Release metadata advances the Gemini extension manifest to `1.16.1` and the Helm chart to
+  `0.7.1` for exact-tag publication.
+
+### Fixed
+
+- The first chat after zero-key activation no longer races a post-deploy OpenClaw restart and
+  returns a transient `502` after Nora has already advertised the agent as running.
+- Built-in demo readiness failures now fail closed and retry instead of exposing an unreachable
+  runtime through the recoverable-warning path.
+- Proxmox now carries the worker-resolved per-agent MCP selection into OpenClaw bootstrap instead
+  of silently dropping it, and rejects malformed template, storage, or bridge values during
+  catalog preflight before a deployment can be queued.
+
 ## [v1.16.0](https://github.com/solomon2773/nora/releases/tag/v1.16.0) — 2026-07-12
 
 Launch-readiness release: a deterministic first-run demo, safer production defaults,

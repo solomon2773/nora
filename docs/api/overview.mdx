@@ -8,9 +8,9 @@ The Nora REST API is a JSON-over-HTTP interface that lets you deploy agents, man
   Every Nora instance also serves a machine-readable **OpenAPI 3.1 spec** at `GET /api/api.json` and
   an **interactive API reference** at `/api/api-docs`. The spec covers agents, schedules and
   versions, monitoring, LLM providers, auth, workspaces, API keys, alerts, integrations, channels,
-  backups, Agent Hub, remote hosts, and the admin doctor endpoint. CI drift-tests those operations
-  against the actual routers, so documented routes cannot silently disappear; browser-only admin and
-  experimental surfaces remain intentionally outside the spec.
+  backups, Agent Hub, self-hosted-only remote hosts, and the admin doctor endpoint. CI drift-tests
+  those operations against the actual routers, so documented routes cannot silently disappear;
+  browser-only admin and experimental surfaces remain intentionally outside the spec.
 </Tip>
 
 ## Base URL
@@ -108,8 +108,11 @@ GET /health
 Returns `{"status":"ok"}` after the server has finished its startup sequence, including database migrations and catalog seeding. The API does not bind its HTTP listener until that sequence succeeds.
 
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/health ```
+
+```bash curl theme={null}
+curl http://localhost:8080/api/health
+```
+
 </CodeGroup>
 
 ```json theme={null}
@@ -177,18 +180,19 @@ Returns the NemoClaw sandbox configuration for the current deployment.
 The following request authenticates and lists your agents:
 
 <CodeGroup>
-  ```bash curl theme={null}
-  # 1. Get a token
-  TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
-    -H "Content-Type: application/json" \
-    -d '{"email":"you@example.com","password":"yourpassword"}' \
-    | jq -r .token)
+
+```bash curl theme={null}
+# 1. Get a token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"yourpassword"}' \
+  | jq -r .token)
 
 # 2. Call a protected endpoint
 
 curl http://localhost:8080/api/agents \
- -H "Authorization: Bearer $TOKEN"
+-H "Authorization: Bearer $TOKEN"
 
 ```
+
 </CodeGroup>
-```

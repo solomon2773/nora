@@ -194,7 +194,16 @@ async function getBackendInstance(type, agent = {}) {
       : type === "remote-hermes" || type === "remote-nemoclaw"
         ? `${type}:${resolveAgentExecutionTargetId(agent)}`
         : type;
-  if (backendCache[cacheKey]) return backendCache[cacheKey];
+  const profileBacked = [
+    "k8s",
+    "k3s",
+    "kubernetes",
+    "remote-docker",
+    "remote-hermes",
+    "remote-nemoclaw",
+  ].includes(type);
+  if (backendCache[cacheKey] && !profileBacked) return backendCache[cacheKey];
+  if (profileBacked) delete backendCache[cacheKey];
 
   switch (type) {
     case "docker": {
@@ -338,13 +347,17 @@ module.exports = {
       : backend.restart(id);
   },
 
-  async updateEnv(agent, envVars = {}) {
+  async updateEnv(agent, envVars = {}, options = {}) {
     const id = resolveKubernetesRuntimeId(agent, "update env");
     const backend = await backendFor(agent);
     if (typeof backend.updateEnv !== "function") {
       throw new Error(`Backend ${resolveAgentBackendType(agent)} does not support env updates`);
     }
-    return backend.updateEnv(id, envVars, lifecycleOptions(agent));
+    const managedEnvNames = Array.isArray(options.managedEnvNames) ? options.managedEnvNames : [];
+    return backend.updateEnv(id, envVars, {
+      ...lifecycleOptions(agent),
+      ...(managedEnvNames.length > 0 ? { managedEnvNames } : {}),
+    });
   },
 
   async destroy(agent) {

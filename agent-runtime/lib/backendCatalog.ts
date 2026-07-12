@@ -17,6 +17,14 @@ const EXTERNAL_DEPLOY_TARGET = "external";
 const KNOWN_SANDBOX_PROFILES = Object.freeze(["standard", "nemoclaw"]);
 const PROXMOX_NEMOCLAW_BLOCKER_ISSUE =
   "NemoClaw on Proxmox is not supported yet because the LXC adapter does not provide the enforced OpenShell sandbox contract.";
+const DEFAULT_PROXMOX_TEMPLATE = "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst";
+// Keep this in lockstep with workers/provisioner/backends/proxmox.ts. The
+// catalog must reject malformed values before a deployment reaches create().
+const PROXMOX_TEMPLATE_RE = /^[A-Za-z0-9_.-]+:vztmpl\/[A-Za-z0-9._+~-]+\.tar\.zst$/;
+const PROXMOX_RESOURCE_ID_RE = /^[A-Za-z0-9_.-]+$/;
+// Linux interface names, including Proxmox bridges, are limited to 15 bytes.
+// Restricting the character set also prevents net0 option-delimiter injection.
+const PROXMOX_BRIDGE_RE = /^[A-Za-z0-9_.-]{1,15}$/;
 
 const OPENCLAW_OPERATOR_CONTRACT = Object.freeze([
   "deploy/redeploy",
@@ -555,6 +563,19 @@ function validateProxmoxFile(filePath, label, options = {}) {
   return null;
 }
 
+function isProxmoxTemplateRef(value) {
+  return PROXMOX_TEMPLATE_RE.test(String(value || "").trim());
+}
+
+function getProxmoxTemplateIssue(value, envName) {
+  const template = String(value || "").trim();
+  if (!template) return `${envName} is required.`;
+  if (!isProxmoxTemplateRef(template)) {
+    return `${envName} must use storage:vztmpl/template.tar.zst format.`;
+  }
+  return null;
+}
+
 function getProxmoxConfigIssue(env = process.env, options = {}) {
   const rawApiUrl = String(env.PROXMOX_API_URL || "").trim();
   if (!rawApiUrl) return "Proxmox requires PROXMOX_API_URL.";
@@ -603,6 +624,23 @@ function getProxmoxConfigIssue(env = process.env, options = {}) {
   if (!/^[A-Za-z0-9_.-]+$/.test(node)) {
     return "PROXMOX_NODE contains unsupported characters.";
   }
+
+  const templateIssue = getProxmoxTemplateIssue(
+    env.PROXMOX_TEMPLATE || DEFAULT_PROXMOX_TEMPLATE,
+    "PROXMOX_TEMPLATE",
+  );
+  if (templateIssue) return templateIssue;
+
+  const rootfsStorage = String(env.PROXMOX_ROOTFS_STORAGE || "local-lvm").trim();
+  if (!PROXMOX_RESOURCE_ID_RE.test(rootfsStorage)) {
+    return "PROXMOX_ROOTFS_STORAGE contains unsupported characters.";
+  }
+
+  const bridge = String(env.PROXMOX_BRIDGE || "vmbr0").trim();
+  if (!PROXMOX_BRIDGE_RE.test(bridge)) {
+    return "PROXMOX_BRIDGE must be a 1-15 character interface name using only letters, numbers, dots, underscores, or hyphens.";
+  }
+
   const rawSshPort = String(env.PROXMOX_SSH_PORT || "22").trim();
   const sshPort = Number(rawSshPort);
   if (!/^\d+$/.test(rawSshPort) || !Number.isInteger(sshPort) || sshPort < 1 || sshPort > 65535) {
@@ -699,12 +737,13 @@ function runtimeSelectionIssue(selection = {}, env = process.env) {
   });
   if (targetIssue) return targetIssue;
 
-  if (
-    normalizedDeployTarget === "proxmox" &&
-    normalizedRuntimeFamily === "hermes" &&
-    !env.PROXMOX_HERMES_TEMPLATE
-  ) {
-    return "Hermes on Proxmox requires PROXMOX_HERMES_TEMPLATE.";
+  if (normalizedDeployTarget === "proxmox" && normalizedRuntimeFamily === "hermes") {
+    const hermesTemplate = String(env.PROXMOX_HERMES_TEMPLATE || "").trim();
+    if (!hermesTemplate) {
+      return "Hermes on Proxmox requires PROXMOX_HERMES_TEMPLATE.";
+    }
+    const hermesTemplateIssue = getProxmoxTemplateIssue(hermesTemplate, "PROXMOX_HERMES_TEMPLATE");
+    if (hermesTemplateIssue) return hermesTemplateIssue;
   }
 
   return null;

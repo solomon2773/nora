@@ -1,9 +1,15 @@
 // @ts-nocheck
-const mockDbClient = { query: jest.fn(), release: jest.fn() };
-const mockDb = { query: jest.fn(), connect: jest.fn() };
+const mockDbClient = {
+  connect: jest.fn(),
+  query: jest.fn(),
+  end: jest.fn(),
+};
+const mockDb = { query: jest.fn() };
+const mockPgClient = jest.fn(() => mockDbClient);
 const mockEncrypt = jest.fn((value) => `enc(${value})`);
 
 jest.mock("../db", () => mockDb);
+jest.mock("pg", () => ({ Client: mockPgClient }));
 jest.mock("../crypto", () => ({
   encrypt: mockEncrypt,
   decrypt: jest.fn(),
@@ -13,15 +19,19 @@ jest.mock("../crypto", () => ({
 const {
   addProvider,
   buildAuthProfiles,
+  deleteProvider,
   ensureDemoProvider,
   getDeploymentProvider,
+  getManagedProviderEnvNames,
+  updateProvider,
 } = require("../llmProviders");
 
 beforeEach(() => {
   mockDb.query.mockReset();
-  mockDb.connect.mockReset().mockResolvedValue(mockDbClient);
-  mockDbClient.query.mockReset();
-  mockDbClient.release.mockReset();
+  mockPgClient.mockClear();
+  mockDbClient.connect.mockReset().mockResolvedValue(undefined);
+  mockDbClient.query.mockReset().mockResolvedValue({ rows: [] });
+  mockDbClient.end.mockReset().mockResolvedValue(undefined);
   mockEncrypt.mockClear();
 });
 
@@ -102,8 +112,8 @@ describe("llmProviders demo/default transitions", () => {
 
   it("promotes the first real provider when demo is the current default", async () => {
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // session advisory lock
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
-      .mockResolvedValueOnce({ rows: [] }) // advisory lock
       .mockResolvedValueOnce({ rows: [{ provider_count: 1, demo_is_default: true }] })
       .mockResolvedValueOnce({ rows: [] }) // clear demo default
       .mockResolvedValueOnce({
@@ -125,7 +135,7 @@ describe("llmProviders demo/default transitions", () => {
       "UPDATE llm_providers SET is_default = false WHERE user_id = $1",
       ["user-1"],
     );
-    expect(mockDbClient.release).toHaveBeenCalledTimes(1);
+    expect(mockDbClient.end).toHaveBeenCalledTimes(1);
   });
 
   it("does not replace an existing real default when ensuring demo", async () => {
@@ -156,7 +166,9 @@ describe("llmProviders demo/default transitions", () => {
     mockDbClient.query
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ provider_count: 2, demo_is_default: false }] })
+      .mockResolvedValueOnce({
+        rows: [{ provider_count: 2, has_default: true, demo_is_default: false }],
+      })
       .mockResolvedValueOnce({
         rows: [{ id: "provider-groq", provider: "groq", model: null, is_default: false }],
       })
@@ -171,6 +183,215 @@ describe("llmProviders demo/default transitions", () => {
     expect(mockDbClient.query).not.toHaveBeenCalledWith(
       "UPDATE llm_providers SET is_default = false WHERE user_id = $1",
       expect.anything(),
+    );
+  });
+
+  it("serializes default changes and the provider update in one mutation-lock transaction", async () => {
+    mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // session advisory lock
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // clear previous default
+      .mockResolvedValueOnce({
+        rows: [{ id: "provider-openai", provider: "openai", model: "gpt-5.5", is_default: true }],
+      })
+      .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+    const result = await updateProvider("provider-openai", "user-1", {
+      model: "gpt-5.5",
+      is_default: true,
+    });
+
+    expect(result).toEqual(expect.objectContaining({ id: "provider-openai", is_default: true }));
+    expect(mockDb.query).not.toHaveBeenCalled();
+    expect(
+      mockDbClient.query.mock.calls.map(([sql]) => sql.trim().split(/\s+/).slice(0, 3).join(" ")),
+    ).toEqual([
+      "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+      "BEGIN",
+      "UPDATE llm_providers SET",
+      "UPDATE llm_providers SET",
+      "COMMIT",
+      "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+    ]);
+    expect(mockDbClient.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("repairs a historical missing default when adding another provider", async () => {
+    mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ provider_count: 1, has_default: false, demo_is_default: false }],
+      })
+      .mockResolvedValueOnce({
+        rows: [{ id: "provider-groq", provider: "groq", model: null, is_default: true }],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(addProvider("user-1", "groq", "gsk-live")).resolves.toEqual(
+      expect.objectContaining({ id: "provider-groq", is_default: true }),
+    );
+  });
+
+  it("serializes provider deletion with deployment finalization", async () => {
+    mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "provider-openai" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "provider-google" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(deleteProvider("provider-openai", "user-1")).resolves.toEqual({ success: true });
+
+    expect(mockDb.query).not.toHaveBeenCalled();
+    expect(mockDbClient.query).toHaveBeenNthCalledWith(
+      1,
+      "SELECT pg_advisory_lock(hashtextextended($1, 0))",
+      ["nora:llm-providers:user-1"],
+    );
+    expect(mockDbClient.query).toHaveBeenNthCalledWith(
+      3,
+      "DELETE FROM llm_providers WHERE id = $1 AND user_id = $2 RETURNING id",
+      ["provider-openai", "user-1"],
+    );
+    expect(mockDbClient.query.mock.calls[3][0]).toContain("NOT EXISTS");
+    expect(mockDbClient.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs afterCommit after commit while the session advisory lock is still held", async () => {
+    const order = [];
+    mockDb.query.mockImplementation(async () => {
+      order.push("main-pool-sync");
+      return { rows: [] };
+    });
+    mockDbClient.query.mockImplementation(async (sql) => {
+      if (sql.includes("pg_advisory_lock")) order.push("lock");
+      else if (sql === "BEGIN") order.push("begin");
+      else if (sql.startsWith("UPDATE llm_providers SET model")) {
+        order.push("update");
+        return {
+          rows: [
+            {
+              id: "provider-openai",
+              provider: "openai",
+              model: "gpt-5.5-pro",
+              is_default: true,
+            },
+          ],
+        };
+      } else if (sql.includes("WITH candidate")) order.push("repair-default");
+      else if (sql === "COMMIT") order.push("commit");
+      else if (sql.includes("pg_advisory_unlock")) order.push("unlock");
+      return { rows: [] };
+    });
+
+    await updateProvider(
+      "provider-openai",
+      "user-1",
+      { model: "gpt-5.5-pro" },
+      {
+        afterCommit: async (result) => {
+          order.push(`sync:${result.model}`);
+          await mockDb.query("SELECT provider sync state");
+        },
+      },
+    );
+
+    expect(order).toEqual([
+      "lock",
+      "begin",
+      "update",
+      "repair-default",
+      "commit",
+      "sync:gpt-5.5-pro",
+      "main-pool-sync",
+      "unlock",
+    ]);
+    expect(mockPgClient).toHaveBeenCalledWith(
+      expect.objectContaining({
+        application_name: "nora-backend-provider-mutation",
+      }),
+    );
+    expect(mockPgClient.mock.calls[0][0]).not.toHaveProperty("max");
+    expect(mockPgClient.mock.calls[0][0]).not.toHaveProperty("idleTimeoutMillis");
+  });
+
+  it("does not run afterCommit when the mutation rolls back", async () => {
+    const afterCommit = jest.fn();
+    mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // lock
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // clear defaults
+      .mockResolvedValueOnce({ rows: [] }) // missing provider
+      .mockResolvedValueOnce({ rows: [] }) // ROLLBACK
+      .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
+
+    await expect(
+      updateProvider("missing-provider", "user-1", { is_default: true }, { afterCommit }),
+    ).rejects.toThrow("Provider not found");
+
+    expect(afterCommit).not.toHaveBeenCalled();
+    expect(mockDbClient.query).toHaveBeenLastCalledWith(
+      "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+      ["nora:llm-providers:user-1"],
+    );
+  });
+
+  it("keeps a sole provider as the default when a client tries to unset it", async () => {
+    mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "provider-openai", provider: "openai", model: "gpt-5.5", is_default: false }],
+      })
+      .mockResolvedValueOnce({ rows: [{ id: "provider-openai" }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      updateProvider("provider-openai", "user-1", { is_default: false }),
+    ).resolves.toEqual(expect.objectContaining({ id: "provider-openai", is_default: true }));
+  });
+
+  it("rolls back a default switch when the target provider does not exist", async () => {
+    mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(
+      updateProvider("missing-provider", "user-1", { is_default: true }),
+    ).rejects.toThrow("Provider not found");
+
+    expect(mockDbClient.query).toHaveBeenCalledWith("ROLLBACK");
+    expect(mockDbClient.query).not.toHaveBeenCalledWith("COMMIT");
+    expect(mockDbClient.query).toHaveBeenLastCalledWith(
+      "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+      ["nora:llm-providers:user-1"],
+    );
+    expect(mockDbClient.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects non-boolean default flags before opening a transaction", async () => {
+    await expect(
+      updateProvider("provider-openai", "user-1", { is_default: "false" }),
+    ).rejects.toThrow("is_default must be a boolean");
+    expect(mockPgClient).not.toHaveBeenCalled();
+  });
+
+  it("enumerates the runtime-owned provider env set for replacement updates", () => {
+    expect(getManagedProviderEnvNames({ runtimeFamily: "openclaw" })).toEqual(
+      expect.arrayContaining([
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_API_VERSION",
+        "MICROSOFT_FOUNDRY_DEPLOYMENT",
+        "NORA_DEFAULT_OPENCLAW_MODEL",
+      ]),
+    );
+    expect(getManagedProviderEnvNames({ runtimeFamily: "hermes" })).toEqual(
+      expect.arrayContaining(["NORA_HERMES_MANAGED_ENV_B64", "NORA_HERMES_MODEL_CONFIG_B64"]),
     );
   });
 

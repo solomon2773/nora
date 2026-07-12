@@ -11,6 +11,7 @@ COPY tsconfig.base.json /tsconfig.base.json
 COPY workers/backup/ ./
 COPY backend-api /backend-api
 COPY agent-runtime /agent-runtime
+COPY workers/provisioner/backends /backend-api/backends
 RUN cd /backend-api && (npm ci --omit=dev || npm install --omit=dev)
 
 CMD ["npm", "start"]

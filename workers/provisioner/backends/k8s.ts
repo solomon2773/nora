@@ -1738,6 +1738,41 @@ class K8sBackend extends ProvisionerBackend {
     return name;
   }
 
+  async _replaceManagedEnvSecretData(
+    deployName,
+    stringData = {},
+    managedNames = [],
+    namespace = this.namespace,
+  ) {
+    const name = this._envSecretName(deployName);
+    const managed = new Set((managedNames || []).map((entry) => String(entry || "").trim()));
+    let current = null;
+    try {
+      current = this._serviceObject(await this.coreApi.readNamespacedSecret({ name, namespace }));
+    } catch (error) {
+      if (!this._isNotFoundError(error)) throw error;
+    }
+
+    if (!current) {
+      if (Object.keys(stringData).length === 0) return name;
+      return this._upsertEnvSecret(deployName, stringData, {}, namespace);
+    }
+
+    const data = Object.fromEntries(
+      Object.entries(current.data || {}).filter(([key]) => !managed.has(key)),
+    );
+    const body = {
+      apiVersion: "v1",
+      kind: "Secret",
+      metadata: current.metadata,
+      type: current.type || "Opaque",
+      data,
+      stringData,
+    };
+    await this.coreApi.replaceNamespacedSecret({ name, namespace, body });
+    return name;
+  }
+
   async _deleteEnvSecretIfExists(deployName, namespace) {
     const name = this._envSecretName(deployName);
     try {
@@ -2663,7 +2698,12 @@ class K8sBackend extends ProvisionerBackend {
   async updateEnv(containerId, envVars = {}, options = {}) {
     const deployName = containerId;
     const entries = Object.entries(envVars || {}).filter(([key]) => key);
-    if (entries.length === 0) return;
+    const managedEnvNames = new Set(
+      (Array.isArray(options?.managedEnvNames) ? options.managedEnvNames : [])
+        .map((name) => String(name || "").trim())
+        .filter(Boolean),
+    );
+    if (entries.length === 0 && managedEnvNames.size === 0) return;
 
     const { deployment, namespace } = await this._readDeploymentInCandidateNamespace(
       deployName,
@@ -2673,7 +2713,6 @@ class K8sBackend extends ProvisionerBackend {
     const containerIndex = containers.findIndex((container) => container?.name === "agent");
     const index = containerIndex >= 0 ? containerIndex : 0;
     const env = Array.isArray(containers[index]?.env) ? containers[index].env : [];
-    const envIndexByName = new Map(env.map((entry, entryIndex) => [entry.name, entryIndex]));
     const envPath = `/spec/template/spec/containers/${index}/env`;
     const patch = [];
 
@@ -2691,16 +2730,13 @@ class K8sBackend extends ProvisionerBackend {
       });
     }
 
-    if (!Array.isArray(containers[index]?.env)) {
-      patch.push({ op: "add", path: envPath, value: [] });
-    }
-
     // Sensitive values go into the env Secret and are referenced via
     // secretKeyRef — replacing an existing secretKeyRef entry with a literal
     // value would put the decrypted key into the pod spec (readable by
     // anyone with `get deployment`) and let the Secret drift.
     const secretName = this._envSecretName(deployName);
     const sensitiveData = {};
+    const nextEntries = [];
     for (const [name, value] of entries) {
       const key = String(name);
       const stringValue = String(value ?? "");
@@ -2711,17 +2747,31 @@ class K8sBackend extends ProvisionerBackend {
       } else {
         nextEntry = { name: key, value: stringValue };
       }
-      const existingIndex = envIndexByName.get(key);
-      if (Number.isInteger(existingIndex)) {
-        patch.push({ op: "replace", path: `${envPath}/${existingIndex}`, value: nextEntry });
-      } else {
-        patch.push({ op: "add", path: `${envPath}/-`, value: nextEntry });
-      }
+      nextEntries.push(nextEntry);
     }
+
+    const replacedNames = new Set([...managedEnvNames, ...entries.map(([name]) => String(name))]);
+    const nextEnv = [
+      ...env.filter((entry) => !replacedNames.has(String(entry?.name || ""))),
+      ...nextEntries,
+    ];
+    patch.push({
+      op: Array.isArray(containers[index]?.env) ? "replace" : "add",
+      path: envPath,
+      value: nextEnv,
+    });
 
     // Update the Secret before the Deployment so secretKeyRef entries resolve
     // as soon as the rollout (or the caller's explicit restart) starts pods.
-    if (Object.keys(sensitiveData).length > 0) {
+    const managedSensitiveNames = [...managedEnvNames].filter(isSensitiveEnvName);
+    if (managedSensitiveNames.length > 0) {
+      await this._replaceManagedEnvSecretData(
+        deployName,
+        sensitiveData,
+        managedSensitiveNames,
+        namespace,
+      );
+    } else if (Object.keys(sensitiveData).length > 0) {
       await this._mergeEnvSecretData(deployName, sensitiveData, namespace);
     }
 

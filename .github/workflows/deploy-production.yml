@@ -205,6 +205,10 @@ jobs:
             "$TARGET_COMMIT" \
             "$NORA_GITHUB_REPO"
 
+          bash infra/render-public-nginx.sh \
+            "$DEPLOY_ENV_FILE" \
+            "$DEPLOY_COMPOSE_FILES"
+
           bash scripts/materialize-compose-secrets.sh "$DEPLOY_ENV_FILE"
 
           compose_args=(--env-file "$DEPLOY_ENV_FILE")
@@ -239,6 +243,17 @@ jobs:
             fi
 
             sleep "$health_interval_seconds"
+          done
+
+          docker_probe='const http=require("http");const request=http.request({socketPath:"/var/run/docker.sock",path:"/_ping",method:"GET"},response=>{let body="";response.setEncoding("utf8");response.on("data",chunk=>body+=chunk);response.on("end",()=>process.exit(response.statusCode===200&&body.trim()==="OK"?0:1));});request.setTimeout(5000,()=>request.destroy(new Error("Docker socket timeout")));request.on("error",error=>{console.error(error.message);process.exit(1);});request.end();'
+          for service in backend-api worker-provisioner worker-backup; do
+            echo "Verifying Docker socket access from ${service}."
+            if ! docker compose "${compose_args[@]}" exec -T "$service" node -e "$docker_probe"; then
+              echo "${service} cannot access /var/run/docker.sock after deployment." >&2
+              docker compose "${compose_args[@]}" ps "$service" >&2 || true
+              docker compose "${compose_args[@]}" logs --tail=80 "$service" >&2 || true
+              exit 1
+            fi
           done
           REMOTE
 

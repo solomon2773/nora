@@ -5,11 +5,32 @@
  * RFC1918), while never widening the allowlist for other agents and still
  * enforcing the hard blocked-IP floor.
  */
-jest.mock("../db", () => ({ query: jest.fn() }));
+const mockDbQuery = jest.fn();
+jest.mock("../db", () => ({ query: (...args) => mockDbQuery(...args) }));
 jest.mock("../integrations", () => ({}));
 jest.mock("../metrics", () => ({ recordMetric: jest.fn(), recordTokenUsage: jest.fn() }));
 jest.mock("../agentBudgets", () => ({ checkAndEnforce: jest.fn() }));
-jest.mock("ws", () => ({ WebSocket: class {}, WebSocketServer: class {} }));
+jest.mock("ws", () => {
+  class MockWebSocket {
+    static OPEN = 1;
+    static CONNECTING = 0;
+  }
+
+  class MockWebSocketServer {
+    constructor() {
+      this.handlers = {};
+    }
+
+    on(event, handler) {
+      this.handlers[event] = handler;
+      return this;
+    }
+
+    handleUpgrade() {}
+  }
+
+  return { WebSocket: MockWebSocket, WebSocketServer: MockWebSocketServer };
+});
 
 const mockGetRemoteHostByExecutionTarget = jest.fn();
 const mockUserCanUseRemoteHost = jest.fn().mockResolvedValue(false);
@@ -19,12 +40,16 @@ jest.mock("../remoteHosts", () => ({
 }));
 
 const {
+  allowedGatewayHostsForAgent,
+  attachGatewayWS,
   resolveSafeGatewayHttpTarget,
   resolveSafeHermesDashboardTarget,
   assertExternalEndpointReachable,
+  rpcCall,
 } = require("../gatewayProxy");
 
 const PUBLIC_IP = "203.0.113.5";
+const originalPlatformMode = process.env.PLATFORM_MODE;
 
 function remoteAgent(overrides = {}) {
   return {
@@ -39,9 +64,16 @@ function remoteAgent(overrides = {}) {
 }
 
 beforeEach(() => {
+  process.env.PLATFORM_MODE = "selfhosted";
+  mockDbQuery.mockReset();
   mockGetRemoteHostByExecutionTarget.mockReset();
   mockUserCanUseRemoteHost.mockReset();
   mockUserCanUseRemoteHost.mockResolvedValue(false);
+});
+
+afterAll(() => {
+  if (originalPlatformMode === undefined) delete process.env.PLATFORM_MODE;
+  else process.env.PLATFORM_MODE = originalPlatformMode;
 });
 
 describe("remote-host gateway allowlist (HTTP proxy)", () => {
@@ -129,6 +161,24 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
     );
   });
 
+  it("blocks historical Remote Docker rows before a hosted-mode registry lookup", async () => {
+    process.env.PLATFORM_MODE = "paas";
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue({
+      id: "my-vps",
+      ownerUserId: "user-1",
+      gatewayHost: "10.0.0.7",
+      sshHost: "10.0.0.7",
+    });
+
+    await expect(
+      resolveSafeGatewayHttpTarget(remoteAgent({ gateway_host: "10.0.0.7" }), "status"),
+    ).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+
   it("trusts a k8s agent's operator-provisioned (public LoadBalancer) address", async () => {
     // k8s exposure addresses (LB/NodePort) are operator-provisioned, so RPC/WS/HTTP
     // must reach them even when public — without a registry lookup.
@@ -177,6 +227,71 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
     });
     const target = await resolveSafeGatewayHttpTarget(dockerAgent, "status");
     expect(target.url).toBe("http://10.0.0.10:19000/status");
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosted-mode Remote Docker gateway shutdown", () => {
+  beforeEach(() => {
+    process.env.PLATFORM_MODE = "paas";
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue({
+      id: "my-vps",
+      ownerUserId: "user-1",
+      gatewayHost: PUBLIC_IP,
+      sshHost: PUBLIC_IP,
+    });
+  });
+
+  it("rejects the shared allowlist boundary even when a historical public host resolves", async () => {
+    await expect(allowedGatewayHostsForAgent(remoteAgent())).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects pooled RPC before opening or reusing a remote gateway connection", async () => {
+    await expect(
+      rpcCall(remoteAgent({ gateway_token: "legacy-gateway-token" }), "status"),
+    ).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects the Remote Hermes embed path before consulting the host registry", async () => {
+    await expect(
+      resolveSafeHermesDashboardTarget({
+        ...remoteAgent(),
+        runtime_family: "hermes",
+        runtime_host: PUBLIC_IP,
+        dashboard_port: 19044,
+      }),
+    ).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects the WebSocket relay for a historical Remote Docker agent", async () => {
+    const agent = {
+      ...remoteAgent(),
+      status: "running",
+      gateway_token: "legacy-gateway-token",
+    };
+    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    const server = { on: jest.fn() };
+    const wss = attachGatewayWS(server);
+    const ws = { send: jest.fn(), close: jest.fn() };
+
+    await wss.handlers.connection(ws, {}, agent.id, { id: agent.user_id });
+
+    expect(ws.send).toHaveBeenCalledWith(
+      expect.stringContaining("Remote Docker gateway access is disabled in hosted mode"),
+    );
+    expect(ws.close).toHaveBeenCalledTimes(1);
     expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
   });
 });

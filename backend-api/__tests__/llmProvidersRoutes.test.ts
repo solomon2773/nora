@@ -3,14 +3,16 @@ const request = require("supertest");
 const express = require("express");
 
 const mockAddProvider = jest.fn();
+const mockUpdateProvider = jest.fn();
+const mockDeleteProvider = jest.fn();
 const mockSyncAuthToUserAgents = jest.fn();
 
 jest.mock("../llmProviders", () => ({
   addProvider: mockAddProvider,
   listProviders: jest.fn(),
   getAvailableProviders: jest.fn(),
-  updateProvider: jest.fn(),
-  deleteProvider: jest.fn(),
+  updateProvider: mockUpdateProvider,
+  deleteProvider: mockDeleteProvider,
 }));
 jest.mock("../authSync", () => ({
   syncAuthToUserAgents: mockSyncAuthToUserAgents,
@@ -27,11 +29,73 @@ app.use("/llm-providers", router);
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockAddProvider.mockResolvedValue({
-    id: "provider-openai",
-    provider: "openai",
-    model: "gpt-5.5",
-    is_default: true,
+  mockAddProvider.mockImplementation(async (...args) => {
+    const result = {
+      id: "provider-openai",
+      provider: "openai",
+      model: "gpt-5.5",
+      is_default: true,
+    };
+    await args[5]?.afterCommit?.(result);
+    return result;
+  });
+  mockUpdateProvider.mockImplementation(async (...args) => {
+    const result = {
+      id: "provider-openai",
+      provider: "openai",
+      model: "gpt-5.5-pro",
+      is_default: true,
+    };
+    await args[3]?.afterCommit?.(result);
+    return result;
+  });
+  mockDeleteProvider.mockImplementation(async (...args) => {
+    const result = { success: true };
+    await args[2]?.afterCommit?.(result);
+    return result;
+  });
+});
+
+describe("PUT/DELETE /llm-providers/:id", () => {
+  it("awaits update sync and reports per-agent failures", async () => {
+    mockSyncAuthToUserAgents.mockResolvedValue([
+      { agentId: "agent-1", status: "failed", error: "runtime unavailable" },
+    ]);
+
+    const response = await request(app)
+      .put("/llm-providers/provider-openai")
+      .send({ model: "gpt-5.5-pro" });
+
+    expect(response.status).toBe(200);
+    expect(mockUpdateProvider).toHaveBeenCalledWith(
+      "provider-openai",
+      "user-1",
+      { model: "gpt-5.5-pro" },
+      { afterCommit: expect.any(Function) },
+    );
+    expect(mockSyncAuthToUserAgents).toHaveBeenCalledWith("user-1");
+    expect(response.body.sync_warning).toMatch(/1 running agent/i);
+    expect(response.body.sync_results[0]).toEqual(
+      expect.objectContaining({ agentId: "agent-1", status: "failed" }),
+    );
+  });
+
+  it("awaits delete sync and returns a warning when synchronization rejects", async () => {
+    mockSyncAuthToUserAgents.mockRejectedValue(new Error("runtime sync crashed"));
+
+    const response = await request(app).delete("/llm-providers/provider-openai");
+
+    expect(response.status).toBe(200);
+    expect(mockDeleteProvider).toHaveBeenCalledWith("provider-openai", "user-1", {
+      afterCommit: expect.any(Function),
+    });
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        success: true,
+        sync_results: [],
+        sync_warning: expect.stringMatching(/provider deleted/i),
+      }),
+    );
   });
 });
 
@@ -55,6 +119,7 @@ describe("POST /llm-providers", () => {
       "sk-live",
       "gpt-5.5",
       undefined,
+      { afterCommit: expect.any(Function) },
     );
     expect(mockSyncAuthToUserAgents).toHaveBeenCalledWith("user-1");
     expect(response.body).toEqual(

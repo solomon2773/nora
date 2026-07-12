@@ -3,6 +3,12 @@ const mockWorkerDb = {
   query: jest.fn(),
   connect: jest.fn(),
 };
+const mockLockClient = {
+  connect: jest.fn(),
+  query: jest.fn(),
+  end: jest.fn(),
+};
+const mockPgClient = jest.fn(() => mockLockClient);
 const mockGetDeploymentProvider = jest.fn();
 const mockWorkerOn = jest.fn();
 let mockDeploymentProcessor;
@@ -24,6 +30,7 @@ jest.mock("../../workers/provisioner/node_modules/bullmq", () => ({
 }));
 jest.mock("../../workers/provisioner/node_modules/ioredis", () => jest.fn());
 jest.mock("../../workers/provisioner/node_modules/pg", () => ({
+  Client: mockPgClient,
   Pool: jest.fn().mockImplementation(() => mockWorkerDb),
 }));
 jest.mock("../lib/connectionConfig", () => ({
@@ -32,6 +39,8 @@ jest.mock("../lib/connectionConfig", () => ({
 }));
 jest.mock("../llmProviders", () => ({
   getDeploymentProvider: mockGetDeploymentProvider,
+  getManagedProviderEnvNames: jest.fn(() => []),
+  providerMutationLockKey: (userId) => `nora:llm-providers:${userId}`,
 }));
 jest.mock("../redisQueue", () => ({
   ALERT_DELIVERY_ATTEMPTS: 1,
@@ -60,6 +69,9 @@ const {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockLockClient.connect.mockReset().mockResolvedValue(undefined);
+  mockLockClient.query.mockReset().mockResolvedValue({ rows: [] });
+  mockLockClient.end.mockReset().mockResolvedValue(undefined);
   delete process.env.KEY_STORAGE;
 });
 
@@ -360,14 +372,9 @@ describe("provisioner deployment lifecycle", () => {
   });
 
   it("refuses to provision a replacement while a prior runtime identity remains", async () => {
-    const lockClient = {
-      query: jest
-        .fn()
-        .mockResolvedValueOnce({ rows: [{ locked: true }] })
-        .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] }),
-      release: jest.fn(),
-    };
-    mockWorkerDb.connect.mockResolvedValue(lockClient);
+    mockLockClient.query
+      .mockResolvedValueOnce({ rows: [{ locked: true }] })
+      .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
       if (sql.includes("SELECT image, template_payload")) {
         return {
@@ -420,6 +427,6 @@ describe("provisioner deployment lifecycle", () => {
     expect(
       mockWorkerDb.query.mock.calls.some(([sql]) => String(sql).includes("status = 'deploying'")),
     ).toBe(false);
-    expect(lockClient.release).toHaveBeenCalledTimes(1);
+    expect(mockLockClient.end).toHaveBeenCalledTimes(1);
   });
 });

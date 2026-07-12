@@ -11,6 +11,12 @@ process.env.JWT_SECRET = JWT_SECRET;
 
 const mockDbClient = { query: jest.fn(), release: jest.fn() };
 const mockDb = { query: jest.fn(), connect: jest.fn() };
+const mockActivationLockClient = {
+  connect: jest.fn(),
+  query: jest.fn(),
+  end: jest.fn(),
+};
+const mockPgClient = jest.fn(() => mockActivationLockClient);
 const mockAddDeploymentJob = jest.fn();
 const mockCancelDeploymentJobsForAgent = jest.fn();
 const mockEnsureDemoProvider = jest.fn();
@@ -69,6 +75,10 @@ const mockGetDeploymentDefaults = jest.fn().mockResolvedValue({
 const mockGetAgentHubSourceApiKey = jest.fn().mockResolvedValue("nora_hub_test_key");
 const mockAssertKubernetesExecutionTargetAvailable = jest.fn().mockResolvedValue();
 jest.mock("../db", () => mockDb);
+jest.mock("pg", () => ({
+  ...jest.requireActual("pg"),
+  Client: mockPgClient,
+}));
 jest.mock("dockerode", () =>
   jest.fn().mockImplementation(() => ({
     ping: mockDockerPing,
@@ -357,6 +367,10 @@ beforeEach(() => {
   mockDb.connect.mockReset().mockResolvedValue(mockDbClient);
   mockDbClient.query.mockReset().mockResolvedValue({ rows: [] });
   mockDbClient.release.mockReset();
+  mockPgClient.mockReset().mockImplementation(() => mockActivationLockClient);
+  mockActivationLockClient.connect.mockReset().mockResolvedValue(undefined);
+  mockActivationLockClient.query.mockReset().mockResolvedValue({ rows: [] });
+  mockActivationLockClient.end.mockReset().mockResolvedValue(undefined);
   mockAddDeploymentJob.mockReset();
   mockCancelDeploymentJobsForAgent.mockReset().mockResolvedValue({ removed: 0, active: 0 });
   mockEnsureDemoProvider.mockReset().mockResolvedValue({
@@ -2362,9 +2376,10 @@ describe("POST /agents/activate-demo", () => {
       else locked = false;
     }
 
-    mockDb.connect.mockImplementation(async () => {
+    mockPgClient.mockImplementation(() => {
       const client = {
-        release: jest.fn(),
+        connect: jest.fn().mockResolvedValue(undefined),
+        end: jest.fn().mockResolvedValue(undefined),
         query: jest.fn(async (sql, params) => {
           if (sql.includes("pg_advisory_lock")) {
             await acquireLock();
@@ -2437,12 +2452,23 @@ describe("POST /agents/activate-demo", () => {
       }),
     );
     expect(clients).toHaveLength(2);
-    expect(clients.every((client) => client.release.mock.calls.length === 1)).toBe(true);
+    expect(clients.every((client) => client.connect.mock.calls.length === 1)).toBe(true);
+    expect(clients.every((client) => client.end.mock.calls.length === 1)).toBe(true);
+    expect(mockDb.connect).not.toHaveBeenCalled();
+    expect(mockPgClient).toHaveBeenCalledTimes(2);
+    for (const [config] of mockPgClient.mock.calls) {
+      expect(config).toEqual(
+        expect.objectContaining({ application_name: "nora-backend-demo-activation" }),
+      );
+      expect(config).not.toHaveProperty("max");
+      expect(config).not.toHaveProperty("idleTimeoutMillis");
+    }
   });
 
   it("removes the new deployment and agent when queueing fails", async () => {
     const client = {
-      release: jest.fn(),
+      connect: jest.fn().mockResolvedValue(undefined),
+      end: jest.fn().mockResolvedValue(undefined),
       query: jest.fn(async (sql, params) => {
         if (sql.includes("FROM agents") && sql.includes("template_payload @>")) {
           return { rows: [] };
@@ -2470,7 +2496,7 @@ describe("POST /agents/activate-demo", () => {
         return { rows: [] };
       }),
     };
-    mockDb.connect.mockResolvedValue(client);
+    mockPgClient.mockImplementation(() => client);
     mockAddDeploymentJob.mockRejectedValue(new Error("Redis unavailable"));
 
     const response = await auth(request(app).post("/agents/activate-demo").send({}));
@@ -2484,7 +2510,7 @@ describe("POST /agents/activate-demo", () => {
       "agent-demo-failed",
       "user-1",
     ]);
-    expect(client.release).toHaveBeenCalledTimes(1);
+    expect(client.end).toHaveBeenCalledTimes(1);
   });
 
   it("resets and requeues the same demo agent after a terminal deployment failure", async () => {
@@ -2509,7 +2535,8 @@ describe("POST /agents/activate-demo", () => {
     };
     const queuedAgent = { ...failedAgent, status: "queued", container_id: null };
     const client = {
-      release: jest.fn(),
+      connect: jest.fn().mockResolvedValue(undefined),
+      end: jest.fn().mockResolvedValue(undefined),
       query: jest.fn(async (sql) => {
         if (sql.includes("FROM agents") && sql.includes("template_payload @>")) {
           return { rows: [failedAgent] };
@@ -2520,7 +2547,7 @@ describe("POST /agents/activate-demo", () => {
         return { rows: [] };
       }),
     };
-    mockDb.connect.mockResolvedValue(client);
+    mockPgClient.mockImplementation(() => client);
     mockAddDeploymentJob.mockResolvedValue(undefined);
 
     const response = await auth(request(app).post("/agents/activate-demo").send({}));
@@ -2560,14 +2587,15 @@ describe("POST /agents/activate-demo", () => {
       container_name: "nora-oclaw-demo-agent-active",
     };
     const client = {
-      release: jest.fn(),
+      connect: jest.fn().mockResolvedValue(undefined),
+      end: jest.fn().mockResolvedValue(undefined),
       query: jest.fn(async (sql) =>
         sql.includes("FROM agents") && sql.includes("template_payload @>")
           ? { rows: [failedAgent] }
           : { rows: [] },
       ),
     };
-    mockDb.connect.mockResolvedValue(client);
+    mockPgClient.mockImplementation(() => client);
     mockCancelDeploymentJobsForAgent.mockResolvedValue({ removed: 0, active: 1 });
 
     const response = await auth(request(app).post("/agents/activate-demo").send({}));
@@ -2603,14 +2631,15 @@ describe("POST /agents/activate-demo", () => {
       container_id: "stopped-demo-container",
     };
     const client = {
-      release: jest.fn(),
+      connect: jest.fn().mockResolvedValue(undefined),
+      end: jest.fn().mockResolvedValue(undefined),
       query: jest.fn(async (sql) =>
         sql.includes("FROM agents") && sql.includes("template_payload @>")
           ? { rows: [stoppedAgent] }
           : { rows: [] },
       ),
     };
-    mockDb.connect.mockResolvedValue(client);
+    mockPgClient.mockImplementation(() => client);
 
     const response = await auth(request(app).post("/agents/activate-demo").send({}));
 
@@ -2624,7 +2653,8 @@ describe("POST /agents/activate-demo", () => {
 
   it("rejects activation with an actionable error when local Docker is unavailable", async () => {
     const client = {
-      release: jest.fn(),
+      connect: jest.fn().mockResolvedValue(undefined),
+      end: jest.fn().mockResolvedValue(undefined),
       query: jest.fn(async (sql) => {
         if (sql.includes("FROM agents") && sql.includes("template_payload @>")) {
           return { rows: [] };
@@ -2632,7 +2662,7 @@ describe("POST /agents/activate-demo", () => {
         return { rows: [] };
       }),
     };
-    mockDb.connect.mockResolvedValue(client);
+    mockPgClient.mockImplementation(() => client);
     mockDockerPing.mockImplementationOnce((callback) =>
       callback(new Error("connect ENOENT /var/run/docker.sock")),
     );
@@ -2661,14 +2691,15 @@ describe("POST /agents/activate-demo", () => {
       container_id: "restored-container",
     };
     const client = {
-      release: jest.fn(),
+      connect: jest.fn().mockResolvedValue(undefined),
+      end: jest.fn().mockResolvedValue(undefined),
       query: jest.fn(async (sql) =>
         sql.includes("FROM agents") && sql.includes("template_payload @>")
           ? { rows: [existingAgent] }
           : { rows: [] },
       ),
     };
-    mockDb.connect.mockResolvedValue(client);
+    mockPgClient.mockImplementation(() => client);
     mockDockerPing.mockImplementationOnce((callback) =>
       callback(new Error("connect ENOENT /var/run/docker.sock")),
     );
@@ -2685,10 +2716,11 @@ describe("POST /agents/activate-demo", () => {
   it("rejects durable demo activation when the Docker deploy target is disabled", async () => {
     process.env.ENABLED_BACKENDS = "k8s";
     const client = {
-      release: jest.fn(),
+      connect: jest.fn().mockResolvedValue(undefined),
+      end: jest.fn().mockResolvedValue(undefined),
       query: jest.fn().mockResolvedValue({ rows: [] }),
     };
-    mockDb.connect.mockResolvedValue(client);
+    mockPgClient.mockImplementation(() => client);
 
     const response = await auth(request(app).post("/agents/activate-demo").send({}));
 

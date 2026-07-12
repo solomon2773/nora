@@ -14,6 +14,7 @@ COPY tsconfig.base.json /tsconfig.base.json
 COPY workers/backup/ ./
 COPY backend-api /backend-api
 COPY agent-runtime /agent-runtime
+COPY workers/provisioner/backends /backend-api/backends
 COPY --chown=root:root infra/container-entrypoint.sh /usr/local/bin/nora-container-entrypoint
 RUN cd /backend-api && (npm ci --omit=dev || npm install --omit=dev)
 RUN mkdir -p /var/lib/nora-backups /tmp/nora-home /tmp/npm-cache \

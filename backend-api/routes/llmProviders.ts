@@ -6,7 +6,7 @@ const { syncAuthToUserAgents } = require("../authSync");
 
 const router = express.Router();
 
-async function syncAfterProviderSave(userId) {
+async function syncAfterProviderSave(userId, successMessage = "Provider saved") {
   try {
     const results = await syncAuthToUserAgents(userId);
     const failed = results.filter((result) => result.status === "failed");
@@ -22,9 +22,19 @@ async function syncAfterProviderSave(userId) {
     console.warn("[llmProviders] Post-save auth sync failed:", error.message);
     return {
       sync_results: [],
-      sync_warning: "Provider saved, but running agents could not be updated automatically",
+      sync_warning: `${successMessage}, but running agents could not be updated automatically`,
     };
   }
+}
+
+async function mutateProviderAndSync(userId, successMessage, mutation) {
+  let sync = { sync_results: [] };
+  const result = await mutation({
+    afterCommit: async () => {
+      sync = await syncAfterProviderSave(userId, successMessage);
+    },
+  });
+  return { ...result, ...sync };
 }
 
 router.get("/available", (req, res) => {
@@ -46,9 +56,11 @@ router.post("/", async (req, res) => {
     // derived server-side); every real provider still requires a key.
     if (!provider || (!apiKey && provider !== "demo"))
       return res.status(400).json({ error: "provider and apiKey required" });
-    const result = await llmProviders.addProvider(req.user.id, provider, apiKey, model, config);
-    const sync = await syncAfterProviderSave(req.user.id);
-    res.json({ ...result, ...sync });
+    res.json(
+      await mutateProviderAndSync(req.user.id, "Provider saved", (mutationOptions) =>
+        llmProviders.addProvider(req.user.id, provider, apiKey, model, config, mutationOptions),
+      ),
+    );
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -56,11 +68,11 @@ router.post("/", async (req, res) => {
 
 router.put("/:id", async (req, res) => {
   try {
-    const result = await llmProviders.updateProvider(req.params.id, req.user.id, req.body);
-    syncAuthToUserAgents(req.user.id).catch((error) =>
-      console.warn("[llmProviders] Post-save auth sync failed:", error.message),
+    res.json(
+      await mutateProviderAndSync(req.user.id, "Provider updated", (mutationOptions) =>
+        llmProviders.updateProvider(req.params.id, req.user.id, req.body, mutationOptions),
+      ),
     );
-    res.json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -68,11 +80,11 @@ router.put("/:id", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    await llmProviders.deleteProvider(req.params.id, req.user.id);
-    syncAuthToUserAgents(req.user.id).catch((error) =>
-      console.warn("[llmProviders] Post-save auth sync failed:", error.message),
+    res.json(
+      await mutateProviderAndSync(req.user.id, "Provider deleted", (mutationOptions) =>
+        llmProviders.deleteProvider(req.params.id, req.user.id, mutationOptions),
+      ),
     );
-    res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

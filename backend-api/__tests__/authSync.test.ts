@@ -9,6 +9,10 @@ const mockIsKubernetesAgent = jest.fn();
 const mockUpdateEnv = jest.fn();
 const mockPersistLifecycleRuntimeAddress = jest.fn();
 const mockGetProviderKeys = jest.fn();
+const mockGetProviderEndpoints = jest.fn();
+const mockBuildBaseUrlEnvVars = jest.fn();
+const mockBuildApiVersionEnvVars = jest.fn();
+const mockBuildDeploymentEnvVars = jest.fn();
 const mockBuildAuthProfiles = jest.fn();
 const mockGetIntegrationEnvVars = jest.fn();
 const mockEvictConnection = jest.fn();
@@ -26,9 +30,23 @@ jest.mock("../llmProviders", () => ({
   PROVIDERS: [
     { id: "openai", envVar: "OPENAI_API_KEY" },
     { id: "google", envVar: "GEMINI_API_KEY" },
+    { id: "microsoft-foundry", envVar: "MICROSOFT_FOUNDRY_API_KEY" },
   ],
   getProviderKeys: mockGetProviderKeys,
+  getProviderEndpoints: mockGetProviderEndpoints,
+  buildBaseUrlEnvVars: mockBuildBaseUrlEnvVars,
+  buildApiVersionEnvVars: mockBuildApiVersionEnvVars,
+  buildDeploymentEnvVars: mockBuildDeploymentEnvVars,
   buildAuthProfiles: mockBuildAuthProfiles,
+  getManagedProviderEnvNames: ({ runtimeFamily } = {}) =>
+    runtimeFamily === "hermes"
+      ? [
+          "OPENAI_API_KEY",
+          "GEMINI_API_KEY",
+          "NORA_HERMES_MANAGED_ENV_B64",
+          "NORA_HERMES_MODEL_CONFIG_B64",
+        ]
+      : ["OPENAI_API_KEY", "GEMINI_API_KEY", "NORA_DEFAULT_OPENCLAW_MODEL"],
 }));
 jest.mock("../integrations", () => ({
   getIntegrationEnvVars: mockGetIntegrationEnvVars,
@@ -46,6 +64,7 @@ const {
   runContainerCommand,
   syncAuthToUserAgents,
   writeAuthToContainer,
+  writeHermesEnvToContainer,
 } = require("../authSync");
 
 function jsonResponse(body, status = 200) {
@@ -101,6 +120,16 @@ describe("auth sync", () => {
     mockGetProviderKeys.mockReset().mockResolvedValue({
       OPENAI_API_KEY: "sk-live-test",
     });
+    mockGetProviderEndpoints.mockReset().mockResolvedValue({
+      byEnvVar: {},
+      byProvider: {},
+      apiVersionByEnvVar: {},
+      apiVersionByProvider: {},
+      deploymentByEnvVar: {},
+    });
+    mockBuildBaseUrlEnvVars.mockReset().mockReturnValue({});
+    mockBuildApiVersionEnvVars.mockReset().mockReturnValue({});
+    mockBuildDeploymentEnvVars.mockReset().mockReturnValue({});
     mockBuildAuthProfiles.mockReset().mockReturnValue({
       version: 1,
       profiles: {
@@ -207,17 +236,107 @@ describe("auth sync", () => {
         gatewayPort: 18789,
       }),
     );
+    const runtimeWriteOrders = global.fetch.mock.invocationCallOrder;
+    expect(Math.max(...runtimeWriteOrders)).toBeLessThan(mockRestart.mock.invocationCallOrder[0]);
+    expect(mockRestart.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWaitForAgentReadiness.mock.invocationCallOrder[0],
+    );
     expect(JSON.parse(global.fetch.mock.calls[1][1].body).command).toContain(
       '"primary": "openai/gpt-5.5"',
     );
     // Kubernetes restarts are rollouts: the replacement pod re-seeds auth
     // from the Deployment env, so the sync must patch it too.
-    expect(mockUpdateEnv).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-k8s-1" }), {
-      GITHUB_TOKEN: "gh-tok",
-      OPENAI_API_KEY: "sk-live-test",
-      NORA_DEFAULT_OPENCLAW_MODEL: "openai/gpt-5.5",
-    });
+    expect(mockUpdateEnv).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "agent-k8s-1" }),
+      {
+        GITHUB_TOKEN: "gh-tok",
+        OPENAI_API_KEY: "sk-live-test",
+        NORA_DEFAULT_OPENCLAW_MODEL: "openai/gpt-5.5",
+      },
+      {
+        managedEnvNames: ["OPENAI_API_KEY", "GEMINI_API_KEY", "NORA_DEFAULT_OPENCLAW_MODEL"],
+      },
+    );
     expect(results).toEqual([{ agentId: "agent-k8s-1", status: "synced" }]);
+  });
+
+  it("writes auth, custom providers, and the default model before one restart with readiness last", async () => {
+    const foundryBaseUrl = "https://resource.openai.azure.com/openai/v1";
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            provider: "microsoft-foundry",
+            model: "openai/gpt-5.5-1",
+            config: { base_url: foundryBaseUrl },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-k8s-foundry",
+            container_id: "oclaw-foundry-123",
+            backend_type: "k8s",
+            host: "agent.internal",
+            runtime_host: "runtime.internal",
+            runtime_port: 9090,
+            gateway_host_port: null,
+            gateway_host: "gateway.internal",
+            gateway_port: 18789,
+          },
+        ],
+      });
+    mockGetProviderKeys.mockResolvedValue({ MICROSOFT_FOUNDRY_API_KEY: "ms-live-test" });
+    mockGetProviderEndpoints.mockResolvedValue({
+      byEnvVar: { MICROSOFT_FOUNDRY_API_KEY: foundryBaseUrl },
+      byProvider: { "microsoft-foundry": foundryBaseUrl },
+      apiVersionByEnvVar: {},
+      apiVersionByProvider: {},
+      deploymentByEnvVar: { MICROSOFT_FOUNDRY_API_KEY: "gpt-5.5-1" },
+    });
+    mockBuildBaseUrlEnvVars.mockReturnValue({ MICROSOFT_FOUNDRY_BASE_URL: foundryBaseUrl });
+    mockBuildDeploymentEnvVars.mockReturnValue({
+      MICROSOFT_FOUNDRY_DEPLOYMENT: "gpt-5.5-1",
+    });
+    mockBuildAuthProfiles.mockReturnValue({
+      version: 1,
+      profiles: {
+        "microsoft-foundry:default": {
+          type: "api_key",
+          provider: "microsoft-foundry",
+          key: "ms-live-test",
+          endpoint: foundryBaseUrl,
+        },
+      },
+      order: { "microsoft-foundry": ["microsoft-foundry:default"] },
+      lastGood: { "microsoft-foundry": "microsoft-foundry:default" },
+    });
+    global.fetch
+      .mockResolvedValueOnce(jsonResponse({ exitCode: 0, stdout: "", stderr: "" }))
+      .mockResolvedValueOnce(jsonResponse({ exitCode: 0, stdout: "", stderr: "" }))
+      .mockResolvedValueOnce(jsonResponse({ exitCode: 0, stdout: "", stderr: "" }));
+    mockWaitForAgentReadiness.mockImplementationOnce(async () => {
+      expect(global.fetch).toHaveBeenCalledTimes(3);
+      expect(mockRestart).toHaveBeenCalledTimes(1);
+      return { ok: true, runtime: { ok: true }, gateway: { ok: true } };
+    });
+
+    const results = await syncAuthToUserAgents("user-1");
+
+    const commands = global.fetch.mock.calls.map(([, options]) => JSON.parse(options.body).command);
+    expect(commands[0]).toContain("__NORA_OPENCLAW_AUTH_SQLITE_IMPORT__");
+    expect(commands[1]).toContain('"azure-openai-responses"');
+    expect(commands[1]).toContain('"apiKey": "ms-live-test"');
+    expect(commands[2]).toContain('"primary": "azure-openai-responses/gpt-5.5-1"');
+    expect(mockRestart).toHaveBeenCalledTimes(1);
+    expect(Math.max(...global.fetch.mock.invocationCallOrder)).toBeLessThan(
+      mockRestart.mock.invocationCallOrder[0],
+    );
+    expect(mockRestart.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWaitForAgentReadiness.mock.invocationCallOrder[0],
+    );
+    expect(results).toEqual([{ agentId: "agent-k8s-foundry", status: "synced" }]);
   });
 
   it("uses a refreshed Proxmox address for readiness after auth-sync restart", async () => {
@@ -469,6 +588,12 @@ describe("auth sync", () => {
         checkGateway: false,
       }),
     );
+    expect(Math.max(...mockExec.mock.invocationCallOrder)).toBeLessThan(
+      mockRestart.mock.invocationCallOrder[0],
+    );
+    expect(mockRestart.mock.invocationCallOrder[0]).toBeLessThan(
+      mockWaitForAgentReadiness.mock.invocationCallOrder[0],
+    );
     expect(global.fetch).not.toHaveBeenCalled();
     expect(results).toEqual([{ agentId: "agent-hermes-1", status: "synced" }]);
   });
@@ -511,6 +636,124 @@ describe("auth sync", () => {
     expect(configScript).toContain("repair_surrogates(load_config() or {})");
     expect(configScript).toContain("save_config(config)");
     expect(configScript).not.toContain("json.dumps(config, indent=2)");
+  });
+
+  it("replaces Kubernetes Hermes provider env and model bootstrap in one update", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [{ provider: "openai", model: "gpt-5.5", config: {} }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-hermes-k8s",
+            container_id: "hermes-agent-k8s",
+            backend_type: "k8s",
+            runtime_family: "hermes",
+            host: "hermes-agent.hermes-agents.svc.cluster.local",
+            runtime_host: "hermes-agent.hermes-agents.svc.cluster.local",
+            runtime_port: 8642,
+            gateway_host_port: null,
+            gateway_host: null,
+            gateway_port: null,
+          },
+        ],
+      });
+
+    const results = await syncAuthToUserAgents("user-1");
+
+    expect(mockUpdateEnv).toHaveBeenCalledTimes(1);
+    const [, managedEnv, options] = mockUpdateEnv.mock.calls[0];
+    expect(managedEnv.OPENAI_API_KEY).toBe("sk-live-test");
+    expect(managedEnv.NORA_HERMES_MANAGED_ENV_B64).toBeTruthy();
+    expect(
+      JSON.parse(Buffer.from(managedEnv.NORA_HERMES_MODEL_CONFIG_B64, "base64").toString("utf8")),
+    ).toEqual(
+      expect.objectContaining({
+        provider: "custom",
+        defaultModel: "gpt-5.5",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "sk-live-test",
+      }),
+    );
+    expect(options.managedEnvNames).toEqual(
+      expect.arrayContaining([
+        "OPENAI_API_KEY",
+        "NORA_HERMES_MANAGED_ENV_B64",
+        "NORA_HERMES_MODEL_CONFIG_B64",
+      ]),
+    );
+    expect(mockExec).not.toHaveBeenCalled();
+    expect(mockRestart).toHaveBeenCalledTimes(1);
+    expect(results).toEqual([{ agentId: "agent-hermes-k8s", status: "synced" }]);
+  });
+
+  it("preserves the Kubernetes Hermes model bootstrap during channel-only env writes", async () => {
+    await writeHermesEnvToContainer(
+      {
+        id: "agent-hermes-k8s-channel",
+        backend_type: "k8s",
+        runtime_family: "hermes",
+        container_id: "hermes-agent-k8s-channel",
+      },
+      { TELEGRAM_BOT_TOKEN: "telegram-test-token" },
+    );
+
+    expect(mockUpdateEnv).toHaveBeenCalledTimes(1);
+    const [, managedEnv, options] = mockUpdateEnv.mock.calls[0];
+    expect(managedEnv.NORA_HERMES_MANAGED_ENV_B64).toBeTruthy();
+    expect(managedEnv.NORA_HERMES_MODEL_CONFIG_B64).toBeUndefined();
+    expect(options.managedEnvNames).toEqual(
+      expect.arrayContaining(["OPENAI_API_KEY", "GEMINI_API_KEY", "NORA_HERMES_MANAGED_ENV_B64"]),
+    );
+    expect(options.managedEnvNames).not.toContain("NORA_HERMES_MODEL_CONFIG_B64");
+  });
+
+  it("removes Kubernetes Hermes managed provider state after the last provider is deleted", async () => {
+    mockGetProviderKeys.mockResolvedValue({});
+    mockGetIntegrationEnvVars.mockResolvedValue({});
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-hermes-k8s-empty",
+            container_id: "hermes-agent-k8s-empty",
+            backend_type: "k8s",
+            runtime_family: "hermes",
+            host: "hermes-agent.hermes-agents.svc.cluster.local",
+            runtime_host: "hermes-agent.hermes-agents.svc.cluster.local",
+            runtime_port: 8642,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            model_config: {
+              provider: "custom",
+              defaultModel: "gpt-5.5",
+              baseUrl: "https://api.openai.com/v1",
+              apiKey: "deleted-secret",
+            },
+            channel_configs: {},
+          },
+        ],
+      });
+
+    await syncAuthToUserAgents("user-1");
+
+    expect(mockUpdateEnv).toHaveBeenCalledTimes(1);
+    const [, managedEnv, options] = mockUpdateEnv.mock.calls[0];
+    expect(managedEnv).toEqual({});
+    expect(options.managedEnvNames).toEqual(
+      expect.arrayContaining([
+        "OPENAI_API_KEY",
+        "NORA_HERMES_MANAGED_ENV_B64",
+        "NORA_HERMES_MODEL_CONFIG_B64",
+      ]),
+    );
+    expect(mockRestart).toHaveBeenCalledTimes(1);
   });
 
   it("builds a shell-parseable Hermes env rewrite command", () => {

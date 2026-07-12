@@ -129,7 +129,7 @@ iwr -useb https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1 | 
 **Kubernetes (Helm):**
 
 ```bash
-helm show chart oci://ghcr.io/solomon2773/nora --version 0.7.0
+helm show chart oci://ghcr.io/solomon2773/nora --version 0.7.1
 ```
 
 The public OCI chart installs the full Nora control plane. See the [Helm instructions](https://noradocs.solomontsao.com/self-hosting#kubernetes-helm) for the required secrets and Ingress options.
@@ -142,7 +142,7 @@ For manual setup, environment variables, public-domain mode, TLS, Kubernetes, Ne
 
 - [Self-hosting guide](https://noradocs.solomontsao.com/self-hosting)
 - [Environment variables reference](https://noradocs.solomontsao.com/configuration/environment-variables)
-- [Provisioner backends](https://noradocs.solomontsao.com/configuration/provisioner-backends) (Docker and k3s/Kubernetes are GA; NemoClaw and Proxmox LXC are experimental)
+- [Provisioner backends](https://noradocs.solomontsao.com/configuration/provisioner-backends) (Docker and k3s/Kubernetes are GA; Remote Docker, NemoClaw, and Proxmox LXC are experimental)
 - [TLS and public domains](https://noradocs.solomontsao.com/configuration/tls-domains)
 - [Fronting a launch with Cloudflare](infra/cloudflare-launch.md) — edge caching, rate limiting, and spike absorption for the single-host deploy
 
@@ -171,7 +171,7 @@ Nginx
                        ├── Redis + BullMQ  (deployments, clawhub-jobs, backups, alert-deliveries)
                        ├── worker-provisioner
                        ├── worker-backup
-                       ├── deploy-target adapters  (Docker GA · k3s/k8s GA · Proxmox LXC experimental)
+                       ├── deploy-target adapters  (Docker + k3s/k8s GA · Remote Docker + Proxmox experimental)
                        └── sandbox profiles        (standard · NemoClaw experimental)
 ```
 
@@ -179,18 +179,18 @@ Full architecture write-up — system map, queue/worker boundaries, RBAC, migrat
 
 ## Tech Stack
 
-| Layer              | Technology                                                              |
-| ------------------ | ----------------------------------------------------------------------- |
-| Reverse proxy      | Nginx                                                                   |
-| Frontends          | Next.js 16, React 19, Tailwind CSS                                      |
-| Backend API        | Express.js 5, Node.js 24 LTS                                            |
-| Auth               | JWT, HttpOnly cookies, bcryptjs, provider OAuth bridge                  |
-| Database           | PostgreSQL 15                                                           |
-| Queue              | BullMQ + Redis 7                                                        |
-| Runtime families   | OpenClaw, Hermes                                                        |
-| Deployment targets | Docker and k3s/Kubernetes (GA); Proxmox unprivileged LXC (experimental) |
-| Sandbox profiles   | Standard; NemoClaw (experimental, not available on Proxmox)             |
-| Secrets at rest    | AES-256-GCM (provider keys, integrations, backups)                      |
+| Layer              | Technology                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| Reverse proxy      | Nginx                                                                                          |
+| Frontends          | Next.js 16, React 19, Tailwind CSS                                                             |
+| Backend API        | Express.js 5, Node.js 24 LTS                                                                   |
+| Auth               | JWT, HttpOnly cookies, bcryptjs, provider OAuth bridge                                         |
+| Database           | PostgreSQL 15                                                                                  |
+| Queue              | BullMQ + Redis 7                                                                               |
+| Runtime families   | OpenClaw, Hermes                                                                               |
+| Deployment targets | Docker and k3s/Kubernetes (GA); Remote Docker BYOC and Proxmox unprivileged LXC (experimental) |
+| Sandbox profiles   | Standard; NemoClaw (experimental, not available on Proxmox)                                    |
+| Secrets at rest    | AES-256-GCM (provider keys, integrations, backups)                                             |
 
 ## Public REST API, CLI, and MCP
 

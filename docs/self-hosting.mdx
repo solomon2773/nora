@@ -157,7 +157,7 @@ Run Nora itself on a Kubernetes cluster with the public OCI chart at `oci://ghcr
 
 ```bash
 helm install nora oci://ghcr.io/solomon2773/nora \
-  --version 0.7.0 \
+  --version 0.7.1 \
   --namespace nora --create-namespace \
   --set secrets.jwtSecret="$(openssl rand -hex 32)" \
   --set secrets.encryptionKey="$(openssl rand -hex 32)" \
@@ -176,7 +176,13 @@ inherit it. For a public deployment set `publicUrl`, enable `ingress.*`, and ter
 Ingress controller.
 
 <Warning>
-  A cluster-hosted control plane deploys agents to **Kubernetes targets only** (`ENABLED_BACKENDS=k8s`): pods have no Docker socket, so the Docker deploy target is unavailable. Register agent clusters under Admin → Kubernetes and mount their kubeconfigs with `kubeconfigs.existingSecret`. In-place release upgrades from the Admin UI are a Docker Compose feature — upgrade with `helm upgrade nora oci://ghcr.io/solomon2773/nora --version <chart-version> --reuse-values` instead.
+  A cluster-hosted control plane cannot use the **local Docker** target (`ENABLED_BACKENDS=k8s`)
+  because its pods have no Docker socket. It can still use operator-registered [Remote
+  Docker](/configuration/provisioner-backends/remote-docker) targets over SSH when Nora is
+  self-hosted and the control-plane pods can reach the private remote-host network. Register agent
+  clusters under Admin → Kubernetes and mount their kubeconfigs with `kubeconfigs.existingSecret`.
+  In-place release upgrades from the Admin UI are a Docker Compose feature — use the Helm upgrade
+  command from the chart README instead.
 </Warning>
 
 See the [chart README](https://github.com/solomon2773/nora/blob/master/infra/helm/nora/README.md) for all values, design notes, and the local Kind smoke test.

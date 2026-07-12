@@ -13,6 +13,7 @@ const { decrypt } = require("./crypto");
 const integrations = require("./integrations");
 const { resolveAgentRuntimeFamily } = require("./agentRuntimeFields");
 const remoteHosts = require("./remoteHosts");
+const { PRIVATE_IP_RE } = require("./networkSafety");
 const { normalizeDeployTargetName } = require("../agent-runtime/lib/backendCatalog");
 
 const metrics = require("./metrics");
@@ -53,7 +54,7 @@ function assertSafeAgentAddress(addr, label = "agent gateway") {
     throw new Error(`${label} address is missing`);
   }
   const host = typeof addr.host === "string" ? addr.host.trim() : "";
-  if (!host || host.length > 253 || !GATEWAY_HOST_RE.test(host)) {
+  if (!host || host.length > 253 || (!net.isIP(host) && !GATEWAY_HOST_RE.test(host))) {
     throw new Error(`${label} host is not a valid hostname`);
   }
   const port = Number(addr.port);
@@ -120,6 +121,24 @@ function isBlockedGatewayIP(address) {
 
 const EMPTY_ALLOWED_HOSTS = new Set();
 
+function assertRemoteGatewayAccessSupported(agent) {
+  if (normalizeDeployTargetName(agent?.deploy_target) !== "remote-docker") return;
+  if (
+    String(process.env.PLATFORM_MODE || "selfhosted")
+      .trim()
+      .toLowerCase() !== "paas"
+  ) {
+    return;
+  }
+
+  const error = new Error(
+    "Remote Docker gateway access is disabled in hosted mode because runtime traffic is not end-to-end encrypted",
+  );
+  error.statusCode = 403;
+  error.code = "REMOTE_HOSTS_DISABLED_IN_PAAS";
+  throw error;
+}
+
 // A registered remote host's advertised address is operator-trusted, so allow
 // it even though it is not RFC1918/loopback. Scoped to the agent's OWN host
 // (looked up by execution target) AND to a user who may use it — the agent's
@@ -130,6 +149,10 @@ async function allowedRemoteHostsForAgent(agent) {
   if (normalizeDeployTargetName(agent?.deploy_target) !== "remote-docker") {
     return EMPTY_ALLOWED_HOSTS;
   }
+  // Fail before consulting the registry. This protects historical/imported
+  // remote-agent rows too, and every caller (HTTP proxy, RPC pool, Hermes
+  // embed, and WS relay) shares this boundary.
+  assertRemoteGatewayAccessSupported(agent);
   try {
     const host = await remoteHosts.getRemoteHostByExecutionTarget(agent.execution_target_id);
     if (!host) return EMPTY_ALLOWED_HOSTS;
@@ -144,6 +167,8 @@ async function allowedRemoteHostsForAgent(agent) {
     const allowed = new Set();
     if (host.gatewayHost) allowed.add(String(host.gatewayHost).toLowerCase());
     if (host.sshHost) allowed.add(String(host.sshHost).toLowerCase());
+    if (host.rawGatewayHost) allowed.add(String(host.rawGatewayHost).toLowerCase());
+    if (host.rawSshHost) allowed.add(String(host.rawSshHost).toLowerCase());
     return allowed;
   } catch {
     return EMPTY_ALLOWED_HOSTS;
@@ -194,9 +219,17 @@ function isAllowedGatewayIP(address, hostname, extraAllowedHosts) {
   return false;
 }
 
-async function resolveGatewayHostForProxy(host, label = "agent gateway", extraAllowedHosts) {
+async function resolveGatewayHostForProxy(
+  host,
+  label = "agent gateway",
+  extraAllowedHosts,
+  { publicOnly = false } = {},
+) {
   const normalizedHost = String(host || "").trim();
   if (net.isIP(normalizedHost)) {
+    if (publicOnly && PRIVATE_IP_RE.test(normalizedHost)) {
+      throw new Error(`${label} host must be public in hosted mode`);
+    }
     if (!isAllowedGatewayIP(normalizedHost, normalizedHost, extraAllowedHosts)) {
       throw new Error(`${label} host is not an allowed gateway address`);
     }
@@ -210,8 +243,10 @@ async function resolveGatewayHostForProxy(host, label = "agent gateway", extraAl
     throw new Error(`${label} host could not be resolved (${error.code || error.message})`);
   }
 
-  const firstAllowed = addresses.find((entry) =>
-    isAllowedGatewayIP(entry.address, normalizedHost, extraAllowedHosts),
+  const firstAllowed = addresses.find(
+    (entry) =>
+      (!publicOnly || !PRIVATE_IP_RE.test(entry.address)) &&
+      isAllowedGatewayIP(entry.address, normalizedHost, extraAllowedHosts),
   );
   if (!firstAllowed) {
     throw new Error(`${label} host does not resolve to an allowed gateway network`);
@@ -258,6 +293,11 @@ async function resolveSafeGatewayHttpTarget(agent, gatewayPath = "", search = ""
     addr.host,
     "agent gateway",
     extraAllowedHosts,
+    {
+      publicOnly:
+        String(process.env.PLATFORM_MODE || "selfhosted").toLowerCase() === "paas" &&
+        normalizeDeployTargetName(agent?.deploy_target) === "remote-docker",
+    },
   );
   // The connection is pinned to the validated, resolved IP (no re-resolution at
   // fetch time, so no DNS-rebinding window). The Host header intentionally keeps
@@ -298,6 +338,11 @@ async function resolveSafeHermesDashboardTarget(agent) {
     addr.host,
     "hermes dashboard",
     extraAllowedHosts,
+    {
+      publicOnly:
+        String(process.env.PLATFORM_MODE || "selfhosted").toLowerCase() === "paas" &&
+        normalizeDeployTargetName(agent?.deploy_target) === "remote-docker",
+    },
   );
   return { host: resolvedHost, port: addr.port };
 }
@@ -717,6 +762,10 @@ function retireConflictingConnections(key, agent, addr) {
 }
 
 async function getConnection(agent) {
+  // Check before a pooled connection can be reused. PLATFORM_MODE is normally
+  // process-static, but this keeps the hosted-mode contract fail closed even
+  // if a process is reconfigured while an old remote connection is alive.
+  assertRemoteGatewayAccessSupported(agent);
   const rawAddr = resolveGatewayAddress(agent);
   if (!rawAddr) throw new Error("Agent gateway not yet provisioned");
   const addr = assertSafeAgentAddress(rawAddr);

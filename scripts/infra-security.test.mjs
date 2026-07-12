@@ -111,6 +111,61 @@ test("marketing Compose services use an explicit environment allowlist", () => {
   }
 });
 
+test("public nginx templates enforce marketing security and homepage cache headers", () => {
+  for (const file of ["infra/nginx_public.conf.template", "infra/nginx_tls.conf"]) {
+    const source = read(file);
+    assert.match(source, /server_tokens off;/, `${file} must suppress version disclosure`);
+    assert.match(
+      source,
+      /Strict-Transport-Security "max-age=63072000" always;/,
+      `${file} must emit HSTS`,
+    );
+    assert.doesNotMatch(
+      source,
+      /Strict-Transport-Security[^;]*includeSubDomains/,
+      `${file} must not pin unrelated subdomains by default`,
+    );
+    assert.match(
+      source,
+      /add_header Content-Security-Policy \$marketing_content_security_policy always;/,
+      `${file} must emit the marketing CSP`,
+    );
+    assert.match(source, /frame-ancestors 'none'/, `${file} must prevent marketing framing`);
+    assert.match(
+      source,
+      /~\^\/\(api\|app\|admin\)\(\/\|\$\) "";/,
+      `${file} must exclude protected surfaces from the marketing CSP`,
+    );
+    assert.match(
+      source,
+      /add_header X-Frame-Options \$surface_x_frame_options always;/,
+      `${file} must choose frame policy by surface`,
+    );
+    assert.match(
+      source,
+      /map \$uri \$surface_x_frame_options \{[\s\S]*?~\^\/api\(\/\|\$\) "";[\s\S]*?~\^\/\(app\|admin\)\(\/\|\$\) "SAMEORIGIN";/,
+      `${file} must preserve backend embed headers and protect dashboards`,
+    );
+    assert.match(
+      source,
+      /"\/" "public, max-age=0, s-maxage=300, stale-while-revalidate=60";/,
+      `${file} must mark only the homepage for shared caching`,
+    );
+    assert.match(source, /location = \/ \{[\s\S]*?proxy_hide_header Cache-Control;/);
+  }
+});
+
+test("every active nginx edge preserves backend embed framing headers", () => {
+  for (const file of ["nginx.conf", "infra/helm/nora/files/nginx-k8s.conf"]) {
+    const source = read(file);
+    assert.match(source, /map \$uri \$surface_x_frame_options \{/);
+    assert.match(source, /~\^\/api\(\/\|\$\) "";/);
+    assert.match(source, /~\^\/\(app\|admin\)\(\/\|\$\) "SAMEORIGIN";/);
+    assert.match(source, /add_header X-Frame-Options \$surface_x_frame_options always;/);
+    assert.doesNotMatch(source, /add_header X-Frame-Options DENY always;/);
+  }
+});
+
 test("production Compose mounts core secrets and fails closed on ownership migration", () => {
   const rootCompose = read("docker-compose.yml");
   assert.match(rootCompose, /target: JWT_SECRET/);
@@ -143,6 +198,16 @@ test("production Compose mounts core secrets and fails closed on ownership migra
     assert.match(permissionCommand, /set -eu/);
     assert.match(permissionCommand, /Failed to migrate Nora volume ownership/);
     assert.match(permissionCommand, /exit 1/);
+  }
+});
+
+test("backup worker images include backend adapters for remote agent capture", () => {
+  for (const file of ["workers/backup/Dockerfile", "workers/backup/Dockerfile.prod"]) {
+    assert.match(
+      read(file),
+      /COPY workers\/provisioner\/backends \/backend-api\/backends/,
+      `${file} must package the backend selected by containerManager`,
+    );
   }
 });
 
@@ -451,6 +516,8 @@ test("setup and entrypoint retain fail-closed secret handling contracts", () => 
   assert.match(composeSecretMaterializer, /symlinked path component/);
   assert.match(powershellSetup, /unexpected entry/);
   assert.match(deployWorkflow, /bash scripts\/materialize-compose-secrets\.sh "\$DEPLOY_ENV_FILE"/);
+  assert.match(deployWorkflow, /Verifying Docker socket access from \$\{service\}/);
+  assert.match(deployWorkflow, /socketPath:"\/var\/run\/docker\.sock"/);
   assert.match(proxmoxWorkflow, /NORA_COMPOSE_SECRETS_DIR=%s/);
   assert.match(proxmoxWorkflow, /bash scripts\/materialize-compose-secrets\.sh "\$env_file"/);
   assert.match(proxmoxWorkflow, /rm -rf "\$secrets_dir"/);
@@ -515,6 +582,95 @@ test("setup and entrypoint retain fail-closed secret handling contracts", () => 
      ln -s "$real_parent" "$fixture_dir/linked-parent"
      sed "s#^NORA_COMPOSE_SECRETS_DIR=.*#NORA_COMPOSE_SECRETS_DIR=$fixture_dir/linked-parent/secrets#" "$env_file" > "$fixture_dir/symlink.env"
      ! bash scripts/materialize-compose-secrets.sh "$fixture_dir/symlink.env"`,
+  ]);
+});
+
+test("release env refreshes and deduplicates the live Docker socket group", () => {
+  runChecked("bash", [
+    "-c",
+    `set -euo pipefail
+     fixture_dir="$(mktemp -d /tmp/nora-release-docker-gid.XXXXXX)"
+     socket_pid=""
+     cleanup() {
+       if [ -n "$socket_pid" ]; then
+         kill "$socket_pid" >/dev/null 2>&1 || true
+         wait "$socket_pid" >/dev/null 2>&1 || true
+       fi
+       rm -rf "$fixture_dir"
+     }
+     trap cleanup EXIT
+     env_file="$fixture_dir/.env"
+     socket_path="$fixture_dir/docker.sock"
+     fake_bin="$fixture_dir/bin"
+     mkdir -p "$fake_bin"
+     printf '%s\n' \
+       '#!/bin/sh' \
+       'if [ "$1" = "-c" ] && [ "$2" = "%g" ]; then printf "990\\n"; exit 0; fi' \
+       'exec /usr/bin/stat "$@"' > "$fake_bin/stat"
+     chmod 755 "$fake_bin/stat"
+     printf '%s\n' \
+       'NORA_CURRENT_VERSION=v1.16.0' \
+       'NORA_CURRENT_COMMIT=old-commit' \
+       'NORA_GITHUB_REPO=old/repo' \
+       'DOCKER_GID=0' \
+       'DOCKER_GID=123' \
+       'NORA_AGENT_HUB_API_KEY_HASH_SECRET=existing-secret' > "$env_file"
+     chmod 600 "$env_file"
+     node -e 'const net=require("node:net");const server=net.createServer();server.listen(process.argv[1]);process.on("SIGTERM",()=>server.close(()=>process.exit(0)));' "$socket_path" &
+     socket_pid=$!
+     for _ in $(seq 1 50); do
+       [ -S "$socket_path" ] && break
+       sleep 0.02
+     done
+     test -S "$socket_path"
+     PATH="$fake_bin:$PATH" NORA_DOCKER_SOCKET_PATH="$socket_path" \
+       bash infra/update-release-env.sh "$env_file" v1.16.1 new-commit solomon2773/nora
+     test "$(grep -c '^DOCKER_GID=' "$env_file")" -eq 1
+     grep -Fxq 'DOCKER_GID=990' "$env_file"
+     grep -Fxq 'NORA_CURRENT_VERSION=v1.16.1' "$env_file"
+     grep -Fxq 'NORA_CURRENT_COMMIT=new-commit' "$env_file"
+     grep -Fxq 'NORA_GITHUB_REPO=solomon2773/nora' "$env_file"
+     grep -Fxq 'NORA_AGENT_HUB_API_KEY_HASH_SECRET=existing-secret' "$env_file"
+     test "$(stat -c '%a' "$env_file")" = 600`,
+  ]);
+});
+
+test("production deploy refreshes generated public nginx config without touching custom configs", () => {
+  const deployWorkflow = read(".github/workflows/deploy-production.yml");
+  assert.match(
+    deployWorkflow,
+    /bash infra\/render-public-nginx\.sh[\s\S]*?"\$DEPLOY_ENV_FILE"[\s\S]*?"\$DEPLOY_COMPOSE_FILES"/,
+  );
+
+  runChecked("bash", [
+    "-c",
+    `set -euo pipefail
+     fixture_dir="$(mktemp -d /tmp/nora-render-public-nginx.XXXXXX)"
+     cleanup() {
+       rm -rf "$fixture_dir"
+     }
+     trap cleanup EXIT
+     fixture_repo="$fixture_dir/repo"
+     mkdir -p "$fixture_repo/infra"
+     cp infra/render-public-nginx.sh infra/nginx_public.conf.template infra/nginx_tls.conf "$fixture_repo/infra/"
+     env_file="$fixture_repo/.env"
+
+     printf '%s\n' \\
+       'NGINX_CONFIG_FILE=nginx.public.conf' \\
+       'NEXTAUTH_URL=https://launch.example.com' > "$env_file"
+     bash "$fixture_repo/infra/render-public-nginx.sh" "$env_file" 'docker-compose.yml:infra/docker-compose.public-tls.yml'
+     grep -Fq 'server_name launch.example.com;' "$fixture_repo/nginx.public.conf"
+     grep -Fq 'ssl_certificate     /etc/letsencrypt/live/launch.example.com/fullchain.pem;' "$fixture_repo/nginx.public.conf"
+     grep -Fq 'Strict-Transport-Security "max-age=63072000" always;' "$fixture_repo/nginx.public.conf"
+     grep -Fq 'add_header X-Frame-Options $surface_x_frame_options always;' "$fixture_repo/nginx.public.conf"
+
+     printf '%s\n' \\
+       'NGINX_CONFIG_FILE=custom-nginx.conf' \\
+       'NEXTAUTH_URL=https://ignored.example.com' > "$env_file"
+     before="$(sha256sum "$fixture_repo/nginx.public.conf" | awk '{ print $1 }')"
+     bash "$fixture_repo/infra/render-public-nginx.sh" "$env_file" 'docker-compose.yml:infra/docker-compose.public-prod.yml'
+     after="$(sha256sum "$fixture_repo/nginx.public.conf" | awk '{ print $1 }')"
+     test "$before" = "$after"`,
   ]);
 });
 
