@@ -1,5 +1,7 @@
-import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
@@ -137,6 +139,127 @@ function runCapture(command, args) {
   return execFileSync(command, args, { cwd: repoRoot, encoding: "utf8" });
 }
 
+function validateDeployVersionMetadata() {
+  const workflow = fs.readFileSync(
+    path.join(repoRoot, ".github", "workflows", "deploy-production.yml"),
+    "utf8",
+  );
+  const stepMatch = workflow.match(
+    / {6}- name: Compute deployed version metadata\n {8}id: release_meta\n {8}run: \|\n([\s\S]*?)(?=\n {6}- uses:)/,
+  );
+  assert.ok(stepMatch, "deploy workflow must expose an executable release metadata step");
+  assert.doesNotMatch(workflow, /git describe --tags/);
+
+  const script = stepMatch[1].replace(/^ {10}/gm, "");
+  const fixtureRepo = fs.mkdtempSync(path.join(os.tmpdir(), "nora-release-metadata-"));
+
+  const runGit = (args) =>
+    execFileSync("git", args, {
+      cwd: fixtureRepo,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  const runMetadata = (inputVersion = "") => {
+    const outputFile = path.join(fixtureRepo, `github-output-${Date.now()}-${Math.random()}`);
+    fs.writeFileSync(outputFile, "");
+    const result = spawnSync("bash", ["-c", script], {
+      cwd: fixtureRepo,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: outputFile,
+        INPUT_VERSION: inputVersion,
+      },
+    });
+    return {
+      result,
+      output: fs.readFileSync(outputFile, "utf8"),
+    };
+  };
+
+  try {
+    fs.writeFileSync(path.join(fixtureRepo, "fixture.txt"), "release metadata fixture\n");
+    runGit(["init", "-q"]);
+    runGit(["add", "fixture.txt"]);
+    runGit([
+      "-c",
+      "user.name=Nora CI",
+      "-c",
+      "user.email=ci@example.invalid",
+      "commit",
+      "-qm",
+      "fixture",
+    ]);
+    runGit(["tag", "nora-copilot-plugin-v0.1.3"]);
+
+    const componentOnly = runMetadata();
+    assert.equal(componentOnly.result.status, 0, componentOnly.result.stderr);
+    assert.match(componentOnly.output, /^version=$/m);
+    assert.doesNotMatch(componentOnly.output, /nora-copilot-plugin/);
+    assert.match(componentOnly.output, /^commit=[0-9a-f]{40}$/m);
+
+    runGit(["tag", "v1.16.0"]);
+    const automaticProductVersion = runMetadata();
+    assert.equal(automaticProductVersion.result.status, 0, automaticProductVersion.result.stderr);
+    assert.match(automaticProductVersion.output, /^version=v1\.16\.0$/m);
+
+    fs.writeFileSync(path.join(fixtureRepo, "post-release.txt"), "post-release source checkout\n");
+    runGit(["add", "post-release.txt"]);
+    runGit([
+      "-c",
+      "user.name=Nora CI",
+      "-c",
+      "user.email=ci@example.invalid",
+      "commit",
+      "-qm",
+      "post-release source checkout",
+    ]);
+
+    const sourceCheckout = runMetadata();
+    assert.equal(sourceCheckout.result.status, 0, sourceCheckout.result.stderr);
+    assert.match(sourceCheckout.output, /^version=$/m);
+
+    const manualProductVersion = runMetadata("v1.16.0");
+    assert.equal(manualProductVersion.result.status, 0, manualProductVersion.result.stderr);
+    assert.match(manualProductVersion.output, /^version=v1\.16\.0$/m);
+
+    const componentOverride = runMetadata("nora-copilot-plugin-v0.1.3");
+    assert.notEqual(componentOverride.result.status, 0);
+    assert.match(
+      `${componentOverride.result.stderr}${componentOverride.result.stdout}`,
+      /must be an exact Nora product tag/,
+    );
+
+    const nonexistentOverride = runMetadata("v99.0.0");
+    assert.notEqual(nonexistentOverride.result.status, 0);
+    assert.match(
+      `${nonexistentOverride.result.stderr}${nonexistentOverride.result.stdout}`,
+      /must name an existing Nora product tag/,
+    );
+
+    const tree = runGit(["rev-parse", "HEAD^{tree}"]).trim();
+    const unrelatedCommit = runGit([
+      "-c",
+      "user.name=Nora CI",
+      "-c",
+      "user.email=ci@example.invalid",
+      "commit-tree",
+      tree,
+      "-m",
+      "unrelated release",
+    ]).trim();
+    runGit(["tag", "v2.0.0", unrelatedCommit]);
+    const unrelatedOverride = runMetadata("v2.0.0");
+    assert.notEqual(unrelatedOverride.result.status, 0);
+    assert.match(
+      `${unrelatedOverride.result.stderr}${unrelatedOverride.result.stdout}`,
+      /is not reachable from target commit/,
+    );
+  } finally {
+    fs.rmSync(fixtureRepo, { recursive: true, force: true });
+  }
+}
+
 function kubeconformRendered(rendered, label) {
   const renderedPath = path.join(repoRoot, `.helm-rendered-ci-${label}.yaml`);
   fs.writeFileSync(renderedPath, rendered);
@@ -219,6 +342,7 @@ function validateKubernetesManifests(manifestFiles) {
   run("kubeconform", ["-summary", ...manifestFiles.map((file) => path.relative(repoRoot, file))]);
 }
 
+validateDeployVersionMetadata();
 validateComposeFiles();
 
 const chartFiles = walk(infraDir, (fullPath) => path.basename(fullPath) === "Chart.yaml");

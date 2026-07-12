@@ -13,7 +13,7 @@ on:
         required: false
         default: master
       version:
-        description: Override NORA_CURRENT_VERSION for this deploy
+        description: Override with an existing Nora product tag reachable from the target commit
         required: false
         default: ""
 
@@ -82,17 +82,37 @@ jobs:
         run: |
           set -euo pipefail
           commit="$(git rev-parse HEAD)"
-          exact_tag="$(git tag --points-at HEAD | head -n 1 || true)"
+          product_version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          product_tags=()
+          while IFS= read -r candidate_tag; do
+            if [[ "$candidate_tag" =~ $product_version_pattern ]]; then
+              product_tags+=("$candidate_tag")
+            fi
+          done < <(git tag --points-at HEAD)
+
+          exact_tag=""
+          if [ "${#product_tags[@]}" -gt 0 ]; then
+            exact_tag="$(printf '%s\n' "${product_tags[@]}" | sort -V | tail -n 1)"
+          fi
 
           version="${INPUT_VERSION:-}"
+          if [ -n "$version" ]; then
+            if [[ ! "$version" =~ $product_version_pattern ]]; then
+              echo "::error::Version override must be an exact Nora product tag such as v1.16.0; got '$version'."
+              exit 1
+            fi
+            version_commit="$(git rev-parse --verify --quiet "refs/tags/${version}^{commit}" || true)"
+            if [ -z "$version_commit" ]; then
+              echo "::error::Version override must name an existing Nora product tag; got '$version'."
+              exit 1
+            fi
+            if ! git merge-base --is-ancestor "$version_commit" HEAD; then
+              echo "::error::Version override '$version' is not reachable from target commit '$commit'."
+              exit 1
+            fi
+          fi
           if [ -z "$version" ] && [ -n "$exact_tag" ]; then
             version="$exact_tag"
-          fi
-          if [ -z "$version" ]; then
-            latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-            if [ -n "$latest_tag" ] && git merge-base --is-ancestor "$latest_tag" HEAD; then
-              version="$latest_tag"
-            fi
           fi
           if [ -z "$version" ]; then
             version=""
