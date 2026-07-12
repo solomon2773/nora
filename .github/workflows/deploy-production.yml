@@ -220,8 +220,13 @@ jobs:
           done
 
           export NORA_ENV_FILE="$DEPLOY_ENV_FILE"
+          echo "Pre-validating the generated nginx config before replacing services."
+          docker compose "${compose_args[@]}" run --rm --no-deps nginx nginx -t
           echo "Code update only: preserving compose volumes and provisioned agent Docker/K8s/VM instances."
           docker compose "${compose_args[@]}" up -d --build
+          echo "Recreating nginx so the regenerated bind-mounted config inode is active."
+          docker compose "${compose_args[@]}" up -d --force-recreate --no-deps nginx
+          docker compose "${compose_args[@]}" exec -T nginx nginx -t
           docker compose "${compose_args[@]}" ps
 
           health_attempts=221

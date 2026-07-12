@@ -4,6 +4,29 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
+## [v1.16.2](https://github.com/solomon2773/nora/releases/tag/v1.16.2) — 2026-07-12
+
+Edge-activation patch: generated public nginx policy is now applied immediately during every
+supported update path instead of remaining pinned to an older bind-mounted file inode.
+
+### Changed
+
+- Production deploys, Bash/PowerShell setup updates, and direct release upgrades pre-validate
+  and refresh the generated nginx configuration, recreate only the edge container to remount it,
+  and then validate the active configuration.
+- Infrastructure validation now executes the nginx/secret/release regression suite in CI, and
+  TLS renewal validates then gracefully reloads nginx so renewed certificates take effect.
+- Release metadata advances the Gemini extension manifest to `1.16.2` and the Helm chart to
+  `0.7.2` for exact-tag publication.
+
+### Fixed
+
+- Atomically replacing `nginx.public.conf` no longer leaves the running edge container bound to
+  the previous file inode, so marketing CSP, frame denial, host-only HSTS, homepage cache
+  eligibility, and backend-owned API framing headers take effect in the same deployment.
+- Installer and direct-upgrade paths now refresh generated public nginx policy before recreating
+  the edge instead of reactivating an old generated file.
+
 ## [v1.16.1](https://github.com/solomon2773/nora/releases/tag/v1.16.1) — 2026-07-12
 
 Activation-reliability patch: the zero-key first proof now stays behind a final readiness

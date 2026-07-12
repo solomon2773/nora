@@ -308,12 +308,18 @@ run_upgrade() {
       return $?
     fi
     bash scripts/materialize-compose-secrets.sh "$env_file"
+    bash infra/render-public-nginx.sh "$env_file" "$compose_files"
     echo "Rebuilding and restarting Nora services..."
   fi
 
   build_compose_args "$env_file" "$compose_files" || return $?
   if [ ! -f setup.sh ] || [ "${NORA_UPGRADE_USE_SETUP:-true}" = "false" ]; then
+    echo "Pre-validating nginx configuration..."
+    docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps nginx nginx -t
     docker compose "${COMPOSE_ARGS[@]}" up -d --build
+    echo "Recreating nginx so generated configuration mounts are refreshed..."
+    docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --no-deps nginx
+    docker compose "${COMPOSE_ARGS[@]}" exec -T nginx nginx -t
   fi
   docker compose "${COMPOSE_ARGS[@]}" ps
 

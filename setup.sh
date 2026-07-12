@@ -562,7 +562,13 @@ start_compose_stack() {
   info "Starting Nora (docker compose up -d --build)..."
   info "Preserving Docker volumes and provisioned agent instances."
   echo ""
+  info "Pre-validating nginx configuration..."
+  docker compose run --rm --no-deps nginx nginx -t
   docker compose up -d --build
+  info "Recreating nginx so generated configuration mounts are refreshed..."
+  docker compose up -d --force-recreate --no-deps nginx
+  docker compose exec -T nginx nginx -t
+  ok "Nginx configuration activated"
   verify_compose_runtime_permissions
   echo ""
   ok "Nora is running!"
@@ -1302,6 +1308,7 @@ if [ "$SETUP_MODE" = "update" ]; then
   ensure_backup_encryption_key_env "$ENV_FILE"
   materialize_compose_secret_files "$ENV_FILE"
   stamp_release_tracking_env "$ENV_FILE"
+  bash infra/render-public-nginx.sh "$ENV_FILE" "$compose_file_value"
   assert_nora_host_ports_available "$ENV_FILE"
   start_compose_stack
   echo ""

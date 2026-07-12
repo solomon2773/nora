@@ -56,10 +56,14 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
   </Step>
 
   <Step title="Start the stack">
-    Bring the stack up (or restart it if it is already running):
+    Pre-validate the generated file, bring the stack up, and recreate nginx so its single-file
+    bind mount is guaranteed to use the current file inode:
 
     ```bash theme={null}
+    docker compose run --rm --no-deps nginx nginx -t
     docker compose up -d
+    docker compose up -d --force-recreate --no-deps nginx
+    docker compose exec -T nginx nginx -t
     ```
 
     Nora is now accessible at `http://app.example.com` (port 80 must be open on your host firewall and the DNS A record must point to your server's public IP).
@@ -112,11 +116,17 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
 
   </Step>
 
-  <Step title="Restart the stack">
-    Bring the stack down and back up to apply the new nginx config. For a standard single-file Compose run, Docker Compose auto-loads the generated `docker-compose.override.yml`:
+  <Step title="Activate the TLS config">
+    The helper stops the old nginx process before writing the TLS config. Pre-validate the new
+    file, start the stack, and recreate nginx so the generated file is mounted from its current
+    inode. For a standard single-file Compose run, Docker Compose auto-loads the generated
+    `docker-compose.override.yml`:
 
     ```bash theme={null}
+    docker compose run --rm --no-deps nginx nginx -t
     docker compose up -d
+    docker compose up -d --force-recreate --no-deps nginx
+    docker compose exec -T nginx nginx -t
     ```
 
     If you are using explicit Compose overlays, include the tracked TLS layer directly:
@@ -126,7 +136,22 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
       -f docker-compose.yml \
       -f infra/docker-compose.public-tls.yml \
       -f <your-backend-overlay>.yml \
+      run --rm --no-deps nginx nginx -t
+    docker compose \
+      -f docker-compose.yml \
+      -f infra/docker-compose.public-tls.yml \
+      -f <your-backend-overlay>.yml \
       up -d --build
+    docker compose \
+      -f docker-compose.yml \
+      -f infra/docker-compose.public-tls.yml \
+      -f <your-backend-overlay>.yml \
+      up -d --force-recreate --no-deps nginx
+    docker compose \
+      -f docker-compose.yml \
+      -f infra/docker-compose.public-tls.yml \
+      -f <your-backend-overlay>.yml \
+      exec -T nginx nginx -t
     ```
 
     Nora is now available at `https://app.example.com` with a valid Let's Encrypt certificate.
@@ -136,11 +161,20 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
 
 ## Certificate renewal
 
-Let's Encrypt certificates expire after 90 days. Set up a cron job on your host to renew the certificate and reload nginx:
+Let's Encrypt certificates expire after 90 days. `infra/setup-tls.sh` installs a daily 3 AM cron
+entry that runs Certbot renewal, validates the live nginx configuration, and then sends nginx a
+graceful reload signal so renewed certificate files take effect without replacing the edge
+container.
 
 ```bash theme={null}
-# Run at 3 AM on the 1st and 15th of each month
-0 3 1,15 * * DOMAIN=app.example.com EMAIL=admin@example.com /path/to/nora/infra/setup-tls.sh && docker compose -f /path/to/nora/docker-compose.yml up -d
+crontab -l | grep 'certbot.*renew'
+```
+
+If you manage renewal yourself, keep the same post-renewal sequence:
+
+```bash theme={null}
+docker compose exec -T nginx nginx -t
+docker compose exec -T nginx nginx -s reload
 ```
 
 <Tip>

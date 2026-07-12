@@ -716,8 +716,17 @@ function Start-NoraComposeStack {
     Write-Info "Starting Nora (docker compose up -d --build)..."
     Write-Info "Preserving Docker volumes and provisioned agent instances."
     Write-Host ""
+    Write-Info "Pre-validating nginx configuration..."
+    docker compose run --rm --no-deps nginx nginx -t
+    if ($LASTEXITCODE -ne 0) { Write-Err "nginx configuration validation failed"; exit 1 }
     docker compose up -d --build
     if ($LASTEXITCODE -ne 0) { Write-Err "docker compose failed to start Nora"; exit 1 }
+    Write-Info "Recreating nginx so generated configuration mounts are refreshed..."
+    docker compose up -d --force-recreate --no-deps nginx
+    if ($LASTEXITCODE -ne 0) { Write-Err "nginx recreation failed"; exit 1 }
+    docker compose exec -T nginx nginx -t
+    if ($LASTEXITCODE -ne 0) { Write-Err "active nginx configuration validation failed"; exit 1 }
+    Write-Ok "Nginx configuration activated"
     Test-NoraRuntimePermissions
     Write-Host ""
     Write-Ok "Nora is running!"
@@ -1382,6 +1391,27 @@ if ($SETUP_MODE -eq "update") {
     Ensure-BackupEncryptionKeyEnv -EnvPath $ENV_FILE
     Write-ComposeSecretFiles -EnvPath $ENV_FILE
     Update-ReleaseTrackingEnv -EnvPath $ENV_FILE
+    if ($nginxConfig -eq $PUBLIC_NGINX_CONF) {
+        $publicUrl = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_PUBLIC_URL" -Default ""
+        if (-not $publicUrl) {
+            $publicUrl = Read-EnvValue -EnvPath $ENV_FILE -Name "NEXTAUTH_URL" -Default ""
+        }
+        $parsedPublicUri = $null
+        if (-not [Uri]::TryCreate($publicUrl, [UriKind]::Absolute, [ref]$parsedPublicUri) -or
+            -not $parsedPublicUri.Host.Contains(".")) {
+            Write-Err "Could not derive a valid public domain from NORA_PUBLIC_URL or NEXTAUTH_URL."
+            exit 1
+        }
+        $updateNginxTemplate = if ($updateOverlayTemplate -eq $TLS_COMPOSE_OVERRIDE_TEMPLATE) {
+            $TLS_NGINX_TEMPLATE
+        } else {
+            $PUBLIC_NGINX_TEMPLATE
+        }
+        Write-PublicNginxConfig -TemplatePath $updateNginxTemplate -Domain $parsedPublicUri.Host
+        Write-Ok "Refreshed $PUBLIC_NGINX_CONF from $updateNginxTemplate"
+    } elseif ($nginxConfig -ne "nginx.conf") {
+        Write-Info "Custom NGINX_CONFIG_FILE=$nginxConfig is active; leaving it unchanged."
+    }
     Assert-NoraHostPortsAvailable -Checks (Get-NoraHostPortChecks -EnvPath $ENV_FILE)
     Start-NoraComposeStack
     Write-Host ""

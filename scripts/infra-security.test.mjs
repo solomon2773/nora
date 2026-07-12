@@ -635,11 +635,52 @@ test("release env refreshes and deduplicates the live Docker socket group", () =
   ]);
 });
 
-test("production deploy refreshes generated public nginx config without touching custom configs", () => {
+test("production update paths activate refreshed nginx config without touching custom configs", () => {
   const deployWorkflow = read(".github/workflows/deploy-production.yml");
+  const rootPackage = JSON.parse(read("package.json"));
+  const setupBash = read("setup.sh");
+  const setupPowerShell = read("setup.ps1");
+  const releaseUpgrade = read("infra/run-release-upgrade.sh");
+  const setupTls = read("infra/setup-tls.sh");
+  assert.match(
+    rootPackage.scripts["ci:validate-infra"],
+    /node --test scripts\/infra-security\.test\.mjs/,
+  );
   assert.match(
     deployWorkflow,
     /bash infra\/render-public-nginx\.sh[\s\S]*?"\$DEPLOY_ENV_FILE"[\s\S]*?"\$DEPLOY_COMPOSE_FILES"/,
+  );
+  assert.match(
+    deployWorkflow,
+    /docker compose "\$\{compose_args\[@\]\}" run --rm --no-deps nginx nginx -t[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{compose_args\[@\]\}" exec -T nginx nginx -t/,
+  );
+  assert.match(
+    setupBash,
+    /bash infra\/render-public-nginx\.sh "\$ENV_FILE" "\$compose_file_value"/,
+  );
+  assert.match(
+    setupBash,
+    /docker compose run --rm --no-deps nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t/,
+  );
+  assert.match(
+    setupPowerShell,
+    /Write-PublicNginxConfig -TemplatePath \$updateNginxTemplate -Domain \$parsedPublicUri\.Host/,
+  );
+  assert.match(
+    setupPowerShell,
+    /docker compose run --rm --no-deps nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t/,
+  );
+  assert.match(
+    releaseUpgrade,
+    /bash infra\/render-public-nginx\.sh "\$env_file" "\$compose_files"/,
+  );
+  assert.match(
+    releaseUpgrade,
+    /docker compose "\$\{COMPOSE_ARGS\[@\]\}" run --rm --no-deps nginx nginx -t[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" exec -T nginx nginx -t/,
+  );
+  assert.match(
+    setupTls,
+    /certbot renew --quiet[\s\S]*?docker compose exec -T nginx nginx -t[\s\S]*?docker compose exec -T nginx nginx -s reload/,
   );
 
   runChecked("bash", [
