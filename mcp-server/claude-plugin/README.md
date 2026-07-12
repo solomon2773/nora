@@ -36,7 +36,7 @@ same Nora CLI configuration at runtime. You may instead set `NORA_API_URL` and
 After the plugin is listed in Claude's community directory:
 
 ```text
-/plugin install nora@claude-plugins-community
+/plugin install nora@claude-community
 ```
 
 Restart Claude Code after installation, then ask Claude to list your Nora
