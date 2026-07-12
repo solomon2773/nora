@@ -42,6 +42,16 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
       ALTER TABLE workspace_agents
         DROP CONSTRAINT IF EXISTS workspace_agents_workspace_id_agent_id_key;
       DROP INDEX IF EXISTS idx_workspace_agents_unique;
+      CREATE TABLE llm_providers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        provider VARCHAR(30) NOT NULL,
+        api_key TEXT,
+        model VARCHAR(100),
+        config JSONB DEFAULT '{}',
+        is_default BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
     `);
 
     const userResult = await migrationPool.query(
