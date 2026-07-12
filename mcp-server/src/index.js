@@ -12,7 +12,7 @@ import { createApi } from "./client.js";
 import { registerAgentTools } from "./tools/agents.js";
 import { registerMonitoringTools } from "./tools/monitoring.js";
 
-export const SERVER_INFO = { name: "nora", version: "0.1.3" };
+export const SERVER_INFO = { name: "nora", version: "0.1.4" };
 
 export function createServer({ api, env = process.env } = {}) {
   const server = new McpServer(SERVER_INFO, {

@@ -1,6 +1,6 @@
 {
   "name": "@noraai/mcp-server",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "MCP server for Nora — deploy, monitor, and operate self-hosted OpenClaw and Hermes agent fleets on Docker or Kubernetes.",
   "mcpName": "io.github.solomon2773/nora",
   "license": "Apache-2.0",

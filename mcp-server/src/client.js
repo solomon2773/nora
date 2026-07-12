@@ -38,7 +38,7 @@ export function createApi({ baseUrl, apiKey, fetchImpl } = {}) {
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${resolved.apiKey}`,
-        "User-Agent": "nora-mcp-server/0.1.3",
+        "User-Agent": "nora-mcp-server/0.1.4",
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });

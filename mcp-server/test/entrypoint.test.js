@@ -55,7 +55,7 @@ test(
     t.after(() => client.close());
 
     await client.connect(transport);
-    assert.equal(client.getServerVersion()?.version, "0.1.3");
+    assert.equal(client.getServerVersion()?.version, "0.1.4");
 
     const result = await client.listTools();
 

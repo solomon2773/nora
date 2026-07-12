@@ -143,7 +143,7 @@ test("the HTTP client sends bearer auth and parses JSON for a valid path", async
   assert.deepEqual(body, { id: AID });
   assert.equal(seen.url, `https://nora.example.com/api/agents/${AID}`);
   assert.equal(seen.auth, "Bearer nora_test");
-  assert.equal(seen.userAgent, "nora-mcp-server/0.1.3");
+  assert.equal(seen.userAgent, "nora-mcp-server/0.1.4");
 });
 
 test("per-agent observability tools use the /api/agents/:id paths", async () => {

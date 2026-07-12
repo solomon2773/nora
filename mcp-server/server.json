@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.solomon2773/nora",
   "title": "Nora",
-  "description": "Operate your self-hosted Nora agent fleet from MCP clients.",
-  "version": "0.1.3",
+  "description": "Operate self-hosted OpenClaw and Hermes agent fleets on Docker or Kubernetes from MCP clients.",
+  "version": "0.1.4",
   "websiteUrl": "https://noradocs.solomontsao.com",
   "repository": {
     "url": "https://github.com/solomon2773/nora",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@noraai/mcp-server",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "transport": {
         "type": "stdio"
       },
