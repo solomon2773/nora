@@ -71,18 +71,39 @@ http {
     # Marketing pages must not be framed. Authenticated dashboards remain
     # same-origin only, while API responses preserve backend-owned headers
     # (the gateway embed route deliberately emits SAMEORIGIN).
-    map $uri $surface_x_frame_options {
+    map $request_uri $surface_x_frame_options {
         default "DENY";
-        ~^/api(/|$) "";
-        ~^/(app|admin)(/|$) "SAMEORIGIN";
-        ~^/_next/ "";
+        ~^/api(/|\?|$) "";
+        ~^/(app|admin)(/|\?|$) "SAMEORIGIN";
+        ~^/_next(/|\?|$) "";
     }
 
+    # APIs retain backend-owned browser policy so specialized responses such
+    # as gateway embeds can narrow it without an edge-level duplicate.
+    map $request_uri $surface_x_content_type_options {
+        default "nosniff";
+        ~^/api(/|\?|$) "";
+    }
+
+    map $request_uri $surface_referrer_policy {
+        default "strict-origin-when-cross-origin";
+        ~^/api(/|\?|$) "";
+    }
+
+    map $request_uri $surface_cross_origin_opener_policy {
+        default "same-origin";
+        ~^/api(/|\?|$) "";
+    }
+
+    # HSTS is transport-edge policy. Hide the upstream Helmet default so the
+    # host-only value below is the single authoritative field.
+    proxy_hide_header Strict-Transport-Security;
+
     server_tokens off;
-    add_header X-Content-Type-Options nosniff always;
+    add_header X-Content-Type-Options $surface_x_content_type_options always;
     add_header X-Frame-Options $surface_x_frame_options always;
-    add_header Referrer-Policy strict-origin-when-cross-origin always;
-    add_header Cross-Origin-Opener-Policy same-origin always;
+    add_header Referrer-Policy $surface_referrer_policy always;
+    add_header Cross-Origin-Opener-Policy $surface_cross_origin_opener_policy always;
     # This header is ignored by direct HTTP clients but is preserved when a
     # TLS-terminating reverse proxy such as Cloudflare fronts this origin.
     add_header Strict-Transport-Security "max-age=63072000" always;
@@ -211,6 +232,7 @@ http {
         # 4. Marketing Pages (Root)
         location = / {
             proxy_hide_header Cache-Control;
+            proxy_hide_header Strict-Transport-Security;
             proxy_pass $marketing_site;
         }
 

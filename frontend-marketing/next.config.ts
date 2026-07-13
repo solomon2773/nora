@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
   output: "standalone",
   i18n: {
     locales: ["en", "es", "fr", "zh-Hans", "zh-Hant"],

@@ -28,6 +28,8 @@ supported update path instead of remaining pinned to an older bind-mounted file 
   the edge instead of reactivating an old generated file.
 - SSH-driven deploys no longer let the one-off nginx validator consume the remaining remote
   heredoc before the rebuild, health checks, and Docker-socket verification execute.
+- Public edges now emit one host-only HSTS field while preserving backend-owned API browser
+  policy, and every Next.js surface disables framework disclosure through `X-Powered-By`.
 
 ## [v1.16.1](https://github.com/solomon2773/nora/releases/tag/v1.16.1) — 2026-07-12
 

@@ -157,7 +157,7 @@ Run Nora itself on a Kubernetes cluster with the public OCI chart at `oci://ghcr
 
 ```bash
 helm install nora oci://ghcr.io/solomon2773/nora \
-  --version 0.7.1 \
+  --version 0.7.2 \
   --namespace nora --create-namespace \
   --set secrets.jwtSecret="$(openssl rand -hex 32)" \
   --set secrets.encryptionKey="$(openssl rand -hex 32)" \

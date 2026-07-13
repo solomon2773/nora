@@ -62,6 +62,14 @@ function serviceSection(source, serviceName) {
   return match[1];
 }
 
+function nginxRequestMapSection(source, variableName) {
+  const match = source.match(
+    new RegExp(`map \\$request_uri \\$${variableName} \\{([\\s\\S]*?)\\n    \\}`),
+  );
+  assert.ok(match, `missing request map ${variableName}`);
+  return match[1];
+}
+
 function manifestDocument(source, kind, name) {
   const document = source
     .split(/^---\s*$/m)
@@ -127,6 +135,11 @@ test("public nginx templates enforce marketing security and homepage cache heade
     );
     assert.match(
       source,
+      /proxy_hide_header Strict-Transport-Security;/,
+      `${file} must hide upstream HSTS`,
+    );
+    assert.match(
+      source,
       /add_header Content-Security-Policy \$marketing_content_security_policy always;/,
       `${file} must emit the marketing CSP`,
     );
@@ -142,8 +155,8 @@ test("public nginx templates enforce marketing security and homepage cache heade
       `${file} must choose frame policy by surface`,
     );
     assert.match(
-      source,
-      /map \$uri \$surface_x_frame_options \{[\s\S]*?~\^\/api\(\/\|\$\) "";[\s\S]*?~\^\/\(app\|admin\)\(\/\|\$\) "SAMEORIGIN";/,
+      nginxRequestMapSection(source, "surface_x_frame_options"),
+      /~\^\/api\(\/\|\\\?\|\$\) "";[\s\S]*?~\^\/\(app\|admin\)\(\/\|\\\?\|\$\) "SAMEORIGIN";/,
       `${file} must preserve backend embed headers and protect dashboards`,
     );
     assert.match(
@@ -151,18 +164,52 @@ test("public nginx templates enforce marketing security and homepage cache heade
       /"\/" "public, max-age=0, s-maxage=300, stale-while-revalidate=60";/,
       `${file} must mark only the homepage for shared caching`,
     );
-    assert.match(source, /location = \/ \{[\s\S]*?proxy_hide_header Cache-Control;/);
+    assert.match(
+      source,
+      /location = \/ \{[\s\S]*?proxy_hide_header Cache-Control;[\s\S]*?proxy_hide_header Strict-Transport-Security;/,
+    );
   }
 });
 
-test("every active nginx edge preserves backend embed framing headers", () => {
-  for (const file of ["nginx.conf", "infra/helm/nora/files/nginx-k8s.conf"]) {
+test("Next.js frontends suppress framework disclosure headers", () => {
+  for (const file of [
+    "frontend-marketing/next.config.ts",
+    "frontend-dashboard/next.config.ts",
+    "admin-dashboard/next.config.ts",
+  ]) {
+    assert.match(read(file), /poweredByHeader:\s*false/, `${file} must hide X-Powered-By`);
+  }
+});
+
+test("every active nginx edge preserves backend API-owned browser policy", () => {
+  for (const file of [
+    "nginx.conf",
+    "infra/nginx_public.conf.template",
+    "infra/nginx_tls.conf",
+    "infra/helm/nora/files/nginx-k8s.conf",
+  ]) {
     const source = read(file);
-    assert.match(source, /map \$uri \$surface_x_frame_options \{/);
-    assert.match(source, /~\^\/api\(\/\|\$\) "";/);
-    assert.match(source, /~\^\/\(app\|admin\)\(\/\|\$\) "SAMEORIGIN";/);
+    const frameMap = nginxRequestMapSection(source, "surface_x_frame_options");
+    assert.match(frameMap, /~\^\/api\(\/\|\\\?\|\$\) "";/);
+    assert.match(frameMap, /~\^\/\(app\|admin\)\(\/\|\\\?\|\$\) "SAMEORIGIN";/);
     assert.match(source, /add_header X-Frame-Options \$surface_x_frame_options always;/);
     assert.doesNotMatch(source, /add_header X-Frame-Options DENY always;/);
+    for (const [header, variable] of [
+      ["X-Content-Type-Options", "surface_x_content_type_options"],
+      ["Referrer-Policy", "surface_referrer_policy"],
+      ["Cross-Origin-Opener-Policy", "surface_cross_origin_opener_policy"],
+    ]) {
+      assert.match(
+        nginxRequestMapSection(source, variable),
+        /~\^\/api\(\/\|\\\?\|\$\) "";/,
+        `${file} must preserve backend ${header} on APIs`,
+      );
+      assert.match(
+        source,
+        new RegExp(`add_header ${header} \\$${variable} always;`),
+        `${file} must apply edge ${header} outside APIs`,
+      );
+    }
   }
 });
 
