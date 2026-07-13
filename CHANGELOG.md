@@ -28,6 +28,8 @@ supported update path instead of remaining pinned to an older bind-mounted file 
   the edge instead of reactivating an old generated file.
 - SSH-driven deploys no longer let the one-off nginx validator consume the remaining remote
   heredoc before the rebuild, health checks, and Docker-socket verification execute.
+- Active nginx checks and container probes also read from `/dev/null`, so streamed Bash installs
+  and SSH deploys cannot stop after recreation while silently skipping readiness verification.
 - Public edges now emit one host-only HSTS field while preserving backend-owned API browser
   policy, and every Next.js surface disables framework disclosure through `X-Powered-By`.
 - Public nginx now restores visitor addresses only from Cloudflare's published proxy networks,

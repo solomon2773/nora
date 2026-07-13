@@ -567,7 +567,7 @@ start_compose_stack() {
   docker compose up -d --build
   info "Recreating nginx so generated configuration mounts are refreshed..."
   docker compose up -d --force-recreate --no-deps nginx
-  docker compose exec -T nginx nginx -t
+  docker compose exec -T nginx nginx -t </dev/null
   ok "Nginx configuration activated"
   verify_compose_runtime_permissions
   echo ""
@@ -579,7 +579,7 @@ run_compose_node_probe() {
   local attempt
   info "Waiting for ${service} probe: ${attempts} attempts every ${interval}s (${window}s from first to final attempt)."
   for attempt in $(seq 1 "$attempts"); do
-    if docker compose exec -T "$service" node -e "$script" >/dev/null 2>&1; then
+    if docker compose exec -T "$service" node -e "$script" </dev/null >/dev/null 2>&1; then
       ok "$description"
       return 0
     fi
@@ -588,7 +588,7 @@ run_compose_node_probe() {
     fi
   done
 
-  docker compose exec -T "$service" node -e "$script" || true
+  docker compose exec -T "$service" node -e "$script" </dev/null || true
   error "$description failed after ${attempts} attempts every ${interval}s (${window}s first-to-final window). Inspect: docker compose logs --tail=100 $service"
   return 1
 }

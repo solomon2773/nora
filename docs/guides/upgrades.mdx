@@ -40,7 +40,7 @@ bash infra/render-public-nginx.sh \
 "${compose[@]}" run --rm --no-deps --interactive=false -T nginx nginx -t
 "${compose[@]}" up -d --build
 "${compose[@]}" up -d --force-recreate --no-deps nginx
-"${compose[@]}" exec -T nginx nginx -t
+"${compose[@]}" exec -T nginx nginx -t </dev/null
 ```
 
 The Kubernetes overlay is shared by AKS, GKE, EKS, k3s, and other kubeconfig-based Kubernetes targets. Provider selection happens through the Admin Kubernetes cluster settings and mounted kubeconfigs, not through separate provider-specific compose files.

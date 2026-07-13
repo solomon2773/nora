@@ -115,7 +115,7 @@ echo "[2/3] Config ready"
 echo
 echo "[3/3] Setting up auto-renewal..."
 
-CRON_CMD="0 3 * * * docker run --rm -v /etc/letsencrypt:/etc/letsencrypt -v /var/lib/letsencrypt:/var/lib/letsencrypt -v ${WEBROOT}:/var/www/certbot certbot/certbot renew --quiet && cd ${REPO_DIR} && docker compose exec -T nginx nginx -t && docker compose exec -T nginx nginx -s reload"
+CRON_CMD="0 3 * * * docker run --rm -v /etc/letsencrypt:/etc/letsencrypt -v /var/lib/letsencrypt:/var/lib/letsencrypt -v ${WEBROOT}:/var/www/certbot certbot/certbot renew --quiet && cd ${REPO_DIR} && docker compose exec -T nginx nginx -t </dev/null && docker compose exec -T nginx nginx -s reload </dev/null"
 
 (crontab -l 2>/dev/null | grep -v 'certbot.*renew' || true; echo "$CRON_CMD") | crontab -
 

@@ -195,7 +195,7 @@ wait_for_backend_health() {
   echo "Waiting for ${service} health: ${attempts} attempts every ${interval}s (${window}s from first to final attempt)."
   for attempt in $(seq 1 "$attempts"); do
     if docker compose "${COMPOSE_ARGS[@]}" exec -T "$service" \
-      node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"; then
+      node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" </dev/null; then
       echo "${service} is healthy."
       break
     fi
@@ -319,7 +319,7 @@ run_upgrade() {
     docker compose "${COMPOSE_ARGS[@]}" up -d --build
     echo "Recreating nginx so generated configuration mounts are refreshed..."
     docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --no-deps nginx
-    docker compose "${COMPOSE_ARGS[@]}" exec -T nginx nginx -t
+    docker compose "${COMPOSE_ARGS[@]}" exec -T nginx nginx -t </dev/null
   fi
   docker compose "${COMPOSE_ARGS[@]}" ps
 

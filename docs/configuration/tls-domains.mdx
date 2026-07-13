@@ -63,7 +63,7 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
     docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
     docker compose up -d
     docker compose up -d --force-recreate --no-deps nginx
-    docker compose exec -T nginx nginx -t
+    docker compose exec -T nginx nginx -t </dev/null
     ```
 
     Nora is now accessible at `http://app.example.com` (port 80 must be open on your host firewall and the DNS A record must point to your server's public IP).
@@ -126,7 +126,7 @@ By default, Nora listens on `localhost:8080` and is only reachable from the mach
     docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
     docker compose up -d
     docker compose up -d --force-recreate --no-deps nginx
-    docker compose exec -T nginx nginx -t
+    docker compose exec -T nginx nginx -t </dev/null
     ```
 
     If you are using explicit Compose overlays, include the tracked TLS layer directly:
@@ -173,8 +173,8 @@ crontab -l | grep 'certbot.*renew'
 If you manage renewal yourself, keep the same post-renewal sequence:
 
 ```bash theme={null}
-docker compose exec -T nginx nginx -t
-docker compose exec -T nginx nginx -s reload
+docker compose exec -T nginx nginx -t </dev/null
+docker compose exec -T nginx nginx -s reload </dev/null
 ```
 
 <Tip>

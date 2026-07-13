@@ -226,7 +226,7 @@ jobs:
           docker compose "${compose_args[@]}" up -d --build
           echo "Recreating nginx so the regenerated bind-mounted config inode is active."
           docker compose "${compose_args[@]}" up -d --force-recreate --no-deps nginx
-          docker compose "${compose_args[@]}" exec -T nginx nginx -t
+          docker compose "${compose_args[@]}" exec -T nginx nginx -t </dev/null
           docker compose "${compose_args[@]}" ps
 
           health_attempts=221
@@ -235,7 +235,7 @@ jobs:
           echo "Waiting for backend-api health: ${health_attempts} attempts every ${health_interval_seconds}s (${health_window_seconds}s from first to final attempt)."
           for attempt in $(seq 1 "$health_attempts"); do
             if docker compose "${compose_args[@]}" exec -T backend-api \
-              node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"; then
+              node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" </dev/null; then
               echo "backend-api is healthy."
               break
             fi
@@ -253,7 +253,7 @@ jobs:
           docker_probe='const http=require("http");const request=http.request({socketPath:"/var/run/docker.sock",path:"/_ping",method:"GET"},response=>{let body="";response.setEncoding("utf8");response.on("data",chunk=>body+=chunk);response.on("end",()=>process.exit(response.statusCode===200&&body.trim()==="OK"?0:1));});request.setTimeout(5000,()=>request.destroy(new Error("Docker socket timeout")));request.on("error",error=>{console.error(error.message);process.exit(1);});request.end();'
           for service in backend-api worker-provisioner worker-backup; do
             echo "Verifying Docker socket access from ${service}."
-            if ! docker compose "${compose_args[@]}" exec -T "$service" node -e "$docker_probe"; then
+            if ! docker compose "${compose_args[@]}" exec -T "$service" node -e "$docker_probe" </dev/null; then
               echo "${service} cannot access /var/run/docker.sock after deployment." >&2
               docker compose "${compose_args[@]}" ps "$service" >&2 || true
               docker compose "${compose_args[@]}" logs --tail=80 "$service" >&2 || true

@@ -38,6 +38,10 @@ function read(relativePath) {
   return readFileSync(path.join(repoRoot, relativePath), "utf8");
 }
 
+function shellLogicalLines(source) {
+  return source.replace(/\\\r?\n\s*/g, " ").split(/\r?\n/);
+}
+
 function runChecked(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: repoRoot,
@@ -733,7 +737,15 @@ test("production update paths activate refreshed nginx config without touching c
   );
   assert.match(
     deployWorkflow,
-    /docker compose "\$\{compose_args\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{compose_args\[@\]\}" exec -T nginx nginx -t/,
+    /docker compose "\$\{compose_args\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{compose_args\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{compose_args\[@\]\}" exec -T nginx nginx -t <\/dev\/null/,
+  );
+  assert.match(
+    deployWorkflow,
+    /docker compose "\$\{compose_args\[@\]\}" exec -T backend-api \\\s*\n\s*node -e [^\n]+ <\/dev\/null; then/,
+  );
+  assert.match(
+    deployWorkflow,
+    /docker compose "\$\{compose_args\[@\]\}" exec -T "\$service" node -e "\$docker_probe" <\/dev\/null; then/,
   );
   assert.match(
     setupBash,
@@ -741,7 +753,7 @@ test("production update paths activate refreshed nginx config without touching c
   );
   assert.match(
     setupBash,
-    /docker compose run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t/,
+    /docker compose run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose up -d --build[\s\S]*?docker compose up -d --force-recreate --no-deps nginx[\s\S]*?docker compose exec -T nginx nginx -t <\/dev\/null/,
   );
   assert.match(
     setupPowerShell,
@@ -757,26 +769,72 @@ test("production update paths activate refreshed nginx config without touching c
   );
   assert.match(
     releaseUpgrade,
-    /docker compose "\$\{COMPOSE_ARGS\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" exec -T nginx nginx -t/,
+    /docker compose "\$\{COMPOSE_ARGS\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --build[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" up -d --force-recreate --no-deps nginx[\s\S]*?docker compose "\$\{COMPOSE_ARGS\[@\]\}" exec -T nginx nginx -t <\/dev\/null/,
   );
   assert.match(
     setupTls,
-    /certbot renew --quiet[\s\S]*?docker compose exec -T nginx nginx -t[\s\S]*?docker compose exec -T nginx nginx -s reload/,
+    /certbot renew --quiet[\s\S]*?docker compose exec -T nginx nginx -t <\/dev\/null[\s\S]*?docker compose exec -T nginx nginx -s reload <\/dev\/null/,
   );
+
+  for (const [file, source] of [
+    [".github/workflows/deploy-production.yml", deployWorkflow],
+    ["setup.sh", setupBash],
+    ["infra/run-release-upgrade.sh", releaseUpgrade],
+    ["infra/setup-tls.sh", setupTls],
+  ]) {
+    for (const line of shellLogicalLines(source)) {
+      if (!line.includes("docker compose") || !line.includes("exec -T")) continue;
+      const execCount = line.match(/\bexec -T\b/g)?.length || 0;
+      const nullInputCount = line.match(/<\/dev\/null/g)?.length || 0;
+      assert.equal(
+        nullInputCount,
+        execCount,
+        `${file} must detach stdin for every docker compose exec: ${line.trim()}`,
+      );
+    }
+  }
 
   const remoteValidation = deployWorkflow.match(
     /^\s*(docker compose "\$\{compose_args\[@\]\}" run --rm --no-deps --interactive=false -T nginx nginx -t)\s*$/m,
   );
   assert.ok(remoteValidation, "deploy workflow must expose a non-interactive nginx preflight");
+  const activeValidation = deployWorkflow.match(
+    /^\s*(docker compose "\$\{compose_args\[@\]\}" exec -T nginx nginx -t <\/dev\/null)\s*$/m,
+  );
+  assert.ok(activeValidation, "deploy workflow must detach stdin from active nginx validation");
+  const setupPreflight = setupBash.match(
+    /^\s*(docker compose run --rm --no-deps --interactive=false -T nginx nginx -t)\s*$/m,
+  );
+  assert.ok(setupPreflight, "setup must expose a non-interactive nginx preflight");
+  const setupActiveValidation = setupBash.match(
+    /^\s*(docker compose exec -T nginx nginx -t <\/dev\/null)\s*$/m,
+  );
+  assert.ok(setupActiveValidation, "setup must detach stdin from active nginx validation");
+  const verificationBlockStart = deployWorkflow.indexOf(
+    '          echo "Pre-validating the generated nginx config before replacing services."',
+  );
+  const verificationBlockEnd = deployWorkflow.indexOf("\n          REMOTE", verificationBlockStart);
+  assert.ok(verificationBlockStart >= 0, "deploy workflow must expose the verification block");
+  assert.ok(verificationBlockEnd > verificationBlockStart, "deploy verification block must end");
+  const verificationBlock = deployWorkflow
+    .slice(verificationBlockStart, verificationBlockEnd)
+    .replace(/^ {10}/gm, "");
   const stdinFixture = mkdtempSync(path.join(tmpdir(), "nora-nginx-preflight-stdin-"));
   try {
     const fakeDocker = path.join(stdinFixture, "docker");
-    const marker = path.join(stdinFixture, "continued");
+    const dockerLog = path.join(stdinFixture, "docker.log");
+    const deployMarker = path.join(stdinFixture, "deploy-continued");
+    const verificationMarker = path.join(stdinFixture, "verification-continued");
+    const setupMarker = path.join(stdinFixture, "setup-continued");
     writeFileSync(
       fakeDocker,
       `#!/usr/bin/env bash
 set -euo pipefail
-if [[ " $* " != *" --interactive=false "* ]]; then
+printf '%s\t%s\n' "$(readlink /proc/$$/fd/0 || true)" "$*" >> "\${FAKE_DOCKER_LOG:?}"
+if [[ " $* " == *" run "* && " $* " != *" --interactive=false "* ]]; then
+  cat >/dev/null
+fi
+if [[ " $* " == *" exec "* && "$(readlink /proc/$$/fd/0 || true)" != "/dev/null" ]]; then
   cat >/dev/null
 fi
 `,
@@ -785,16 +843,75 @@ fi
     const remoteScript = `set -euo pipefail
 compose_args=()
 ${remoteValidation[1]}
-printf continued > ${JSON.stringify(marker)}
+${activeValidation[1]}
+printf continued > ${JSON.stringify(deployMarker)}
 `;
-    const result = spawnSync("bash", ["-s"], {
+    const deployResult = spawnSync("bash", ["-s"], {
       cwd: repoRoot,
       encoding: "utf8",
       input: remoteScript,
-      env: { ...process.env, PATH: `${stdinFixture}:${process.env.PATH}` },
+      env: {
+        ...process.env,
+        FAKE_DOCKER_LOG: dockerLog,
+        PATH: `${stdinFixture}:${process.env.PATH}`,
+      },
     });
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(readFileSync(marker, "utf8"), "continued");
+    assert.equal(deployResult.status, 0, deployResult.stderr || deployResult.stdout);
+    assert.equal(readFileSync(deployMarker, "utf8"), "continued");
+
+    const verificationScript = `set -euo pipefail
+compose_args=()
+${verificationBlock}
+printf continued > ${JSON.stringify(verificationMarker)}
+`;
+    const verificationResult = spawnSync("bash", ["-s"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      input: verificationScript,
+      env: {
+        ...process.env,
+        FAKE_DOCKER_LOG: dockerLog,
+        PATH: `${stdinFixture}:${process.env.PATH}`,
+      },
+    });
+    assert.equal(
+      verificationResult.status,
+      0,
+      verificationResult.stderr || verificationResult.stdout,
+    );
+    assert.equal(readFileSync(verificationMarker, "utf8"), "continued");
+    const execCalls = readFileSync(dockerLog, "utf8")
+      .split("\n")
+      .filter((line) => line.includes("\tcompose exec "));
+    assert.equal(execCalls.length, 6, "expected one focused and five full-block exec calls");
+    assert.ok(
+      execCalls.every((line) => line.startsWith("/dev/null\t")),
+      `all Compose exec calls must detach stdin:\n${execCalls.join("\n")}`,
+    );
+    for (const service of ["backend-api", "worker-provisioner", "worker-backup"]) {
+      assert.ok(
+        execCalls.some((line) => line.includes(`exec -T ${service} node -e`)),
+        `verification block must probe ${service}`,
+      );
+    }
+
+    const setupScript = `set -euo pipefail
+${setupPreflight[1]}
+${setupActiveValidation[1]}
+printf continued > ${JSON.stringify(setupMarker)}
+`;
+    const setupResult = spawnSync("bash", ["-s"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      input: setupScript,
+      env: {
+        ...process.env,
+        FAKE_DOCKER_LOG: dockerLog,
+        PATH: `${stdinFixture}:${process.env.PATH}`,
+      },
+    });
+    assert.equal(setupResult.status, 0, setupResult.stderr || setupResult.stdout);
+    assert.equal(readFileSync(setupMarker, "utf8"), "continued");
   } finally {
     rmSync(stdinFixture, { recursive: true, force: true });
   }
