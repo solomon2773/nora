@@ -47,8 +47,9 @@ Because the origin has a real Let's Encrypt cert, Full (strict) validates it end
 Do **not** use "Flexible" (it sends plaintext to the origin and breaks secure cookies).
 
 Also enable **SSL/TLS → Edge Certificates → Always Use HTTPS** and **Automatic HTTPS
-Rewrites**. You can turn on **HSTS** here instead of (or in addition to) the commented
-HSTS line in `infra/nginx_tls.conf`.
+Rewrites**. Nora's public nginx emits one host-only HSTS policy. Leave Cloudflare HSTS off
+unless you intentionally want a broader policy such as `includeSubDomains`; do not publish
+two conflicting HSTS fields.
 
 ## Step 3 — Restore the real client IP at the origin (required)
 
@@ -57,17 +58,18 @@ breaks the per-IP rate limiting added in `nginx_tls.conf` / `nginx_public.conf.t
 (`auth_limit` / `api_limit`): every visitor would share a handful of Cloudflare IPs, so a
 single edge IP could trip the limit for everyone.
 
-Both nginx templates ship a ready-to-enable block. **Uncomment** the
-`# ── Cloudflare real client IP restoration ──` section (the `set_real_ip_from …` ranges,
-`real_ip_header CF-Connecting-IP;`, `real_ip_recursive on;`), confirm the ranges against
-<https://www.cloudflare.com/ips/>, then regenerate + reload:
+Both public nginx templates enable Cloudflare real-IP restoration by default. The
+`CF-Connecting-IP` header is trusted only when the connection itself comes from one of
+Cloudflare's published IPv4/IPv6 networks, so direct clients cannot spoof it. Confirm the
+tracked ranges against <https://www.cloudflare.com/ips/> during release maintenance, then
+regenerate + recreate nginx:
 
 ```bash
 # regenerate nginx.public.conf from the template and reload
 DOMAIN=nora.solomontsao.com ./infra/setup-tls.sh    # or re-run your deploy
 docker compose --env-file .env -f docker-compose.yml \
   -f infra/docker-compose.public-prod.yml -f infra/docker-compose.public-tls.yml \
-  exec nginx nginx -s reload
+  up -d --force-recreate --no-deps nginx
 ```
 
 Verify: after enabling, `docker compose ... logs nginx` should show **real visitor IPs**,
@@ -117,11 +119,14 @@ longer reaches the Node process.
 **Cloudflare → Security → WAF → Rate limiting rules.** Add at least:
 
 - **Login protection:** path `/api/auth/login` (and `/api/auth/signup`, `/api/auth/oauth-login`)
-  → more than ~10 requests / minute / IP → **Block** for 1 minute. This sits in front of
-  the nginx `auth_limit` (5 r/s) and the Express `authLimiter` — three layers.
+  and method `POST` → use the strongest threshold and mitigation your plan exposes. On the
+  Free plan the counting period is 10 seconds, so a practical edge burst rule is more than
+  10 requests in 10 seconds per IP. Longer signup windows remain enforced by Nora itself.
+  This sits in front of nginx and the Express auth/signup limiters.
 
-The free plan includes one rate-limiting rule; use it on the auth surface, the most
-abused path.
+The Free plan includes one rate-limiting rule; use it on the auth surface, the most abused
+path. For a public promotion, also enable Nora's Turnstile integration so distributed,
+low-rate signup bots cannot simply rotate IPs.
 
 ## Step 6 — Streaming caveat (read before launch)
 
@@ -146,6 +151,7 @@ Run these against the live site **before** you post anywhere:
 - [ ] `curl -sI https://nora.solomontsao.com/api/health | grep -i cf-cache-status` →
       `BYPASS`/`DYNAMIC` (never `HIT`).
 - [ ] Sign up for a fresh account end-to-end (no cached/stale auth page; cookie sets).
+- [ ] `/api/auth/bootstrap-status` reports signup bot protection enabled and configured.
 - [ ] Log into `/app` and confirm the dashboard + a WebSocket log stream work.
 - [ ] Open an agent chat and confirm SSE streaming works (note the ~100s caveat).
 - [ ] OAuth login (Google/GitHub) round-trips (callbacks go through the marketing app).

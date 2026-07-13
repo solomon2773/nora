@@ -30,6 +30,8 @@ supported update path instead of remaining pinned to an older bind-mounted file 
   heredoc before the rebuild, health checks, and Docker-socket verification execute.
 - Public edges now emit one host-only HSTS field while preserving backend-owned API browser
   policy, and every Next.js surface disables framework disclosure through `X-Powered-By`.
+- Public nginx now restores visitor addresses only from Cloudflare's published proxy networks,
+  keeping launch-day per-IP limits accurate without trusting spoofed direct-client headers.
 
 ## [v1.16.1](https://github.com/solomon2773/nora/releases/tag/v1.16.1) — 2026-07-12
 

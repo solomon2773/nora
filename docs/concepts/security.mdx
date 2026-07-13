@@ -24,7 +24,7 @@ Nora is built to be trustworthy in real operator environments: you run it on you
 - **helmet** security headers and **CORS** restricted to the configured `CORS_ORIGINS` allowlist.
 - **Layered rate limiting**: a global limiter plus a stricter limiter on mutating requests in the API, and nginx-level rate-limit zones for auth and API paths at the public edge.
 - **No raw error leakage**: unexpected failures route through a central error handler with correlation IDs, so 5xx responses never expose exception internals.
-- **TLS setup is scripted** (`infra/setup-tls.sh`) for public deployments, with Cloudflare real-IP guidance for proxied edges.
+- **TLS setup is scripted** (`infra/setup-tls.sh`) for public deployments, and public nginx trusts `CF-Connecting-IP` only from Cloudflare's published networks so proxied per-IP controls remain accurate without accepting direct-header spoofing.
 
 ## Runtime access control
 
