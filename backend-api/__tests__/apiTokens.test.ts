@@ -113,7 +113,9 @@ describe("apiTokens helpers", () => {
 
     it("throws error if primary hash secret is less than 32 characters", () => {
       process.env[PRIMARY_HASH_ENV] = "too-short-secret";
-      expect(() => apiKeyHashSecrets()).toThrow("NORA_API_KEY_HASH_SECRET must be at least 32 characters");
+      expect(() => apiKeyHashSecrets()).toThrow(
+        "NORA_API_KEY_HASH_SECRET must be at least 32 characters",
+      );
     });
 
     it("includes legacy hash secrets when requested", () => {
