@@ -30,6 +30,7 @@ Credentials are stored at `~/.nora/config.json` (mode 0600). `NORA_HOST`, `NORA_
 
 ```text
 nora workspaces list             # workspaces you can access (with role)
+nora workspaces list --json      # machine-readable workspace list
 nora workspaces use <id>         # set active workspace
 nora workspaces show             # print active workspace id
 
