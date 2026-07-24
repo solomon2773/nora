@@ -57,7 +57,7 @@ cd e2e && npm run smoke:runtime-path        # Runtime resolution
 cd e2e && npm run capture:operator-readme   # Regenerate README screenshots
 ```
 
-CI is split across `.github/workflows/ci-quality.yml`, `.github/workflows/ci-security.yml`, `.github/workflows/ci-compose.yml`, and `.github/workflows/ci-codeql.yml` on pull requests and pushes to `master` under Node 24.
+CI is split across `.github/workflows/ci-quality.yml`, `.github/workflows/ci-security.yml`, `.github/workflows/ci-compose.yml`, and `.github/workflows/ci-codeql.yml` on pull requests and pushes to `master` under Node 24. npm advisory auditing is deliberately **not** a per-PR blocking check — `npm audit` queries the live advisory DB, so an unchanged lockfile would flip red whenever an unrelated advisory is published. It runs instead on a schedule in `.github/workflows/dependency-audit.yml` (daily + `workflow_dispatch`), with Dependabot security updates handling remediation; the blocking `Security gate` in `ci-security.yml` covers only the deterministic checks (secret scan, license policy, infra validation).
 
 ## Architecture
 

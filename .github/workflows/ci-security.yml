@@ -30,36 +30,13 @@ jobs:
       - run: npm ci
       - run: npm run ci:secret-scan
 
-  dependency-audit:
-    name: "npm audit (${{ matrix.package }})"
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - admin-dashboard
-          - frontend-dashboard
-          - frontend-marketing
-          - backend-api
-          - agent-runtime
-          - workers/backup
-          - workers/provisioner
-          - e2e
-          - mcp-server
-          - cli
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
-      - run: npm ci
-        working-directory: ${{ matrix.package }}
-      - run: npm audit --omit=dev --audit-level=high
-        working-directory: ${{ matrix.package }}
+  # NOTE: npm advisory auditing runs on a schedule (see
+  # .github/workflows/dependency-audit.yml), not as a per-PR blocking gate.
+  # `npm audit` queries the live GitHub advisory DB, so an unchanged lockfile
+  # flips red the moment an unrelated advisory is published — which would block
+  # every open PR on advisory-publication timing rather than on anything the PR
+  # changed. Dependabot security updates remediate; the scheduled job surfaces
+  # regressions daily. Keep only deterministic checks in this blocking gate.
 
   license-compliance:
     name: "license policy (${{ matrix.package }})"
@@ -133,7 +110,6 @@ jobs:
     if: ${{ always() }}
     needs:
       - secret-scan
-      - dependency-audit
       - license-compliance
       - infra-validation
     runs-on: ubuntu-latest
@@ -143,7 +119,6 @@ jobs:
         env:
           SECURITY_RESULTS: >-
             secret-scan=${{ needs.secret-scan.result }}
-            dependency-audit=${{ needs.dependency-audit.result }}
             license-compliance=${{ needs.license-compliance.result }}
             infra-validation=${{ needs.infra-validation.result }}
         run: |

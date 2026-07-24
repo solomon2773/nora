@@ -1,0 +1,72 @@
+name: Dependency Audit (scheduled)
+
+# npm advisory auditing is intentionally NOT a per-PR blocking gate. `npm audit`
+# queries the live GitHub advisory DB, so an unchanged lockfile flips red the
+# moment an unrelated advisory is published — which would block every open PR on
+# advisory-publication timing rather than on anything the PR changed. Instead we
+# sweep daily here (and on demand), rely on Dependabot security updates to open
+# remediation PRs, and open a tracking issue when the sweep finds something.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 7 * * *" # daily 07:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    name: "npm audit (${{ matrix.package }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - admin-dashboard
+          - frontend-dashboard
+          - frontend-marketing
+          - backend-api
+          - agent-runtime
+          - workers/backup
+          - workers/provisioner
+          - e2e
+          - mcp-server
+          - cli
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package-lock.json
+      - run: npm ci
+        working-directory: ${{ matrix.package }}
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: ${{ matrix.package }}
+
+  report:
+    name: Open tracking issue on failure
+    needs: dependency-audit
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the advisory tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Scheduled dependency audit found high-severity advisories"
+          body="The daily \`npm audit --omit=dev --audit-level=high\` sweep failed — one or more packages have high-severity advisories. Dependabot security updates should open remediation PRs; otherwise bump the flagged package(s) manually. Failing run: ${RUN_URL}"
+          existing="$(gh issue list --repo "${REPO}" --state open --search "${title} in:title" --json number --jq '.[0].number // empty' || true)"
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --repo "${REPO}" --body "${body}"
+          else
+            gh issue create --repo "${REPO}" --title "${title}" --body "${body}"
+          fi
