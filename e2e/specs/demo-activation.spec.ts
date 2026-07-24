@@ -98,16 +98,18 @@ test.describe("Built-in demo activation", () => {
       await chatInput.press("Enter");
 
       await expect(page.getByText(prompt, { exact: true })).toBeVisible();
-      // The demo persona intro prefixes BOTH the welcome message and every reply,
-      // so asserting it is ambiguous (strict mode: 2 elements, one hidden whenever
-      // the welcome bubble has rendered — a timing race). The reply's tail sentence
-      // is unique to the response AND quote-free, so it dodges the markdown
-      // smart-quote normalization that breaks a `You said: "…"` match. Use it as
-      // the streamed-response gate.
+      // The reply text is mirrored into an inactive/hidden panel (a text-slate-300
+      // copy), so a bare getByText on any reply content matches 2 elements — one
+      // hidden — and trips strict mode intermittently (it only passes when the
+      // hidden copy has not rendered yet). Scope to the visible copy in the chat
+      // transcript. The tail sentence is unique to the reply (the welcome message
+      // lacks it) and quote-free, avoiding markdown smart-quote normalization.
       await expect(
-        page.getByText(
-          /This response is generated locally by your Nora control plane \(deterministic, zero cost\)\./,
-        ),
+        page
+          .getByText(
+            /This response is generated locally by your Nora control plane \(deterministic, zero cost\)\./,
+          )
+          .filter({ visible: true }),
       ).toBeVisible({ timeout: 120_000 });
     } finally {
       if (agentId) {
