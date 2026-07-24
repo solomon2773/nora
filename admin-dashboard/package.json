@@ -17,13 +17,13 @@
     "clsx": "^2.1.0",
     "lucide-react": "^1.8.0",
     "next": "^16.2.6",
-    "postcss": "8.5.12",
+    "postcss": "^8.5.23",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "tailwindcss": "^4.2.2"
   },
   "overrides": {
-    "postcss": "8.5.12",
+    "postcss": "^8.5.23",
     "sharp": "^0.35.3"
   },
   "devDependencies": {
