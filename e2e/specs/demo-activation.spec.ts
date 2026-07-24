@@ -98,16 +98,19 @@ test.describe("Built-in demo activation", () => {
       await chatInput.press("Enter");
 
       await expect(page.getByText(prompt, { exact: true })).toBeVisible();
+      // The reply text is mirrored into an inactive/hidden panel (a text-slate-300
+      // copy), so a bare getByText on any reply content matches 2 elements — one
+      // hidden — and trips strict mode intermittently (it only passes when the
+      // hidden copy has not rendered yet). Scope to the visible copy in the chat
+      // transcript. The tail sentence is unique to the reply (the welcome message
+      // lacks it) and quote-free, avoiding markdown smart-quote normalization.
       await expect(
-        page.getByText(
-          /Hi! I'm Nora's demo agent, running on a built-in stub model — no API key required\./,
-        ),
+        page
+          .getByText(
+            /This response is generated locally by your Nora control plane \(deterministic, zero cost\)\./,
+          )
+          .filter({ visible: true }),
       ).toBeVisible({ timeout: 120_000 });
-      await expect(
-        page.getByText(
-          /This response is generated locally by your Nora control plane \(deterministic, zero cost\)\./,
-        ),
-      ).toBeVisible();
     } finally {
       if (agentId) {
         await deleteAgent(browserRequest, "", agentId);

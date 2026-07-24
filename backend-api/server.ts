@@ -627,9 +627,20 @@ const corsOrigins = (
   .filter(Boolean);
 app.use(cors({ origin: corsOrigins }));
 
+// Rate-limit caps are env-overridable so CI/E2E — where the whole Playwright
+// suite hits the API from a single localhost IP — can raise them without
+// disabling abuse protection. Production keeps the defaults below. Mirrors the
+// helper in routes/auth.ts (which already exposes AUTH_/SIGNUP_ overrides).
+function parsePositiveIntegerEnv(name, fallback) {
+  const raw = String(process.env[name] || "").trim();
+  if (!/^[1-9]\d*$/.test(raw)) return fallback;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 1000,
+  windowMs: parsePositiveIntegerEnv("GLOBAL_RATE_LIMIT_WINDOW_MS", 15 * 60 * 1000),
+  max: parsePositiveIntegerEnv("GLOBAL_RATE_LIMIT_MAX", 1000),
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -643,8 +654,8 @@ app.use(globalLimiter);
 // at more than 60 per minute from a single IP. Safe methods are skipped so
 // normal browsing is unaffected.
 const mutationLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 60,
+  windowMs: parsePositiveIntegerEnv("MUTATION_RATE_LIMIT_WINDOW_MS", 60 * 1000),
+  max: parsePositiveIntegerEnv("MUTATION_RATE_LIMIT_MAX", 60),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests, please slow down" },
