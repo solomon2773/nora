@@ -98,11 +98,12 @@ test.describe("Built-in demo activation", () => {
       await chatInput.press("Enter");
 
       await expect(page.getByText(prompt, { exact: true })).toBeVisible();
-      await expect(
-        page.getByText(
-          /Hi! I'm Nora's demo agent, running on a built-in stub model — no API key required\./,
-        ),
-      ).toBeVisible({ timeout: 120_000 });
+      // The demo persona intro ("Hi! I'm Nora's demo agent…") prefixes BOTH the
+      // welcome message and every reply, so asserting it directly is ambiguous —
+      // strict mode matches 2 elements (one hidden) whenever the welcome bubble
+      // has rendered, which is a timing race. Wait on the reply's unique echo of
+      // this run's prompt instead; it appears only in the response bubble.
+      await expect(page.getByText(`You said: "${prompt}"`)).toBeVisible({ timeout: 120_000 });
       await expect(
         page.getByText(
           /This response is generated locally by your Nora control plane \(deterministic, zero cost\)\./,
