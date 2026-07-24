@@ -160,11 +160,25 @@ class HermesBackend extends DockerBackend {
     await this._pullImage(imgName);
   }
 
-  // Host port mapping for the Hermes container. Local Hermes publishes nothing
-  // (reached via the container IP on the shared compose network); the remote
-  // variant overrides this to publish the dashboard port on the remote host.
-  _hermesPortBindings() {
-    return undefined;
+  // Host port mapping for the Hermes container. Local Hermes publishes the
+  // runtime API (8642) and dashboard (9119) on the host interface named by
+  // DOCKER_AGENT_BIND_IP (default loopback) so external desktop clients can
+  // connect. The remote variant overrides this to bind 0.0.0.0 on the remote
+  // host. Ports the caller did not allocate are simply omitted.
+  _hermesPortBindings(config = {}) {
+    const hostIp = this._publishedPortHostIp(config);
+    const bindings = {};
+    const runtimePort = Number(config?.gatewayHostPort);
+    if (Number.isInteger(runtimePort) && runtimePort >= 1 && runtimePort <= 65535) {
+      bindings[`${HERMES_RUNTIME_PORT}/tcp`] = [{ HostIp: hostIp, HostPort: String(runtimePort) }];
+    }
+    const dashboardPort = Number(config?.dashboardHostPort);
+    if (Number.isInteger(dashboardPort) && dashboardPort >= 1 && dashboardPort <= 65535) {
+      bindings[`${HERMES_DASHBOARD_PORT}/tcp`] = [
+        { HostIp: hostIp, HostPort: String(dashboardPort) },
+      ];
+    }
+    return Object.keys(bindings).length ? bindings : undefined;
   }
 
   async create(config) {
@@ -259,9 +273,9 @@ class HermesBackend extends DockerBackend {
           SecurityOpt: ["no-new-privileges:true"],
           PidsLimit: DEFAULT_AGENT_PIDS_LIMIT,
           Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
-          // Local Hermes is reached via the container IP on the shared compose
-          // network (no host publish). The remote variant overrides this to
-          // publish the dashboard port on the remote host.
+          // Local Hermes publishes the runtime + dashboard ports to
+          // DOCKER_AGENT_BIND_IP (see _hermesPortBindings above) in addition to
+          // being reachable via the container IP on the shared compose network.
           PortBindings: this._hermesPortBindings(config),
         },
         NetworkingConfig: composeNetwork

@@ -3835,8 +3835,7 @@ const worker = new Worker(
             : deployTarget === "docker"
               ? LOCAL_HOST_KEY
               : null;
-        const usesLocalDockerPublishedPort =
-          deployTarget === "docker" && resolvedRuntimeFields.runtime_family === "openclaw";
+        const usesLocalDockerPublishedPort = deployTarget === "docker";
         if (allocationHostKey) {
           const unavailableGatewayPorts = usesLocalDockerPublishedPort
             ? await getOccupiedDockerPublishedPorts(provisioner, { agentId: id })
@@ -3846,13 +3845,13 @@ const worker = new Worker(
             agentId: id,
             unavailablePorts: unavailableGatewayPorts,
           });
-          // Remote Hermes needs a SECOND published host port for its dashboard
-          // UI (9119), distinct from the runtime API port (8642 = the 'gateway'
-          // slot used for the readiness probe). Local Hermes reaches the
-          // dashboard on the compose network (no host publish), and OpenClaw has
-          // no separate dashboard, so neither allocates this slot.
+          // Hermes needs a SECOND published host port for its dashboard UI
+          // (9119), distinct from the runtime API port (8642 = the 'gateway'
+          // slot used for the readiness probe). Remote publishes it on the
+          // remote host; local Docker publishes it on DOCKER_AGENT_BIND_IP so
+          // the embedded WebUI is reachable by external clients too.
           if (
-            deployTarget === "remote-docker" &&
+            (deployTarget === "remote-docker" || deployTarget === "docker") &&
             resolvedRuntimeFields.runtime_family === "hermes"
           ) {
             allocatedDashboardPort = await allocateGatewayPort({
@@ -3860,6 +3859,26 @@ const worker = new Worker(
               agentId: id,
               purpose: DASHBOARD_PORT_PURPOSE,
             });
+            // Local Docker (unlike remote) shares the host with the control
+            // plane, so also exclude already-bound host ports outside Nora's
+            // allocation table before handing the port to create().
+            if (
+              deployTarget === "docker" &&
+              typeof provisioner?.isHostPortBound === "function" &&
+              (await provisioner.isHostPortBound(allocatedDashboardPort, {
+                ignoreContainerName: container_name,
+              }))
+            ) {
+              console.warn(
+                `[provisioner] Dashboard host port ${allocatedDashboardPort} already bound; reallocating for agent ${id}`,
+              );
+              allocatedDashboardPort = await reallocateGatewayPort({
+                hostKey: allocationHostKey,
+                agentId: id,
+                previousPort: allocatedDashboardPort,
+                purpose: DASHBOARD_PORT_PURPOSE,
+              });
+            }
           }
           if (
             deployTarget === "remote-docker" &&

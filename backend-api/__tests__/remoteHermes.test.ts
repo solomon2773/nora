@@ -130,9 +130,36 @@ describe("RemoteHermesBackend port publishing", () => {
     expect(backend._hermesPortBindings({ gatewayHostPort: 0 })).toBeUndefined();
   });
 
-  it("leaves local Hermes unpublished (base hook returns undefined)", () => {
-    // The base HermesBackend must not publish any host ports — local Hermes is
-    // reached via the container IP on the shared compose network.
+  it("base HermesBackend publishes runtime + dashboard on the configured host IP", () => {
+    // Local Hermes now publishes to the DOCKER_AGENT_BIND_IP interface (default
+    // loopback) so external desktop clients can reach the runtime API.
+    const bindings = HermesBackend.prototype._hermesPortBindings.call(
+      { _publishedPortHostIp: () => "127.0.0.1" },
+      { gatewayHostPort: 19500, dashboardHostPort: 19044 },
+    );
+    expect(bindings).toEqual({
+      "8642/tcp": [{ HostIp: "127.0.0.1", HostPort: "19500" }],
+      "9119/tcp": [{ HostIp: "127.0.0.1", HostPort: "19044" }],
+    });
+  });
+
+  it("base HermesBackend honors a routable DOCKER_AGENT_BIND_IP", () => {
+    const bindings = HermesBackend.prototype._hermesPortBindings.call(
+      { _publishedPortHostIp: () => "100.71.115.105" },
+      { gatewayHostPort: 19500 },
+    );
+    expect(bindings).toEqual({
+      "8642/tcp": [{ HostIp: "100.71.115.105", HostPort: "19500" }],
+    });
+  });
+
+  it("base HermesBackend publishes nothing when no host port is allocated", () => {
+    expect(
+      HermesBackend.prototype._hermesPortBindings.call(
+        { _publishedPortHostIp: () => "127.0.0.1" },
+        {},
+      ),
+    ).toBeUndefined();
     expect(HermesBackend.prototype._hermesPortBindings()).toBeUndefined();
   });
 });
