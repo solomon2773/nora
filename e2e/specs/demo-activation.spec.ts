@@ -98,17 +98,17 @@ test.describe("Built-in demo activation", () => {
       await chatInput.press("Enter");
 
       await expect(page.getByText(prompt, { exact: true })).toBeVisible();
-      // The demo persona intro ("Hi! I'm Nora's demo agent…") prefixes BOTH the
-      // welcome message and every reply, so asserting it directly is ambiguous —
-      // strict mode matches 2 elements (one hidden) whenever the welcome bubble
-      // has rendered, which is a timing race. Wait on the reply's unique echo of
-      // this run's prompt instead; it appears only in the response bubble.
-      await expect(page.getByText(`You said: "${prompt}"`)).toBeVisible({ timeout: 120_000 });
+      // The demo persona intro prefixes BOTH the welcome message and every reply,
+      // so asserting it is ambiguous (strict mode: 2 elements, one hidden whenever
+      // the welcome bubble has rendered — a timing race). The reply's tail sentence
+      // is unique to the response AND quote-free, so it dodges the markdown
+      // smart-quote normalization that breaks a `You said: "…"` match. Use it as
+      // the streamed-response gate.
       await expect(
         page.getByText(
           /This response is generated locally by your Nora control plane \(deterministic, zero cost\)\./,
         ),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 120_000 });
     } finally {
       if (agentId) {
         await deleteAgent(browserRequest, "", agentId);
