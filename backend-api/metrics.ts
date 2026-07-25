@@ -14,8 +14,17 @@ function otel() {
   return _otel;
 }
 
+// ── Metric recording and usage reports ──────────────────────────
+
 /**
- * Record a single metric data point.
+ * Persist a metric data point; database failures propagate to the caller.
+ *
+ * @param {string} agentId - Agent attributed to the metric.
+ * @param {string} userId - User attributed to the metric.
+ * @param {string} metricType - Metric category.
+ * @param {number} value - Numeric metric value.
+ * @param {Object} metadata - Structured metric context.
+ * @returns {Promise<void>}
  */
 async function recordMetric(agentId, userId, metricType, value, metadata = {}) {
   await db.query(
@@ -39,6 +48,14 @@ function inferProviderFromModel(model) {
   return value.split("/")[0] || "";
 }
 
+/**
+ * Normalize token usage from supported runtime response shapes. Anthropic cache
+ * read/write tokens are added to input totals; payloads without usage return null.
+ *
+ * @param {Object} payload - Runtime response or nested result payload.
+ * @param {Object} defaults - Model, provider, runtime, and request context.
+ * @returns {Object|null} Canonical total and metadata for persistence.
+ */
 function extractTokenUsage(payload = {}, defaults = {}) {
   const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
   const result = data?.result && typeof data.result === "object" ? data.result : {};
@@ -120,6 +137,16 @@ function extractTokenUsage(payload = {}, defaults = {}) {
   };
 }
 
+/**
+ * Persist canonical token usage and mirror it to OpenTelemetry on a best-effort
+ * basis. Missing attribution or token data returns null; database errors propagate.
+ *
+ * @param {Object|string} agentOrId - Agent row or identifier.
+ * @param {string} userId - User attributed to the usage.
+ * @param {Object} payload - Runtime response containing token usage.
+ * @param {Object} defaults - Fallback attribution and timing context.
+ * @returns {Promise<Object|null>} Recorded usage, or null when nothing is recordable.
+ */
 async function recordTokenUsage(agentOrId, userId, payload = {}, defaults = {}) {
   const agentId = typeof agentOrId === "object" ? agentOrId?.id : agentOrId;
   if (!agentId || !userId) return null;
@@ -244,14 +271,21 @@ async function getUserSummary(userId, since) {
 const apiBuffer = [];
 const MAX_BUFFER = 1000;
 
+/**
+ * Buffer one API performance sample in memory, evicting the oldest sample when
+ * the process-local cap is exceeded.
+ *
+ * @param {Object} entry - Request duration and HTTP status sample.
+ * @returns {void}
+ */
 function recordApiMetric(entry) {
   apiBuffer.push(entry);
   if (apiBuffer.length > MAX_BUFFER) apiBuffer.shift();
 }
 
-// Flush aggregates every 60 seconds. .unref() so this background timer never
-// keeps the event loop alive on its own — important for tests (Jest worker
-// would otherwise hang without --forceExit) and for clean shutdowns.
+// Flush aggregates every 60 seconds. The batch is removed before persistence
+// and is not requeued after failure. .unref() keeps this timer from holding the
+// event loop open in tests or during clean shutdown.
 setInterval(async () => {
   if (apiBuffer.length === 0) return;
   const batch = apiBuffer.splice(0);
@@ -273,9 +307,8 @@ setInterval(async () => {
   }
 }, 60000).unref();
 
-/**
- * Get agent token usage and estimated token cost.
- */
+// ── Token cost reporting ────────────────────────────────────────
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_COST_WINDOW_DAYS = 365;
 const UNKNOWN_MODEL = "Unknown model";
@@ -319,6 +352,13 @@ function parseCostDate(value, { endOfDay = false } = {}) {
   return parsed;
 }
 
+/**
+ * Resolve a bounded UTC cost window from a lookback or explicit date range.
+ * Invalid, reversed, or longer-than-365-day ranges throw an HTTP-style error.
+ *
+ * @param {Object} options - Lookback and camel/snake-case range inputs.
+ * @returns {Object} Normalized start, end, duration, and period label.
+ */
 function resolveCostWindow({
   periodDays = 30,
   periodStart = null,
@@ -358,6 +398,12 @@ function resolveCostWindow({
   };
 }
 
+/**
+ * Convert HTTP query values into the normalized options expected by cost APIs.
+ *
+ * @param {Object} query - Cost query parameters.
+ * @returns {Object} ISO date bounds and period length.
+ */
 function parseCostQuery(query = {}) {
   const window = resolveCostWindow({
     periodDays: query.period_days ?? query.periodDays ?? 30,
@@ -588,6 +634,13 @@ function estimateCostUsd({ model, provider, inputTokens, outputTokens, totalToke
   }
 }
 
+/**
+ * Calculate one agent's model-aware token cost for a bounded window.
+ *
+ * @param {string} agentId - Agent whose recorded usage is summarized.
+ * @param {Object} options - Lookback or explicit cost window.
+ * @returns {Promise<Object|null>} Cost breakdown, or null when the agent is absent.
+ */
 async function getAgentCost(agentId, options = {}) {
   const costWindow = resolveCostWindow(options);
 
@@ -613,6 +666,14 @@ async function getAgentCost(agentId, options = {}) {
   };
 }
 
+/**
+ * Build one fleet cost row. Validation errors propagate, while other lookup
+ * failures become a zero-cost row so aggregate reporting can remain available.
+ *
+ * @param {Object} agent - Agent identity and display metadata.
+ * @param {Object} options - Normalized cost window.
+ * @returns {Promise<Object>} Agent metadata plus cost details.
+ */
 async function buildCostRow(agent, options = {}) {
   const cost = await getAgentCost(agent.id, options).catch((error) => {
     if (error?.statusCode) throw error;
@@ -647,6 +708,10 @@ async function buildCostRow(agent, options = {}) {
 /**
  * Sum costs for every agent in a workspace, optionally restricted to a
  * lookback window. Returns token-cost rows plus a workspace total in USD.
+ *
+ * @param {string} workspaceId - Workspace whose assigned agents are included.
+ * @param {Object} options - Lookback or explicit cost window.
+ * @returns {Promise<Object>} Workspace total and per-agent breakdown.
  */
 async function getWorkspaceCost(workspaceId, options = {}) {
   const costWindow = resolveCostWindow(options);
@@ -676,6 +741,15 @@ async function getWorkspaceCost(workspaceId, options = {}) {
   };
 }
 
+/**
+ * Aggregate costs for a user's accessible workspaces and unassigned agents.
+ * `uniqueFleetTotalUsd` de-duplicates agents shared across workspaces, while
+ * `workspaceTotalUsd` sums workspace roll-ups and can count shared agents again.
+ *
+ * @param {string} userId - Owner or workspace member whose fleet is visible.
+ * @param {Object} options - Lookback or explicit cost window.
+ * @returns {Promise<Object>} Workspace, unassigned, and fleet cost roll-ups.
+ */
 async function getAccessibleWorkspaceCosts(userId, options = {}) {
   const costWindow = resolveCostWindow(options);
   const windowOptions = {

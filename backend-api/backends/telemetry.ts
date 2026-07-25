@@ -23,6 +23,8 @@ const PROXMOX_DEFAULT_CAPABILITIES = Object.freeze({
   pids: false,
 });
 
+// Numeric and sample normalization
+
 function toFiniteNumber(value) {
   const parsed = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
   return Number.isFinite(parsed) ? parsed : null;
@@ -61,6 +63,13 @@ function normalizeCapabilities(capabilities = {}) {
   };
 }
 
+/**
+ * Normalize a backend sample into the canonical metric fields, timestamps, and
+ * precision expected by telemetry persistence and API responses.
+ *
+ * @param {Object} [sample={}] - Backend-specific current telemetry values.
+ * @returns {Object} Canonical sample with invalid uptime as `0` and optional metrics as `null`.
+ */
 function normalizeCurrentSample(sample = {}) {
   return {
     recorded_at: normalizeRecordedAt(sample.recorded_at),
@@ -82,6 +91,14 @@ function normalizeCurrentSample(sample = {}) {
   };
 }
 
+// Canonical telemetry envelopes
+
+/**
+ * Build the normalized backend, capability, and current-sample telemetry envelope.
+ *
+ * @param {Object} [input={}] - Backend type, supported capabilities, and current values.
+ * @returns {Object} Canonical telemetry envelope.
+ */
 function buildTelemetry({ backendType = "unknown", capabilities = {}, current = {} } = {}) {
   return {
     backend_type: backendType,
@@ -93,6 +110,12 @@ function buildTelemetry({ backendType = "unknown", capabilities = {}, current = 
   };
 }
 
+/**
+ * Build a canonical fallback envelope when a backend cannot provide live metrics.
+ *
+ * @param {Object} [input={}] - Backend identity, runtime state, and known capabilities.
+ * @returns {Object} Telemetry envelope with unavailable metrics normalized to `null`.
+ */
 function buildUnavailableTelemetry({
   backendType = "unknown",
   running = false,
@@ -108,6 +131,8 @@ function buildUnavailableTelemetry({
     },
   });
 }
+
+// Docker telemetry conversion
 
 function uptimeFromContainerInfo(info) {
   const startedAt = info?.State?.StartedAt ? new Date(info.State.StartedAt).getTime() : 0;
@@ -152,6 +177,13 @@ function dockerCpuPercent(stats) {
   return roundMetric((cpuDelta / systemDelta) * cpuCount * 100);
 }
 
+/**
+ * Convert Docker stats and inspect data into Nora's canonical telemetry units
+ * and capability set, excluding cached memory from usage.
+ *
+ * @param {Object} input - Docker stats, inspect metadata, and optional backend label.
+ * @returns {Object} Canonical Docker telemetry envelope.
+ */
 function buildDockerTelemetry({ stats, info, backendType = "docker" }) {
   const memUsage = stats?.memory_stats?.usage || 0;
   const memCache = stats?.memory_stats?.stats?.cache || 0;

@@ -38,6 +38,13 @@ function allowsFirstAdminSignupClaim(platformMode = process.env.PLATFORM_MODE) {
   );
 }
 
+/**
+ * Validate optional bootstrap-admin credentials without mutating persistence,
+ * declining to seed missing, invalid, short, placeholder, or default credentials.
+ *
+ * @param {Object} input - Bootstrap email and password from configuration.
+ * @returns {Object} Seed decision, normalized email, and reason.
+ */
 function getBootstrapAdminSeedConfig({ adminEmail, adminPassword }) {
   const normalizedEmail = typeof adminEmail === "string" ? adminEmail.trim() : "";
   const password = typeof adminPassword === "string" ? adminPassword : "";

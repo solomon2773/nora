@@ -14,6 +14,13 @@ const {
 
 const router = express.Router();
 
+/**
+ * Authenticate demo requests with the token derived from JWT secret or its fixed fallback.
+ *
+ * @param {Object} req - Express request containing bearer authorization.
+ * @param {Object} res - Express response used for authentication failures.
+ * @returns {boolean} Whether request processing may continue.
+ */
 function checkDemoAuth(req, res) {
   const header = String(req.headers.authorization || "");
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";

@@ -34,6 +34,8 @@ const SCOPE_DEFINITIONS = [
 
 const KNOWN_SCOPES = new Set(SCOPE_DEFINITIONS.map((entry) => entry.value));
 
+// Input normalization and serialization
+
 function normalizeLabel(value) {
   const normalized = typeof value === "string" ? value.trim() : "";
   return (normalized || "API key").slice(0, 120);
@@ -77,6 +79,17 @@ function serializeApiKey(row = {}) {
   };
 }
 
+// Key lifecycle and verification
+
+/**
+ * Issue a workspace-scoped key with validated scopes, storing only its hash
+ * and returning the raw token once in the creation response.
+ *
+ * @param {string} workspaceId - Workspace that permanently binds the key.
+ * @param {string|null} createdBy - User issuing the key.
+ * @param {Object} [input={}] - Label, scopes, and optional expiration.
+ * @returns {Promise<Object>} Serialized key metadata plus the one-time raw key.
+ */
 async function createApiKey(workspaceId, createdBy, { label, scopes, expiresAt } = {}) {
   if (!workspaceId) {
     const error = new Error("workspaceId is required");
@@ -121,6 +134,13 @@ async function listApiKeys(workspaceId) {
   return result.rows.map(serializeApiKey);
 }
 
+/**
+ * Revoke a key only within its bound workspace, preserving the first revocation time.
+ *
+ * @param {string} keyId - Key to revoke.
+ * @param {string} workspaceId - Workspace that must own the key.
+ * @returns {Promise<Object|null>} Revoked key, or `null` when not found in the workspace.
+ */
 async function revokeApiKey(keyId, workspaceId) {
   const result = await db.query(
     `UPDATE api_keys
@@ -134,10 +154,13 @@ async function revokeApiKey(keyId, workspaceId) {
   return result.rows[0] ? serializeApiKey(result.rows[0]) : null;
 }
 
-// Returns { key, workspace, user } when the token is valid, otherwise null.
-// last_used_at is bumped on every successful verification so admins can spot
-// dormant tokens; if the token was hashed under a legacy secret we silently
-// rehash to the canonical secret.
+/**
+ * Verify an active, unexpired raw key and return its key, workspace, and issuing
+ * user context. Successful verification updates usage time and rotates legacy hashes.
+ *
+ * @param {string} rawKey - Presented Nora API key.
+ * @returns {Promise<Object|null>} Authentication context, or `null` when invalid.
+ */
 async function verifyApiKey(rawKey) {
   const normalized = String(rawKey || "").trim();
   if (!normalized) return null;

@@ -85,6 +85,15 @@ async function runScheduledLifecycleAction(agentId, actionType, userId) {
   }
 }
 
+/**
+ * Deliver a scheduled prompt over the runtime-family transport and record any
+ * returned token usage. Delivery errors propagate; usage telemetry is best-effort.
+ *
+ * @param {Object} agent - Agent and runtime endpoint configuration.
+ * @param {string} prompt - Prompt text to deliver.
+ * @param {string} userId - User attributed to recorded usage.
+ * @returns {Promise<void>}
+ */
 async function deliverPrompt(agent, prompt, userId) {
   const text = String(prompt || "").trim();
   if (!text) throw new Error("Schedule has no prompt to deliver");
@@ -160,10 +169,11 @@ async function performAction(agent, actionType, prompt, userId) {
 }
 
 /**
- * Run one scheduled action. Records the outcome on the schedule (markRun) and as
- * an agent.schedule.run event (audit + alert rules). Throws on failure so BullMQ
- * applies its bounded retry; a permanently-missing agent is recorded, not thrown
- * (retrying can't fix it).
+ * Run one scheduled action with best-effort schedule-outcome and audit/event writes.
+ * Action failures throw for BullMQ retry; a permanently missing agent returns instead.
+ *
+ * @param {Object} payload - Claimed schedule run and action details.
+ * @returns {Promise<Object>} Success, skip, or missing-agent outcome.
  */
 async function runScheduledAction(payload = {}) {
   const { scheduleId, agentId, actionType, prompt, createdBy, name } = payload;

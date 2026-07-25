@@ -84,6 +84,15 @@ function transformObject(
   return next;
 }
 
+/**
+ * Create recursive config encryption, decryption, redaction, and stripping helpers.
+ *
+ * Sensitivity combines catalog paths with secret-name heuristics; malformed JSON config becomes
+ * an empty object rather than exposing or transforming raw text.
+ *
+ * @param {Object} deps - Crypto primitives and catalog sensitivity resolver.
+ * @returns {Object} Provider-aware secret transformations.
+ */
 export function createSecretEncryption(deps: SecretEncryptionDeps): SecretEncryption {
   const { encrypt, decrypt, getSensitiveConfigKeys } = deps;
 

@@ -94,17 +94,27 @@ export const twitterProvider: Provider = {
     return { primary: "TWITTER_ACCESS_TOKEN", config: configEnv };
   },
 
-  // Strip OAuth app-side secrets from any runtime sync payload — these
-  // belong to the Nora platform's OAuth app, not the agent.
+  /**
+   * Remove control-plane OAuth app and refresh secrets before runtime sync.
+   *
+   * @param {Object} config - Decrypted Twitter/X integration config.
+   * @returns {Object} Runtime-safe provider config.
+   */
   sanitizeForSync(config: Record<string, unknown>): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(config || {}).filter(([key]) => !APP_SECRET_KEYS.has(key)),
     );
   },
 
-  // Refresh the OAuth 2.0 access token using the stored refresh_token if
-  // we're within the skew window of expiry. Persists the new tokens via
-  // the database handle from ProviderDeps.
+  /**
+   * Refresh a near-expiry OAuth token, leaving transport exceptions retryable.
+   *
+   * Any non-2xx response or successful response without an access token returns `failed`.
+   *
+   * @param {Object} row - Integration row with stored OAuth config.
+   * @param {Object} deps - Network, crypto, and persistence dependencies.
+   * @returns {Promise<Object>} Refresh outcome; persistence remains the service's responsibility.
+   */
   async refreshCredentials(row: IntegrationRow, deps: ProviderDeps): Promise<RefreshOutcome> {
     if (!row?.id) return { row, refreshed: false };
 

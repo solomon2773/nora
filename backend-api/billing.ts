@@ -46,6 +46,8 @@ const SELFHOSTED_LIMITS = {
 };
 const BILLING_ENABLED = process.env.BILLING_ENABLED === "true";
 
+// Effective entitlement normalization
+
 function parseInteger(value) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
@@ -90,6 +92,15 @@ function isAdminUser(user = {}) {
   );
 }
 
+/**
+ * Apply platform-role defaults and an optional administrator override to an
+ * agent cap, limiting only an explicit override when a ceiling is supplied.
+ *
+ * @param {Object} base - Base subscription payload.
+ * @param {Object} [user={}] - User role and limit override fields.
+ * @param {Object} [options={}] - Optional maximum administrator override.
+ * @returns {Object} Subscription with effective limit and provenance fields.
+ */
 function applyEffectiveAgentLimit(base, user = {}, options = {}) {
   const override = normalizeAgentLimitOverride(user?.agent_limit_override);
   const maxAgentLimit = Number.isInteger(options.maxAgentLimit) ? options.maxAgentLimit : null;
@@ -130,6 +141,14 @@ function applyEffectiveAgentLimit(base, user = {}, options = {}) {
   };
 }
 
+/**
+ * Merge plan backup entitlements with administrator overrides and admin
+ * defaults for unlimited backup count and storage, preserving plan retention.
+ *
+ * @param {Object} base - Base plan entitlement payload.
+ * @param {Object} [user={}] - User role and backup override fields.
+ * @returns {Object} Effective backup entitlement and provenance fields.
+ */
 function applyBackupEntitlement(base, user = {}) {
   const enabledOverride = normalizeNullableBoolean(user?.managed_backups_enabled_override);
   const countOverride = normalizeBackupLimitOverride(user?.backup_limit_per_agent_override);
@@ -193,6 +212,8 @@ function applyBackupEntitlement(base, user = {}) {
 
   return next;
 }
+
+// Subscription resolution
 
 function buildPlanSubscription(plan, defaults = {}, backupPlanLimits = null) {
   const normalizedPlan = normalizePlanName(plan);
@@ -289,6 +310,14 @@ function buildPaaSSubscription({
   return applyBackupEntitlement(applyEffectiveAgentLimit(base, user), user);
 }
 
+/**
+ * Resolve a user's effective subscription across self-hosted or PaaS mode,
+ * including platform defaults, billing state, and administrator overrides.
+ *
+ * @param {string} userId - User whose entitlement should be resolved.
+ * @param {Object} [options={}] - Optional preloaded rows and platform settings.
+ * @returns {Promise<Object>} Effective subscription and resource limits.
+ */
 async function getSubscription(userId, options = {}) {
   const hasUserRow = Object.prototype.hasOwnProperty.call(options, "userRow");
   const user = hasUserRow ? options.userRow : await getUserRow(userId);
@@ -322,6 +351,14 @@ function buildLimitReachedError(count, subscription = {}) {
   return `Agent limit reached (${count}/${limit}). Contact your administrator.`;
 }
 
+// Capacity enforcement
+
+/**
+ * Check subscription activity and owned-agent count against the effective cap.
+ *
+ * @param {string} userId - User attempting to create an agent.
+ * @returns {Promise<Object>} Allow/deny decision, remaining capacity, and subscription.
+ */
 async function enforceLimits(userId) {
   const sub = await getSubscription(userId);
   if (IS_PAAS && BILLING_ENABLED && sub.status !== "active") {
@@ -350,6 +387,14 @@ async function enforceLimits(userId) {
   };
 }
 
+/**
+ * Measure aggregate active backup storage for a user and, when requested, the
+ * active backup count for one agent.
+ *
+ * @param {string} userId - Backup owner.
+ * @param {Object} [options={}] - Optional agent id for the per-agent count.
+ * @returns {Promise<Object>} Aggregate bytes and per-agent backup count.
+ */
 async function getBackupUsage(userId, options = {}) {
   const statusScope = ["queued", "running", "ready", "ready_with_warnings"];
   const params = [userId, statusScope];
@@ -392,6 +437,14 @@ function buildBackupLimitReachedError(count, subscription = {}) {
   return `Backup limit reached (${count}/${limit}). Contact your administrator.`;
 }
 
+/**
+ * Enforce subscription status, managed-backup entitlement, count, and
+ * user-wide storage limits; count is agent-scoped only when an id is supplied.
+ *
+ * @param {string} userId - User attempting the backup.
+ * @param {Object} [options={}] - Optional target agent id.
+ * @returns {Promise<Object>} Allow/deny decision with entitlement and usage context.
+ */
 async function enforceBackupLimits(userId, options = {}) {
   const sub = await getSubscription(userId);
   if (IS_PAAS && BILLING_ENABLED && sub.status !== "active") {
@@ -440,6 +493,14 @@ async function enforceBackupLimits(userId, options = {}) {
 
 // ── Create Stripe Checkout Session ──────────────────────────────
 
+/**
+ * Create or reuse a Stripe customer and start checkout, selecting the Pro
+ * price only for `pro` and the Enterprise price for every other plan value.
+ *
+ * @param {string} userId - User starting checkout.
+ * @param {string} plan - Paid plan identifier.
+ * @returns {Promise<Object>} Checkout URL and session id.
+ */
 async function createCheckoutSession(userId, plan) {
   if (!stripe) throw new Error("Stripe is not configured");
 
@@ -484,6 +545,12 @@ async function createPortalSession(userId) {
 
 // ── Handle Stripe Webhook Events ────────────────────────────────
 
+/**
+ * Apply a previously signature-verified Stripe lifecycle event to subscription state.
+ *
+ * @param {Object} event - Stripe webhook event verified by the HTTP boundary.
+ * @returns {Promise<void>}
+ */
 async function handleWebhookEvent(event) {
   switch (event.type) {
     case "checkout.session.completed": {

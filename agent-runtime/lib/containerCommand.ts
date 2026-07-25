@@ -28,8 +28,8 @@ const DEFAULT_SHELL = "/bin/sh";
  *   the target image is known to lack /bin/sh or when the script genuinely
  *   requires bashisms.
  * @param {boolean} [opts.login=false]  Run as a login shell (`-lc`) so the
- *   shell sources /etc/profile and ~/.bash_profile. Needed when the image
- *   relies on profile-level env setup (e.g. Hermes).
+ *   selected interpreter can load its supported login profiles. Needed when
+ *   the image relies on profile-level environment setup (e.g. Hermes).
  *
  * Returns a plain object with `interpreter` (argv for the shell) and `script`.
  * The script is always passed as a SINGLE positional argument so word-

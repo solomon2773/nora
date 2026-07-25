@@ -19,9 +19,13 @@ const { createSecretEncryption } = require("../crypto/secretEncryption");
 const { buildIntegrationToolCatalogEntries } = require("./toolCatalogBuilder");
 const { createProviderRegistry } = require("../providers/base/registry");
 
-// Fail-closed provider returned by the registry when a catalog id has no
-// strategy registered. A stale database catalog row or mismatched deployment
-// must never report successful verification or silently omit runtime env vars.
+/**
+ * Build a fail-closed fallback that rejects verification and runtime environment mapping.
+ * This prevents stale catalog entries from appearing connected without a strategy.
+ *
+ * @param {string} providerId - Unregistered catalog provider ID.
+ * @returns {Object} Provider strategy that reports the missing registration.
+ */
 function createStubProvider(providerId) {
   const unsupportedMessage = `No integration strategy is registered for provider "${providerId}"`;
   return {
@@ -49,6 +53,15 @@ const LLM_AUTH_ENV_VARS = new Set(
     .filter(Boolean),
 );
 
+/**
+ * Determine whether changing a provider requires regenerating agent LLM auth profiles.
+ *
+ * Explicit LLM providers are recognized directly; registered future providers are probed through
+ * their environment mapping without allowing mapping failures to escape.
+ *
+ * @param {string} provider - Provider identifier.
+ * @returns {boolean} Whether auth-profile refresh is required.
+ */
 function integrationProviderAffectsLlmAuth(provider) {
   const providerId = String(provider || "").trim();
   if (!providerId) return false;
@@ -266,6 +279,16 @@ async function getCatalogItem(catalogId) {
 
 // ── OAuth refresh — delegates to provider.refreshCredentials ─────
 
+/**
+ * Refresh credentials when supported, leaving transport exceptions retryable
+ * and persisting successful token rotation.
+ *
+ * Provider `failed` outcomes, including non-2xx or missing-token responses, are
+ * best-effort marked `needs_reconnect`; retryable outcomes leave the row unchanged.
+ *
+ * @param {Object} [row={}] - Raw integration row.
+ * @returns {Promise<Object>} Original, refreshed, or reconnect-required row.
+ */
 async function refreshTwitterOAuthRowIfNeeded(row = {}) {
   const provider = row.provider || row.catalog_id;
   if (!provider || !row.id) return row;
@@ -281,9 +304,8 @@ async function refreshTwitterOAuthRowIfNeeded(row = {}) {
 
   const outcome = await resolved.refreshCredentials(decryptedRow, providerDeps);
 
-  // A definitive provider rejection (revoked/expired grant) means the stored
-  // token is dead and every agent call will 401 — surface it to the operator
-  // instead of leaving the integration silently "active".
+  // Any provider-reported failure makes the stored token unusable for this
+  // workflow, so surface it instead of leaving the integration silently active.
   if (outcome?.failed) {
     console.warn(
       `[integrations] Marking integration ${row.id} (${provider}) needs_reconnect: ${outcome.error || "OAuth refresh failed"}`,
@@ -321,6 +343,12 @@ async function refreshTwitterOAuthRowIfNeeded(row = {}) {
 
 // ── Sync-entry / clone helpers ───────────────────────────
 
+/**
+ * Strip integration credentials for cloning and require reconnection when any were removed.
+ *
+ * @param {Object} [row={}] - Integration row to make portable.
+ * @returns {Object} Clone-safe provider config and status.
+ */
 function buildCloneableIntegration(row = {}) {
   const { config, removedSensitive } = stripSensitiveConfig(row.provider, row.config);
   const hasPrimarySecret = Boolean(row.access_token);
@@ -344,6 +372,15 @@ function normalizeEmailDisplayConfig(config = {}, cronJobId = null) {
   return normalized;
 }
 
+/**
+ * Build a secret-bearing runtime sync entry alongside its separately redacted representation.
+ *
+ * Provider sanitizers remove control-plane-only secrets before environment and tool metadata are
+ * projected. Callers must keep the returned `config` inside trusted runtime sync paths.
+ *
+ * @param {Object} [row={}] - Active integration row with catalog metadata.
+ * @returns {Object} Runtime integration manifest entry.
+ */
 function buildIntegrationSyncEntry(row = {}) {
   const hydrated = hydrateRow(row);
   const provider = row.provider || row.catalog_id || row.id;
@@ -424,6 +461,15 @@ function mergeConfig(baseValue, patchValue) {
 
 // ── Agent integrations (CRUD) ────────────────────────────
 
+/**
+ * Normalize Email or WeCom config, encrypt discovered credentials, and persist a redacted response.
+ *
+ * @param {string} agentId - Agent receiving the integration.
+ * @param {string} provider - Catalog provider identifier.
+ * @param {string|null} token - Optional primary credential.
+ * @param {Object} [config={}] - Provider configuration.
+ * @returns {Promise<Object>} Persisted integration without its primary access token.
+ */
 async function connectIntegration(agentId, provider, token, config = {}) {
   if (provider === "email") {
     config = normalizeEmailConfigInput(config || {});
@@ -465,6 +511,17 @@ async function connectIntegration(agentId, provider, token, config = {}) {
   };
 }
 
+/**
+ * Create a replacement before deleting sibling rows for the same agent and provider.
+ *
+ * The two writes are not transactional, so deletion failure can temporarily leave duplicates.
+ *
+ * @param {string} agentId - Agent receiving the replacement.
+ * @param {string} provider - Singleton provider identifier.
+ * @param {string|null} token - Optional primary credential.
+ * @param {Object} [config={}] - Provider configuration.
+ * @returns {Promise<Object>} Newly persisted integration.
+ */
 async function replaceIntegration(agentId, provider, token, config = {}) {
   const result = await connectIntegration(agentId, provider, token, config);
   if (result?.id) {
@@ -477,6 +534,12 @@ async function replaceIntegration(agentId, provider, token, config = {}) {
   return result;
 }
 
+/**
+ * List an agent's integrations with catalog metadata and redacted display configuration.
+ *
+ * @param {string} agentId - Agent whose integrations should be listed.
+ * @returns {Promise<Object[]>} API-safe integration rows.
+ */
 async function listIntegrations(agentId) {
   const rows = await repo.listForAgent(agentId);
   return rows.map((row) => {
@@ -503,6 +566,17 @@ async function removeIntegration(integrationId, agentId) {
   return removed;
 }
 
+/**
+ * Merge a partial owner-scoped config update while preserving an omitted primary credential.
+ *
+ * Email and WeCom inputs are normalized before all discovered secrets are re-encrypted.
+ *
+ * @param {string} integrationId - Integration identifier.
+ * @param {string} agentId - Owning agent identifier.
+ * @param {string|null} token - Replacement primary credential, or null to preserve it.
+ * @param {Object} [config={}] - Partial provider config, including dotted keys.
+ * @returns {Promise<Object>} Updated integration with sensitive config redacted.
+ */
 async function updateIntegration(integrationId, agentId, token, config = {}) {
   const current = await repo.findIntegration({ integrationId, agentId });
   if (!current) throw new Error("Integration not found");
@@ -581,6 +655,13 @@ async function findActiveIntegrationByCronJobId(agentId, cronJobId) {
   return repo.findActiveIntegrationByCronJobId({ agentId, cronJobId });
 }
 
+/**
+ * Refresh expiring OAuth credentials, decrypt the row, and run its provider connectivity probe.
+ *
+ * @param {string} integrationId - Integration identifier.
+ * @param {string} agentId - Owning agent identifier.
+ * @returns {Promise<Object>} Provider-specific connectivity result.
+ */
 async function testIntegration(integrationId, agentId) {
   const integration = await repo.findIntegration({ integrationId, agentId });
   if (!integration) throw new Error("Integration not found");
@@ -614,6 +695,13 @@ async function testIntegration(integrationId, agentId) {
   return providerRegistry.resolve(provider).test(ctx, providerDeps);
 }
 
+/**
+ * Load an owner-scoped integration with its primary token and config fully decrypted.
+ *
+ * @param {string} integrationId - Integration identifier.
+ * @param {string} agentId - Owning agent identifier.
+ * @returns {Promise<Object|null>} Trusted plaintext integration or null when absent.
+ */
 async function getDecryptedIntegration(integrationId, agentId) {
   const row = await repo.findIntegration({ integrationId, agentId });
   if (!row) return null;
@@ -636,6 +724,12 @@ async function getDecryptedIntegration(integrationId, agentId) {
 
 // ── Sync + env ──────────────────────────────────────────
 
+/**
+ * Refresh active integrations sequentially and build trusted runtime sync manifests.
+ *
+ * @param {string} agentId - Agent whose integrations should be projected.
+ * @returns {Promise<Object[]>} Secret-bearing runtime sync entries.
+ */
 async function getIntegrationsForSync(agentId) {
   const rows = await repo.listActiveForAgent(agentId);
   const refreshedRows = [];
@@ -645,6 +739,12 @@ async function getIntegrationsForSync(agentId) {
   return refreshedRows.map(buildIntegrationSyncEntry);
 }
 
+/**
+ * Refresh and decrypt active integrations, then emit only provider-declared runtime env vars.
+ *
+ * @param {string} agentId - Agent whose integration environment should be built.
+ * @returns {Promise<Object>} Plaintext runtime environment map.
+ */
 async function getIntegrationEnvVars(agentId) {
   const rows = await repo.listActiveEnvSourcesForAgent(agentId);
   const envVars = {};

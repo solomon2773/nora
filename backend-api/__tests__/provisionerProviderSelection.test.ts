@@ -26,6 +26,12 @@ const mockRemoteProvisioner = {
   restart: jest.fn(),
   updateEnv: jest.fn(),
 };
+const mockHermesProvisioner = {
+  create: jest.fn(),
+  destroy: jest.fn(),
+  restart: jest.fn(),
+  updateEnv: jest.fn(),
+};
 const mockContainerManager = {
   canDestroy: jest.fn(),
   destroy: jest.fn(),
@@ -98,6 +104,9 @@ jest.mock("../portAllocations", () => ({
 jest.mock("../../workers/provisioner/backends/remote-docker", () =>
   jest.fn().mockImplementation(() => mockRemoteProvisioner),
 );
+jest.mock("../../workers/provisioner/backends/hermes", () =>
+  jest.fn().mockImplementation(() => mockHermesProvisioner),
+);
 jest.mock("../../workers/provisioner/healthChecks", () => ({
   waitForAgentReadiness: (...args) => mockWaitForAgentReadiness(...args),
 }));
@@ -131,6 +140,7 @@ const {
   runProvisionerExecCommand,
   seedHermesArchiveForDeployment,
 } = require("../../workers/provisioner/worker");
+const { DASHBOARD_PORT_PURPOSE, GATEWAY_PORT_PURPOSE } = require("../portAllocations");
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -166,6 +176,11 @@ beforeEach(() => {
   mockRemoteProvisioner.destroy.mockReset().mockResolvedValue(undefined);
   mockRemoteProvisioner.restart.mockReset().mockResolvedValue(undefined);
   mockRemoteProvisioner.updateEnv.mockReset().mockResolvedValue(undefined);
+  mockHermesProvisioner.create.mockReset();
+  mockHermesProvisioner.destroy.mockReset().mockResolvedValue(undefined);
+  mockHermesProvisioner.restart.mockReset().mockResolvedValue(undefined);
+  mockHermesProvisioner.updateEnv.mockReset().mockResolvedValue(undefined);
+  delete mockHermesProvisioner.isHostPortBound;
   mockContainerManager.canDestroy
     .mockReset()
     .mockImplementation((agent) => Boolean(agent?.container_id || agent?.container_name));
@@ -1494,6 +1509,148 @@ describe("provisioner deployment lifecycle", () => {
       2,
       expect.objectContaining({ hostKey: "local", agentId: "agent-1", rangeMin: 19001 }),
     );
+  });
+
+  function queueLocalHermesAgentRow(overrides = {}) {
+    mockLockClient.query
+      .mockResolvedValueOnce({ rows: [{ locked: true }] })
+      .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
+    mockWorkerDb.query.mockImplementation(async (sql) => {
+      const normalizedSql = String(sql);
+      if (normalizedSql.includes("SELECT image, template_payload")) {
+        return {
+          rows: [
+            {
+              image: "nousresearch/hermes-agent:latest",
+              template_payload: {},
+              sandbox_type: "standard",
+              backend_type: "docker",
+              runtime_family: "hermes",
+              deploy_target: "docker",
+              execution_target_id: "docker",
+              sandbox_profile: "standard",
+              gateway_token: null,
+              mcp_servers: [],
+              status: "queued",
+              container_id: null,
+              user_id: "user-1",
+              ...overrides,
+            },
+          ],
+        };
+      }
+      if (normalizedSql.includes("FROM llm_providers")) return { rows: [] };
+      if (normalizedSql.includes("FROM integrations")) return { rows: [] };
+      if (normalizedSql === "SELECT status FROM agents WHERE id = $1") {
+        return { rows: [{ status: "deploying" }] };
+      }
+      if (normalizedSql.includes("RETURNING id, container_id")) {
+        return { rows: [{ id: "agent-1", container_id: "hermes-local-container-1" }] };
+      }
+      if (normalizedSql === "SELECT id FROM agents WHERE id = $1") {
+        return { rows: [{ id: "agent-1" }] };
+      }
+      return { rows: [] };
+    });
+  }
+
+  function runLocalHermesDeployment() {
+    // The dashboard/gateway port allocation happens before the runtime is
+    // reachable; forcing a post-create authorization failure lets the test
+    // observe the create() call args without modeling the entire rest of the
+    // successful-deployment pipeline (health checks, MCP sync, final status
+    // updates), matching the pattern used by the Remote Docker tests above.
+    const revoked = Object.assign(new Error("Remote host access was revoked"), {
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
+    mockAssertRemoteHostAgentUse
+      .mockResolvedValueOnce({ configured: true, enabled: true })
+      .mockRejectedValueOnce(revoked);
+    mockHermesProvisioner.create.mockImplementationOnce(async (config) => {
+      await config.onRuntimeIdentity({
+        containerId: "hermes-local-container-1",
+        containerName: "nora-hermes-local-agent-agent-1",
+      });
+      return {
+        containerId: "hermes-local-container-1",
+        containerName: "nora-hermes-local-agent-agent-1",
+        host: "10.0.0.9",
+        runtimeHost: "10.0.0.9",
+        runtimePort: 8642,
+        gatewayHost: "10.0.0.9",
+        gatewayPort: 8642,
+        gatewayHostPort: config.gatewayHostPort,
+        gatewayToken: "runtime-token",
+        dashboardPort: config.dashboardHostPort,
+      };
+    });
+
+    return expect(
+      mockDeploymentProcessor({
+        id: "deploy-agent-1",
+        data: {
+          id: "agent-1",
+          name: "Local Hermes Agent",
+          userId: "user-1",
+          specs: { vcpu: 2, ram_mb: 2048, disk_gb: 20 },
+        },
+        attemptsMade: 0,
+        opts: { attempts: 5, timeout: 900000 },
+      }),
+    ).rejects.toMatchObject({
+      name: "UnrecoverableError",
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+    });
+  }
+
+  it("allocates a dashboard host port for local Docker Hermes", async () => {
+    const allocations = [];
+    mockAllocateGatewayPort.mockImplementation(async ({ purpose }) => {
+      const port = purpose === DASHBOARD_PORT_PURPOSE ? 19044 : 19500;
+      allocations.push({ purpose: purpose || GATEWAY_PORT_PURPOSE, port });
+      return port;
+    });
+    queueLocalHermesAgentRow();
+
+    await runLocalHermesDeployment();
+
+    expect(mockHermesProvisioner.create).toHaveBeenCalledTimes(1);
+    const createArgs = mockHermesProvisioner.create.mock.calls[0][0];
+    expect(createArgs.gatewayHostPort).toBe(19500);
+    expect(createArgs.dashboardHostPort).toBe(19044);
+
+    const purposes = allocations.map((a) => a.purpose);
+    expect(purposes).toContain(GATEWAY_PORT_PURPOSE);
+    expect(purposes).toContain(DASHBOARD_PORT_PURPOSE);
+  });
+
+  it("reallocates the local Docker Hermes dashboard port when it is already bound outside Nora's allocation table", async () => {
+    mockAllocateGatewayPort.mockImplementation(async ({ purpose }) =>
+      purpose === DASHBOARD_PORT_PURPOSE ? 19044 : 19500,
+    );
+    mockReallocateGatewayPort.mockImplementation(async ({ purpose }) =>
+      purpose === DASHBOARD_PORT_PURPOSE ? 19045 : 19501,
+    );
+    mockHermesProvisioner.isHostPortBound = jest
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    queueLocalHermesAgentRow();
+
+    await runLocalHermesDeployment();
+
+    expect(mockHermesProvisioner.isHostPortBound).toHaveBeenCalledWith(19044, expect.any(Object));
+    expect(mockReallocateGatewayPort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostKey: "local",
+        agentId: "agent-1",
+        previousPort: 19044,
+        purpose: DASHBOARD_PORT_PURPOSE,
+      }),
+    );
+    const createArgs = mockHermesProvisioner.create.mock.calls[0][0];
+    expect(createArgs.dashboardHostPort).toBe(19045);
   });
 
   it("treats only the last configured attempt as terminal", () => {

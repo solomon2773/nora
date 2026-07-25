@@ -1,15 +1,16 @@
 // @ts-nocheck
 // Workspace usage budgets. When a check sees that current spend has crossed
-// the soft threshold (default 80%) or 100% of the limit, it emits an event
-// (workspace.budget_soft_exceeded / workspace.budget_exceeded) — the alerting
-// system can subscribe to those event types to deliver notifications.
+// the soft threshold (default 80%) or 100% of the limit, it returns a crossing
+// for the caller to emit as a workspace budget event.
 //
-// Re-alerting is rate-limited via last_alerted_pct: an alert at 80% won't
-// re-fire at 81%, only when the bucket changes (80 → 100).
+// Repeat alerts are suppressed from persisted last_alerted_pct: an alert at
+// 80% won't re-fire at 81%, only when the bucket advances from soft to hard.
 
 const db = require("./db");
 
 const VALID_PERIODS = new Set(["daily", "weekly", "monthly"]);
+
+// Budget normalization and persistence
 
 function normalizePeriod(value) {
   const period = String(value || "monthly").trim();
@@ -68,6 +69,13 @@ async function listBudgets(workspaceId) {
   return result.rows.map(serializeBudget);
 }
 
+/**
+ * Validate and upsert one workspace budget for the requested rolling spend window.
+ *
+ * @param {string} workspaceId - Workspace that owns the budget.
+ * @param {Object} [payload={}] - Period, limit, and soft-threshold values.
+ * @returns {Promise<Object>} Persisted budget.
+ */
 async function upsertBudget(workspaceId, payload = {}) {
   const period = normalizePeriod(payload.period);
   const limitUsd = normalizeLimit(payload.limitUsd ?? payload.limit_usd);
@@ -89,6 +97,13 @@ async function upsertBudget(workspaceId, payload = {}) {
   return serializeBudget(result.rows[0]);
 }
 
+/**
+ * Delete a budget only when it belongs to the requested workspace.
+ *
+ * @param {string} budgetId - Budget to delete.
+ * @param {string} workspaceId - Workspace that must own the budget.
+ * @returns {Promise<boolean>} Whether a budget was deleted.
+ */
 async function deleteBudget(budgetId, workspaceId) {
   const result = await db.query(
     "DELETE FROM workspace_budgets WHERE id = $1 AND workspace_id = $2 RETURNING id",
@@ -99,12 +114,17 @@ async function deleteBudget(budgetId, workspaceId) {
 
 const BUDGET_PERIOD_DAYS = { daily: 1, weekly: 7, monthly: 30 };
 
-// Check current spend against budgets and return an array of bucket
-// crossings (none / soft / hard). Callers (the cost route handler, or a
-// background task) decide whether to emit events from the result.
-// Spend is resolved PER BUDGET PERIOD — never from whatever window the
-// viewer happened to select (that measured a daily $10 budget against
-// 30-day spend and fired false alerts on every page view).
+// Spend evaluation and alert state
+
+/**
+ * Return newly alertable soft or hard crossings using each budget's own
+ * rolling 1-, 7-, or 30-day spend rather than the viewer-selected cost window.
+ *
+ * @param {string} workspaceId - Workspace whose budgets should be evaluated.
+ * @param {number} _ignoredViewerWindowUsd - Legacy viewer-window value, intentionally ignored.
+ * @param {Object} [deps={}] - Optional cost resolver dependency.
+ * @returns {Promise<Array>} Crossings not already covered by persisted alert state.
+ */
 async function evaluateBudgetCrossings(workspaceId, _ignoredViewerWindowUsd, deps = {}) {
   const { costResolver = require("./metrics").getWorkspaceCost } = deps;
   const budgets = await listBudgets(workspaceId);
@@ -140,6 +160,13 @@ async function evaluateBudgetCrossings(workspaceId, _ignoredViewerWindowUsd, dep
   return crossings;
 }
 
+/**
+ * Best-effort persistence of the percentage most recently reported for a budget.
+ *
+ * @param {string} budgetId - Budget whose alert state should be updated.
+ * @param {number} pct - Percentage used for later bucket suppression.
+ * @returns {Promise<void>} Resolves even when the write fails.
+ */
 async function recordBudgetAlert(budgetId, pct) {
   await db
     .query(

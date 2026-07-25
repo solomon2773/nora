@@ -76,6 +76,8 @@ const LISTING_SELECT = `
   ) report_counts ON report_counts.listing_id = ml.id
 `;
 
+// Listing normalization and identity
+
 function stripAsciiControlCharacters(value) {
   return Array.from(value)
     .filter((char) => {
@@ -137,6 +139,14 @@ function slugify(value) {
     .slice(0, 80);
 }
 
+/**
+ * Choose a slug candidate after bounded, non-locking collision checks, excluding
+ * the current listing during updates and using an unchecked timestamp fallback.
+ *
+ * @param {string} seed - Listing name or requested slug.
+ * @param {Object} [options={}] - Optional listing id excluded from conflicts.
+ * @returns {Promise<string>} Candidate listing slug.
+ */
 async function createUniqueSlug(seed, { listingId = null } = {}) {
   const base = slugify(seed) || "listing";
 
@@ -156,6 +166,17 @@ async function createUniqueSlug(seed, { listingId = null } = {}) {
   return `${base}-${Date.now().toString(36)}`;
 }
 
+// Listing publication and version records
+
+/**
+ * Check for and then insert a listing snapshot/version record. Missing listing
+ * or snapshot ids are a no-op; the non-atomic check and insert can surface a
+ * concurrent unique conflict.
+ *
+ * @param {Object} version - Listing, snapshot, number, and clone-mode fields.
+ * @returns {Promise<void>} Resolves after the version exists or incomplete
+ * input is ignored.
+ */
 async function ensureListingVersion({
   listingId,
   snapshotId,
@@ -177,32 +198,13 @@ async function ensureListingVersion({
   );
 }
 
-async function publishSnapshot(
-  snapshotId,
-  name,
-  description,
-  price = "Free",
-  category = "General",
-  options = {},
-) {
-  return upsertListing({
-    snapshotId,
-    name,
-    description,
-    price,
-    category,
-    builtIn: options.builtIn === true,
-    sourceType:
-      options.sourceType ||
-      (options.builtIn === true ? LISTING_SOURCE_PLATFORM : LISTING_SOURCE_COMMUNITY),
-    ownerUserId: options.ownerUserId || null,
-    status: options.status,
-    visibility: options.visibility,
-    slug: options.slug,
-    cloneMode: options.cloneMode || "files_only",
-  });
-}
-
+/**
+ * Create or update a normalized listing, then separately ensure its current
+ * version history; a version failure can leave the listing write committed.
+ *
+ * @param {Object} [input={}] - Listing identity, sharing, review, and version fields.
+ * @returns {Promise<Object>} Persisted listing row.
+ */
 async function upsertListing({
   listingId = null,
   snapshotId,
@@ -414,6 +416,34 @@ async function upsertListing({
   return result.rows[0];
 }
 
+async function publishSnapshot(
+  snapshotId,
+  name,
+  description,
+  price = "Free",
+  category = "General",
+  options = {},
+) {
+  return upsertListing({
+    snapshotId,
+    name,
+    description,
+    price,
+    category,
+    builtIn: options.builtIn === true,
+    sourceType:
+      options.sourceType ||
+      (options.builtIn === true ? LISTING_SOURCE_PLATFORM : LISTING_SOURCE_COMMUNITY),
+    ownerUserId: options.ownerUserId || null,
+    status: options.status,
+    visibility: options.visibility,
+    slug: options.slug,
+    cloneMode: options.cloneMode || "files_only",
+  });
+}
+
+// Listing queries and counters
+
 async function listAgentHubLocalListings() {
   const result = await db.query(
     `${LISTING_SELECT}
@@ -513,6 +543,14 @@ async function recordDownload(id) {
   );
 }
 
+// Reports and moderation
+
+/**
+ * Create a report after a non-locking check rejects a currently matching open report.
+ *
+ * @param {Object} [input={}] - Listing, reporter, reason, and detail fields.
+ * @returns {Promise<Object>} Persisted report row.
+ */
 async function createReport({ listingId, reporterUserId, reason, details = "" } = {}) {
   const existing = await db.query(
     `SELECT id
@@ -586,6 +624,16 @@ async function resolveReport(reportId, reviewerUserId, status = REPORT_STATUS_RE
   return result.rows[0] || null;
 }
 
+/**
+ * Update listing moderation status, then separately resolve open reports; a
+ * report-write failure leaves the listing change committed.
+ *
+ * @param {string} id - Listing to moderate.
+ * @param {string} status - Requested moderation status.
+ * @param {string|null} [reviewerUserId=null] - Reviewing administrator.
+ * @param {string|null} [reviewNotes=null] - Moderation notes.
+ * @returns {Promise<Object|null>} Updated listing, or `null` when absent.
+ */
 async function setListingStatus(id, status, reviewerUserId = null, reviewNotes = null) {
   const normalizedStatus = [
     LISTING_STATUS_PENDING_REVIEW,
@@ -626,6 +674,13 @@ async function setListingStatus(id, status, reviewerUserId = null, reviewNotes =
   return result.rows[0];
 }
 
+/**
+ * Persist the state of sharing a local listing with the central Agent Hub.
+ *
+ * @param {string} id - Local listing identifier.
+ * @param {Object} [state={}] - Remote status, id, error, and synchronization time.
+ * @returns {Promise<Object|null>} Updated listing, or `null` when absent.
+ */
 async function updateCentralShareStatus(
   id,
   {

@@ -17,6 +17,8 @@ let githubReleaseCache = {
   value: null,
 };
 
+// ── Upgrade configuration ───────────────────────────────────────
+
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -29,6 +31,15 @@ function parseBooleanEnv(value, defaultValue = false) {
   return defaultValue;
 }
 
+/**
+ * Describe whether direct GitHub upgrade is configured and eligible to run.
+ * Internal host paths and runner details are omitted unless explicitly requested;
+ * the configured source repository remains present even when validation disables it.
+ *
+ * @param {Object} env - Environment-style upgrade configuration.
+ * @param {Object} options - Set includeInternal for server-side orchestration.
+ * @returns {Object} Public or internal auto-upgrade capability descriptor.
+ */
 function buildAutoUpgrade(env = process.env, options = {}) {
   const enabled = parseBooleanEnv(env.NORA_AUTO_UPGRADE_ENABLED);
   const hostRepoDir = readString(env.NORA_HOST_REPO_DIR);
@@ -73,6 +84,8 @@ function buildAutoUpgrade(env = process.env, options = {}) {
       : {}),
   };
 }
+
+// ── Version comparison and release discovery ────────────────────
 
 function normalizeSeverity(value, fallback = "warning") {
   const normalized = readString(value).toLowerCase();
@@ -190,6 +203,14 @@ function comparePrerelease(a = [], b = []) {
   return 0;
 }
 
+/**
+ * Compare release identifiers using semantic-version precedence when both parse,
+ * with a numeric locale comparison fallback for non-semver deployment labels.
+ *
+ * @param {string} currentVersion - Installed release identifier.
+ * @param {string} latestVersion - Candidate release identifier.
+ * @returns {number} Negative, zero, or positive comparison result.
+ */
 function compareVersions(currentVersion, latestVersion) {
   const current = readString(currentVersion);
   const latest = readString(latestVersion);
@@ -250,6 +271,14 @@ function resolveConfiguredLatestRelease(env = process.env) {
   };
 }
 
+/**
+ * Fetch and cache the latest public GitHub release for the configured repository.
+ * Missing configuration and 404 return null; other HTTP failures are thrown for
+ * the fail-open resolver to handle.
+ *
+ * @param {Object} env - Environment-style release configuration.
+ * @returns {Promise<Object|null>} Normalized GitHub release metadata.
+ */
 async function fetchGithubLatestRelease(env = process.env) {
   const repo = normalizeGithubRepo(
     env.NORA_GITHUB_REPO || env.NORA_RELEASE_REPO || env.GITHUB_REPOSITORY,
@@ -343,6 +372,13 @@ async function fetchGithubLatestRelease(env = process.env) {
   return release;
 }
 
+/**
+ * Resolve release metadata with explicit environment values taking precedence.
+ * GitHub transport and response errors are logged and converted to null.
+ *
+ * @param {Object} env - Environment-style release configuration.
+ * @returns {Promise<Object|null>} Latest release metadata when available.
+ */
 async function resolveLatestRelease(env = process.env) {
   const configured = resolveConfiguredLatestRelease(env);
   if (configured) {
@@ -357,6 +393,14 @@ async function resolveLatestRelease(env = process.env) {
   }
 }
 
+/**
+ * Build the public release and upgrade summary consumed by control-plane routes.
+ * Missing latest-release metadata is represented explicitly and does not fail
+ * the API.
+ *
+ * @param {Object} env - Environment-style release and upgrade configuration.
+ * @returns {Promise<Object>} Current/latest version and upgrade capability summary.
+ */
 async function buildReleaseInfo(env = process.env) {
   const latestRelease = await resolveLatestRelease(env);
   const currentVersion = readString(env.NORA_CURRENT_VERSION) || null;

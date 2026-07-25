@@ -40,6 +40,9 @@ const {
   buildHermesRuntimeConfigBootstrapCommand,
 } = require("../../../agent-runtime/lib/hermesRuntimeBootstrap");
 const {
+  deriveHermesDashboardBasicAuth,
+} = require("../../../agent-runtime/lib/hermesDashboardAuth");
+const {
   buildTelemetry,
   buildUnavailableTelemetry,
   PROXMOX_DEFAULT_CAPABILITIES,
@@ -1907,6 +1910,7 @@ class ProxmoxBackend extends ProvisionerBackend {
 
   async _bootstrapHermes(vmid, { id, env = {}, signal } = {}) {
     const apiServerKey = crypto.randomBytes(32).toString("hex");
+    const dashboardAuth = deriveHermesDashboardBasicAuth(apiServerKey);
     const hermesBin = process.env.PROXMOX_HERMES_BIN || "/opt/hermes/.venv/bin/hermes";
     await this._prepareHermesBase(vmid, hermesBin, { signal });
     const inputEnv = normalizeEnv(env || {});
@@ -1921,6 +1925,11 @@ class ProxmoxBackend extends ProvisionerBackend {
       API_SERVER_HOST: "0.0.0.0",
       API_SERVER_PORT: String(HERMES_RUNTIME_PORT),
       API_SERVER_KEY: apiServerKey,
+      // Hermes fail-closed dashboard auth (basic-auth provider); the embed proxy
+      // re-derives the same credential from API_SERVER_KEY to log in.
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: dashboardAuth.username,
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: dashboardAuth.password,
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: dashboardAuth.secret,
       GATEWAY_HEALTH_URL: `http://127.0.0.1:${HERMES_RUNTIME_PORT}`,
       MESSAGING_CWD: HERMES_WORKSPACE,
       TERMINAL_CWD: HERMES_WORKSPACE,
@@ -1960,7 +1969,7 @@ class ProxmoxBackend extends ProvisionerBackend {
       buildHermesRuntimeConfigBootstrapCommand(),
       `  touch ${HERMES_HOME}/.nora-bootstrap-complete`,
       "fi",
-      `nohup "$HERMES_BIN" dashboard --host ${dashboardHost} --insecure --no-open >> /var/log/nora/hermes-dashboard.log 2>&1 &`,
+      `nohup "$HERMES_BIN" dashboard --host ${dashboardHost} --no-open >> /var/log/nora/hermes-dashboard.log 2>&1 &`,
       'exec "$HERMES_BIN" gateway run',
       "",
     ].join("\n");

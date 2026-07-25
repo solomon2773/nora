@@ -9,6 +9,7 @@ const {
   joinHttpUrl,
   resolveHermesDashboardAddress,
 } = require("../../agent-runtime/lib/agentEndpoints");
+const { HERMES_DASHBOARD_PORT } = require("../../agent-runtime/lib/contracts");
 
 describe("joinHttpUrl", () => {
   it("builds a plain URL for hostnames and IPv4", () => {
@@ -64,5 +65,21 @@ describe("resolveHermesDashboardAddress", () => {
         dashboard_port: 19044,
       }),
     ).toEqual({ host: "laptop.tail-scale.ts.net", port: 19044 });
+  });
+
+  it("resolves a local Hermes dashboard on the compose network, not a host port", () => {
+    // dashboard_port stays null for local Docker, so the resolver falls back to
+    // the compose runtime_host + the container port 9119 (HERMES_DASHBOARD_PORT).
+    const agent = {
+      runtime_family: "hermes",
+      deploy_target: "docker",
+      runtime_host: "172.18.0.11",
+      runtime_port: 8642,
+      dashboard_port: null,
+    };
+    expect(resolveHermesDashboardAddress(agent)).toEqual({
+      host: "172.18.0.11",
+      port: HERMES_DASHBOARD_PORT,
+    });
   });
 });

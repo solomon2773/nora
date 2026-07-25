@@ -85,6 +85,14 @@ function normalizeImage(value, fallback = null) {
   return normalized || null;
 }
 
+/**
+ * Normalize editable file input into decoded path/content entries, falling
+ * back to the existing files when the field is not an array.
+ *
+ * @param {Array} value - Requested editable files.
+ * @param {Array} [fallbackFiles=[]] - Existing normalized payload files.
+ * @returns {Array} Editable text file entries with non-empty paths.
+ */
 function normalizeEditableFiles(value, fallbackFiles = []) {
   if (!Array.isArray(value)) return fallbackFiles;
 
@@ -106,6 +114,16 @@ function normalizeEditableFiles(value, fallbackFiles = []) {
     .filter((entry) => entry.path.trim());
 }
 
+/**
+ * Build synchronized listing and snapshot updates while preserving protected
+ * template identity fields unless the caller explicitly allows changing them.
+ *
+ * @param {Object} snapshot - Existing template snapshot.
+ * @param {Object} listing - Existing Agent Hub listing.
+ * @param {Object} [input={}] - Requested metadata, defaults, and file edits.
+ * @param {Object} [options={}] - Source and protected-field permissions.
+ * @returns {Object} Normalized listing and snapshot update payloads.
+ */
 function buildAgentHubTemplateUpdate(snapshot, listing, input = {}, options = {}) {
   const config = decodeMaybeString(snapshot?.config);
   const currentPayload = extractTemplatePayloadFromSnapshot(snapshot, {

@@ -156,26 +156,32 @@ function buildManagedEnvApplyScript() {
     "# Source this file; it intentionally changes only Nora's managed names.",
     `export NORA_MANAGED_ENV_STATE=${JSON.stringify(MANAGED_ENV_STATE_PATH)}`,
     'if [ ! -r "$NORA_MANAGED_ENV_STATE" ]; then unset NORA_MANAGED_ENV_STATE; return 0 2>/dev/null || exit 0; fi',
-    "nora_managed_env_commands=\"$(node <<'__NORA_RENDER_MANAGED_ENV__'",
+    // Render into a temp file first rather than piping this heredoc straight into
+    // `node <<'EOF' ... EOF)`: nesting a heredoc inside `$(...)` trips the lexer on
+    // some /bin/sh implementations (observed: bash 3.2), which misparses quotes in
+    // the heredoc body and fails with "unexpected EOF while looking for matching '".
+    'nora_managed_env_render="$(mktemp)" || return $?',
+    "cat <<'__NORA_RENDER_MANAGED_ENV__' > \"$nora_managed_env_render\"",
     "const fs = require('fs');",
     "const statePath = process.env.NORA_MANAGED_ENV_STATE;",
     "const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));",
     "const validName = /^[A-Za-z_][A-Za-z0-9_]*$/;",
     "const names = Array.isArray(state.managedNames) ? state.managedNames : [];",
     "const values = state && state.values && typeof state.values === 'object' && !Array.isArray(state.values) ? state.values : {};",
-    "const quote = (value) => `'${String(value).replace(/'/g, `'\\\"'\\\"'`)}'`;",
+    'const quote = (value) => "\'" + String(value).replace(/\'/g, "\'\\"\'\\"\'") + "\'";',
     "for (const name of names) {",
     "  if (!validName.test(String(name))) throw new Error('Invalid Nora managed environment name');",
-    "  process.stdout.write(`unset ${name}\\n`);",
+    "  process.stdout.write('unset ' + name + '\\n');",
     "}",
     "for (const [name, value] of Object.entries(values)) {",
     "  if (!validName.test(name)) throw new Error('Invalid Nora managed environment name');",
-    "  process.stdout.write(`export ${name}=${quote(value)}\\n`);",
+    "  process.stdout.write('export ' + name + '=' + quote(value) + '\\n');",
     "}",
     "__NORA_RENDER_MANAGED_ENV__",
-    ')" || return $?',
+    'nora_managed_env_commands="$(node "$nora_managed_env_render")" || { rm -f "$nora_managed_env_render"; return $?; }',
+    'rm -f "$nora_managed_env_render"',
     'eval "$nora_managed_env_commands"',
-    "unset nora_managed_env_commands NORA_MANAGED_ENV_STATE",
+    "unset nora_managed_env_commands NORA_MANAGED_ENV_STATE nora_managed_env_render",
     "",
   ].join("\n");
 }

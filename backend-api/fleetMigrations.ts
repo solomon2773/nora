@@ -16,6 +16,15 @@ const agentVersions = require("./agentVersions");
 const ALLOWED_TARGETS = new Set(["docker", "k8s", "proxmox"]);
 const ALLOWED_SANDBOXES = new Set(["standard", "nemoclaw"]);
 
+// Selection and compatibility planning
+
+/**
+ * Normalize selection aliases and reject unsupported runtime, target, or sandbox values.
+ *
+ * @param {Object} value - Source or target selection supplied by the caller.
+ * @param {string} label - Field prefix used in validation errors.
+ * @returns {Object} Canonical selection with nullable criteria.
+ */
 function normalizeSelection(value, label) {
   const sel = value && typeof value === "object" ? value : {};
   const runtimeFamily = sel.runtime_family || sel.runtimeFamily;
@@ -114,6 +123,13 @@ async function findCandidateAgents(source, agentIds) {
   return result.rows;
 }
 
+/**
+ * Compare an agent's current runtime selection with a proposed target.
+ *
+ * @param {Object} agent - Candidate agent row.
+ * @param {Object} target - Normalized target selection.
+ * @returns {Object} Current, desired, and availability details for the agent.
+ */
 function evaluateAgent(agent, target) {
   const desired = {
     runtime_family: target.runtime_family || agent.runtime_family,
@@ -141,6 +157,12 @@ function evaluateAgent(agent, target) {
   };
 }
 
+/**
+ * Capture the runtime and template fields needed by the current rollback path.
+ *
+ * @param {Object} agent - Candidate agent row.
+ * @returns {Object} Persistable pre-migration state.
+ */
 function captureBeforeState(agent) {
   return {
     runtime_family: agent.runtime_family,
@@ -155,6 +177,14 @@ function captureBeforeState(agent) {
   };
 }
 
+/**
+ * Plan a fleet transition without mutating agents or creating a migration record.
+ *
+ * Explicit agent IDs select candidates directly; otherwise the normalized source filters them.
+ *
+ * @param {Object} [input={}] - Source, target, and optional agent IDs.
+ * @returns {Promise<Object>} Normalized selections and per-agent compatibility evaluations.
+ */
 async function planMigration({ source = {}, target = {}, agentIds = [] } = {}) {
   const normalizedSource = normalizeSelection(source, "from");
   const normalizedTarget = normalizeSelection(target, "to");
@@ -170,6 +200,17 @@ async function planMigration({ source = {}, target = {}, agentIds = [] } = {}) {
   };
 }
 
+// Migration persistence
+
+/**
+ * Persist a fleet migration plan and its pre-state snapshot without executing agent transitions.
+ *
+ * Dry runs are recorded as completed. Real runs are recorded as queued and request best-effort
+ * per-agent version snapshots.
+ *
+ * @param {Object} [input={}] - Selections, candidate IDs, dry-run flag, actor, and notes.
+ * @returns {Promise<Object>} Serialized migration record and compatibility plan.
+ */
 async function createMigration({
   source,
   target,
@@ -259,6 +300,13 @@ async function getMigration(migrationId) {
   return result.rows[0] ? serializeMigration(result.rows[0]) : null;
 }
 
+/**
+ * Mark a migration record rolled back after its caller performs any agent restoration.
+ *
+ * @param {string} migrationId - Fleet migration identifier.
+ * @param {Object} [afterState={}] - Caller-supplied rollback outcome.
+ * @returns {Promise<Object|null>} Updated migration record when found.
+ */
 async function markRolledBack(migrationId, afterState = {}) {
   const result = await db.query(
     `UPDATE fleet_migrations

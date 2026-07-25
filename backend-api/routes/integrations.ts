@@ -37,6 +37,187 @@ const DEFAULT_EMAIL_CRON_PROMPT =
   "Look for any new emails or calendar invites I should be aware of and summarize anything important for me.";
 const SINGLETON_INTEGRATION_PROVIDERS = new Set(["wecom"]);
 
+// Email cron lifecycle
+
+/**
+ * Register an email check-in cron for a ready agent, retrying gateway failures.
+ *
+ * @param {Object} agent - Runtime target that owns the cron.
+ * @param {string} integrationId - Email integration referenced by the job.
+ * @param {Object} pollingIntervalSeconds - Cron config; non-object input uses defaults.
+ * @returns {Promise<string|null>} Created cron id, or null when registration is unavailable.
+ */
+async function registerEmailCronJob(agent, integrationId, pollingIntervalSeconds) {
+  if (!agent || !["running", "warning"].includes(agent.status)) return null;
+  const cronConfig = normalizeEmailConfigInput({
+    cron:
+      pollingIntervalSeconds && typeof pollingIntervalSeconds === "object"
+        ? pollingIntervalSeconds
+        : {},
+  }).cron;
+  const intervalMinutes = Number.parseInt(String(cronConfig?.intervalMinutes || 60), 10);
+  const safeIntervalMinutes =
+    Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 60;
+  const prompt =
+    String(cronConfig?.prompt || DEFAULT_EMAIL_CRON_PROMPT).trim() || DEFAULT_EMAIL_CRON_PROMPT;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const result = await rpcCall(agent, "cron.add", {
+        name: `email_checkin_${integrationId}`,
+        schedule: { kind: "interval", everyMs: safeIntervalMinutes * 60 * 1000 },
+        sessionTarget: "isolated",
+        payload: {
+          kind: "agentTurn",
+          message: prompt,
+          thinking: "minimal",
+          lightContext: true,
+          timeoutSeconds: 300,
+        },
+        delivery: { mode: "none" },
+        agentId: "main",
+      });
+      return result?.id || result?.cronId || null;
+    } catch (error) {
+      if (attempt === 4) {
+        console.warn(
+          `[email-cron] failed to create cron for integration ${integrationId}: ${error?.message || error}`,
+        );
+        return null;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+  }
+}
+
+async function removeEmailCronJob(agent, cronJobId) {
+  if (!agent || !cronJobId) return;
+  try {
+    await rpcCall(agent, "cron.remove", { id: cronJobId });
+  } catch {
+    // best-effort; gateway may be unavailable during teardown
+  }
+}
+
+function extractCronJobs(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.jobs)) return result.jobs;
+  return [];
+}
+
+function cronJobReferencesIntegration(job, integrationId) {
+  if (!job || !integrationId) return false;
+  const idText = String(integrationId);
+  const name = String(job?.name || "");
+  if (name === `email_checkin_${idText}`) return true;
+
+  const payload = job?.payload;
+  const message = String(payload?.message || "");
+  return message.includes(idText);
+}
+
+async function findEmailCronJobIds(agent, integrationId) {
+  if (!agent || !integrationId || !["running", "warning"].includes(agent.status)) return [];
+  try {
+    const result = await rpcCall(agent, "cron.list");
+    return extractCronJobs(result)
+      .filter((job) => cronJobReferencesIntegration(job, integrationId))
+      .map((job) => String(job?.id || job?.cronId || ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function removeEmailCronJobs(agent, cronJobIds = []) {
+  const uniqueIds = [...new Set((cronJobIds || []).filter(Boolean))];
+  for (const cronJobId of uniqueIds) {
+    await removeEmailCronJob(agent, cronJobId);
+  }
+}
+
+/**
+ * Replace an integration's email cron after best-effort removal of its prior job.
+ *
+ * @param {Object} agent - Runtime target that owns the cron.
+ * @param {string} integrationId - Email integration referenced by the job.
+ * @param {string|null} previousCronJobId - Previously persisted cron id.
+ * @param {Object} pollingIntervalSeconds - Cron config; non-object input uses defaults.
+ * @returns {Promise<string|null>} New cron id, or the prior id when replacement fails.
+ */
+async function reconcileEmailCronJob(
+  agent,
+  integrationId,
+  previousCronJobId,
+  pollingIntervalSeconds,
+) {
+  if (!agent || !integrationId) return previousCronJobId || null;
+
+  if (previousCronJobId) {
+    await removeEmailCronJob(agent, previousCronJobId);
+  }
+
+  const nextCronJobId = await registerEmailCronJob(agent, integrationId, pollingIntervalSeconds);
+  if (!nextCronJobId) return previousCronJobId || null;
+
+  return nextCronJobId;
+}
+
+// WeCom activation lifecycle
+
+async function updateWecomActivationState(agentId, integrationId, activation) {
+  if (!integrationId || !activation || typeof activation !== "object") return null;
+  return integrations.updateIntegration(integrationId, agentId, null, {
+    activation,
+  });
+}
+
+/**
+ * Activate a saved WeCom integration and persist its resulting lifecycle state.
+ *
+ * Activation failures are recorded best-effort before being exposed as a gateway error.
+ *
+ * @param {Object} agent - OpenClaw runtime target.
+ * @param {string} agentId - Agent that owns the integration.
+ * @param {string} integrationId - Saved WeCom integration to activate.
+ * @returns {Promise<Object>} Integration with the latest activation state.
+ */
+async function activateWecomIntegration(agent, agentId, integrationId) {
+  const savedIntegration = await integrations.getDecryptedIntegration(integrationId, agentId);
+  if (!savedIntegration) {
+    const error = new Error("Saved WeCom integration could not be loaded for activation.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  try {
+    const outcome = await activateWecomForOpenClawAgent(agent, savedIntegration.config || {}, {
+      runContainerCommand,
+      rpcCall,
+    });
+    return (
+      (await updateWecomActivationState(agentId, integrationId, outcome.activation)) ||
+      savedIntegration
+    );
+  } catch (error) {
+    const message =
+      String(error?.message || "WeCom activation failed.")
+        .trim()
+        .replace(/\s+/g, " ") || "WeCom activation failed.";
+    await updateWecomActivationState(agentId, integrationId, {
+      lifecycleStatus: "activation_failed",
+      readiness: "error",
+      lastError: message,
+      lastVerifiedAt: "",
+    }).catch(() => null);
+    const wrapped = new Error(message);
+    wrapped.statusCode = 502;
+    throw wrapped;
+  }
+}
+
+// Credential reconciliation safety
+
 function integrationMutationCommittedError(message, cause = null, syncResults = []) {
   const error = new Error(message, cause ? { cause } : undefined);
   error.statusCode = 502;
@@ -185,6 +366,13 @@ function defaultTwitterOAuthRedirectPath(agentId) {
   return `/app/agents/${encodeURIComponent(agentId)}`;
 }
 
+/**
+ * Restrict OAuth completion redirects to Nora application paths.
+ *
+ * @param {*} value - Requested post-OAuth redirect.
+ * @param {string} agentId - Agent used for the safe fallback path.
+ * @returns {string} Local `/app/` redirect path.
+ */
 function normalizeRedirectPath(value, agentId) {
   const fallback = defaultTwitterOAuthRedirectPath(agentId);
   if (typeof value !== "string") return fallback;
@@ -203,6 +391,13 @@ function appendQuery(targetPath, params = {}) {
   return `${url.pathname}${url.search}`;
 }
 
+/**
+ * Parse a provider response and surface its most useful structured error detail.
+ *
+ * @param {Object} res - Fetch response.
+ * @param {string} label - Provider operation label.
+ * @returns {Promise<Object>} Parsed JSON object, or an empty object for an empty success body.
+ */
 async function readJsonResponse(res, label) {
   const rawText = await res.text().catch(() => "");
   let data = null;
@@ -360,6 +555,16 @@ async function getAgentIntegrationRuntimeTarget(agentId, request = null) {
   return agentResult.rows[0] || null;
 }
 
+/**
+ * Project stored integrations into the selected runtime and optionally surface sync failures.
+ *
+ * Strict modes surface Hermes manifest build/install failures or OpenClaw
+ * manifest-delivery failures. OpenClaw gateway env projection remains best effort.
+ *
+ * @param {string} agentId - Agent whose integration state should be projected.
+ * @param {Object} [options={}] - Failure policy, prior env names, and request authorization context.
+ * @returns {Promise<Object|null>} Runtime family and manifest sync outcome.
+ */
 async function syncIntegrationsToAgent(
   agentId,
   { strict = false, strictHermes = false, previousEnvNames = [], request = null } = {},
@@ -560,6 +765,14 @@ async function replaceOAuthIntegrationAndReconcile(agent, provider, accessToken,
   return result;
 }
 
+/**
+ * Forward an integration tool invocation only to a running or warning non-Hermes runtime.
+ *
+ * @param {string} agentId - Target agent.
+ * @param {Object} [payload={}] - Runtime tool name and input.
+ * @param {Object|null} [request=null] - Optional API-key request used to scope agent access.
+ * @returns {Promise<Object>} Runtime invocation result.
+ */
 async function invokeAgentIntegrationTool(agentId, payload = {}, request = null) {
   const agent = await getAgentIntegrationRuntimeTarget(agentId, request);
   if (!agent) {
@@ -869,154 +1082,6 @@ router.get("/integrations/linkedin/oauth/callback", async (req, res) => {
     );
   }
 });
-
-async function registerEmailCronJob(agent, integrationId, pollingIntervalSeconds) {
-  if (!agent || !["running", "warning"].includes(agent.status)) return null;
-  const cronConfig = normalizeEmailConfigInput({
-    cron:
-      pollingIntervalSeconds && typeof pollingIntervalSeconds === "object"
-        ? pollingIntervalSeconds
-        : {},
-  }).cron;
-  const intervalMinutes = Number.parseInt(String(cronConfig?.intervalMinutes || 60), 10);
-  const safeIntervalMinutes =
-    Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 60;
-  const prompt =
-    String(cronConfig?.prompt || DEFAULT_EMAIL_CRON_PROMPT).trim() || DEFAULT_EMAIL_CRON_PROMPT;
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      const result = await rpcCall(agent, "cron.add", {
-        name: `email_checkin_${integrationId}`,
-        schedule: { kind: "interval", everyMs: safeIntervalMinutes * 60 * 1000 },
-        sessionTarget: "isolated",
-        payload: {
-          kind: "agentTurn",
-          message: prompt,
-          thinking: "minimal",
-          lightContext: true,
-          timeoutSeconds: 300,
-        },
-        delivery: { mode: "none" },
-        agentId: "main",
-      });
-      return result?.id || result?.cronId || null;
-    } catch (error) {
-      if (attempt === 4) {
-        console.warn(
-          `[email-cron] failed to create cron for integration ${integrationId}: ${error?.message || error}`,
-        );
-        return null;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
-    }
-  }
-}
-
-async function removeEmailCronJob(agent, cronJobId) {
-  if (!agent || !cronJobId) return;
-  try {
-    await rpcCall(agent, "cron.remove", { id: cronJobId });
-  } catch {
-    // best-effort; gateway may be unavailable during teardown
-  }
-}
-
-function extractCronJobs(result) {
-  if (Array.isArray(result)) return result;
-  if (Array.isArray(result?.jobs)) return result.jobs;
-  return [];
-}
-
-function cronJobReferencesIntegration(job, integrationId) {
-  if (!job || !integrationId) return false;
-  const idText = String(integrationId);
-  const name = String(job?.name || "");
-  if (name === `email_checkin_${idText}`) return true;
-
-  const payload = job?.payload;
-  const message = String(payload?.message || "");
-  return message.includes(idText);
-}
-
-async function findEmailCronJobIds(agent, integrationId) {
-  if (!agent || !integrationId || !["running", "warning"].includes(agent.status)) return [];
-  try {
-    const result = await rpcCall(agent, "cron.list");
-    return extractCronJobs(result)
-      .filter((job) => cronJobReferencesIntegration(job, integrationId))
-      .map((job) => String(job?.id || job?.cronId || ""))
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-async function removeEmailCronJobs(agent, cronJobIds = []) {
-  const uniqueIds = [...new Set((cronJobIds || []).filter(Boolean))];
-  for (const cronJobId of uniqueIds) {
-    await removeEmailCronJob(agent, cronJobId);
-  }
-}
-
-async function reconcileEmailCronJob(
-  agent,
-  integrationId,
-  previousCronJobId,
-  pollingIntervalSeconds,
-) {
-  if (!agent || !integrationId) return previousCronJobId || null;
-
-  if (previousCronJobId) {
-    await removeEmailCronJob(agent, previousCronJobId);
-  }
-
-  const nextCronJobId = await registerEmailCronJob(agent, integrationId, pollingIntervalSeconds);
-  if (!nextCronJobId) return previousCronJobId || null;
-
-  return nextCronJobId;
-}
-
-async function updateWecomActivationState(agentId, integrationId, activation) {
-  if (!integrationId || !activation || typeof activation !== "object") return null;
-  return integrations.updateIntegration(integrationId, agentId, null, {
-    activation,
-  });
-}
-
-async function activateWecomIntegration(agent, agentId, integrationId) {
-  const savedIntegration = await integrations.getDecryptedIntegration(integrationId, agentId);
-  if (!savedIntegration) {
-    const error = new Error("Saved WeCom integration could not be loaded for activation.");
-    error.statusCode = 500;
-    throw error;
-  }
-
-  try {
-    const outcome = await activateWecomForOpenClawAgent(agent, savedIntegration.config || {}, {
-      runContainerCommand,
-      rpcCall,
-    });
-    return (
-      (await updateWecomActivationState(agentId, integrationId, outcome.activation)) ||
-      savedIntegration
-    );
-  } catch (error) {
-    const message =
-      String(error?.message || "WeCom activation failed.")
-        .trim()
-        .replace(/\s+/g, " ") || "WeCom activation failed.";
-    await updateWecomActivationState(agentId, integrationId, {
-      lifecycleStatus: "activation_failed",
-      readiness: "error",
-      lastError: message,
-      lastVerifiedAt: "",
-    }).catch(() => null);
-    const wrapped = new Error(message);
-    wrapped.statusCode = 502;
-    throw wrapped;
-  }
-}
 
 router.post("/agents/:id/integrations", async (req, res) => {
   try {

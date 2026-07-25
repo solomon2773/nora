@@ -34,6 +34,8 @@ const RUNNING_PHASES = new Set([
 
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
 
+// ── Upgrade configuration ───────────────────────────────────────
+
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -234,6 +236,13 @@ async function pathExists(filePath, type = "any") {
   }
 }
 
+/**
+ * Resolve and validate direct-upgrade configuration from environment values and
+ * Compose labels, marking it unavailable for an invalid host path or source.
+ *
+ * @param {Object} env - Environment-style upgrade configuration.
+ * @returns {Promise<Object>} Internal runner and public capability configuration.
+ */
 async function resolveUpgradeConfig(env = process.env) {
   const composeMetadata = await inspectCurrentComposeMetadata();
   const autoConfig = buildAutoUpgrade(env, { includeInternal: true });
@@ -296,6 +305,8 @@ async function resolveUpgradeConfig(env = process.env) {
   };
 }
 
+// ── Persisted state and public projections ──────────────────────
+
 function buildIdleState() {
   return {
     job: null,
@@ -345,6 +356,14 @@ function publicJob(job) {
   };
 }
 
+/**
+ * Best-effort redaction for known environment secrets and common credential
+ * patterns. It reduces accidental disclosure but is not an exhaustive sanitizer.
+ *
+ * @param {string} input - Log or error text.
+ * @param {Object} env - Environment containing values to redact.
+ * @returns {string} Redacted text.
+ */
 function redactText(input, env = process.env) {
   let output = String(input || "");
   const secretValues = [
@@ -372,6 +391,13 @@ async function ensureStateDir(env = process.env) {
   await fsp.mkdir(getStateDir(env), { recursive: true });
 }
 
+/**
+ * Read persisted upgrade state, falling back to idle after missing, malformed,
+ * or unreadable state; non-missing failures are logged.
+ *
+ * @param {Object} env - Environment selecting the state directory.
+ * @returns {Promise<Object>} Persisted or synthesized idle state.
+ */
 async function readState(env = process.env) {
   try {
     const payload = await fsp.readFile(getStatePath(env), "utf8");
@@ -385,6 +411,14 @@ async function readState(env = process.env) {
   return buildIdleState();
 }
 
+/**
+ * Overwrite the upgrade state file directly and refresh its update timestamp;
+ * persistence does not use a temporary-file rename for atomic replacement.
+ *
+ * @param {Object} state - Complete state to persist.
+ * @param {Object} env - Environment selecting the state directory.
+ * @returns {Promise<Object>} Persisted state with updatedAt.
+ */
 async function writeState(state, env = process.env) {
   await ensureStateDir(env);
   const nextState = {
@@ -423,6 +457,8 @@ async function readLogTail(logFile, env = process.env) {
   }
 }
 
+// ── Privileged runner launch ────────────────────────────────────
+
 async function ensureRunnerImage(image) {
   await new Promise((resolve, reject) => {
     docker.pull(image, (pullError, stream) => {
@@ -450,6 +486,16 @@ function buildRunnerCommand() {
   ].join("\n");
 }
 
+/**
+ * Pull and launch the privileged upgrade runner. The container receives the host
+ * repo as a read-write bind, the Docker socket, and the durable state volume;
+ * its container ID is persisted before start.
+ *
+ * @param {Object} job - Mutable upgrade job state.
+ * @param {Object} config - Resolved runner and repository configuration.
+ * @param {Object} env - Environment forwarded to runner configuration.
+ * @returns {Promise<Object>} Started Docker container.
+ */
 async function launchRunnerContainer(job, config, env = process.env) {
   const image = config.runnerImage || DEFAULT_RUNNER_IMAGE;
   const stateVolume = config.stateVolume || DEFAULT_STATE_VOLUME;
@@ -500,6 +546,8 @@ async function launchRunnerContainer(job, config, env = process.env) {
   await container.start();
   return container;
 }
+
+// ── Preflight and public orchestration ──────────────────────────
 
 function buildCheck(id, label, status, message, detail = {}) {
   return { id, label, status, message, detail };
@@ -573,6 +621,14 @@ async function validateRepoMirrorFiles(config) {
   return checks;
 }
 
+/**
+ * Evaluate upgrade enablement, target availability, repository configuration,
+ * Docker access, and visible deployment files. A missing read-only repo mirror
+ * is a warning because the runner performs the file checks again.
+ *
+ * @param {Object} options - Optional release/config snapshots and environment.
+ * @returns {Promise<Object>} Readiness status with pass, warning, and fail checks.
+ */
 async function buildReleaseUpgradePreflight({
   release = null,
   config = null,
@@ -678,6 +734,13 @@ async function buildReleaseUpgradePreflight({
   };
 }
 
+/**
+ * Read the current public upgrade status, including fresh release/preflight data,
+ * persisted job state, and a redacted log tail.
+ *
+ * @param {Object} env - Environment-style release and runner configuration.
+ * @returns {Promise<Object>} Public upgrade capability and job status.
+ */
 async function getReleaseUpgradeStatus(env = process.env) {
   const release = await buildReleaseInfo(env);
   const config = await resolveUpgradeConfig(env);
@@ -706,6 +769,14 @@ async function getReleaseUpgradeStatus(env = process.env) {
   };
 }
 
+/**
+ * Queue and launch a direct GitHub upgrade after a fresh preflight. A persisted
+ * running phase is rejected, but the read/check/write sequence is not a
+ * cross-process lock; launch failures are persisted before returning HTTP 503.
+ *
+ * @param {Object} options - Requesting actor and environment configuration.
+ * @returns {Promise<Object>} Public status for the launched upgrade.
+ */
 async function startReleaseUpgrade({ actor = null, env = process.env } = {}) {
   const release = await buildReleaseInfo(env);
   const config = await resolveUpgradeConfig(env);

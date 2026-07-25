@@ -61,6 +61,13 @@ function parseEventDate(value, { endOfDay = false } = {}) {
   return parsed;
 }
 
+/**
+ * Normalize event-search query fields and reject invalid or reversed dates.
+ * Date-only upper bounds include the full UTC day.
+ *
+ * @param {Object} query - Express query values.
+ * @returns {Object} Validated filters for the monitoring service.
+ */
 function buildEventFilters(query = {}) {
   const search = typeof query.search === "string" ? query.search.trim() : "";
   const type =

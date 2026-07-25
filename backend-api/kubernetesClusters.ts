@@ -123,6 +123,8 @@ function parseJsonObject(value, fallback = {}) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : fallback;
 }
 
+// Network policy normalization
+
 function createPolicyValidationError(message) {
   const error = new Error(message);
   error.statusCode = 400;
@@ -211,6 +213,15 @@ function normalizeIngressPorts(runtimeFamily, ports, { lenient = false } = {}) {
   return Array.from(new Set(normalized)).sort((left, right) => left - right);
 }
 
+/**
+ * Validate and canonicalize one runtime family's CIDR-based ingress rules.
+ * Strict input rejects duplicate CIDRs and ports outside Nora's runtime baseline.
+ *
+ * @param {string} runtimeFamily - Supported runtime family whose ports are allowed.
+ * @param {Array} rules - Ingress rules to normalize.
+ * @param {Object} [options={}] - Optional lenient persisted-data handling.
+ * @returns {Array} Canonical rules with stable shapes and unique CIDRs.
+ */
 function normalizeIngressPolicyRules(runtimeFamily, rules, options = {}) {
   const { lenient = false } = options;
   if (!Object.prototype.hasOwnProperty.call(POLICY_INGRESS_PORTS, runtimeFamily)) {
@@ -293,6 +304,15 @@ function normalizeTimestamp(value, fieldName, { lenient = false } = {}) {
   return parsed.toISOString();
 }
 
+/**
+ * Normalize the full custom ingress-policy document for OpenClaw and Hermes runtimes.
+ * Omitted runtime-family buckets are treated as empty replacement lists.
+ *
+ * @param {Object} [input={}] - Policy settings candidate.
+ * @param {Object|null} [existing=null] - Fallback for missing roots or lenient persisted reads.
+ * @param {Object} [options={}] - Optional lenient persisted-data handling.
+ * @returns {Object} Canonical policy settings.
+ */
 function normalizePolicySettings(input = {}, existing = null, options = {}) {
   const { lenient = false } = options;
   const existingInput =
@@ -314,6 +334,13 @@ function normalizePolicySettings(input = {}, existing = null, options = {}) {
   };
 }
 
+/**
+ * Hash normalized policy state for desired-versus-applied reconciliation checks.
+ * Deterministic hashes require stable rule IDs; normalization generates missing IDs.
+ *
+ * @param {Object} policySettings - Policy settings to fingerprint.
+ * @returns {string} SHA-256 hash of the normalized document.
+ */
 function buildPolicySettingsHash(policySettings) {
   const normalized = normalizePolicySettings(policySettings, buildEmptyPolicySettings(), {
     lenient: true,
@@ -321,6 +348,15 @@ function buildPolicySettingsHash(policySettings) {
   return createHash("sha256").update(JSON.stringify(normalized)).digest("hex");
 }
 
+/**
+ * Normalize worker reconciliation status, hashes, namespaces, issues, and timestamps.
+ *
+ * @param {Object} [input={}] - Status fields to normalize.
+ * @param {Object|null} [existing=null] - Existing status used for omitted values.
+ * @param {Object|null} [policySettings=null] - Desired settings used to derive a fallback hash.
+ * @param {Object} [options={}] - Optional lenient persisted-data handling.
+ * @returns {Object} Canonical policy reconciliation status.
+ */
 function normalizePolicySettingsStatus(
   input = {},
   existing = null,
@@ -372,6 +408,13 @@ function normalizePolicySettingsStatus(
   return Object.values(normalized).some((value) => value != null) ? normalized : {};
 }
 
+/**
+ * Summarize whether custom policy is configured and applied to the current desired hash.
+ *
+ * @param {Object} policySettings - Desired policy settings.
+ * @param {Object} [policySettingsStatus={}] - Latest worker reconciliation status.
+ * @returns {Object} Public capability and reconciliation summary fields.
+ */
 function buildPolicySettingsSummary(policySettings, policySettingsStatus = {}) {
   const normalizedSettings = normalizePolicySettings(policySettings, buildEmptyPolicySettings(), {
     lenient: true,
@@ -410,6 +453,8 @@ function buildPolicySettingsSummary(policySettings, policySettingsStatus = {}) {
     },
   };
 }
+
+// Cluster profile normalization
 
 function parseStringArray(value) {
   if (Array.isArray(value)) {
@@ -462,6 +507,14 @@ function maskCluster(row) {
   };
 }
 
+/**
+ * Convert a cluster row into its provisioning profile and derived policy/availability state.
+ * Kubeconfig content is decrypted only when explicitly requested by a trusted internal caller.
+ *
+ * @param {Object} row - Kubernetes-cluster database row.
+ * @param {Object} [options={}] - Profile serialization options.
+ * @returns {Object|null} Normalized cluster profile.
+ */
 function rowToProfile(row, { includeSecret = false } = {}) {
   if (!row) return null;
   const id = normalizeClusterId(row.id || row.cluster_id || row.label || "cluster");
@@ -576,6 +629,13 @@ function rowToProfile(row, { includeSecret = false } = {}) {
   };
 }
 
+/**
+ * Normalize cluster registry input, encrypting kubeconfig content and preserving omitted fields.
+ *
+ * @param {Object} [input={}] - Requested cluster fields.
+ * @param {Object|null} [existing=null] - Existing row for update semantics.
+ * @returns {Object} Database-facing cluster configuration.
+ */
 function normalizeClusterInput(input = {}, existing = null) {
   const label = normalizeText(input.label ?? existing?.label);
   const id = existing
@@ -698,6 +758,8 @@ function clusterConnectionInputChanged(existing, cluster) {
   );
 }
 
+// Registry persistence and policy state
+
 async function listKubernetesClusters(options = {}) {
   const includeDisabled = options.includeDisabled !== false;
   const includeSecret = options.includeSecret === true;
@@ -739,6 +801,13 @@ async function getKubernetesClusterPolicySettings(clusterId) {
   return maskCluster(row);
 }
 
+/**
+ * Persist a worker policy status update without letting a stale hash mark newer settings applied.
+ *
+ * @param {string} clusterId - Cluster whose reconciliation state should be updated.
+ * @param {Object} [statusPayload={}] - Worker state, hashes, namespaces, and issue details.
+ * @returns {Promise<Object>} Updated masked cluster profile.
+ */
 async function markKubernetesClusterPolicyStatus(clusterId, statusPayload = {}) {
   const existing = await getClusterRow(clusterId);
   if (!existing) {
@@ -798,6 +867,14 @@ async function markKubernetesClusterPolicyStatus(clusterId, statusPayload = {}) 
   return maskCluster(result.rows[0]);
 }
 
+/**
+ * Replace custom ingress policy and mark reconciliation queued against its new desired
+ * hash. The caller owns queue submission; applied evidence remains until worker update.
+ *
+ * @param {string} clusterId - Cluster whose desired policy should be replaced.
+ * @param {Object} [input={}] - Full policy settings document.
+ * @returns {Promise<Object>} Updated masked cluster profile in queued state.
+ */
 async function updateKubernetesClusterPolicySettings(clusterId, input = {}) {
   const existing = await getClusterRow(clusterId);
   if (!existing) {
@@ -841,6 +918,13 @@ async function updateKubernetesClusterPolicySettings(clusterId, input = {}) {
   return maskCluster(result.rows[0]);
 }
 
+/**
+ * Register a Kubernetes cluster and encrypt supplied kubeconfig content. Selecting it
+ * as default clears other defaults in a separate, non-atomic statement.
+ *
+ * @param {Object} [input={}] - Cluster registration fields.
+ * @returns {Promise<Object>} Persisted masked cluster profile.
+ */
 async function createKubernetesCluster(input = {}) {
   const cluster = normalizeClusterInput(input);
   const result = await db.query(
@@ -898,6 +982,14 @@ async function createKubernetesCluster(input = {}) {
   return maskCluster(result.rows[0]);
 }
 
+/**
+ * Update a cluster and invalidate its connectivity test when credential inputs change.
+ * Selecting it as default clears other defaults in a separate, non-atomic statement.
+ *
+ * @param {string} clusterId - Cluster to update.
+ * @param {Object} [input={}] - Replacement cluster fields.
+ * @returns {Promise<Object>} Updated masked cluster profile.
+ */
 async function updateKubernetesCluster(clusterId, input = {}) {
   const existing = await getClusterRow(clusterId);
   if (!existing) {
@@ -978,6 +1070,12 @@ async function updateKubernetesCluster(clusterId, input = {}) {
   return maskCluster(result.rows[0]);
 }
 
+/**
+ * Delete a cluster only when no non-deleted agent still references its execution target.
+ *
+ * @param {string} clusterId - Cluster to delete.
+ * @returns {Promise<Object>} Deleted masked cluster profile.
+ */
 async function deleteKubernetesCluster(clusterId) {
   const id = normalizeClusterId(clusterId);
   const executionTargetId = `k8s:${id}`;
@@ -999,6 +1097,13 @@ async function deleteKubernetesCluster(clusterId) {
   return maskCluster(result.rows[0]);
 }
 
+/**
+ * Load a secret-bearing cluster profile for trusted provisioning callers.
+ * This lookup does not enforce enabled, configured, or tested availability.
+ *
+ * @param {string} executionTargetId - Target in `k8s:<id>` form.
+ * @returns {Promise<Object|null>} Decrypted provisioning profile or `null`.
+ */
 async function getKubernetesClusterProfile(executionTargetId) {
   const normalized = normalizeExecutionTargetId(executionTargetId);
   if (!normalized || normalized === "k8s") return null;
@@ -1008,6 +1113,13 @@ async function getKubernetesClusterProfile(executionTargetId) {
   return rowToProfile(row, { includeSecret: true });
 }
 
+/**
+ * Validate that a Kubernetes deployment selects a registered, enabled, configured, and tested cluster.
+ * NetworkPolicy support may remain degraded without blocking deployment.
+ *
+ * @param {Object} [runtimeFields={}] - Runtime selection containing the cluster execution target.
+ * @returns {Promise<Object|null>} Available secret-bearing profile, or `null` for other targets.
+ */
 async function assertKubernetesExecutionTargetAvailable(runtimeFields = {}) {
   if (normalizeDeployTargetName(runtimeFields.deploy_target) !== "k8s") return null;
   const executionTargetId = normalizeExecutionTargetId(
@@ -1049,6 +1161,14 @@ async function assertKubernetesExecutionTargetAvailable(runtimeFields = {}) {
   return profile;
 }
 
+// Connectivity and capability probing
+
+/**
+ * Build a Kubernetes client configuration from decrypted content, a mounted path, or in-cluster credentials.
+ *
+ * @param {Object} profile - Secret-bearing cluster profile.
+ * @returns {Object} Configured Kubernetes client context.
+ */
 function buildKubeConfig(profile) {
   const k8s = getK8sClient();
   const kc = new k8s.KubeConfig();
@@ -1078,6 +1198,12 @@ function unwrapKubernetesClientResponse(response) {
   return response.body && typeof response.body === "object" ? response.body : response;
 }
 
+/**
+ * Best-effort probe NetworkPolicy engine detection and create permission across Nora namespaces.
+ *
+ * @param {Object} profile - Secret-bearing cluster profile.
+ * @returns {Promise<Object>} Capability flag, detected engine, and operator-facing message.
+ */
 async function probeKubernetesNetworkPolicySupport(profile) {
   const k8s = getK8sClient();
   const kc = buildKubeConfig(profile);
@@ -1151,6 +1277,13 @@ async function probeKubernetesNetworkPolicySupport(profile) {
   return result;
 }
 
+/**
+ * Test Kubernetes API connectivity and persist NetworkPolicy capability metadata.
+ * Connectivity and capability probe failures are stored and returned rather than thrown.
+ *
+ * @param {string} clusterId - Cluster to test.
+ * @returns {Promise<Object>} Updated masked cluster profile with test results.
+ */
 async function testKubernetesCluster(clusterId) {
   const profile = await getKubernetesClusterProfile(`k8s:${clusterId}`);
   if (!profile) {
