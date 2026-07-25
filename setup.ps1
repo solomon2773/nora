@@ -39,6 +39,23 @@ $TLS_COMPOSE_OVERRIDE_TEMPLATE = "infra/docker-compose.public-tls.yml"
 $PUBLIC_NGINX_CONF = "nginx.public.conf"
 $COMPOSE_OVERRIDE_FILE = "docker-compose.override.yml"
 $SETUP_MODE = ""
+$DEFAULT_HEALTHCHECK_ATTEMPTS = 221
+$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS = 3
+$LEGACY_HEALTHCHECK_ATTEMPTS = 40
+$LEGACY_HEALTHCHECK_INTERVAL_SECONDS = 3
+$MAX_HEALTHCHECK_WINDOW_SECONDS = 3900
+$DEFAULT_HEALTHCHECK_WINDOW_SECONDS = ($DEFAULT_HEALTHCHECK_ATTEMPTS - 1) * $DEFAULT_HEALTHCHECK_INTERVAL_SECONDS
+$MIN_COMPOSE_VERSION = [version]"2.24.4"
+$DEFAULT_COMPOSE_SECRETS_DIR = ".secrets/compose"
+$DEFAULT_COMPOSE_PROJECT_NAME = "nora"
+$COMPOSE_SECRET_NAMES = @(
+    "JWT_SECRET",
+    "ENCRYPTION_KEY",
+    "NORA_BACKUP_ENCRYPTION_KEY",
+    "NORA_AGENT_HUB_API_KEY_HASH_SECRET",
+    "NORA_API_KEY_HASH_SECRET",
+    "DB_PASSWORD"
+)
 
 $selectedModes = @($Install.IsPresent, $Update.IsPresent, $CleanReinstall.IsPresent) | Where-Object { $_ }
 if ($selectedModes.Count -gt 1) {
@@ -57,6 +74,97 @@ function Write-Warn  { param($msg) Write-Host "[warn]  $msg" -ForegroundColor Ye
 function Write-Err   { param($msg) Write-Host "[error] $msg" -ForegroundColor Red }
 function Write-Header { param($msg) Write-Host "`n── $msg ──`n" -ForegroundColor Cyan }
 
+function Test-BootstrapAdminEmail {
+    param([string]$Value)
+    if (-not $Value -or $Value -notmatch '^[^\s@]+@[^\s@]+$') { return $false }
+    if ($Value.Contains('<') -or $Value.Contains('>') -or $Value.Contains('{{')) { return $false }
+    return $Value -notmatch '^(?i:your_|replace[-_]with|placeholder)'
+}
+
+function Test-BootstrapAdminPasswordForbidden {
+    param([string]$Value)
+    $lowered = ([string]$Value).ToLowerInvariant()
+    if ($lowered -match '^(your_|example|sample|placeholder|changeme|replace-me|test-|demo-)' -or
+        $lowered.Contains('<') -or $lowered.Contains('{{')) {
+        return $true
+    }
+    $comparable = [regex]::Replace($lowered, '[^a-z0-9]', '')
+    foreach ($prefix in @('admin123', 'administrator', 'password', 'changeme', 'letmein', 'welcome1', 'qwerty123')) {
+        if ($comparable.StartsWith($prefix, [System.StringComparison]::Ordinal)) { return $true }
+    }
+    return $false
+}
+
+function Read-SecretText {
+    param([string]$Prompt)
+    $secureValue = Read-Host $Prompt -AsSecureString
+    $credential = [System.Net.NetworkCredential]::new('', $secureValue)
+    return $credential.Password
+}
+
+function ConvertTo-ComposeEnvLiteral {
+    param([AllowEmptyString()][string]$Value)
+    if ($null -eq $Value) { $Value = "" }
+    if ($Value.Contains("`r") -or $Value.Contains("`n")) {
+        throw "Compose environment values cannot contain newlines."
+    }
+    $slash = [char]92
+    if (
+        $Value.EndsWith([string]$slash, [System.StringComparison]::Ordinal) -or
+        $Value.Contains([string]::Concat($slash, [char]39))
+    ) {
+        $escaped = $Value.Replace([string]$slash, [string]::Concat($slash, $slash))
+        $escaped = $escaped.Replace([string][char]34, [string]::Concat($slash, [char]34))
+        $escaped = $escaped.Replace('$', '$$')
+        return [string][char]34 + $escaped + [string][char]34
+    }
+    $escaped = $Value.Replace("'", [string]::Concat($slash, "'"))
+    return "'" + $escaped + "'"
+}
+
+function ConvertFrom-ComposeEnvLiteral {
+    param([AllowEmptyString()][string]$Value)
+    if ($null -eq $Value) { return "" }
+    $trimmed = $Value.Trim()
+    if ($trimmed.Length -lt 2) { return $trimmed }
+
+    $first = $trimmed.Substring(0, 1)
+    $last = $trimmed.Substring($trimmed.Length - 1, 1)
+    if ($first -eq '"' -and $last -eq '"') { $quoteMode = "double" }
+    elseif ($first -eq "'" -and $last -eq "'") { $quoteMode = "single" }
+    else { return $trimmed }
+
+    $body = $trimmed.Substring(1, $trimmed.Length - 2)
+    $slash = [char]92
+    $builder = [System.Text.StringBuilder]::new()
+    for ($index = 0; $index -lt $body.Length; $index += 1) {
+        $current = $body[$index]
+        if ($quoteMode -eq "single" -and $current -eq $slash -and ($index + 1) -lt $body.Length) {
+            $next = $body[$index + 1]
+            if ($next -eq [char]39) {
+                [void]$builder.Append($next)
+                $index += 1
+                continue
+            }
+        }
+        if ($quoteMode -eq "double" -and ($index + 1) -lt $body.Length) {
+            $next = $body[$index + 1]
+            if ($current -eq $slash -and ($next -eq $slash -or $next -eq [char]34)) {
+                [void]$builder.Append($next)
+                $index += 1
+                continue
+            }
+            if ($current -eq [char]36 -and $next -eq [char]36) {
+                [void]$builder.Append($current)
+                $index += 1
+                continue
+            }
+        }
+        [void]$builder.Append($current)
+    }
+    return $builder.ToString()
+}
+
 function Write-PublicNginxConfig {
     param([string]$TemplatePath, [string]$Domain)
     $content = Get-Content $TemplatePath -Raw
@@ -67,6 +175,143 @@ function Write-PublicNginxConfig {
 function Write-ComposeOverride {
     param([string]$TemplatePath)
     Copy-Item $TemplatePath $COMPOSE_OVERRIDE_FILE -Force
+}
+
+function Protect-EnvFile {
+    param([string]$EnvPath)
+
+    if (-not (Test-Path -LiteralPath $EnvPath)) { return }
+    $resolvedPath = (Resolve-Path -LiteralPath $EnvPath).Path
+
+    if ($IsWindows) {
+        $icacls = Get-Command icacls.exe -ErrorAction SilentlyContinue
+        if (-not $icacls) {
+            throw "Cannot secure $EnvPath because icacls.exe is unavailable."
+        }
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $arguments = @(
+            $resolvedPath,
+            "/inheritance:r",
+            "/grant:r",
+            "${identity}:(F)",
+            "*S-1-5-18:(F)",
+            "*S-1-5-32-544:(F)",
+            "/remove:g",
+            "*S-1-1-0",
+            "*S-1-5-32-545"
+        )
+        & $icacls.Source @arguments *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to restrict the Windows ACL on $EnvPath."
+        }
+        return
+    }
+
+    $chmod = Get-Command chmod -ErrorAction SilentlyContinue
+    if (-not $chmod) { throw "Cannot secure $EnvPath because chmod is unavailable." }
+    & $chmod.Source 600 $resolvedPath
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set mode 0600 on $EnvPath." }
+
+    $mode = (& stat -c '%a' $resolvedPath 2>$null)
+    if ($LASTEXITCODE -ne 0) { $mode = (& stat -f '%Lp' $resolvedPath 2>$null) }
+    if ($LASTEXITCODE -ne 0 -or "$mode".Trim() -ne "600") {
+        throw "Refusing to continue because $EnvPath is not mode 0600."
+    }
+}
+
+function Get-DockerComposeVersion {
+    $null = docker compose version 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $raw = [string](docker compose version --short 2>&1)
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $match = [regex]::Match($raw, '\d+\.\d+\.\d+')
+    if (-not $match.Success) { return $null }
+    return [version]$match.Value
+}
+
+function Set-EnvValue {
+    param([string]$EnvPath, [string]$Name, [string]$Value)
+    $lines = if (Test-Path $EnvPath) { @(Get-Content -LiteralPath $EnvPath) } else { @() }
+    $pattern = '^\s*' + [regex]::Escape($Name) + '\s*='
+    $updated = [System.Collections.Generic.List[string]]::new()
+    $wrote = $false
+    foreach ($line in $lines) {
+        if ($line -match $pattern) {
+            if (-not $wrote) {
+                $updated.Add("$Name=$Value")
+                $wrote = $true
+            }
+            continue
+        }
+        $updated.Add($line)
+    }
+    if (-not $wrote) { $updated.Add("$Name=$Value") }
+    $updated | Out-File -FilePath $EnvPath -Encoding utf8NoBOM
+    Protect-EnvFile -EnvPath $EnvPath
+}
+
+function Get-DockerSocketGid {
+    if ((Test-Path "/var/run/docker.sock") -and (Get-Command stat -ErrorAction SilentlyContinue)) {
+        $detected = (& stat -c '%g' /var/run/docker.sock 2>$null)
+        if ($LASTEXITCODE -eq 0 -and "$detected" -match '^\d+$') { return "$detected" }
+    }
+    return "0"
+}
+
+function Get-NormalizedGeneratedComposeContent {
+    param([string]$Content)
+    $ignoredPatterns = @(
+        'NORA_KUBECONFIGS_DIR.*/kubeconfigs:ro',
+        'NORA_HOST_REPO_DIR.*/nora-host-repo:ro',
+        '^\s*NODE_PATH:\s*/app/node_modules\s*$'
+    )
+    $lines = $Content -split "`r?`n"
+    $kept = foreach ($line in $lines) {
+        $ignore = $false
+        foreach ($pattern in $ignoredPatterns) {
+            if ($line -match $pattern) {
+                $ignore = $true
+                break
+            }
+        }
+        if (-not $ignore) { $line }
+    }
+    return (($kept -join "`n").TrimEnd([char[]]"`r`n"))
+}
+
+function Test-ComposeOverrideMatchesGeneratedHistory {
+    param([string]$OverridePath, [string]$TemplatePath)
+
+    $overrideContent = Get-NormalizedGeneratedComposeContent -Content (Get-Content -LiteralPath $OverridePath -Raw)
+    if (Test-Path -LiteralPath $TemplatePath) {
+        $templateContent = Get-NormalizedGeneratedComposeContent -Content (Get-Content -LiteralPath $TemplatePath -Raw)
+        if ($overrideContent -ceq $templateContent) { return $true }
+    }
+
+    $null = git rev-parse --is-inside-work-tree 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+
+    $commits = @(git log --format=%H --all -- $TemplatePath 2>$null)
+    foreach ($commit in $commits) {
+        if (-not $commit) { continue }
+        $candidateLines = @(git show "${commit}:$TemplatePath" 2>$null)
+        if ($LASTEXITCODE -ne 0) { continue }
+        $candidateContent = Get-NormalizedGeneratedComposeContent -Content ($candidateLines -join "`n")
+        if ($overrideContent -ceq $candidateContent) { return $true }
+    }
+    return $false
+}
+
+function Backup-LegacyComposeOverride {
+    $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmssZ")
+    $candidate = "$COMPOSE_OVERRIDE_FILE.legacy-$timestamp"
+    $suffix = 1
+    while (Test-Path -LiteralPath $candidate) {
+        $candidate = "$COMPOSE_OVERRIDE_FILE.legacy-$timestamp.$suffix"
+        $suffix += 1
+    }
+    Copy-Item -LiteralPath $COMPOSE_OVERRIDE_FILE -Destination $candidate -Force
+    return $candidate
 }
 
 function Clear-PublicAccessArtifacts {
@@ -89,7 +334,9 @@ function Backup-ExistingEnvFile {
         $suffix += 1
     }
 
+    Protect-EnvFile -EnvPath $resolvedEnvPath
     Copy-Item -LiteralPath $resolvedEnvPath -Destination $candidate -Force
+    Protect-EnvFile -EnvPath $candidate
     return $candidate
 }
 
@@ -175,20 +422,20 @@ function Resolve-CurrentReleaseVersion {
         return ""
     }
 
-    $exactTag = git describe --tags --exact-match 2>$null | Select-Object -First 1
-    if ($LASTEXITCODE -eq 0 -and $exactTag) {
-        return $exactTag.Trim()
-    }
-
-    $latestTag = git describe --tags --abbrev=0 2>$null | Select-Object -First 1
-    if ($LASTEXITCODE -ne 0 -or -not $latestTag) {
+    $productVersionPattern = '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+    $tagsAtHead = @(git tag --points-at HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0) {
         return ""
     }
 
-    $latestTag = $latestTag.Trim()
-    $null = git merge-base --is-ancestor $latestTag HEAD 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        return $latestTag
+    $productTags = @(
+        $tagsAtHead |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -match $productVersionPattern } |
+            Sort-Object { [version]$_.Substring(1) }
+    )
+    if ($productTags.Count -gt 0) {
+        return $productTags[-1]
     }
 
     return ""
@@ -234,6 +481,7 @@ function Update-ReleaseTrackingEnv {
     if (-not $sawRepo) { $updatedLines.Add("NORA_GITHUB_REPO=$NORA_GITHUB_REPO_SLUG") }
 
     $updatedLines | Out-File -FilePath $EnvPath -Encoding utf8NoBOM
+    Protect-EnvFile -EnvPath $EnvPath
     $label = if ($currentVersion) { $currentVersion } else { "source checkout" }
     Write-Ok "Release tracking stamped: $label @ $($currentCommit.Substring(0, [Math]::Min(12, $currentCommit.Length)))"
 }
@@ -241,16 +489,14 @@ function Update-ReleaseTrackingEnv {
 function Get-EnvAssignmentValue {
     param([string]$Line)
 
-    $value = $Line -replace '^[^=]*=', ''
-    $value = $value -replace '\s+#.*$', ''
-    $value = $value.Trim()
-    if (
+    $value = ($Line -replace '^[^=]*=', '').Trim()
+    $quoted =
         ($value.Length -ge 2) -and
         (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))
-    ) {
-        $value = $value.Substring(1, $value.Length - 2).Trim()
+    if (-not $quoted) {
+        $value = ($value -replace '\s+#.*$', '').Trim()
     }
-    return $value
+    return ConvertFrom-ComposeEnvLiteral -Value $value
 }
 
 function Test-AgentHubHashSecretPresent {
@@ -285,6 +531,7 @@ function Ensure-AgentHubHashSecretEnv {
     if (-not (Test-Path $EnvPath)) {
         return
     }
+    Protect-EnvFile -EnvPath $EnvPath
 
     $lines = Get-Content -LiteralPath $EnvPath
     if (Test-AgentHubHashSecretPresent -Lines $lines) {
@@ -315,7 +562,29 @@ function Ensure-AgentHubHashSecretEnv {
     }
 
     $updatedLines | Out-File -FilePath $EnvPath -Encoding utf8NoBOM
+    Protect-EnvFile -EnvPath $EnvPath
     Write-Ok "NORA_AGENT_HUB_API_KEY_HASH_SECRET generated (64-char hex)"
+}
+
+function Ensure-ApiKeyHashSecretEnv {
+    param([string]$EnvPath)
+
+    if (-not (Test-Path $EnvPath)) { return }
+    Protect-EnvFile -EnvPath $EnvPath
+    $existing = Read-EnvValue -EnvPath $EnvPath -Name "NORA_API_KEY_HASH_SECRET" -Default ""
+    if ($existing) {
+        Write-Info "NORA_API_KEY_HASH_SECRET already set; preserving existing value."
+        return
+    }
+
+    # Match lib/apiTokens.ts's legacy fallback order so introducing the primary
+    # name does not invalidate hashes produced by an existing installation.
+    $fallback = Read-EnvValue -EnvPath $EnvPath -Name "NORA_AGENT_HUB_API_KEY_HASH_SECRET" -Default ""
+    if (-not $fallback) { $fallback = Read-EnvValue -EnvPath $EnvPath -Name "ENCRYPTION_KEY" -Default "" }
+    if (-not $fallback) { $fallback = Read-EnvValue -EnvPath $EnvPath -Name "JWT_SECRET" -Default "" }
+    if (-not $fallback) { $fallback = New-HexSecret }
+    Set-EnvValue -EnvPath $EnvPath -Name "NORA_API_KEY_HASH_SECRET" -Value $fallback
+    Write-Ok "NORA_API_KEY_HASH_SECRET populated from the existing token-hash fallback"
 }
 
 function Ensure-BackupEncryptionKeyEnv {
@@ -324,6 +593,7 @@ function Ensure-BackupEncryptionKeyEnv {
     if (-not (Test-Path $EnvPath)) {
         return
     }
+    Protect-EnvFile -EnvPath $EnvPath
 
     $lines = Get-Content -LiteralPath $EnvPath
     if (Test-BackupEncryptionKeyPresent -Lines $lines) {
@@ -362,23 +632,159 @@ function Ensure-BackupEncryptionKeyEnv {
     }
 
     $updatedLines | Out-File -FilePath $EnvPath -Encoding utf8NoBOM
+    Protect-EnvFile -EnvPath $EnvPath
     Write-Ok "NORA_BACKUP_ENCRYPTION_KEY generated (64-char hex)"
 }
 
+function Protect-ComposeSecretsDirectory {
+    param([string]$SecretsDirectory)
+
+    if (-not $SecretsDirectory -or $SecretsDirectory -in @("/", ".", "..", "./", "../")) {
+        throw "NORA_COMPOSE_SECRETS_DIR must point to a dedicated non-root directory."
+    }
+    $candidatePath = if ([System.IO.Path]::IsPathRooted($SecretsDirectory)) {
+        [System.IO.Path]::GetFullPath($SecretsDirectory)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $SecretsDirectory))
+    }
+    $currentPath = [System.IO.Path]::GetFullPath((Get-Location).Path)
+    $rootPath = [System.IO.Path]::GetPathRoot($candidatePath)
+    if ($candidatePath -eq $currentPath -or $candidatePath -eq $rootPath) {
+        throw "NORA_COMPOSE_SECRETS_DIR must not be the filesystem or repository root: $candidatePath"
+    }
+    $segments = $SecretsDirectory -split '[\\/]'
+    if ($segments | Where-Object { $_ -in @(".", "..") }) {
+        throw "NORA_COMPOSE_SECRETS_DIR must not contain '.' or '..' path segments."
+    }
+
+    $pathProbe = $candidatePath
+    while ($pathProbe) {
+        if (Test-Path -LiteralPath $pathProbe) {
+            $probeItem = Get-Item -LiteralPath $pathProbe -Force
+            if (($probeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing NORA_COMPOSE_SECRETS_DIR with symlinked path component: $pathProbe"
+            }
+        }
+        $parent = [System.IO.Directory]::GetParent($pathProbe)
+        if (-not $parent) { break }
+        $pathProbe = $parent.FullName
+    }
+
+    if (Test-Path -LiteralPath $candidatePath) {
+        $existingItem = Get-Item -LiteralPath $candidatePath -Force
+        if (-not $existingItem.PSIsContainer) {
+            throw "NORA_COMPOSE_SECRETS_DIR is not a directory: $candidatePath"
+        }
+        $unexpectedEntry = Get-ChildItem -LiteralPath $candidatePath -Force | Where-Object {
+            $_.Name -notin $COMPOSE_SECRET_NAMES
+        } | Select-Object -First 1
+        if ($unexpectedEntry) {
+            throw "Refusing non-dedicated NORA_COMPOSE_SECRETS_DIR; unexpected entry: $($unexpectedEntry.FullName)"
+        }
+    }
+    New-Item -ItemType Directory -Path $candidatePath -Force | Out-Null
+    $resolvedPath = (Resolve-Path -LiteralPath $candidatePath).Path
+
+    if ($IsWindows) {
+        $icacls = Get-Command icacls.exe -ErrorAction SilentlyContinue
+        if (-not $icacls) {
+            throw "Cannot secure $SecretsDirectory because icacls.exe is unavailable."
+        }
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $arguments = @(
+            $resolvedPath,
+            "/inheritance:r",
+            "/grant:r",
+            "${identity}:(OI)(CI)(F)",
+            "*S-1-5-18:(OI)(CI)(F)",
+            "*S-1-5-32-544:(OI)(CI)(F)",
+            "/remove:g",
+            "*S-1-1-0",
+            "*S-1-5-32-545"
+        )
+        & $icacls.Source @arguments *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to restrict the Windows ACL on $SecretsDirectory."
+        }
+        return
+    }
+
+    $chmod = Get-Command chmod -ErrorAction SilentlyContinue
+    if (-not $chmod) { throw "Cannot secure $SecretsDirectory because chmod is unavailable." }
+    & $chmod.Source 700 $resolvedPath
+    if ($LASTEXITCODE -ne 0) { throw "Failed to set mode 0700 on $SecretsDirectory." }
+
+    $mode = (& stat -c '%a' $resolvedPath 2>$null)
+    if ($LASTEXITCODE -ne 0) { $mode = (& stat -f '%Lp' $resolvedPath 2>$null) }
+    if ($LASTEXITCODE -ne 0 -or "$mode".Trim() -ne "700") {
+        throw "Refusing to continue because $SecretsDirectory is not mode 0700."
+    }
+}
+
+function Write-ComposeSecretFiles {
+    param([string]$EnvPath)
+
+    $secretsDirectory = Read-EnvValue -EnvPath $EnvPath -Name "NORA_COMPOSE_SECRETS_DIR" -Default $DEFAULT_COMPOSE_SECRETS_DIR
+    Protect-ComposeSecretsDirectory -SecretsDirectory $secretsDirectory
+    foreach ($secretName in $COMPOSE_SECRET_NAMES) {
+        $value = Read-EnvValue -EnvPath $EnvPath -Name $secretName -Default ""
+        if (-not $value) {
+            throw "Cannot materialize Compose secrets because $secretName is empty in $EnvPath."
+        }
+        $target = Join-Path $secretsDirectory $secretName
+        $temporary = Join-Path $secretsDirectory (".$secretName." + [guid]::NewGuid().ToString("N"))
+        try {
+            [System.IO.File]::WriteAllText($temporary, "$value`n", [System.Text.UTF8Encoding]::new($false))
+            if (-not $IsWindows) {
+                & chmod 444 $temporary
+                if ($LASTEXITCODE -ne 0) { throw "Failed to set mode 0444 on $temporary." }
+            }
+            Move-Item -LiteralPath $temporary -Destination $target -Force
+            if ($IsWindows) {
+                Protect-EnvFile -EnvPath $target
+            } else {
+                $mode = (& stat -c '%a' $target 2>$null)
+                if ($LASTEXITCODE -ne 0) { $mode = (& stat -f '%Lp' $target 2>$null) }
+                if ($LASTEXITCODE -ne 0 -or "$mode".Trim() -ne "444") {
+                    throw "Refusing to continue because $target is not mode 0444."
+                }
+            }
+        } finally {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Set-EnvValue -EnvPath $EnvPath -Name "NORA_COMPOSE_SECRETS_DIR" -Value $secretsDirectory
+    Write-Ok "Compose secret files refreshed under $secretsDirectory (owner-only directory)"
+}
+
+function Get-ComposeProjectName {
+    param([string]$EnvPath = $ENV_FILE)
+
+    $projectName = Read-EnvValue -EnvPath $EnvPath -Name "COMPOSE_PROJECT_NAME" -Default $DEFAULT_COMPOSE_PROJECT_NAME
+    if ($projectName -notmatch '^[a-z0-9][a-z0-9_-]*$') {
+        throw "Invalid COMPOSE_PROJECT_NAME '$projectName'; use lowercase letters, digits, hyphens, or underscores."
+    }
+    return $projectName
+}
+
 function Remove-LocalAgentContainers {
+    param([string]$ProjectName)
+
+    $composeNetwork = "${ProjectName}_default"
     $containerIds = @()
     foreach ($label in @("openclaw.agent.id", "nora.agent.id")) {
-        $ids = docker ps -a --filter "label=$label" -q 2>$null
+        $ids = docker ps -a --filter "label=$label" --filter "network=$composeNetwork" -q 2>$null
         if ($ids) { $containerIds += $ids }
     }
 
     $containerIds = $containerIds | Where-Object { $_ } | Sort-Object -Unique
     if (-not $containerIds) {
-        Write-Info "No local Nora agent containers found."
+        Write-Info "No local Nora agent containers found on $composeNetwork."
         return
     }
 
-    Write-Info "Removing local Nora agent containers..."
+    Write-Info "Removing local Nora agent containers attached to $composeNetwork..."
     foreach ($containerId in $containerIds) {
         docker rm -f $containerId 2>$null | Out-Null
     }
@@ -386,11 +792,12 @@ function Remove-LocalAgentContainers {
 }
 
 function Invoke-CleanReinstallState {
+    $projectName = Get-ComposeProjectName -EnvPath $ENV_FILE
     Write-Warn "Clean reinstall selected: local compose containers and volumes will be removed."
-    Write-Info "External Kubernetes, planned Proxmox, NemoClaw, and VM resources will not be touched."
-    docker compose down -v --remove-orphans 2>$null
-    Remove-LocalAgentContainers
-    Write-Ok "Local Nora compose state cleaned"
+    Write-Info "External Kubernetes, Proxmox, NemoClaw, and other VM resources will not be touched."
+    Remove-LocalAgentContainers -ProjectName $projectName
+    docker compose -p $projectName down -v --remove-orphans 2>$null
+    Write-Ok "Local Nora compose state cleaned for project $projectName"
 }
 
 function Start-NoraComposeStack {
@@ -398,9 +805,52 @@ function Start-NoraComposeStack {
     Write-Info "Starting Nora (docker compose up -d --build)..."
     Write-Info "Preserving Docker volumes and provisioned agent instances."
     Write-Host ""
+    Write-Info "Pre-validating nginx configuration..."
+    docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
+    if ($LASTEXITCODE -ne 0) { Write-Err "nginx configuration validation failed"; exit 1 }
     docker compose up -d --build
+    if ($LASTEXITCODE -ne 0) { Write-Err "docker compose failed to start Nora"; exit 1 }
+    Write-Info "Recreating nginx so generated configuration mounts are refreshed..."
+    docker compose up -d --force-recreate --no-deps nginx
+    if ($LASTEXITCODE -ne 0) { Write-Err "nginx recreation failed"; exit 1 }
+    docker compose exec -T nginx nginx -t
+    if ($LASTEXITCODE -ne 0) { Write-Err "active nginx configuration validation failed"; exit 1 }
+    Write-Ok "Nginx configuration activated"
+    Test-NoraRuntimePermissions
     Write-Host ""
     Write-Ok "Nora is running!"
+}
+
+function Invoke-ComposeNodeProbe {
+    param([string]$Service, [string]$Description, [string]$Script, [object]$Budget)
+
+    Write-Info "Waiting for $Service probe: $($Budget.Attempts) attempts every $($Budget.IntervalSeconds)s ($($Budget.FirstToFinalWindowSeconds)s from first to final attempt)."
+    for ($attempt = 1; $attempt -le $Budget.Attempts; $attempt += 1) {
+        docker compose exec -T $Service node -e $Script *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok $Description
+            return
+        }
+        if ($attempt -lt $Budget.Attempts) {
+            Start-Sleep -Seconds $Budget.IntervalSeconds
+        }
+    }
+
+    docker compose exec -T $Service node -e $Script
+    Write-Err "$Description failed after $($Budget.Attempts) attempts every $($Budget.IntervalSeconds)s ($($Budget.FirstToFinalWindowSeconds)s first-to-final window). Inspect: docker compose logs --tail=100 $Service"
+    exit 1
+}
+
+function Test-NoraRuntimePermissions {
+    Write-Info "Verifying runtime permissions and upgrade mounts..."
+    $budget = Get-NoraHealthcheckBudget
+    $dockerProbe = 'const http=require("http");const request=http.request({socketPath:"/var/run/docker.sock",path:"/_ping",method:"GET"},response=>{let body="";response.setEncoding("utf8");response.on("data",chunk=>body+=chunk);response.on("end",()=>process.exit(response.statusCode===200&&body.trim()==="OK"?0:1));});request.setTimeout(5000,()=>request.destroy(new Error("Docker socket timeout")));request.on("error",error=>{console.error(error.message);process.exit(1);});request.end();'
+    $backendVolumeProbe = 'const fs=require("fs");fs.accessSync("/nora-host-repo/infra/run-release-upgrade.sh",fs.constants.R_OK);const path=`/var/lib/nora-upgrade/.nora-write-probe-${process.pid}`;try{fs.writeFileSync(path,"ok",{mode:0o600});fs.unlinkSync(path);}finally{try{fs.unlinkSync(path);}catch{}}'
+    $backupVolumeProbe = 'const fs=require("fs");const path=`/var/lib/nora-backups/.nora-write-probe-${process.pid}`;try{fs.writeFileSync(path,"ok",{mode:0o600});fs.unlinkSync(path);}finally{try{fs.unlinkSync(path);}catch{}}'
+
+    Invoke-ComposeNodeProbe -Service "worker-provisioner" -Description "Provisioner Docker socket access verified" -Script $dockerProbe -Budget $budget
+    Invoke-ComposeNodeProbe -Service "backend-api" -Description "Upgrade checkout and state volume verified" -Script $backendVolumeProbe -Budget $budget
+    Invoke-ComposeNodeProbe -Service "worker-backup" -Description "Backup volume write access verified" -Script $backupVolumeProbe -Budget $budget
 }
 
 # ── Helper: generate random hex ─────────────────────────────
@@ -539,18 +989,172 @@ function Read-EnvValue {
     foreach ($line in Get-Content -LiteralPath $EnvPath) {
         if ($line -match $pattern) {
             $value = $matches[1].Trim()
-            if ($value.Length -ge 2) {
-                $first = $value.Substring(0, 1)
-                $last = $value.Substring($value.Length - 1, 1)
-                if (($first -eq '"' -and $last -eq '"') -or ($first -eq "'" -and $last -eq "'")) {
-                    $value = $value.Substring(1, $value.Length - 2)
-                }
-            }
-            return $value
+            return ConvertFrom-ComposeEnvLiteral -Value $value
         }
     }
 
     return $Default
+}
+
+function Read-EnvValueWithAlias {
+    param([string]$EnvPath, [string]$Name, [string]$AliasName, [string]$Default = "")
+
+    $value = Read-EnvValue -EnvPath $EnvPath -Name $Name -Default ""
+    if (-not $value -and $AliasName) {
+        $value = Read-EnvValue -EnvPath $EnvPath -Name $AliasName -Default ""
+    }
+    if ($value) { return $value }
+    return $Default
+}
+
+function Test-NemoClawImageReferenceMutable {
+    param([string]$Image)
+
+    $reference = if ($null -eq $Image) { "" } else { $Image.Trim() }
+    if (-not $reference -or $reference.Contains("@")) {
+        return $false
+    }
+    $lastSlash = $reference.LastIndexOf("/")
+    $tagSeparator = $reference.LastIndexOf(":")
+    if ($tagSeparator -le $lastSlash) {
+        return $true
+    }
+    return $reference.Substring($tagSeparator + 1).ToLowerInvariant() -eq "latest"
+}
+
+function Test-CommaSeparatedValue {
+    param([string]$List, [string]$Value)
+
+    foreach ($item in ($List -split ',')) {
+        if ($item.Trim() -ieq $Value) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Ensure-NemoClawSandboxImage {
+    param([string]$Image)
+
+    $imageRef = if ($null -eq $Image) { "" } else { $Image.Trim() }
+    if (-not $imageRef) {
+        Write-Err "NEMOCLAW_SANDBOX_IMAGE must not be empty"
+        throw "NEMOCLAW_SANDBOX_IMAGE must not be empty"
+    }
+
+    if ($imageRef -eq "nora-nemoclaw-agent:local") {
+        Write-Host ""
+        Write-Info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
+        Write-Host ""
+        docker build -f agent-runtime/Dockerfile.nemoclaw-agent -t nora-nemoclaw-agent:local agent-runtime/
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err "Failed to build nora-nemoclaw-agent:local"
+            throw "Failed to build nora-nemoclaw-agent:local"
+        }
+        Write-Ok "NemoClaw sandbox image ready"
+        return
+    }
+
+    docker image inspect $imageRef *> $null
+    $imagePresent = $LASTEXITCODE -eq 0
+    if ($imagePresent -and -not (Test-NemoClawImageReferenceMutable -Image $imageRef)) {
+        Write-Info "Using existing immutable NemoClaw sandbox image"
+        Write-Ok "NemoClaw sandbox image ready"
+        return
+    }
+
+    if ($imagePresent) {
+        Write-Info "Refreshing mutable NemoClaw sandbox image..."
+    } else {
+        Write-Info "Pulling missing NemoClaw sandbox image..."
+    }
+    docker pull $imageRef
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "Failed to pull configured NemoClaw sandbox image"
+        throw "Failed to pull configured NemoClaw sandbox image"
+    }
+    Write-Ok "NemoClaw sandbox image ready"
+}
+
+function Update-SignupProtectionEnv {
+    param([string]$EnvPath)
+
+    $values = [ordered]@{
+        SIGNUP_RATE_LIMIT_BURST_MAX = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RATE_LIMIT_BURST_MAX" -Default "5")
+        SIGNUP_RATE_LIMIT_BURST_WINDOW_MS = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" -Default "600000")
+        SIGNUP_RATE_LIMIT_DAILY_MAX = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RATE_LIMIT_DAILY_MAX" -Default "20")
+        SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS" -Default "86400000")
+        SIGNUP_BOT_PROTECTION_PROVIDER = (Read-EnvValueWithAlias -EnvPath $EnvPath -Name "SIGNUP_BOT_PROTECTION_PROVIDER" -AliasName "NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER" -Default "none")
+        SIGNUP_TURNSTILE_SITE_KEY = (Read-EnvValueWithAlias -EnvPath $EnvPath -Name "SIGNUP_TURNSTILE_SITE_KEY" -AliasName "NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY" -Default "")
+        SIGNUP_TURNSTILE_SECRET = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_TURNSTILE_SECRET" -Default "")
+        SIGNUP_RECAPTCHA_SITE_KEY = (Read-EnvValueWithAlias -EnvPath $EnvPath -Name "SIGNUP_RECAPTCHA_SITE_KEY" -AliasName "NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY" -Default "")
+        SIGNUP_RECAPTCHA_SECRET = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RECAPTCHA_SECRET" -Default "")
+    }
+    foreach ($entry in $values.GetEnumerator()) {
+        Set-EnvValue -EnvPath $EnvPath -Name $entry.Key -Value ([string]$entry.Value)
+    }
+}
+
+function Get-NoraHealthcheckBudget {
+    $attemptsRaw = if ([string]::IsNullOrWhiteSpace($env:NORA_UPGRADE_HEALTHCHECK_ATTEMPTS)) {
+        Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_UPGRADE_HEALTHCHECK_ATTEMPTS" -Default ([string]$DEFAULT_HEALTHCHECK_ATTEMPTS)
+    } else {
+        $env:NORA_UPGRADE_HEALTHCHECK_ATTEMPTS
+    }
+    $intervalRaw = if ([string]::IsNullOrWhiteSpace($env:NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS)) {
+        Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS" -Default ([string]$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS)
+    } else {
+        $env:NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS
+    }
+
+    $attemptsRaw = ([string]$attemptsRaw).Trim()
+    $intervalRaw = ([string]$intervalRaw).Trim()
+    if ($attemptsRaw -eq [string]$LEGACY_HEALTHCHECK_ATTEMPTS -and
+        $intervalRaw -eq [string]$LEGACY_HEALTHCHECK_INTERVAL_SECONDS) {
+        $attemptsRaw = [string]$DEFAULT_HEALTHCHECK_ATTEMPTS
+        $intervalRaw = [string]$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS
+    }
+    [long]$attempts = 0
+    [long]$interval = 0
+    $valid = $attemptsRaw -match '^\d+$' -and
+        [long]::TryParse($attemptsRaw, [ref]$attempts) -and
+        $attempts -ge 1 -and
+        $attempts -le ($MAX_HEALTHCHECK_WINDOW_SECONDS + 1) -and
+        $intervalRaw -match '^\d+$' -and
+        [long]::TryParse($intervalRaw, [ref]$interval) -and
+        $interval -ge 1 -and
+        $interval -le $MAX_HEALTHCHECK_WINDOW_SECONDS
+    [long]$window = 0
+    if ($valid) {
+        $window = ($attempts - 1) * $interval
+        $valid = $window -le $MAX_HEALTHCHECK_WINDOW_SECONDS
+    }
+
+    if (-not $valid) {
+        Write-Warn "Invalid NORA_UPGRADE health-check overrides (attempts='$attemptsRaw', interval='${intervalRaw}s'); using $DEFAULT_HEALTHCHECK_ATTEMPTS attempts every ${DEFAULT_HEALTHCHECK_INTERVAL_SECONDS}s (${DEFAULT_HEALTHCHECK_WINDOW_SECONDS}s from first to final attempt). Values must be positive integers with a first-to-final window no greater than ${MAX_HEALTHCHECK_WINDOW_SECONDS}s."
+        $attempts = $DEFAULT_HEALTHCHECK_ATTEMPTS
+        $interval = $DEFAULT_HEALTHCHECK_INTERVAL_SECONDS
+        $window = ($attempts - 1) * $interval
+    }
+
+    return [pscustomobject]@{
+        Attempts = [int]$attempts
+        IntervalSeconds = [int]$interval
+        FirstToFinalWindowSeconds = [int]$window
+    }
+}
+
+function Update-NoraHealthcheckDefaults {
+    param([string]$EnvPath)
+
+    $attempts = (Read-EnvValue -EnvPath $EnvPath -Name "NORA_UPGRADE_HEALTHCHECK_ATTEMPTS" -Default "").Trim()
+    $interval = (Read-EnvValue -EnvPath $EnvPath -Name "NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS" -Default "").Trim()
+    if ($attempts -eq [string]$LEGACY_HEALTHCHECK_ATTEMPTS -and
+        $interval -eq [string]$LEGACY_HEALTHCHECK_INTERVAL_SECONDS) {
+        Set-EnvValue -EnvPath $EnvPath -Name "NORA_UPGRADE_HEALTHCHECK_ATTEMPTS" -Value ([string]$DEFAULT_HEALTHCHECK_ATTEMPTS)
+        Set-EnvValue -EnvPath $EnvPath -Name "NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS" -Value ([string]$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS)
+        Write-Ok "Migrated legacy health-check budget from $($LEGACY_HEALTHCHECK_ATTEMPTS)x$($LEGACY_HEALTHCHECK_INTERVAL_SECONDS)s to $($DEFAULT_HEALTHCHECK_ATTEMPTS)x$($DEFAULT_HEALTHCHECK_INTERVAL_SECONDS)s ($($DEFAULT_HEALTHCHECK_WINDOW_SECONDS)s first-to-final window)"
+    }
 }
 
 function ConvertTo-PortNumber {
@@ -808,23 +1412,25 @@ if (-not $dockerRunning) {
 $dockerVer = docker --version 2>&1 | Select-Object -First 1
 Write-Ok "Docker found: $dockerVer"
 
-# Verify Compose
-$composeOk = $false
-try {
-    $null = docker compose version 2>&1
-    $composeVer = docker compose version --short 2>&1
-    Write-Ok "Docker Compose found: $composeVer"
-    $composeOk = $true
-} catch {}
-
-if (-not $composeOk) {
+# Verify the Compose plugin version required by the !override merge tags used
+# in Nora's generated hardened overlays. Standalone docker-compose v1 is not
+# accepted because it cannot parse the generated files safely.
+$composeVersion = Get-DockerComposeVersion
+if (-not $composeVersion) {
     if (Get-Command docker-compose -ErrorAction SilentlyContinue) {
-        Write-Warn "Found docker-compose (v1). Docker Compose v2+ is recommended."
+        Write-Err "docker-compose v1 is unsupported; Nora requires the 'docker compose' plugin $MIN_COMPOSE_VERSION or newer."
     } else {
-        Write-Err "Docker Compose not found. Reinstall Docker Desktop."
-        exit 1
+        Write-Err "Docker Compose $MIN_COMPOSE_VERSION or newer was not found."
     }
+    Write-Host "  Upgrade Docker Desktop or install the current Docker Compose plugin, then re-run setup."
+    exit 1
 }
+if ($composeVersion -lt $MIN_COMPOSE_VERSION) {
+    Write-Err "Docker Compose $composeVersion is too old; Nora requires $MIN_COMPOSE_VERSION or newer."
+    Write-Host "  Upgrade Docker Desktop or the Docker Compose plugin, then re-run setup."
+    exit 1
+}
+Write-Ok "Docker Compose found: $composeVersion (minimum $MIN_COMPOSE_VERSION)"
 
 Write-Ok "Docker daemon is running"
 
@@ -873,20 +1479,90 @@ if ($SETUP_MODE -eq "update") {
     }
 
     Write-Header "Updating Nora"
+    Protect-EnvFile -EnvPath $ENV_FILE
     Write-Info "Code update mode keeps $ENV_FILE, Postgres/backup volumes, and provisioned instances."
-    # A leftover public-mode docker-compose.override.yml is auto-loaded by docker
-    # compose and would pin a LOCAL stack to prod/TLS wiring (443 + cert mounts).
-    # If .env selects the local nginx.conf, retire the stale override.
-    if (((Read-EnvValue -EnvPath $ENV_FILE -Name "NGINX_CONFIG_FILE" -Default "nginx.conf") -eq "nginx.conf") -and (Test-Path $COMPOSE_OVERRIDE_FILE)) {
-        $overrideStamp = ((Get-Date).ToUniversalTime().ToString("yyyyMMdd-HHmmss") + "Z")
-        Move-Item $COMPOSE_OVERRIDE_FILE "$COMPOSE_OVERRIDE_FILE.disabled-$overrideStamp"
-        Write-Warn "Disabled a stale $COMPOSE_OVERRIDE_FILE (it did not match local mode in $ENV_FILE)."
+    # Every install mode uses a hardened application overlay. Preserve whether
+    # nginx terminates TLS locally, then refresh the matching current template so
+    # older installs receive non-root/read-only defaults and volume migration.
+    $updateOverlayTemplate = $PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE
+    $nginxConfig = Read-EnvValue -EnvPath $ENV_FILE -Name "NGINX_CONFIG_FILE" -Default "nginx.conf"
+    $hasTlsOverride = (Test-Path $COMPOSE_OVERRIDE_FILE) -and (Select-String -Path $COMPOSE_OVERRIDE_FILE -Pattern '/etc/letsencrypt|443:443' -Quiet)
+    $hasTlsNginx = (Test-Path $PUBLIC_NGINX_CONF) -and (Select-String -Path $PUBLIC_NGINX_CONF -Pattern 'listen\s+443' -Quiet)
+    if ($nginxConfig -ne "nginx.conf" -and ($hasTlsOverride -or $hasTlsNginx)) {
+        $updateOverlayTemplate = $TLS_COMPOSE_OVERRIDE_TEMPLATE
     }
+    $updateOverlayHadKubeconfigs = (Test-Path $COMPOSE_OVERRIDE_FILE) -and
+        (Select-String -Path $COMPOSE_OVERRIDE_FILE -Pattern 'NORA_KUBECONFIGS_DIR.*/kubeconfigs:ro' -Quiet)
     Update-SourceCheckout
+    $updateOverlayCustom = $false
+    $updateOverlayGenerated = $false
+    if (Test-Path $COMPOSE_OVERRIDE_FILE) {
+        if (Test-ComposeOverrideMatchesGeneratedHistory -OverridePath $COMPOSE_OVERRIDE_FILE -TemplatePath $updateOverlayTemplate) {
+            $updateOverlayGenerated = $true
+        } else {
+            $updateOverlayCustom = $true
+        }
+    }
+
+    if ($updateOverlayGenerated) {
+        $overrideHash = (Get-FileHash -Algorithm SHA256 $COMPOSE_OVERRIDE_FILE).Hash
+        $templateHash = (Get-FileHash -Algorithm SHA256 $updateOverlayTemplate).Hash
+        if ($overrideHash -ne $templateHash) {
+            $legacyOverrideBackup = Backup-LegacyComposeOverride
+            Write-Info "Backed up the generated legacy override to $legacyOverrideBackup."
+        }
+        Write-ComposeOverride -TemplatePath $updateOverlayTemplate
+        $composeFileValue = "docker-compose.yml:${COMPOSE_OVERRIDE_FILE}"
+        if ($updateOverlayHadKubeconfigs) {
+            $composeFileValue += ":docker-compose.kubernetes.yml"
+            Write-Info "Migrated Kubernetes kubeconfig mounts into docker-compose.kubernetes.yml."
+        }
+    } elseif ($updateOverlayCustom) {
+        $composeFileValue = "docker-compose.yml:${updateOverlayTemplate}:${COMPOSE_OVERRIDE_FILE}"
+        Write-Info "Preserving customized $COMPOSE_OVERRIDE_FILE as the final compose layer."
+    } else {
+        Write-ComposeOverride -TemplatePath $updateOverlayTemplate
+        $composeFileValue = "docker-compose.yml:${COMPOSE_OVERRIDE_FILE}"
+    }
+    Set-EnvValue -EnvPath $ENV_FILE -Name "COMPOSE_PATH_SEPARATOR" -Value ":"
+    Set-EnvValue -EnvPath $ENV_FILE -Name "COMPOSE_FILE" -Value $composeFileValue
+    Set-EnvValue -EnvPath $ENV_FILE -Name "COMPOSE_PROJECT_NAME" -Value (Get-ComposeProjectName -EnvPath $ENV_FILE)
+    Set-EnvValue -EnvPath $ENV_FILE -Name "NORA_UPGRADE_COMPOSE_FILES" -Value $composeFileValue
+    Update-NoraHealthcheckDefaults -EnvPath $ENV_FILE
+    Update-SignupProtectionEnv -EnvPath $ENV_FILE
+    $env:COMPOSE_PATH_SEPARATOR = ":"
+    $env:COMPOSE_FILE = $composeFileValue
+    Set-EnvValue -EnvPath $ENV_FILE -Name "DOCKER_GID" -Value (Get-DockerSocketGid)
+    if (-not (Read-EnvValue -EnvPath $ENV_FILE -Name "DOCKER_AGENT_BIND_IP" -Default "")) {
+        Set-EnvValue -EnvPath $ENV_FILE -Name "DOCKER_AGENT_BIND_IP" -Value "127.0.0.1"
+    }
     Refresh-ReleaseTags
     Ensure-AgentHubHashSecretEnv -EnvPath $ENV_FILE
+    Ensure-ApiKeyHashSecretEnv -EnvPath $ENV_FILE
     Ensure-BackupEncryptionKeyEnv -EnvPath $ENV_FILE
+    Write-ComposeSecretFiles -EnvPath $ENV_FILE
     Update-ReleaseTrackingEnv -EnvPath $ENV_FILE
+    if ($nginxConfig -eq $PUBLIC_NGINX_CONF) {
+        $publicUrl = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_PUBLIC_URL" -Default ""
+        if (-not $publicUrl) {
+            $publicUrl = Read-EnvValue -EnvPath $ENV_FILE -Name "NEXTAUTH_URL" -Default ""
+        }
+        $parsedPublicUri = $null
+        if (-not [Uri]::TryCreate($publicUrl, [UriKind]::Absolute, [ref]$parsedPublicUri) -or
+            -not $parsedPublicUri.Host.Contains(".")) {
+            Write-Err "Could not derive a valid public domain from NORA_PUBLIC_URL or NEXTAUTH_URL."
+            exit 1
+        }
+        $updateNginxTemplate = if ($updateOverlayTemplate -eq $TLS_COMPOSE_OVERRIDE_TEMPLATE) {
+            $TLS_NGINX_TEMPLATE
+        } else {
+            $PUBLIC_NGINX_TEMPLATE
+        }
+        Write-PublicNginxConfig -TemplatePath $updateNginxTemplate -Domain $parsedPublicUri.Host
+        Write-Ok "Refreshed $PUBLIC_NGINX_CONF from $updateNginxTemplate"
+    } elseif ($nginxConfig -ne "nginx.conf") {
+        Write-Info "Custom NGINX_CONFIG_FILE=$nginxConfig is active; leaving it unchanged."
+    }
     Assert-NoraHostPortsAvailable -Checks (Get-NoraHostPortChecks -EnvPath $ENV_FILE)
     Start-NoraComposeStack
     Write-Host ""
@@ -897,11 +1573,13 @@ if ($SETUP_MODE -eq "update") {
 if ($SETUP_MODE -eq "clean-reinstall") {
     Write-Header "Clean Reinstall"
     if (Test-Path $ENV_FILE) {
+        Protect-EnvFile -EnvPath $ENV_FILE
         $ENV_BACKUP_FILE = Backup-ExistingEnvFile -EnvPath $ENV_FILE
         Write-Ok "Existing $ENV_FILE backed up to $ENV_BACKUP_FILE"
     }
     Invoke-CleanReinstallState
 } elseif (Test-Path $ENV_FILE) {
+    Protect-EnvFile -EnvPath $ENV_FILE
     Write-Host ""
     Write-Warn ".env already exists."
     $answer = Read-Host "  Overwrite configuration while preserving data volumes and instances? [y/N]"
@@ -929,6 +1607,14 @@ $NORA_BACKUP_ENCRYPTION_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_BACKU
 if ($NORA_BACKUP_ENCRYPTION_KEY -notmatch '^[0-9a-fA-F]{64}$') { $NORA_BACKUP_ENCRYPTION_KEY = New-HexSecret }
 $NORA_AGENT_HUB_API_KEY_HASH_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_AGENT_HUB_API_KEY_HASH_SECRET" -Default ""
 if ($NORA_AGENT_HUB_API_KEY_HASH_SECRET -notmatch '^[0-9a-fA-F]{64}$') { $NORA_AGENT_HUB_API_KEY_HASH_SECRET = New-HexSecret }
+$NORA_API_KEY_HASH_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_API_KEY_HASH_SECRET" -Default ""
+if (-not $NORA_API_KEY_HASH_SECRET) {
+    if (Test-Path $ENV_FILE) {
+        $NORA_API_KEY_HASH_SECRET = $NORA_AGENT_HUB_API_KEY_HASH_SECRET
+    } else {
+        $NORA_API_KEY_HASH_SECRET = New-HexSecret
+    }
+}
 $DB_USER         = "nora"
 $DB_NAME         = "nora"
 $DB_PASSWORD     = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_PASSWORD" -Default ""
@@ -938,6 +1624,7 @@ Write-Ok "JWT_SECRET            (64-char hex)"
 Write-Ok "ENCRYPTION_KEY        (64-char hex — AES-256-GCM)"
 Write-Ok "BACKUP_ENCRYPTION_KEY (64-char hex — managed backup archives)"
 Write-Ok "AGENT_HUB_HASH        (64-char hex)"
+Write-Ok "API_KEY_HASH          (preserved primary/fallback secret)"
 Write-Ok "DB_PASSWORD           (48-char hex)"
 
 # ── Platform mode ────────────────────────────────────────────
@@ -978,19 +1665,39 @@ Write-Header "Deploy Backends"
 $DOCKER_BACKEND_ENABLED = $true
 $HERMES_RUNTIME_ENABLED = $false
 $NEMOCLAW_SANDBOX_ENABLED = $false
-$PROXMOX_API_URL = ""
-$PROXMOX_TOKEN_ID = ""
-$PROXMOX_TOKEN_SECRET = ""
-$PROXMOX_NODE = "pve"
-$PROXMOX_TEMPLATE = "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
-$PROXMOX_HERMES_TEMPLATE = ""
-$PROXMOX_NEMOCLAW_TEMPLATE = ""
-$PROXMOX_ROOTFS_STORAGE = "local-lvm"
-$PROXMOX_BRIDGE = "vmbr0"
-$PROXMOX_SSH_HOST = ""
-$PROXMOX_SSH_USER = "root"
-$PROXMOX_SSH_PRIVATE_KEY_PATH = ""
-$PROXMOX_SSH_PASSWORD = ""
+$PROXMOX_BACKEND_ENABLED = ((Read-EnvValue -EnvPath $ENV_FILE -Name "ENABLED_BACKENDS" -Default "") -split ',') -contains "proxmox"
+$PROXMOX_API_URL = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_API_URL" -Default ""
+$PROXMOX_TOKEN_ID = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_TOKEN_ID" -Default ""
+$PROXMOX_TOKEN_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_TOKEN_SECRET" -Default ""
+$PROXMOX_VERIFY_TLS = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_VERIFY_TLS" -Default "true"
+$PROXMOX_CA_CERT = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_CA_CERT" -Default ""
+$PROXMOX_CA_CERT_PATH = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_CA_CERT_PATH" -Default ""
+$PROXMOX_ALLOW_INSECURE_HTTP = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_ALLOW_INSECURE_HTTP" -Default "false"
+$PROXMOX_NODE = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_NODE" -Default "pve"
+$PROXMOX_TEMPLATE = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_TEMPLATE" -Default "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
+$PROXMOX_HERMES_TEMPLATE = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_HERMES_TEMPLATE" -Default ""
+$PROXMOX_ROOTFS_STORAGE = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_ROOTFS_STORAGE" -Default "local-lvm"
+$PROXMOX_BRIDGE = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_BRIDGE" -Default "vmbr0"
+$PROXMOX_SSH_HOST = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_HOST" -Default ""
+$PROXMOX_SSH_USER = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_USER" -Default "root"
+$PROXMOX_SSH_PORT = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_PORT" -Default "22"
+$PROXMOX_SSH_PRIVATE_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_PRIVATE_KEY" -Default ""
+$PROXMOX_SSH_PRIVATE_KEY_PATH = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_PRIVATE_KEY_PATH" -Default ""
+$PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE" -Default ""
+$PROXMOX_SSH_PASSWORD = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_PASSWORD" -Default ""
+$PROXMOX_SSH_HOST_FINGERPRINT = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_HOST_FINGERPRINT" -Default ""
+$PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY" -Default "false"
+$PROXMOX_PCT_COMMAND = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_PCT_COMMAND" -Default "pct"
+$PROXMOX_SUDO = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_SUDO" -Default ""
+$PROXMOX_OFFLINE_STAGE_COMMAND = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_OFFLINE_STAGE_COMMAND" -Default ""
+$PROXMOX_NODE_MAJOR = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_NODE_MAJOR" -Default "24"
+$PROXMOX_OPENCLAW_PACKAGE = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_OPENCLAW_PACKAGE" -Default "openclaw@2026.6.11"
+if ($PROXMOX_OPENCLAW_PACKAGE -eq "openclaw@latest") {
+    Write-Warn "Migrating legacy PROXMOX_OPENCLAW_PACKAGE=openclaw@latest to Nora's validated pin."
+    $PROXMOX_OPENCLAW_PACKAGE = "openclaw@2026.6.11"
+}
+$PROXMOX_HERMES_BIN = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_HERMES_BIN" -Default "/opt/hermes/.venv/bin/hermes"
+$PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD" -Default "false"
 $NVIDIA_API_KEY = ""
 
 $dockerBackendAnswer = Read-Host "  Enable Docker backend for local socket provisioning? [Y/n]"
@@ -1002,7 +1709,16 @@ if ($dockerBackendAnswer -match '^[Nn]$') {
 }
 
 Write-Info "Kubernetes clusters are registered after setup in Admin -> Kubernetes."
-Write-Info "Proxmox is planned but release-blocked in this Nora release; setup will not enable it."
+$proxmoxPrompt = if ($PROXMOX_BACKEND_ENABLED) { "  Keep experimental Proxmox LXC target enabled? [Y/n]" } else { "  Enable experimental Proxmox LXC target? [y/N]" }
+$proxmoxBackendAnswer = Read-Host $proxmoxPrompt
+if (($PROXMOX_BACKEND_ENABLED -and $proxmoxBackendAnswer -notmatch '^[Nn]$') -or
+    (-not $PROXMOX_BACKEND_ENABLED -and $proxmoxBackendAnswer -match '^[Yy]$')) {
+    $PROXMOX_BACKEND_ENABLED = $true
+    Write-Warn "Proxmox is experimental. Configure HTTPS API TLS, pinned SSH host verification, and run e2e/scripts/run-proxmox-smoke.sh before production use."
+} else {
+    $PROXMOX_BACKEND_ENABLED = $false
+    Write-Info "Proxmox target disabled"
+}
 
 $hermesRuntimeAnswer = Read-Host "  Enable Hermes runtime family? [y/N]"
 if ($hermesRuntimeAnswer -match '^[Yy]$') {
@@ -1028,6 +1744,7 @@ if ($nemoclawSandboxAnswer -match '^[Yy]$') {
 
 $enabledBackends = @()
 if ($DOCKER_BACKEND_ENABLED) { $enabledBackends += "docker" }
+if ($PROXMOX_BACKEND_ENABLED) { $enabledBackends += "proxmox" }
 
 if ($enabledBackends.Count -eq 0) {
     Write-Warn "No deploy backends selected — enabling Docker so Nora can deploy agents."
@@ -1124,6 +1841,7 @@ switch ($accessAnswer) {
     }
     default {
         Clear-PublicAccessArtifacts
+        Write-ComposeOverride -TemplatePath $PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE
         $NGINX_HTTP_PORT = Resolve-AvailableHostPort -PreferredPort 8080 -Purpose "Local web gateway" -ServiceName "nginx" -ContainerPort 80
         $NEXTAUTH_URL = "http://localhost:$NGINX_HTTP_PORT"
         $CORS_ORIGINS = $NEXTAUTH_URL
@@ -1140,21 +1858,29 @@ if ("$BACKEND_API_PORT" -ne "4100") {
     Write-Warn "Port 4100 was busy — Nora backend API will run at 127.0.0.1:$BACKEND_API_PORT."
 }
 
-# ── Bootstrap Admin Account (Optional) ───────────────────────
+# ── Bootstrap Admin Account ──────────────────────────────────
 
-Write-Header "Bootstrap Admin Account (Optional)"
-
-Write-Host "  Leave both fields blank to skip bootstrap admin creation."
-Write-Host "  If set, the password must be at least 12 characters.`n"
+if ($PLATFORM_MODE -eq "paas") {
+    Write-Header "Bootstrap Admin Account (Required for PaaS)"
+    Write-Host "  Hosted PaaS requires an explicit bootstrap administrator."
+} else {
+    Write-Header "Bootstrap Admin Account (Optional)"
+    Write-Host "  Leave both fields blank to claim the first admin after boot."
+}
+Write-Host "  If set, use a valid email and a non-default password of at least 12 characters.`n"
 
 while ($true) {
     $adminEmailInput = Read-Host "  Admin email [leave blank to skip]"
-    $adminPassInput = Read-Host "  Admin password (min 12 chars, leave blank to skip)"
+    $adminPassInput = Read-SecretText "  Admin password (min 12 chars, leave blank to skip)"
 
     if (-not $adminEmailInput -and -not $adminPassInput) {
+        if ($PLATFORM_MODE -eq "paas") {
+            Write-Warn "Hosted PaaS cannot expose first-account admin claim. Configure the bootstrap administrator."
+            continue
+        }
         $DEFAULT_ADMIN_EMAIL = ""
         $DEFAULT_ADMIN_PASSWORD = ""
-        Write-Info "Skipping bootstrap admin seed — create your operator account after first boot."
+        Write-Info "Skipping bootstrap admin seed — claim your self-hosted operator account after first boot."
         break
     }
 
@@ -1163,8 +1889,18 @@ while ($true) {
         continue
     }
 
+    if (-not (Test-BootstrapAdminEmail -Value $adminEmailInput)) {
+        Write-Warn "Bootstrap admin email must be a valid non-placeholder address."
+        continue
+    }
+
     if ($adminPassInput.Length -lt 12) {
         Write-Warn "Bootstrap admin password must be at least 12 characters."
+        continue
+    }
+
+    if (Test-BootstrapAdminPasswordForbidden -Value $adminPassInput) {
+        Write-Warn "Bootstrap admin password cannot be a shipped placeholder or derived from a common default."
         continue
     }
 
@@ -1209,10 +1945,8 @@ if (-not $GOOGLE_CLIENT_ID -and -not $GITHUB_CLIENT_ID) {
 }
 
 $OAUTH_LOGIN_ENABLED = "false"
-$NEXT_PUBLIC_OAUTH_LOGIN_ENABLED = "false"
 if ($GOOGLE_CLIENT_ID -or $GITHUB_CLIENT_ID) {
     $OAUTH_LOGIN_ENABLED = "true"
-    $NEXT_PUBLIC_OAUTH_LOGIN_ENABLED = "true"
 }
 
 # ── Write .env ───────────────────────────────────────────────
@@ -1224,6 +1958,53 @@ Write-Info "Writing $ENV_FILE..."
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 $NORA_CURRENT_VERSION = Resolve-CurrentReleaseVersion
 $NORA_CURRENT_COMMIT = Resolve-CurrentReleaseCommit
+$DOCKER_GID = Get-DockerSocketGid
+$COMPOSE_PROJECT_NAME = Get-ComposeProjectName -EnvPath $ENV_FILE
+$DOCKER_AGENT_BIND_IP = Read-EnvValue -EnvPath $ENV_FILE -Name "DOCKER_AGENT_BIND_IP" -Default "127.0.0.1"
+$OPENCLAW_DOCKER_PACKAGE = Read-EnvValue -EnvPath $ENV_FILE -Name "OPENCLAW_DOCKER_PACKAGE" -Default "openclaw@2026.6.11"
+if ($OPENCLAW_DOCKER_PACKAGE -eq "openclaw@latest") {
+    Write-Warn "Migrating legacy OPENCLAW_DOCKER_PACKAGE=openclaw@latest to Nora's validated pin."
+    $OPENCLAW_DOCKER_PACKAGE = "openclaw@2026.6.11"
+}
+$NEMOCLAW_SANDBOX_IMAGE = Read-EnvValue -EnvPath $ENV_FILE -Name "NEMOCLAW_SANDBOX_IMAGE" -Default "ghcr.io/solomon2773/nora-nemoclaw-agent:latest"
+$DATABASE_URL = Read-EnvValue -EnvPath $ENV_FILE -Name "DATABASE_URL" -Default ""
+$DB_SSL_MODE = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_SSL_MODE" -Default ""
+$DB_SSL_CA = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_SSL_CA" -Default ""
+$DB_SSL_CA_FILE = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_SSL_CA_FILE" -Default ""
+$DB_SSL_CERT = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_SSL_CERT" -Default ""
+$DB_SSL_CERT_FILE = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_SSL_CERT_FILE" -Default ""
+$DB_SSL_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_SSL_KEY" -Default ""
+$DB_SSL_KEY_FILE = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_SSL_KEY_FILE" -Default ""
+$DB_POOL_MAX = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_POOL_MAX" -Default "20"
+$DB_IDLE_TIMEOUT_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_IDLE_TIMEOUT_MS" -Default "30000"
+$DB_CONNECTION_TIMEOUT_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_CONNECTION_TIMEOUT_MS" -Default "10000"
+$DB_STATEMENT_TIMEOUT_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_STATEMENT_TIMEOUT_MS" -Default "0"
+$DB_MIGRATION_LOCK_TIMEOUT_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_MIGRATION_LOCK_TIMEOUT_MS" -Default "60000"
+$DB_MIGRATION_STATEMENT_TIMEOUT_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "DB_MIGRATION_STATEMENT_TIMEOUT_MS" -Default "600000"
+$REDIS_URL = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_URL" -Default ""
+$REDIS_USERNAME = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_USERNAME" -Default ""
+$REDIS_PASSWORD = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_PASSWORD" -Default ""
+$REDIS_DB = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_DB" -Default ""
+$REDIS_TLS = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS" -Default "false"
+$REDIS_TLS_CA = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_CA" -Default ""
+$REDIS_TLS_CA_FILE = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_CA_FILE" -Default ""
+$REDIS_TLS_CERT = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_CERT" -Default ""
+$REDIS_TLS_CERT_FILE = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_CERT_FILE" -Default ""
+$REDIS_TLS_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_KEY" -Default ""
+$REDIS_TLS_KEY_FILE = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_KEY_FILE" -Default ""
+$REDIS_TLS_INSECURE_SKIP_VERIFY = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_INSECURE_SKIP_VERIFY" -Default "false"
+$REDIS_CONNECT_TIMEOUT_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_CONNECT_TIMEOUT_MS" -Default "10000"
+$SIGNUP_RATE_LIMIT_BURST_MAX = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RATE_LIMIT_BURST_MAX" -Default "5"
+$SIGNUP_RATE_LIMIT_BURST_WINDOW_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" -Default "600000"
+$SIGNUP_RATE_LIMIT_DAILY_MAX = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RATE_LIMIT_DAILY_MAX" -Default "20"
+$SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS" -Default "86400000"
+$SIGNUP_BOT_PROTECTION_PROVIDER = Read-EnvValueWithAlias -EnvPath $ENV_FILE -Name "SIGNUP_BOT_PROTECTION_PROVIDER" -AliasName "NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER" -Default "none"
+$SIGNUP_TURNSTILE_SITE_KEY = Read-EnvValueWithAlias -EnvPath $ENV_FILE -Name "SIGNUP_TURNSTILE_SITE_KEY" -AliasName "NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY" -Default ""
+$SIGNUP_TURNSTILE_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_TURNSTILE_SECRET" -Default ""
+$SIGNUP_RECAPTCHA_SITE_KEY = Read-EnvValueWithAlias -EnvPath $ENV_FILE -Name "SIGNUP_RECAPTCHA_SITE_KEY" -AliasName "NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY" -Default ""
+$SIGNUP_RECAPTCHA_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RECAPTCHA_SECRET" -Default ""
+$DEFAULT_ADMIN_EMAIL_ENV = ConvertTo-ComposeEnvLiteral -Value $DEFAULT_ADMIN_EMAIL
+$DEFAULT_ADMIN_PASSWORD_ENV = ConvertTo-ComposeEnvLiteral -Value $DEFAULT_ADMIN_PASSWORD
 if ($NORA_CURRENT_COMMIT) {
     $label = if ($NORA_CURRENT_VERSION) { $NORA_CURRENT_VERSION } else { "source checkout" }
     Write-Ok "Release tracking: $label @ $($NORA_CURRENT_COMMIT.Substring(0, [Math]::Min(12, $NORA_CURRENT_COMMIT.Length)))"
@@ -1243,10 +2024,11 @@ JWT_SECRET=$JWT_SECRET
 ENCRYPTION_KEY=$ENCRYPTION_KEY
 NORA_BACKUP_ENCRYPTION_KEY=$NORA_BACKUP_ENCRYPTION_KEY
 NORA_AGENT_HUB_API_KEY_HASH_SECRET=$NORA_AGENT_HUB_API_KEY_HASH_SECRET
+NORA_API_KEY_HASH_SECRET=$NORA_API_KEY_HASH_SECRET
 
 # ── Bootstrap Admin Account (optional; seeded only when both are set securely) ──
-DEFAULT_ADMIN_EMAIL=$DEFAULT_ADMIN_EMAIL
-DEFAULT_ADMIN_PASSWORD=$DEFAULT_ADMIN_PASSWORD
+DEFAULT_ADMIN_EMAIL=$DEFAULT_ADMIN_EMAIL_ENV
+DEFAULT_ADMIN_PASSWORD=$DEFAULT_ADMIN_PASSWORD_ENV
 
 # ── Database (defaults work with Docker Compose) ─────────────
 DB_HOST=postgres
@@ -1254,12 +2036,41 @@ DB_USER=$DB_USER
 DB_PASSWORD=$DB_PASSWORD
 DB_NAME=$DB_NAME
 DB_PORT=5432
+DATABASE_URL=$DATABASE_URL
+DB_SSL_MODE=$DB_SSL_MODE
+DB_SSL_CA=$DB_SSL_CA
+DB_SSL_CA_FILE=$DB_SSL_CA_FILE
+DB_SSL_CERT=$DB_SSL_CERT
+DB_SSL_CERT_FILE=$DB_SSL_CERT_FILE
+DB_SSL_KEY=$DB_SSL_KEY
+DB_SSL_KEY_FILE=$DB_SSL_KEY_FILE
+DB_POOL_MAX=$DB_POOL_MAX
+DB_IDLE_TIMEOUT_MS=$DB_IDLE_TIMEOUT_MS
+DB_CONNECTION_TIMEOUT_MS=$DB_CONNECTION_TIMEOUT_MS
+DB_STATEMENT_TIMEOUT_MS=$DB_STATEMENT_TIMEOUT_MS
+DB_MIGRATION_LOCK_TIMEOUT_MS=$DB_MIGRATION_LOCK_TIMEOUT_MS
+DB_MIGRATION_STATEMENT_TIMEOUT_MS=$DB_MIGRATION_STATEMENT_TIMEOUT_MS
 
 # ── Redis (defaults work with Docker Compose) ────────────────
 REDIS_HOST=redis
 REDIS_PORT=6379
+REDIS_URL=$REDIS_URL
+REDIS_USERNAME=$REDIS_USERNAME
+REDIS_PASSWORD=$REDIS_PASSWORD
+REDIS_DB=$REDIS_DB
+REDIS_TLS=$REDIS_TLS
+REDIS_TLS_CA=$REDIS_TLS_CA
+REDIS_TLS_CA_FILE=$REDIS_TLS_CA_FILE
+REDIS_TLS_CERT=$REDIS_TLS_CERT
+REDIS_TLS_CERT_FILE=$REDIS_TLS_CERT_FILE
+REDIS_TLS_KEY=$REDIS_TLS_KEY
+REDIS_TLS_KEY_FILE=$REDIS_TLS_KEY_FILE
+REDIS_TLS_INSECURE_SKIP_VERIFY=$REDIS_TLS_INSECURE_SKIP_VERIFY
+REDIS_CONNECT_TIMEOUT_MS=$REDIS_CONNECT_TIMEOUT_MS
 PORT=4000
 BACKEND_API_PORT=$BACKEND_API_PORT
+DOCKER_GID=$DOCKER_GID
+COMPOSE_PROJECT_NAME=$COMPOSE_PROJECT_NAME
 
 # ── Access / URL ─────────────────────────────────────────────
 NGINX_CONFIG_FILE=$NGINX_CONFIG_FILE
@@ -1271,12 +2082,22 @@ NORA_FORCE_SECURE_COOKIES=$NORA_FORCE_SECURE_COOKIES
 
 # ── OAuth ────────────────────────────────────────────────────
 OAUTH_LOGIN_ENABLED=$OAUTH_LOGIN_ENABLED
-NEXT_PUBLIC_OAUTH_LOGIN_ENABLED=$NEXT_PUBLIC_OAUTH_LOGIN_ENABLED
 GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
 GITHUB_CLIENT_ID=$GITHUB_CLIENT_ID
 GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
 NEXTAUTH_URL=$NEXTAUTH_URL
+
+# ── Public Signup Abuse Protection ──────────────────────────
+SIGNUP_RATE_LIMIT_BURST_MAX=$SIGNUP_RATE_LIMIT_BURST_MAX
+SIGNUP_RATE_LIMIT_BURST_WINDOW_MS=$SIGNUP_RATE_LIMIT_BURST_WINDOW_MS
+SIGNUP_RATE_LIMIT_DAILY_MAX=$SIGNUP_RATE_LIMIT_DAILY_MAX
+SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS=$SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS
+SIGNUP_BOT_PROTECTION_PROVIDER=$SIGNUP_BOT_PROTECTION_PROVIDER
+SIGNUP_TURNSTILE_SITE_KEY=$SIGNUP_TURNSTILE_SITE_KEY
+SIGNUP_TURNSTILE_SECRET=$SIGNUP_TURNSTILE_SECRET
+SIGNUP_RECAPTCHA_SITE_KEY=$SIGNUP_RECAPTCHA_SITE_KEY
+SIGNUP_RECAPTCHA_SECRET=$SIGNUP_RECAPTCHA_SECRET
 
 # ── Platform Mode ────────────────────────────────────────────
 PLATFORM_MODE=$PLATFORM_MODE
@@ -1346,9 +2167,15 @@ NORA_UPGRADE_REF=master
 NORA_UPGRADE_RUNNER_IMAGE=docker:29-cli
 NORA_UPGRADE_STATE_VOLUME=nora_upgrade_state
 NORA_ENV_FILE=.env
-NORA_UPGRADE_COMPOSE_FILES=
+NORA_COMPOSE_SECRETS_DIR=$DEFAULT_COMPOSE_SECRETS_DIR
+COMPOSE_PATH_SEPARATOR=:
+COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml
+NORA_UPGRADE_COMPOSE_FILES=docker-compose.yml:docker-compose.override.yml
 NORA_UPGRADE_PUBLIC_HEALTH_URL=
-NORA_UPGRADE_HEALTHCHECK_ATTEMPTS=40
+# Shared by setup post-start probes and one-click upgrade health checks.
+# 221 attempts, 3s apart = 660s from the first to final attempt. Overrides
+# must be positive integers with a first-to-final window no greater than 3900s.
+NORA_UPGRADE_HEALTHCHECK_ATTEMPTS=221
 NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS=3
 NORA_INSTALL_METHOD=source
 NORA_MANUAL_UPGRADE_COMMAND=./setup.sh --update
@@ -1358,30 +2185,45 @@ NORA_MANUAL_UPGRADE_STEPS=
 ENABLED_RUNTIME_FAMILIES=$ENABLED_RUNTIME_FAMILIES
 ENABLED_BACKENDS=$ENABLED_BACKENDS
 ENABLED_SANDBOX_PROFILES=$ENABLED_SANDBOX_PROFILES
+DOCKER_AGENT_BIND_IP=$DOCKER_AGENT_BIND_IP
+OPENCLAW_DOCKER_PACKAGE=$OPENCLAW_DOCKER_PACKAGE
 
-# ── Proxmox (planned; release-blocked in current Nora releases) ─────────
-# These values are retained for adapter development and future validation.
-# Setting them does not make Proxmox a supported deploy target yet.
+# ── Proxmox LXC (experimental; secure configuration required) ──────────
 PROXMOX_API_URL=$PROXMOX_API_URL
 PROXMOX_TOKEN_ID=$PROXMOX_TOKEN_ID
 PROXMOX_TOKEN_SECRET=$PROXMOX_TOKEN_SECRET
+PROXMOX_VERIFY_TLS=$PROXMOX_VERIFY_TLS
+PROXMOX_CA_CERT=$PROXMOX_CA_CERT
+PROXMOX_CA_CERT_PATH=$PROXMOX_CA_CERT_PATH
+PROXMOX_ALLOW_INSECURE_HTTP=$PROXMOX_ALLOW_INSECURE_HTTP
 PROXMOX_NODE=$PROXMOX_NODE
 PROXMOX_TEMPLATE=$PROXMOX_TEMPLATE
 PROXMOX_HERMES_TEMPLATE=$PROXMOX_HERMES_TEMPLATE
-PROXMOX_NEMOCLAW_TEMPLATE=$PROXMOX_NEMOCLAW_TEMPLATE
 PROXMOX_ROOTFS_STORAGE=$PROXMOX_ROOTFS_STORAGE
 PROXMOX_BRIDGE=$PROXMOX_BRIDGE
 PROXMOX_SSH_HOST=$PROXMOX_SSH_HOST
 PROXMOX_SSH_USER=$PROXMOX_SSH_USER
+PROXMOX_SSH_PORT=$PROXMOX_SSH_PORT
+PROXMOX_SSH_PRIVATE_KEY=$PROXMOX_SSH_PRIVATE_KEY
 PROXMOX_SSH_PRIVATE_KEY_PATH=$PROXMOX_SSH_PRIVATE_KEY_PATH
+PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE=$PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE
 PROXMOX_SSH_PASSWORD=$PROXMOX_SSH_PASSWORD
+PROXMOX_SSH_HOST_FINGERPRINT=$PROXMOX_SSH_HOST_FINGERPRINT
+PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY=$PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY
+PROXMOX_PCT_COMMAND=$PROXMOX_PCT_COMMAND
+PROXMOX_SUDO=$PROXMOX_SUDO
+PROXMOX_OFFLINE_STAGE_COMMAND=$PROXMOX_OFFLINE_STAGE_COMMAND
+PROXMOX_NODE_MAJOR=$PROXMOX_NODE_MAJOR
+PROXMOX_OPENCLAW_PACKAGE=$PROXMOX_OPENCLAW_PACKAGE
+PROXMOX_HERMES_BIN=$PROXMOX_HERMES_BIN
+PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD=$PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD
 
 # ── NemoClaw / NVIDIA (when ENABLED_SANDBOX_PROFILES includes nemoclaw) ──
 NVIDIA_API_KEY=$NVIDIA_API_KEY
 NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
-# For K3s/Kubernetes targets, use a registry image your nodes can pull
-# or preload nora-nemoclaw-agent:local onto the target nodes.
-NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local
+# Defaults to the Nora-published GHCR image. For offline hosts or private
+# clusters, build/preload nora-nemoclaw-agent:local and override this value.
+NEMOCLAW_SANDBOX_IMAGE=$NEMOCLAW_SANDBOX_IMAGE
 
 # ── Security ─────────────────────────────────────────────────
 CORS_ORIGINS=$CORS_ORIGINS
@@ -1399,7 +2241,11 @@ KEY_STORAGE=database
 
 $envContent | Out-File -FilePath $ENV_FILE -Encoding utf8NoBOM
 
+Protect-EnvFile -EnvPath $ENV_FILE
+Write-ComposeSecretFiles -EnvPath $ENV_FILE
 Write-Ok ".env created successfully"
+$env:COMPOSE_PATH_SEPARATOR = ":"
+$env:COMPOSE_FILE = "docker-compose.yml:docker-compose.override.yml"
 
 # ── Summary ──────────────────────────────────────────────────
 
@@ -1481,17 +2327,10 @@ docker build -f agent-runtime/Dockerfile.openclaw-agent -t nora-openclaw-agent:l
 if ($LASTEXITCODE -ne 0) { Write-Err "Failed to build nora-openclaw-agent:local"; exit 1 }
 Write-Ok "OpenClaw agent image ready"
 
-# Only build the NemoClaw variant when the operator enabled the sandbox profile.
-# The NemoClaw adapter pulls (never builds) nora-nemoclaw-agent:local, so without
-# this build a nemoclaw deploy fails — unlike the standard OpenClaw image, which
-# the Docker backend builds on demand.
-if (($ENABLED_SANDBOX_PROFILES -split ',') -contains 'nemoclaw') {
-    Write-Host ""
-    Write-Info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
-    Write-Host ""
-    docker build -f agent-runtime/Dockerfile.nemoclaw-agent -t nora-nemoclaw-agent:local agent-runtime/
-    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to build nora-nemoclaw-agent:local"; exit 1 }
-    Write-Ok "NemoClaw sandbox image ready"
+# Build Nora's exact local NemoClaw tag. Other refs follow provisioner policy:
+# refresh mutable refs, reuse present immutable refs, and pull any missing ref.
+if (Test-CommaSeparatedValue -List $ENABLED_SANDBOX_PROFILES -Value "nemoclaw") {
+    Ensure-NemoClawSandboxImage -Image $NEMOCLAW_SANDBOX_IMAGE
 }
 Start-NoraComposeStack
 
@@ -1518,7 +2357,7 @@ Write-Host "    docker compose down                 # stop everything"
 Write-Host ""
 Write-Info "Useful links:"
 Write-Host "    Quick start:        https://github.com/solomon2773/nora#quick-start"
-Write-Host "    GitHub repo:        https://github.com/solomon2773/nora"
+Write-Host "    Star Nora:          https://github.com/solomon2773/nora"
 Write-Host "    Public site:        https://nora.solomontsao.com"
 Write-Host "    Log in:             https://nora.solomontsao.com/login"
 Write-Host "    Create account:     https://nora.solomontsao.com/signup"

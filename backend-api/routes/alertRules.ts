@@ -10,6 +10,16 @@ const { requireWorkspaceRole } = require("../middleware/ownership");
 
 const router = express.Router({ mergeParams: true });
 
+/**
+ * Write a workspace-scoped alert-rule audit event without failing the primary
+ * mutation when audit persistence or downstream alert evaluation fails.
+ *
+ * @param {Object} req - Authenticated Express request.
+ * @param {string} eventType - Audit event type.
+ * @param {string} message - Human-readable event message.
+ * @param {Object} context - Workspace and alert context.
+ * @returns {Promise<void>}
+ */
 function logAlertEvent(req, eventType, message, context) {
   return Promise.resolve(
     monitoring.logEvent(

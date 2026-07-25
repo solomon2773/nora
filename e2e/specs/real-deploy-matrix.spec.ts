@@ -6,17 +6,19 @@
 // Requires .env.real with at least REAL_LLM_API_KEY set, plus REAL_ENABLE_*
 // flags for the cells you want to exercise. See e2e/REAL_TESTS.md.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIRequestContext } from "@playwright/test";
 import {
   DEFAULT_PASSWORD,
   apiJson,
   createUserSession,
+  ensureUserSession,
   getCurrentUser,
   uniqueEmail,
   uniqueName,
 } from "./support/app";
 import {
   getPlatformConfig,
+  getAccessibleRemoteExecutionTarget,
   backendSupported,
   runtimeSupported,
   deployAgent,
@@ -27,10 +29,34 @@ import {
   deleteAgent,
   chatWithAgent,
   saveProviderKey,
+  setProviderDefault,
 } from "./support/agents";
 import { real } from "./support/realConfig";
 
-const CELLS = [
+type PlatformExecutionTarget = {
+  id?: string;
+  available?: boolean;
+  configured?: boolean;
+  [key: string]: unknown;
+};
+
+type PlatformConfig = {
+  executionTargets?: PlatformExecutionTarget[];
+  [key: string]: unknown;
+};
+
+type MatrixCell = {
+  key: string;
+  label: string;
+  runtimeFamily: string;
+  backend: string;
+  targetPrefix?: string;
+  executionTargetId?: () => string | null;
+  sandboxProfile: "standard" | "nemoclaw";
+  enabledFlag: () => boolean;
+};
+
+const CELLS: MatrixCell[] = [
   {
     key: "openclaw-docker",
     label: "OpenClaw + Docker",
@@ -40,20 +66,52 @@ const CELLS = [
     enabledFlag: () => real.enableOpenclawDocker,
   },
   {
+    key: "openclaw-remote-docker",
+    label: "OpenClaw + Remote Docker",
+    runtimeFamily: "openclaw",
+    backend: "remote-docker",
+    targetPrefix: "remote:",
+    executionTargetId: () => real.remoteDockerExecutionTargetId,
+    sandboxProfile: "standard",
+    enabledFlag: () => real.enableOpenclawRemoteDocker,
+  },
+  {
     key: "openclaw-k8s",
     label: "OpenClaw + Kubernetes",
     runtimeFamily: "openclaw",
     backend: "k8s",
+    targetPrefix: "k8s:",
+    executionTargetId: () => real.k8sExecutionTargetId,
     sandboxProfile: "standard",
     enabledFlag: () => real.enableOpenclawK8s,
   },
   {
-    key: "openclaw-nemoclaw",
-    label: "OpenClaw + NemoClaw sandbox",
+    key: "openclaw-nemoclaw-docker",
+    label: "OpenClaw + NemoClaw sandbox + Docker",
     runtimeFamily: "openclaw",
     backend: "docker",
     sandboxProfile: "nemoclaw",
     enabledFlag: () => real.enableOpenclawNemoclaw,
+  },
+  {
+    key: "openclaw-nemoclaw-remote-docker",
+    label: "OpenClaw + NemoClaw sandbox + Remote Docker",
+    runtimeFamily: "openclaw",
+    backend: "remote-docker",
+    targetPrefix: "remote:",
+    executionTargetId: () => real.remoteDockerExecutionTargetId,
+    sandboxProfile: "nemoclaw",
+    enabledFlag: () => real.enableOpenclawNemoclawRemoteDocker,
+  },
+  {
+    key: "openclaw-nemoclaw-k8s",
+    label: "OpenClaw + NemoClaw sandbox + Kubernetes",
+    runtimeFamily: "openclaw",
+    backend: "k8s",
+    targetPrefix: "k8s:",
+    executionTargetId: () => real.k8sExecutionTargetId,
+    sandboxProfile: "nemoclaw",
+    enabledFlag: () => real.enableOpenclawNemoclawK8s,
   },
   {
     key: "hermes-docker",
@@ -68,31 +126,102 @@ const CELLS = [
     label: "Hermes + Kubernetes",
     runtimeFamily: "hermes",
     backend: "k8s",
+    targetPrefix: "k8s:",
+    executionTargetId: () => real.k8sExecutionTargetId,
     sandboxProfile: "standard",
     enabledFlag: () => real.enableHermesK8s,
   },
 ];
 
-test.describe("Deploy matrix — real credentials", () => {
-  test.describe.configure({ mode: "serial" });
+function resolveExecutionTarget(platform: PlatformConfig, cell: MatrixCell) {
+  const explicit = typeof cell.executionTargetId === "function" ? cell.executionTargetId() : null;
+  if (explicit) {
+    if (!Array.isArray(platform.executionTargets)) return explicit;
+    const explicitTarget = platform.executionTargets.find((entry) => entry?.id === explicit);
+    return explicitTarget &&
+      explicitTarget.available !== false &&
+      explicitTarget.configured !== false
+      ? explicit
+      : undefined;
+  }
+  const prefix = cell.targetPrefix;
+  if (!prefix || !Array.isArray(platform.executionTargets)) return undefined;
+  const target = platform.executionTargets.find(
+    (entry) =>
+      String(entry?.id || "").startsWith(prefix) &&
+      entry.available !== false &&
+      entry.configured !== false,
+  );
+  return target?.id;
+}
 
+async function destroyAgentAndVerify(request: APIRequestContext, token: string, agentId: string) {
+  const { response: deleteResponse, body: deleteBody } = await deleteAgent(request, token, agentId);
+  if (!deleteResponse.ok() && deleteResponse.status() !== 404) {
+    throw new Error(
+      `Failed to destroy real-matrix agent ${agentId}: ${deleteResponse.status()} ${JSON.stringify(
+        deleteBody,
+      )}`,
+    );
+  }
+
+  const { response: lookupResponse, body: lookupBody } = await apiJson(
+    request,
+    `/api/agents/${agentId}`,
+    {
+      token,
+      failOnStatus: false,
+    },
+  );
+  if (lookupResponse.status() !== 404) {
+    throw new Error(
+      `Real-matrix agent ${agentId} still exists after destroy: ${lookupResponse.status()} ${JSON.stringify(
+        lookupBody,
+      )}`,
+    );
+  }
+}
+
+test.describe("Deploy matrix — real credentials", () => {
   /** @type {{email: string, password: string, token: string, profile: any} | null} */
   let operator = null;
+  const providerRecordIds: Record<string, string | undefined> = {};
 
   test.beforeAll(async ({ request }) => {
-    test.skip(!real.llmApiKey, "REAL_LLM_API_KEY (or REAL_ANTHROPIC_API_KEY / REAL_OPENAI_API_KEY) not set");
+    test.skip(
+      !real.llmApiKey && !real.nvidiaApiKey,
+      "REAL_LLM_API_KEY (or provider-specific real API key) not set",
+    );
 
-    operator = await createUserSession(request, {
-      email: uniqueEmail("nora-real-matrix"),
-      password: DEFAULT_PASSWORD,
-    });
+    operator = real.operatorEmail
+      ? await ensureUserSession(request, {
+          email: real.operatorEmail,
+          password: real.operatorPassword || DEFAULT_PASSWORD,
+        })
+      : await createUserSession(request, {
+          email: uniqueEmail("nora-real-matrix"),
+          password: DEFAULT_PASSWORD,
+        });
     operator.profile = await getCurrentUser(request, operator.token);
 
-    await saveProviderKey(request, operator.token, {
-      provider: real.llmProviderId,
-      apiKey: real.llmApiKey,
-      model: real.llmModel || undefined,
-    });
+    if (real.llmApiKey) {
+      const primaryProvider = await saveProviderKey(request, operator.token, {
+        provider: real.llmProviderId,
+        apiKey: real.llmApiKey,
+        model: real.llmModel || undefined,
+      });
+      providerRecordIds.primary = primaryProvider?.id;
+      providerRecordIds[real.llmProviderId] = primaryProvider?.id;
+    }
+
+    if (real.nvidiaApiKey && real.llmProviderId !== real.nvidiaProviderId) {
+      const nvidiaProvider = await saveProviderKey(request, operator.token, {
+        provider: real.nvidiaProviderId,
+        apiKey: real.nvidiaApiKey,
+        model: real.nvidiaModel,
+      });
+      providerRecordIds[real.nvidiaProviderId] = nvidiaProvider?.id;
+    }
   });
 
   for (const cell of CELLS) {
@@ -103,36 +232,91 @@ test.describe("Deploy matrix — real credentials", () => {
       /** @type {any} */
       let agent = null;
 
+      test.afterAll(async ({ request }, testInfo) => {
+        testInfo.setTimeout(120000);
+        if (!agent?.id || !operator?.token) return;
+
+        const agentId = agent.id;
+        await destroyAgentAndVerify(request, operator.token, agentId);
+        agent = null;
+      });
+
       test(`[L1] deploy`, async ({ request }) => {
         test.skip(!cell.enabledFlag(), `Cell disabled via REAL_ENABLE_* flag`);
 
-        const platform = await getPlatformConfig(request, operator.token);
+        const basePlatform = await getPlatformConfig(request, operator.token);
+        const explicitExecutionTargetId =
+          typeof cell.executionTargetId === "function" ? cell.executionTargetId() : null;
+        const accessibleRemoteTarget =
+          cell.backend === "remote-docker" && explicitExecutionTargetId
+            ? await getAccessibleRemoteExecutionTarget(
+                request,
+                operator.token,
+                explicitExecutionTargetId,
+              )
+            : null;
+        const platform = accessibleRemoteTarget
+          ? {
+              ...basePlatform,
+              executionTargets: [
+                ...(basePlatform.executionTargets || []).filter(
+                  (entry) => entry?.id !== accessibleRemoteTarget.id,
+                ),
+                accessibleRemoteTarget,
+              ],
+            }
+          : basePlatform;
+        const executionTargetId = resolveExecutionTarget(platform, cell);
         test.skip(
-          !backendSupported(platform, cell.backend),
-          `backend ${cell.backend} not in ENABLED_BACKENDS on this stack`
+          Boolean(cell.targetPrefix) && !executionTargetId,
+          `No available ${cell.backend} execution target found for ${cell.label}`,
+        );
+        test.skip(
+          !backendSupported(platform, cell.backend, executionTargetId),
+          `backend ${cell.backend} not in ENABLED_BACKENDS on this stack`,
         );
         test.skip(
           !runtimeSupported(platform, cell.runtimeFamily),
-          `runtime ${cell.runtimeFamily} not in ENABLED_RUNTIME_FAMILIES on this stack`
+          `runtime ${cell.runtimeFamily} not in ENABLED_RUNTIME_FAMILIES on this stack`,
         );
+        test.skip(
+          cell.sandboxProfile !== "nemoclaw" && !real.llmApiKey,
+          "Standard real-LLM cells require REAL_LLM_API_KEY or a provider-specific real key",
+        );
+        test.skip(
+          cell.sandboxProfile === "nemoclaw" && !real.nvidiaApiKey,
+          "NemoClaw real-key cells require REAL_NVIDIA_API_KEY or NVIDIA_API_KEY",
+        );
+
+        const defaultProviderRecordId =
+          cell.sandboxProfile === "nemoclaw"
+            ? providerRecordIds[real.nvidiaProviderId]
+            : providerRecordIds.primary;
+        if (defaultProviderRecordId) {
+          await setProviderDefault(request, operator.token, defaultProviderRecordId);
+        }
 
         try {
           agent = await deployAgent(request, operator.token, {
             name: uniqueName(`real-${cell.key}`),
             runtimeFamily: cell.runtimeFamily,
             backend: cell.backend,
+            executionTargetId,
             sandboxProfile: cell.sandboxProfile,
             vcpu: 1,
             ramMb: 1024,
             diskGb: 5,
+            model: cell.sandboxProfile === "nemoclaw" ? real.nvidiaModel : undefined,
           });
         } catch (err: any) {
           // The backend rejects unsupported runtime/backend combinations with
           // a 400 explaining the constraint. Treat that
           // as a clean skip, not a test failure.
-          if (/only supported|not supported|invalid combination|not enabled/i.test(
-            String(err?.message || "")
-          )) {
+          if (
+            /only supported|not supported|invalid combination|not enabled/i.test(
+              String(err?.message || ""),
+            )
+          ) {
             test.skip(true, `Combination unsupported by platform: ${err.message}`);
             return;
           }
@@ -150,7 +334,7 @@ test.describe("Deploy matrix — real credentials", () => {
           operator.token,
           agent.id,
           ["running", "warning"],
-          { timeoutMs: real.provisionTimeoutMs }
+          { timeoutMs: real.provisionTimeoutMs },
         );
         agent = running;
         expect(["running", "warning"]).toContain(agent.status);
@@ -171,12 +355,8 @@ test.describe("Deploy matrix — real credentials", () => {
 
         const embedPath =
           agent.runtime_family === "hermes"
-            ? `/api/agents/${agent.id}/hermes-ui/embed?token=${encodeURIComponent(
-                operator.token
-              )}`
-            : `/api/agents/${agent.id}/gateway/embed?token=${encodeURIComponent(
-                operator.token
-              )}`;
+            ? `/api/agents/${agent.id}/hermes-ui/embed?token=${encodeURIComponent(operator.token)}`
+            : `/api/agents/${agent.id}/gateway/embed?token=${encodeURIComponent(operator.token)}`;
 
         const deadline = Date.now() + real.provisionTimeoutMs;
         let lastStatus = 0;
@@ -190,8 +370,8 @@ test.describe("Deploy matrix — real credentials", () => {
         }
         throw new Error(
           `Gateway embed never returned 2xx within ${Math.round(
-            real.provisionTimeoutMs / 1000
-          )}s; last status: ${lastStatus}`
+            real.provisionTimeoutMs / 1000,
+          )}s; last status: ${lastStatus}`,
         );
       });
 
@@ -203,7 +383,7 @@ test.describe("Deploy matrix — real credentials", () => {
           request,
           operator.token,
           agent,
-          "Reply with a single short word, e.g. 'ok'."
+          "Reply with a single short word, e.g. 'ok'.",
         );
 
         // Both runtimes eventually return either a string, a { message }
@@ -219,15 +399,14 @@ test.describe("Deploy matrix — real credentials", () => {
         test.skip(!agent, "no agent from [L1]");
         // Logs are streamed via WebSocket; the HTTP metrics + events surfaces
         // give us a non-streaming signal that the agent is alive.
-        const { body } = await apiJson(
-          request,
-          `/api/monitoring/events?limit=25`,
-          { token: operator.token }
-        );
+        const { body } = await apiJson(request, `/api/monitoring/events?limit=25`, {
+          token: operator.token,
+        });
         const events = Array.isArray(body) ? body : [];
-        const touchesAgent = events.some((e) =>
-          String(e.metadata?.agentId || e.agent_id || "") === agent.id ||
-          String(e.message || "").includes(agent.name)
+        const touchesAgent = events.some(
+          (e) =>
+            String(e.metadata?.agentId || e.agent_id || "") === agent.id ||
+            String(e.message || "").includes(agent.name),
         );
         expect(touchesAgent, "expected a monitoring event touching this agent").toBe(true);
       });
@@ -248,7 +427,7 @@ test.describe("Deploy matrix — real credentials", () => {
           const { response, body } = await apiJson(
             request,
             `/api/agents/${agent.id}/metrics/summary`,
-            { token: operator.token, failOnStatus: false }
+            { token: operator.token, failOnStatus: false },
           );
           lastBody = body;
           if (!response.ok()) {
@@ -256,9 +435,7 @@ test.describe("Deploy matrix — real credentials", () => {
             continue;
           }
           const keys =
-            body && typeof body === "object" && !Array.isArray(body)
-              ? Object.keys(body)
-              : [];
+            body && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
           if (!expectData) {
             expect(body && typeof body === "object" && !Array.isArray(body)).toBe(true);
             return;
@@ -267,40 +444,27 @@ test.describe("Deploy matrix — real credentials", () => {
           await new Promise((r) => setTimeout(r, 5000));
         }
         throw new Error(
-          `Timed out waiting for agent metrics summary; last body: ${JSON.stringify(lastBody)}`
+          `Timed out waiting for agent metrics summary; last body: ${JSON.stringify(lastBody)}`,
         );
       });
 
       test(`[L8] stop then start`, async ({ request }) => {
         test.skip(!agent, "no agent from [L1]");
         await stopAgent(request, operator.token, agent.id);
-        await waitForAgentStatus(
-          request,
-          operator.token,
-          agent.id,
-          ["stopped"],
-          { timeoutMs: 120000 }
-        );
+        await waitForAgentStatus(request, operator.token, agent.id, ["stopped"], {
+          timeoutMs: 120000,
+        });
         await startAgent(request, operator.token, agent.id);
-        await waitForAgentStatus(
-          request,
-          operator.token,
-          agent.id,
-          ["running", "warning"],
-          { timeoutMs: 180000 }
-        );
+        await waitForAgentStatus(request, operator.token, agent.id, ["running", "warning"], {
+          timeoutMs: 180000,
+        });
       });
 
       test(`[L10] destroy`, async ({ request }) => {
         test.skip(!agent, "no agent from [L1]");
-        await deleteAgent(request, operator.token, agent.id);
-        // After delete, the per-user GET should 404 or return deleted state.
-        const { response } = await apiJson(
-          request,
-          `/api/agents/${agent.id}`,
-          { token: operator.token, failOnStatus: false }
-        );
-        expect([404, 200]).toContain(response.status());
+        const agentId = agent.id;
+        await destroyAgentAndVerify(request, operator.token, agentId);
+        agent = null;
       });
     });
   }

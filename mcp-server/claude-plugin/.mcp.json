@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "nora": {
+      "command": "npx",
+      "args": ["-y", "@noraai/mcp-server@0.1.4"],
+      "env": {
+        "NORA_MCP_ALLOW_DESTRUCTIVE": "false"
+      }
+    }
+  }
+}

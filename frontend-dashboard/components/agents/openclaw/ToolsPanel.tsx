@@ -130,7 +130,9 @@ export default function ToolsPanel({ agentId }) {
                     {/* Parameters schema */}
                     {params && (
                       <div>
-                        <p className="text-[10px] font-bold text-slate-500 mb-1">Parameters Schema</p>
+                        <p className="text-[10px] font-bold text-slate-500 mb-1">
+                          Parameters Schema
+                        </p>
                         <pre className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-[10px] text-slate-600 font-mono overflow-x-auto max-h-40">
                           {JSON.stringify(params, null, 2)}
                         </pre>
@@ -174,8 +176,8 @@ export default function ToolsPanel({ agentId }) {
                       {noraMeta?.executionState === "runtime_skill"
                         ? "This tool is connected through Nora and is executable inside the agent via the generated nora-integrations skill and local nora-integration-tool command."
                         : noraMeta?.executionState === "manifest_only"
-                        ? "This tool comes from the Nora integration manifest. It advertises provider capability and schema, but the current runtime does not execute it yet."
-                        : "Tools are invoked automatically by the AI model during chat conversations."}
+                          ? "This tool comes from the Nora integration manifest. It advertises provider capability and schema, but the current runtime does not execute it yet."
+                          : "Tools are invoked automatically by the AI model during chat conversations."}
                     </p>
                   </div>
                 )}

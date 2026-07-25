@@ -51,7 +51,11 @@ describe("gateway_token encryption at rest", () => {
       jest.doMock("../db", () => ({ query: jest.fn() }));
       const { runtimeAuthHeaders } = require("../runtimeAuth");
       const token = "feedface".repeat(8);
-      const headers = await runtimeAuthHeaders({ id: "a1", gateway_token: crypto.encrypt(token) });
+      const headers = await runtimeAuthHeaders({
+        id: "a1",
+        gateway_token: crypto.encrypt(token),
+        deploy_target: "docker",
+      });
       expect(headers.Authorization).toBe(`Bearer ${token}`);
     });
 
@@ -59,7 +63,11 @@ describe("gateway_token encryption at rest", () => {
       jest.doMock("../db", () => ({ query: jest.fn() }));
       const { runtimeAuthHeaders } = require("../runtimeAuth");
       const legacy = "abc123".repeat(6);
-      const headers = await runtimeAuthHeaders({ id: "a1", gateway_token: legacy });
+      const headers = await runtimeAuthHeaders({
+        id: "a1",
+        gateway_token: legacy,
+        deploy_target: "docker",
+      });
       expect(headers.Authorization).toBe(`Bearer ${legacy}`);
     });
 
@@ -67,7 +75,9 @@ describe("gateway_token encryption at rest", () => {
       const token = "0a1b2c3d".repeat(8);
       const encrypted = crypto.encrypt(token);
       jest.doMock("../db", () => ({
-        query: jest.fn().mockResolvedValue({ rows: [{ gateway_token: encrypted }] }),
+        query: jest
+          .fn()
+          .mockResolvedValue({ rows: [{ gateway_token: encrypted, deploy_target: "docker" }] }),
       }));
       const { runtimeAuthHeaders } = require("../runtimeAuth");
       const headers = await runtimeAuthHeaders({ id: "a1" });

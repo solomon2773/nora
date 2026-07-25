@@ -84,10 +84,6 @@ function createEmptyMigrationSource() {
     name: "",
     transport: "docker",
     container: "",
-    host: "",
-    username: "root",
-    port: "22",
-    privateKey: "",
     workspaceRoot: "",
     agentRoot: "",
     sessionRoot: "",
@@ -222,36 +218,62 @@ export default function Deploy() {
   }, []);
 
   useEffect(() => {
-    fetchWithAuth("/api/billing/subscription")
-      .then((r) => r.json())
-      .then(setSub)
-      .catch((err) => console.error(err));
-    fetchWithAuth("/api/agents?scope=owned")
-      .then((r) => r.json())
-      .then((data) => setAgentCount(Array.isArray(data) ? data.length : 0))
-      .catch((err) => console.error(err));
-    fetchWithAuth("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((profile) => setViewerRole(profile?.role || "user"))
-      .catch(() => {});
-    // Fetch the global catalog and the operator's own connected remote hosts,
-    // then merge the hosts in as selectable targets before storing the config.
-    Promise.all([
-      fetch("/api/config/backends")
-        .then((r) => r.json())
-        .catch(() => null),
-      fetchWithAuth("/api/remote-hosts")
-        .then((r) => (r.ok ? r.json() : []))
-        .catch(() => []),
-    ])
-      .then(([config, hosts]) => {
-        if (config) setBackendConfig(mergeRemoteHostsIntoConfig(config, hosts));
+    let active = true;
+    const parseOkJson = async (response, fallback) => {
+      if (!response.ok) return fallback;
+      return response.json().catch(() => fallback);
+    };
+
+    const platformPromise = fetch("/api/config/platform")
+      .then((response) => parseOkJson(response, null))
+      .catch(() => null);
+    const backendConfigPromise = fetch("/api/config/backends")
+      .then((response) => parseOkJson(response, null))
+      .catch(() => null);
+    const remoteHostsPromise = platformPromise.then(async (platform) => {
+      const mode =
+        typeof platform?.mode === "string" ? platform.mode.trim().toLowerCase() : "unknown";
+      if (mode !== "selfhosted") return [];
+
+      try {
+        const response = await fetchWithAuth("/api/remote-hosts");
+        const hosts = await parseOkJson(response, []);
+        return Array.isArray(hosts) ? hosts : [];
+      } catch {
+        return [];
+      }
+    });
+
+    void platformPromise.then((platform) => {
+      if (active) setPlatformConfig(platform);
+    });
+    void fetchWithAuth("/api/billing/subscription")
+      .then((response) => parseOkJson(response, null))
+      .then((subscription) => {
+        if (active && subscription) setSub(subscription);
       })
       .catch(() => {});
-    fetch("/api/config/platform")
-      .then((r) => r.json())
-      .then(setPlatformConfig)
+    void fetchWithAuth("/api/agents?scope=owned")
+      .then((response) => parseOkJson(response, []))
+      .then((agents) => {
+        if (active) setAgentCount(Array.isArray(agents) ? agents.length : 0);
+      })
       .catch(() => {});
+    void fetchWithAuth("/api/auth/me")
+      .then((response) => parseOkJson(response, null))
+      .then((profile) => {
+        if (active) setViewerRole(profile?.role || "user");
+      })
+      .catch(() => {});
+    void Promise.all([backendConfigPromise, remoteHostsPromise]).then(([config, hosts]) => {
+      if (active && config) {
+        setBackendConfig(mergeRemoteHostsIntoConfig(config, hosts));
+      }
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const deploymentDefaults = platformConfig?.deploymentDefaults || {
@@ -288,7 +310,7 @@ export default function Deploy() {
     resourceDefaultsInitializedRef.current = true;
   }, [deploymentDefaults, platformConfig?.deploymentDefaults]);
 
-  const isSelfHosted = platformConfig?.mode !== "paas";
+  const isSelfHosted = platformConfig?.mode === "selfhosted";
   const plan = sub?.plan || "free";
   const planLabel = formatPlanLabel(plan, { selfHosted: isSelfHosted });
   const limit = Number.isInteger(sub?.agent_limit) ? sub.agent_limit : null;
@@ -299,6 +321,9 @@ export default function Deploy() {
     !isUnlimited && Number.isInteger(limit) ? Math.max(limit - agentCount, 0) : null;
   const atLimit = !isUnlimited && Number.isInteger(limit) ? agentCount >= limit : false;
   const isAdmin = viewerRole === "admin";
+  const canUseLiveMigration = platformConfig?.mode === "selfhosted" && isAdmin;
+  const effectiveMigrationMethod =
+    canUseLiveMigration && migrationMethod === "live" ? "live" : "upload";
   const runtimeFamilyLocked =
     deploymentMode === "migrate"
       ? String(migrationDraft?.runtimeFamily || "")
@@ -518,9 +543,16 @@ export default function Deploy() {
       sandboxProfile: selectedSandboxProfile || "standard",
       model: isNemoClaw && selectedModel ? selectedModel : "",
       deploymentMode,
-      migrationMethod,
+      migrationMethod: effectiveMigrationMethod,
       migrationDraft,
-      migrationSource,
+      migrationSource: {
+        name: migrationSource.name,
+        transport: "docker",
+        container: migrationSource.container,
+        workspaceRoot: migrationSource.workspaceRoot,
+        agentRoot: migrationSource.agentRoot,
+        sessionRoot: migrationSource.sessionRoot,
+      },
       vcpu: isSelfHosted ? normalizedResources.vcpu : 0,
       ramMb: isSelfHosted ? normalizedResources.ramMb : 0,
       diskGb: isSelfHosted ? normalizedResources.diskGb : 0,
@@ -682,49 +714,30 @@ export default function Deploy() {
   }
 
   async function inspectLiveMigrationSource() {
-    const transport = String(migrationSource.transport || "")
-      .trim()
-      .toLowerCase();
-    const runtimeFamily = runtimeFamilyLocked || effectiveRuntimeFamily;
-
-    if (transport === "docker" && !migrationSource.container.trim()) {
-      toast.error("Enter the source Docker container id or name.");
+    if (!canUseLiveMigration) {
+      setMigrationMethod("upload");
+      toast.error("Live Pull is restricted to platform admins on self-hosted Nora.");
       return;
     }
 
-    if (transport === "ssh") {
-      if (!migrationSource.host.trim()) {
-        toast.error("Enter the source SSH host.");
-        return;
-      }
-      if (!migrationSource.username.trim()) {
-        toast.error("Enter the source SSH username.");
-        return;
-      }
+    const runtimeFamily = runtimeFamilyLocked || effectiveRuntimeFamily;
+
+    if (!migrationSource.container.trim()) {
+      toast.error("Enter the source Docker container id or name.");
+      return;
     }
 
     setMigrationBusyAction("inspect");
     try {
       const payload = {
         runtime_family: runtimeFamily,
-        transport,
+        transport: "docker",
         ...(migrationSource.name.trim()
           ? { name: migrationSource.name.trim() }
           : name.trim()
             ? { name: name.trim() }
             : {}),
-        ...(transport === "docker"
-          ? { container_id: migrationSource.container.trim() }
-          : {
-              host: migrationSource.host.trim(),
-              username: migrationSource.username.trim(),
-              ...(migrationSource.port.trim()
-                ? { port: Number(migrationSource.port) || migrationSource.port.trim() }
-                : {}),
-              ...(migrationSource.privateKey.trim()
-                ? { privateKey: migrationSource.privateKey }
-                : {}),
-            }),
+        container_id: migrationSource.container.trim(),
         ...(migrationSource.workspaceRoot.trim()
           ? { workspace_root: migrationSource.workspaceRoot.trim() }
           : {}),
@@ -1038,18 +1051,18 @@ export default function Deploy() {
                         </div>
                       ) : null}
 
-                      <div className="grid gap-3 sm:grid-cols-2">
+                      <div className={`grid gap-3 ${canUseLiveMigration ? "sm:grid-cols-2" : ""}`}>
                         <button
                           type="button"
                           onClick={() => setMigrationMethod("upload")}
                           className={`rounded-2xl border px-4 py-4 text-left transition-all ${
-                            migrationMethod === "upload"
-                              ? "border-blue-500 bg-blue-50"
+                            effectiveMigrationMethod === "upload"
+                              ? "border-brand-cyan/50 bg-brand-cyan/15"
                               : "border-slate-200 bg-white hover:border-slate-300"
                           }`}
                         >
                           <div className="flex items-center gap-3">
-                            <Upload size={18} className="text-blue-600" />
+                            <Upload size={18} className="text-brand-ink" />
                             <div>
                               <p className="text-sm font-bold text-slate-900">Upload Bundle</p>
                               <p className="text-xs text-slate-500">
@@ -1058,28 +1071,30 @@ export default function Deploy() {
                             </div>
                           </div>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setMigrationMethod("live")}
-                          className={`rounded-2xl border px-4 py-4 text-left transition-all ${
-                            migrationMethod === "live"
-                              ? "border-blue-500 bg-blue-50"
-                              : "border-slate-200 bg-white hover:border-slate-300"
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <RefreshCw size={18} className="text-blue-600" />
-                            <div>
-                              <p className="text-sm font-bold text-slate-900">Live Pull</p>
-                              <p className="text-xs text-slate-500">
-                                Inspect a running Docker container or remote host.
-                              </p>
+                        {canUseLiveMigration ? (
+                          <button
+                            type="button"
+                            onClick={() => setMigrationMethod("live")}
+                            className={`rounded-2xl border px-4 py-4 text-left transition-all ${
+                              effectiveMigrationMethod === "live"
+                                ? "border-brand-cyan/50 bg-brand-cyan/15"
+                                : "border-slate-200 bg-white hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <RefreshCw size={18} className="text-brand-ink" />
+                              <div>
+                                <p className="text-sm font-bold text-slate-900">Live Pull</p>
+                                <p className="text-xs text-slate-500">
+                                  Privileged import from a local Docker container.
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        </button>
+                          </button>
+                        ) : null}
                       </div>
 
-                      {migrationMethod === "upload" ? (
+                      {effectiveMigrationMethod === "upload" ? (
                         <div className="rounded-2xl border border-slate-200 bg-white p-5">
                           <p className="text-xs font-black uppercase tracking-widest text-slate-400">
                             Upload Migration Bundle
@@ -1114,39 +1129,15 @@ export default function Deploy() {
                         </div>
                       ) : (
                         <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setMigrationSource((current) => ({
-                                  ...current,
-                                  transport: "docker",
-                                }))
-                              }
-                              className={`rounded-xl px-3 py-2 text-xs font-bold transition-all ${
-                                migrationSource.transport === "docker"
-                                  ? "bg-blue-600 text-white"
-                                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                              }`}
-                            >
-                              Docker Source
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setMigrationSource((current) => ({
-                                  ...current,
-                                  transport: "ssh",
-                                }))
-                              }
-                              className={`rounded-xl px-3 py-2 text-xs font-bold transition-all ${
-                                migrationSource.transport === "ssh"
-                                  ? "bg-blue-600 text-white"
-                                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-                              }`}
-                            >
-                              SSH Source
-                            </button>
+                          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                              Privileged self-hosted admin operation
+                            </p>
+                            <p className="mt-2 text-sm leading-relaxed text-amber-900">
+                              Live Pull reads a running Docker container on this Nora host. Use it
+                              only when you trust the container contents and intend to copy its
+                              managed files and supported secrets into a Nora migration draft.
+                            </p>
                           </div>
 
                           <div className="grid gap-3 md:grid-cols-2">
@@ -1155,7 +1146,7 @@ export default function Deploy() {
                                 Imported Name
                               </span>
                               <input
-                                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-400 focus:bg-white"
+                                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-brand-cyan focus:bg-white focus:ring-2 focus:ring-brand-cyan/25"
                                 placeholder="Optional source label override"
                                 value={migrationSource.name}
                                 onChange={(event) =>
@@ -1167,98 +1158,23 @@ export default function Deploy() {
                               />
                             </label>
 
-                            {migrationSource.transport === "docker" ? (
-                              <label className="flex flex-col gap-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                                  Container ID or Name
-                                </span>
-                                <input
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-400 focus:bg-white"
-                                  placeholder="e.g. nora-hermes-prod"
-                                  value={migrationSource.container}
-                                  onChange={(event) =>
-                                    setMigrationSource((current) => ({
-                                      ...current,
-                                      container: event.target.value,
-                                    }))
-                                  }
-                                />
-                              </label>
-                            ) : (
-                              <label className="flex flex-col gap-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                                  Host
-                                </span>
-                                <input
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-400 focus:bg-white"
-                                  placeholder="source.example.com"
-                                  value={migrationSource.host}
-                                  onChange={(event) =>
-                                    setMigrationSource((current) => ({
-                                      ...current,
-                                      host: event.target.value,
-                                    }))
-                                  }
-                                />
-                              </label>
-                            )}
+                            <label className="flex flex-col gap-2">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                Local Container ID or Name
+                              </span>
+                              <input
+                                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-brand-cyan focus:bg-white focus:ring-2 focus:ring-brand-cyan/25"
+                                placeholder="e.g. nora-hermes-prod"
+                                value={migrationSource.container}
+                                onChange={(event) =>
+                                  setMigrationSource((current) => ({
+                                    ...current,
+                                    container: event.target.value,
+                                  }))
+                                }
+                              />
+                            </label>
                           </div>
-
-                          {migrationSource.transport === "ssh" ? (
-                            <>
-                              <div className="grid gap-3 md:grid-cols-[0.8fr,0.4fr]">
-                                <label className="flex flex-col gap-2">
-                                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                                    Username
-                                  </span>
-                                  <input
-                                    className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-400 focus:bg-white"
-                                    placeholder="root"
-                                    value={migrationSource.username}
-                                    onChange={(event) =>
-                                      setMigrationSource((current) => ({
-                                        ...current,
-                                        username: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </label>
-                                <label className="flex flex-col gap-2">
-                                  <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                                    Port
-                                  </span>
-                                  <input
-                                    className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-bold text-slate-900 outline-none focus:border-blue-400 focus:bg-white"
-                                    placeholder="22"
-                                    value={migrationSource.port}
-                                    onChange={(event) =>
-                                      setMigrationSource((current) => ({
-                                        ...current,
-                                        port: event.target.value,
-                                      }))
-                                    }
-                                  />
-                                </label>
-                              </div>
-                              <label className="flex flex-col gap-2">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                                  Private Key
-                                </span>
-                                <textarea
-                                  rows={6}
-                                  className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-mono text-slate-900 outline-none focus:border-blue-400 focus:bg-white"
-                                  placeholder="Optional if the Nora host already has SSH access to the source."
-                                  value={migrationSource.privateKey}
-                                  onChange={(event) =>
-                                    setMigrationSource((current) => ({
-                                      ...current,
-                                      privateKey: event.target.value,
-                                    }))
-                                  }
-                                />
-                              </label>
-                            </>
-                          ) : null}
 
                           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                             <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
@@ -1273,7 +1189,7 @@ export default function Deploy() {
                                   Workspace Root
                                 </span>
                                 <input
-                                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-mono text-slate-900 outline-none focus:border-blue-400"
+                                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-mono text-slate-900 outline-none focus:border-brand-cyan focus:ring-2 focus:ring-brand-cyan/25"
                                   placeholder={
                                     effectiveRuntimeFamily === "hermes"
                                       ? "/opt/data/workspace"
@@ -1295,7 +1211,7 @@ export default function Deploy() {
                                       Agent Root
                                     </span>
                                     <input
-                                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-mono text-slate-900 outline-none focus:border-blue-400"
+                                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-mono text-slate-900 outline-none focus:border-brand-cyan focus:ring-2 focus:ring-brand-cyan/25"
                                       placeholder="/root/.openclaw/agents/main/agent"
                                       value={migrationSource.agentRoot}
                                       onChange={(event) =>
@@ -1311,7 +1227,7 @@ export default function Deploy() {
                                       Session Root
                                     </span>
                                     <input
-                                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-mono text-slate-900 outline-none focus:border-blue-400"
+                                      className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-mono text-slate-900 outline-none focus:border-brand-cyan focus:ring-2 focus:ring-brand-cyan/25"
                                       placeholder="/root/.openclaw/agents/main/sessions"
                                       value={migrationSource.sessionRoot}
                                       onChange={(event) =>
@@ -1961,8 +1877,9 @@ function MigrationDraftPreview({ draft, busyAction, onDiscard }) {
         </p>
         <h3 className="mt-2 text-base font-black text-slate-900">No draft prepared yet.</h3>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
-          Upload a Nora export bundle or inspect a live Docker or SSH source to preview files,
-          imported channels, provider keys, warnings, and the runtime family Nora will recreate.
+          Upload a Nora export bundle to preview files, imported channels, provider keys, warnings,
+          and the runtime family Nora will recreate. Self-hosted platform admins can also inspect a
+          local Docker container with the privileged Live Pull option.
         </p>
       </div>
     );

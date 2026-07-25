@@ -2,7 +2,6 @@
 const path = require("path");
 const express = require("express");
 
-const db = require("../db");
 const {
   createDirectory,
   deletePath,
@@ -14,24 +13,29 @@ const {
   rootsForAgent,
   writeFile,
 } = require("../agentFiles");
-const {
-  buildMigrationManifestFromAgent,
-  packMigrationBundle,
-} = require("../agentMigrations");
+const { buildMigrationManifestFromAgent, packMigrationBundle } = require("../agentMigrations");
 const { asyncHandler } = require("../middleware/errorHandler");
+const { requireSession } = require("../middleware/auth");
+const { findAgentForRequest } = require("../middleware/ownership");
 const { createMutationFailureAuditMiddleware } = require("../auditLog");
 
 const router = express.Router();
 router.use(createMutationFailureAuditMiddleware("agent_files"));
+// Runtime roots include provider credentials, gateway secrets, paired-device
+// state, and session data. Scope the session guard to this router's paths so
+// later /agents routers can still enforce their own API-key contracts.
+router.use("/:id/files", requireSession);
 
+/**
+ * Load an agent only for its direct owner, responding with 404 when ownership
+ * does not match so file routes never expose cross-workspace runtime contents.
+ *
+ * @param {Object} req - Express request containing agent and user identifiers.
+ * @param {Object} res - Express response used for the not-found result.
+ * @returns {Promise<Object|null>} Owned agent row, or `null` after responding.
+ */
 async function loadOwnedAgent(req, res) {
-  const result = await db.query(
-    `SELECT *
-       FROM agents
-      WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
-  const agent = result.rows[0];
+  const agent = await findAgentForRequest(req, req.params.id);
   if (!agent) {
     res.status(404).json({ error: "Agent not found" });
     return null;
@@ -46,8 +50,11 @@ function filenameFromHeader(req) {
     .pop();
 }
 
+// Agent export and filesystem reads
+
 router.get(
   "/:id/export",
+  requireSession,
   asyncHandler(async (req, res) => {
     const agent = await loadOwnedAgent(req, res);
     if (!agent) return;
@@ -64,10 +71,10 @@ router.get(
     res.setHeader("Content-Type", "application/gzip");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${filenameSeed || "nora-agent"}.nora-migration.tgz"`
+      `attachment; filename="${filenameSeed || "nora-agent"}.nora-migration.tgz"`,
     );
     res.send(bundle);
-  })
+  }),
 );
 
 router.get(
@@ -76,7 +83,7 @@ router.get(
     const agent = await loadOwnedAgent(req, res);
     if (!agent) return;
     res.json({ roots: rootsForAgent(agent) });
-  })
+  }),
 );
 
 router.get(
@@ -88,10 +95,10 @@ router.get(
     const payload = await listFiles(
       agent,
       req.query.root,
-      typeof req.query.path === "string" ? req.query.path : ""
+      typeof req.query.path === "string" ? req.query.path : "",
     );
     res.json(payload);
-  })
+  }),
 );
 
 router.get(
@@ -103,10 +110,10 @@ router.get(
     const payload = await readFile(
       agent,
       req.query.root,
-      typeof req.query.path === "string" ? req.query.path : ""
+      typeof req.query.path === "string" ? req.query.path : "",
     );
     res.json(payload);
-  })
+  }),
 );
 
 router.get(
@@ -118,16 +125,15 @@ router.get(
     const payload = await downloadPath(
       agent,
       req.query.root,
-      typeof req.query.path === "string" ? req.query.path : ""
+      typeof req.query.path === "string" ? req.query.path : "",
     );
     res.setHeader("Content-Type", payload.contentType);
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${payload.filename}"`
-    );
+    res.setHeader("Content-Disposition", `attachment; filename="${payload.filename}"`);
     res.send(Buffer.from(payload.contentBase64, "base64"));
-  })
+  }),
 );
+
+// Filesystem mutations
 
 router.put(
   "/:id/files/content",
@@ -140,10 +146,10 @@ router.put(
       req.body?.root,
       req.body?.path,
       req.body?.contentBase64 || "",
-      Number.isInteger(req.body?.mode) ? req.body.mode : 0o644
+      Number.isInteger(req.body?.mode) ? req.body.mode : 0o644,
     );
     res.json(result);
-  })
+  }),
 );
 
 router.post(
@@ -160,20 +166,18 @@ router.post(
 
     const baseDirectory = normalizeRelativePath(
       typeof req.query.path === "string" ? req.query.path : "",
-      { allowEmpty: true }
+      { allowEmpty: true },
     );
-    const relativePath = baseDirectory
-      ? path.posix.join(baseDirectory, filename)
-      : filename;
+    const relativePath = baseDirectory ? path.posix.join(baseDirectory, filename) : filename;
 
     const result = await writeFile(
       agent,
       req.query.root,
       relativePath,
-      Buffer.from(req.body || Buffer.alloc(0)).toString("base64")
+      Buffer.from(req.body || Buffer.alloc(0)).toString("base64"),
     );
     res.json(result);
-  })
+  }),
 );
 
 router.post(
@@ -184,7 +188,7 @@ router.post(
 
     const result = await createDirectory(agent, req.body?.root, req.body?.path);
     res.json(result);
-  })
+  }),
 );
 
 router.post(
@@ -193,14 +197,9 @@ router.post(
     const agent = await loadOwnedAgent(req, res);
     if (!agent) return;
 
-    const result = await movePath(
-      agent,
-      req.body?.root,
-      req.body?.fromPath,
-      req.body?.toPath
-    );
+    const result = await movePath(agent, req.body?.root, req.body?.fromPath, req.body?.toPath);
     res.json(result);
-  })
+  }),
 );
 
 router.delete(
@@ -211,7 +210,7 @@ router.delete(
 
     const result = await deletePath(agent, req.body?.root, req.body?.path);
     res.json(result);
-  })
+  }),
 );
 
 module.exports = router;

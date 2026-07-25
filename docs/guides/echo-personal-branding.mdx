@@ -1,8 +1,8 @@
 # Set up Echo, the personal-branding agent
 
-> Install the Echo Agent Hub template, connect X and/or LinkedIn, connect one channel, and run the bootstrap that learns your voice. Echo drafts posts and replies in your voice for X, LinkedIn, or both — you always stay the publisher.
+> Install the Echo Agent Hub template, connect X and/or LinkedIn, connect one channel, and run the bootstrap that learns your voice. Echo drafts posts and replies in your voice for X, LinkedIn, or both — then publishes original posts after you approve final text.
 
-Echo is a ghostwriting-oriented Agent Hub template for X and LinkedIn. It runs a guided bootstrap, builds a `VOICE.md` from your real writing samples, drafts multiple post angles, prepares engagement replies for review, and keeps platform-specific playbooks close to the daily workflow. **Nothing is published or sent without your approval.**
+Echo is a ghostwriting-oriented Agent Hub template for X and LinkedIn. It runs a guided bootstrap, builds a `VOICE.md` from your real writing samples, drafts multiple post angles, prepares engagement replies for review, and keeps platform-specific playbooks close to the daily workflow. **Original posts can go out after your explicit approval; nothing is published or sent on its own.**
 
 You can run Echo for **X only, LinkedIn only, or both** — the platform you pick during bootstrap drives everything downstream.
 
@@ -111,15 +111,16 @@ Started with one and want the other? Just tell Echo **"add X"** or **"add Linked
 
 ## What Echo will and won't do
 
-- **Draft-only by design.** Echo drafts; you publish. There is no auto-posting and no auto-engagement.
-- **Approval every time.** Publishing, DMs, replies, profile changes, and follows each require your explicit live approval — prior approval never carries over.
+- **Approval-gated publishing.** Echo drafts; you approve final text; Echo can post approved original content through connected X/LinkedIn integrations. There is no auto-posting and no auto-engagement.
+- **Approval every time.** Publishing each original post requires your explicit live approval — prior approval never carries over.
+- **Engagement stays manual.** DMs, replies, comments, profile changes, follows, likes, reposts, and connection actions remain draft/recommend-only.
 - **Hard nos are absolute.** Topics you list during bootstrap are never drafted.
 
 ## API limits
 
 - **X:** the free API tier is very limited for reads. Analytics pulls need the Premium API or manual dashboard exports.
 - **LinkedIn:** the API is restrictive; most operators paste analytics screenshots for Echo to parse during the weekly review.
-- Either way, **drafting works without API access** — only auto-pulled analytics are affected.
+- Either way, **drafting works without API access** — auto-pulled analytics and approval-gated posting require the platform integration.
 
 ## Troubleshooting
 

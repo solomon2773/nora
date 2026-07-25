@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Repo Is
 
-Nora is the self-hosted AI agent ops platform — an operator-facing control plane that manages, deploys, monitors, and operates agent runtimes across Docker and Kubernetes GA deploy targets. Runtime families are OpenClaw and Hermes; NemoClaw is an experimental sandbox profile layered onto supported deploy targets. Proxmox is a known but release-blocked planned target. Node 24 LTS across all services.
+Nora is the self-hosted AI agent ops platform — an operator-facing control plane that manages, deploys, monitors, and operates agent runtimes across Docker and Kubernetes GA deploy targets. Runtime families are OpenClaw and Hermes; NemoClaw is an experimental sandbox profile layered onto supported deploy targets. Proxmox LXC placement is experimental for OpenClaw and prepared Hermes templates; NemoClaw on Proxmox remains blocked. Node 24 LTS across all services.
 
 ## Development Commands
 
@@ -57,7 +57,7 @@ cd e2e && npm run smoke:runtime-path        # Runtime resolution
 cd e2e && npm run capture:operator-readme   # Regenerate README screenshots
 ```
 
-CI is split across `.github/workflows/ci-quality.yml`, `.github/workflows/ci-security.yml`, `.github/workflows/ci-compose.yml`, and `.github/workflows/ci-codeql.yml` on pull requests and pushes to `master` under Node 24.
+CI is split across `.github/workflows/ci-quality.yml`, `.github/workflows/ci-security.yml`, `.github/workflows/ci-compose.yml`, and `.github/workflows/ci-codeql.yml` on pull requests and pushes to `master` under Node 24. npm advisory auditing is deliberately **not** a per-PR blocking check — `npm audit` queries the live advisory DB, so an unchanged lockfile would flip red whenever an unrelated advisory is published. It runs instead on a schedule in `.github/workflows/dependency-audit.yml` (daily + `workflow_dispatch`), with Dependabot security updates handling remediation; the blocking `Security gate` in `ci-security.yml` covers only the deterministic checks (secret scan, license policy, infra validation).
 
 ## Architecture
 
@@ -74,7 +74,7 @@ nginx (8080 local / 80|443 public)
                     └── worker-provisioner (health on 4001)
                           ├── Docker adapter
                           ├── Kubernetes adapter
-                          └── Proxmox adapter (release-blocked)
+                          └── Proxmox LXC adapter (experimental)
 ```
 
 **Key ports:** nginx 8080 (local), backend-api container 4000 → host 4100, worker-provisioner health 4001, agent runtime contract 9090, OpenClaw gateway 18789, Hermes dashboard 9119.
@@ -86,7 +86,7 @@ nginx (8080 local / 80|443 public)
 Resolved in `agent-runtime/lib/backendCatalog.ts`:
 
 1. **Runtime family** (`ENABLED_RUNTIME_FAMILIES`): `openclaw` (default) or `hermes`
-2. **Deploy target** (`ENABLED_BACKENDS`): `docker`, `k8s`, `proxmox` (`proxmox` is release-blocked)
+2. **Deploy target** (`ENABLED_BACKENDS`): `docker`, `k8s`, `proxmox` (`proxmox` is experimental)
 3. **Sandbox profile**: `standard` or `nemoclaw` (`nemoclaw` is experimental)
 
 ### Shared runtime contracts
@@ -106,8 +106,9 @@ Two consequences that routinely confuse agents:
 
 - **The mount shadows the host `backend-api/backends/` directory at runtime.** Inside the backend-api container, `/app/backends/*` resolves to the worker's copy, _not_ the host files under `backend-api/backends/`. A change to a host file that the mount shadows has **no runtime effect** in the container.
 - **`backend-api/backends/hermes.ts` and `nemoclaw.ts` are re-export shims** (`module.exports = require("../../workers/provisioner/backends/<name>")`) — edit the worker source, never the shim. The one genuinely backend-owned file there is `telemetry.ts` (backend telemetry normalization), which is distinct from the worker's `telemetry.ts`.
+- **`containerManager.resolveBackendPath` loads adapters from `/app/backends` first.** That directory holds the worker's real adapters in every layout (backend-api prod `COPY`, worker-provisioner prod image, and the dev bind mount), so lifecycle/destroy calls resolve correctly even in the worker-provisioner prod image, where `containerManager` runs from `/backend-api` and the shims' `../../workers/...` path is dead (there is no `/workers` dir). Don't reintroduce reliance on the shim path for prod resolution.
 
-Treat `workers/provisioner/backends/` and `agent-runtime/` as **shared-blast-radius zones**: an edit there changes both backend-api and the worker. See those folders' `AGENTS.md` for the per-folder warning.
+Treat `workers/provisioner/backends/` and `agent-runtime/` as **shared-blast-radius zones**: an edit there changes both backend-api and the worker, so verify both consumers.
 
 ### Key backend modules
 
@@ -117,7 +118,7 @@ Treat `workers/provisioner/backends/` and `agent-runtime/` as **shared-blast-rad
 
 ## Subtree Ownership
 
-Each folder has its own `AGENTS.md` that narrows ownership, data-flow rules, and architecture. Read the relevant subtree doc before implementing in that area. Cross-cutting changes should be split across affected subtrees.
+Use the ownership map below before implementing in a subtree. Cross-cutting changes should be split across affected areas and verified at every changed contract boundary.
 
 - `backend-api/` — primary integration hub: control-plane APIs, persistence, queue, auth, monitoring, Agent Hub, gateway proxy, runtime coordination
 - `cli/` — packaged command-line client for Nora's public REST APIs, workspace config, token auth, and operator automation commands
@@ -140,10 +141,10 @@ Root-owned operational files also live at the repo root: `docker-compose*.yml`, 
 
 When multiple agents work the repo at once:
 
-- **Divide by subtree owner**, using the routing table in the root `AGENTS.md`. Keep each agent's writes inside its owned subtree unless the root doc says otherwise.
+- **Divide by subtree owner**, using the routing table above. Keep each agent's writes inside its assigned subtree unless the task explicitly spans a shared contract.
 - **Use a git worktree per agent** for any file-mutating task, so concurrent edits can't collide in a single working tree.
-- **Treat `agent-runtime/` and `workers/provisioner/backends/` as shared-blast-radius zones** (see the ⚠️ SHARED/MOUNTED banners in those folders' `AGENTS.md`). An edit there changes two services — coordinate it rather than assuming it is local to one subtree.
-- **Grep `⚠️ SHARED/MOUNTED`** to find every cross-consumer zone before fanning out work.
+- **Treat `agent-runtime/` and `workers/provisioner/backends/` as shared-blast-radius zones.** An edit there changes two services — coordinate it rather than assuming it is local to one subtree.
+- **Inspect compose mounts and import paths** before fanning out work so every cross-consumer zone has an explicit owner.
 
 ## Environment
 
@@ -162,4 +163,4 @@ Commonly toggled: `PLATFORM_MODE` (`selfhosted` or `paas`), `ENABLED_RUNTIME_FAM
 
 ## Maintenance Rule
 
-When code changes affect a documented folder's behavior, responsibilities, architecture, or data flow, update the nearest `AGENTS.md` and any affected ancestor/child docs in the same change. New meaningful source folders should receive an `AGENTS.md`; removed/renamed folders should clean up stale `Child Docs` entries.
+When code changes affect documented behavior, responsibilities, architecture, or data flow, update the nearest public contributor or architecture documentation in the same change. New meaningful source folders should include a public README when their extension or operating contract is not obvious from code.

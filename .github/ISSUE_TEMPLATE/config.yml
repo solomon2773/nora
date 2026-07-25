@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Contribution guide
+    url: https://github.com/solomon2773/nora/blob/master/CONTRIBUTING.md
+    about: Development setup, targeted checks, extension scaffolds, and review expectations.
   - name: Documentation
     url: https://noradocs.solomontsao.com
     about: Quickstart, configuration, guides, and API reference. Check here first.

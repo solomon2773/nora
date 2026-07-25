@@ -4,6 +4,9 @@
 const { Queue } = require("bullmq");
 const { randomUUID } = require("crypto");
 const IORedis = require("ioredis");
+const { createRedisClient } = require("./lib/connectionConfig");
+
+const IS_TEST_ENV = process.env.NODE_ENV === "test" || !!process.env.JEST_WORKER_ID;
 
 function parseTimeoutMs(rawValue, fallbackMs) {
   const parsed = Number.parseInt(rawValue, 10);
@@ -26,12 +29,20 @@ const ALERT_DELIVERY_ATTEMPTS = (() => {
   return Math.min(parsed, 10);
 })();
 
-const connection = new IORedis({
-  host: process.env.REDIS_HOST || "redis",
-  port: parseInt(process.env.REDIS_PORT || "6379"),
-  ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
+const connection = createRedisClient(IORedis, process.env, {
   maxRetriesPerRequest: null,
+  ...(IS_TEST_ENV
+    ? {
+        // Unit tests mock queue behavior at the module boundary. Keep imports
+        // from opening a retrying DNS/socket loop when a suite loads server.ts.
+        lazyConnect: true,
+        enableOfflineQueue: false,
+        retryStrategy: () => null,
+      }
+    : {}),
 });
+
+// ── Queue definitions and retry policy ──────────────────────────
 
 const deployQueue = new Queue("deployments", {
   connection,
@@ -50,6 +61,16 @@ const clawhubJobsQueue = new Queue("clawhub-jobs", {
     attempts: 1,
     backoff: { type: "exponential", delay: 3000 },
     timeout: CLAWHUB_INSTALL_JOB_TIMEOUT_MS,
+    removeOnComplete: { count: 200 },
+    removeOnFail: false,
+  },
+});
+
+const policySettingsQueue = new Queue("k8s-policy-settings", {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 3000 },
     removeOnComplete: { count: 200 },
     removeOnFail: false,
   },
@@ -83,10 +104,112 @@ const alertDeliveryQueue = new Queue("alert-deliveries", {
   },
 });
 
-async function addDeploymentJob(agent) {
-  await deployQueue.add("deploy-agent", agent);
+// Scheduled agent runs (recurring cron triggers). The backend sweep claims due
+// schedules and enqueues one job per run; the worker executes the prompt /
+// lifecycle action. Retries are bounded — a missed run is re-fired on the next
+// sweep once next_run_at comes due, so we don't want long retry storms.
+const agentScheduleQueue = new Queue("agent-schedules", {
+  connection,
+  defaultJobOptions: {
+    attempts: 2,
+    backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: { count: 200, age: 86400 },
+    removeOnFail: { count: 200, age: 86400 },
+  },
+});
+
+if (IS_TEST_ENV) {
+  for (const queue of [
+    deployQueue,
+    clawhubJobsQueue,
+    policySettingsQueue,
+    backupsQueue,
+    alertDeliveryQueue,
+    agentScheduleQueue,
+  ]) {
+    if (typeof queue.removeAllListeners === "function" && typeof queue.on === "function") {
+      queue.removeAllListeners("error");
+      queue.on("error", () => {});
+    }
+  }
 }
 
+// ── Deployment enqueue and cancellation ────────────────────────
+
+async function addDeploymentJob(agent, options = undefined) {
+  const jobId = options?.jobId ? String(options.jobId) : "";
+  if (jobId) {
+    const existing = await deployQueue.getJob(jobId);
+    if (existing) {
+      const state = typeof existing.getState === "function" ? await existing.getState() : "unknown";
+      if (["active", "waiting", "waiting-children", "delayed", "prioritized"].includes(state)) {
+        return existing;
+      }
+      if (typeof existing.remove === "function") {
+        await existing.remove();
+      }
+    }
+    return deployQueue.add("deploy-agent", agent, { ...options, jobId });
+  }
+  return deployQueue.add("deploy-agent", agent);
+}
+
+async function cancelDeploymentJobsForAgent(agentId) {
+  if (!agentId) return { removed: 0, active: 0 };
+
+  const jobs = await deployQueue.getJobs([
+    "active",
+    "waiting",
+    "waiting-children",
+    "delayed",
+    "prioritized",
+    "failed",
+  ]);
+  const normalizedAgentId = String(agentId);
+  let removed = 0;
+  let active = 0;
+
+  for (const job of jobs) {
+    if (!job || String(job.data?.id || "") !== normalizedAgentId) continue;
+    const state = typeof job.getState === "function" ? await job.getState() : "unknown";
+    if (state === "active") {
+      // BullMQ cannot remove a locked job from another process. The provisioner
+      // treats a missing agent row as cancellation before create, after create,
+      // and in its failure path, so an in-flight job cannot retry or orphan a
+      // runtime after the control-plane row is deleted.
+      active += 1;
+      continue;
+    }
+    if (typeof job.remove === "function") {
+      await job.remove();
+      removed += 1;
+    }
+  }
+
+  return { removed, active };
+}
+
+// ── Other enqueue operations ───────────────────────────────────
+
+/**
+ * Enqueue one schedule execution, using runId as payload and BullMQ job identity.
+ * Repeated attempts deduplicate only while the corresponding job is retained.
+ *
+ * @param {Object} payload - Claimed schedule-run payload.
+ * @returns {Promise<Object>} BullMQ job.
+ */
+async function addScheduleRunJob(payload) {
+  const jobId = payload?.runId || randomUUID();
+  return agentScheduleQueue.add("run-schedule", { ...payload, runId: jobId }, { jobId });
+}
+
+/**
+ * Enqueue one webhook channel delivery under a stable delivery ID so sibling
+ * channels retry independently.
+ *
+ * @param {Object} payload - Rule, channel, and event delivery context.
+ * @returns {Promise<Object>} BullMQ job.
+ */
 async function addAlertDeliveryJob(payload) {
   const deliveryId = payload?.deliveryId || randomUUID();
   return alertDeliveryQueue.add(
@@ -96,6 +219,13 @@ async function addAlertDeliveryJob(payload) {
   );
 }
 
+/**
+ * Enqueue a ClawHub operation with a caller-provided or generated job ID.
+ * Repeated IDs deduplicate only while the corresponding job is retained.
+ *
+ * @param {Object} payload - Agent, skill, and operation details.
+ * @returns {Promise<Object>} BullMQ job.
+ */
 async function addClawhubJob(payload) {
   const jobId = payload?.jobId || randomUUID();
   const operation = String(payload?.operation || "").trim() || "install";
@@ -107,6 +237,57 @@ async function addBackupJob(payload) {
   return backupsQueue.add("run-backup", { ...payload, jobId }, { jobId });
 }
 
+/**
+ * Coalesce Kubernetes policy reconciliation per cluster. Waiting jobs are
+ * updated in place, active jobs receive a follow-up, and terminal jobs are
+ * replaced.
+ *
+ * @param {Object} payload - Cluster ID and desired policy hash.
+ * @returns {Promise<Object>} Existing, updated, or newly enqueued BullMQ job.
+ */
+async function addKubernetesPolicyReconcileJob(payload) {
+  const clusterId = String(payload?.clusterId || payload?.cluster_id || "").trim();
+  if (!clusterId) {
+    throw new Error("clusterId is required");
+  }
+  const desiredHash = String(payload?.desiredHash || payload?.desired_hash || "").trim() || null;
+  const jobId = `k8s-policy-${clusterId}`;
+  const existingJob = await policySettingsQueue.getJob(jobId);
+  if (existingJob) {
+    const state =
+      typeof existingJob.getState === "function" ? await existingJob.getState() : "unknown";
+    if (["waiting", "waiting-children", "delayed", "prioritized"].includes(state)) {
+      await existingJob.updateData({ clusterId, desiredHash });
+      return existingJob;
+    }
+    if (state === "active") {
+      return policySettingsQueue.add(
+        "reconcile-kubernetes-policy-settings",
+        { clusterId, desiredHash },
+        { jobId: `${jobId}-followup-${randomUUID()}` },
+      );
+    }
+    if (typeof existingJob.remove === "function") {
+      await existingJob.remove();
+    }
+  }
+  return policySettingsQueue.add(
+    "reconcile-kubernetes-policy-settings",
+    { clusterId, desiredHash },
+    { jobId },
+  );
+}
+
+// ── ClawHub job inspection and compatibility helpers ────────────
+
+/**
+ * Find an in-flight ClawHub job for the same agent, skill, and optional operation.
+ *
+ * @param {string} agentId - Agent receiving the operation.
+ * @param {string} slug - ClawHub skill slug.
+ * @param {string} operation - Optional operation filter.
+ * @returns {Promise<Object|null>} Matching BullMQ job, if any.
+ */
 async function findInFlightClawhubJob(agentId, slug, operation) {
   if (!agentId || !slug) return null;
 
@@ -197,6 +378,8 @@ async function getClawhubInstallJobStatus(jobId) {
   return status && status.operation === "install" ? status : null;
 }
 
+// ── Deployment dead-letter operations ──────────────────────────
+
 /** Retrieve failed jobs (dead letter queue) for inspection. */
 async function getDLQJobs(start = 0, end = 50) {
   return deployQueue.getFailed(start, end);
@@ -213,12 +396,17 @@ async function retryDLQJob(jobId) {
 module.exports = {
   deployQueue,
   clawhubJobsQueue,
+  policySettingsQueue,
   backupsQueue,
   alertDeliveryQueue,
+  agentScheduleQueue,
   addDeploymentJob,
+  cancelDeploymentJobsForAgent,
+  addScheduleRunJob,
   addClawhubJob,
   addClawhubInstallJob,
   addBackupJob,
+  addKubernetesPolicyReconcileJob,
   addAlertDeliveryJob,
   findInFlightClawhubJob,
   findInFlightClawhubInstallJob,

@@ -8,6 +8,8 @@ services:
     depends_on:
       backend-api:
         condition: service_healthy
+      worker-provisioner:
+        condition: service_healthy
       frontend-marketing:
         condition: service_started
       frontend-dashboard:
@@ -23,8 +25,6 @@ services:
       - PORT=3000
       - NODE_ENV=production
       - PLATFORM_MODE=${PLATFORM_MODE:-selfhosted}
-    env_file:
-      - ${NORA_ENV_FILE:-.env}
 
   frontend-dashboard:
     build:
@@ -49,6 +49,7 @@ services:
     volumes:
       - ./workers:/workers:ro
       - ./agent-runtime:/agent-runtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -69,6 +70,36 @@ services:
       retries: 3
       start_period: 30s
 
+  worker-provisioner:
+    build:
+      context: .
+      dockerfile: workers/provisioner/Dockerfile
+    environment:
+      DEPLOYMENT_WORKER_CONCURRENCY: 1
+    env_file:
+      - ${NORA_ENV_FILE:-.env}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      backend-api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'node -e "require(''http'').get(''http://localhost:4001/health'', r => process.exit(r.statusCode === 200 ? 0 : 1)).on(''error'', () => process.exit(1))"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
   postgres:
     image: postgres:15
     restart: always
@@ -80,7 +111,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./backend-api/db_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U platform"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U platform -d platform"]
       interval: 10s
       timeout: 5s
       retries: 5

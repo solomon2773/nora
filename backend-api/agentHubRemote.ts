@@ -89,6 +89,14 @@ function normalizeCatalogPayload(payload = {}, { hubUrl = "", error = "" } = {})
   };
 }
 
+/**
+ * Send an authenticated, timeout-bounded Agent Hub request and surface remote
+ * errors without retaining the API key in returned data.
+ *
+ * @param {string} url - Remote Agent Hub endpoint.
+ * @param {Object} [options={}] - Fetch options plus API key and timeout.
+ * @returns {Promise<Object>} Parsed JSON response.
+ */
 async function fetchJson(url, options = {}) {
   const apiKey = String(options.apiKey || "").trim();
   const { apiKey: _apiKey, timeoutMs: _timeoutMs, ...fetchOptions } = options;
@@ -109,6 +117,14 @@ async function fetchJson(url, options = {}) {
   return payload;
 }
 
+/**
+ * Fetch and cache the remote catalog, returning stale cached items with an
+ * error marker when refresh fails instead of failing the local catalog page.
+ *
+ * @param {Object} [settings={}] - Remote URL and source API key settings.
+ * @param {Object} [options={}] - Refresh, timeout, and cache-TTL overrides.
+ * @returns {Promise<Object>} Normalized catalog and synchronization metadata.
+ */
 async function fetchCatalog(settings = {}, options = {}) {
   const hubUrl = normalizeHubBaseUrl(settings.envUrl || settings.url);
   if (!hubUrl) {
@@ -159,6 +175,13 @@ async function fetchCatalog(settings = {}, options = {}) {
   }
 }
 
+/**
+ * Load one authenticated remote listing and normalize its id into the `hub:` namespace.
+ *
+ * @param {Object} [settings={}] - Remote URL and source API key settings.
+ * @param {string} remoteId - Remote listing identifier, with or without `hub:`.
+ * @returns {Promise<Object>} Normalized remote listing detail.
+ */
 async function fetchListing(settings = {}, remoteId) {
   const hubUrl = normalizeHubBaseUrl(settings.envUrl || settings.url);
   if (!hubUrl) {
@@ -190,6 +213,13 @@ async function fetchListing(settings = {}, remoteId) {
   };
 }
 
+/**
+ * Submit a listing payload to the configured remote Agent Hub.
+ *
+ * @param {Object} [settings={}] - Remote URL and source API key settings.
+ * @param {Object} [payload={}] - Listing submission payload.
+ * @returns {Promise<Object>} Remote submission response.
+ */
 async function submitListing(settings = {}, payload = {}) {
   const hubUrl = normalizeHubBaseUrl(settings.envUrl || settings.url);
   if (!hubUrl) {

@@ -14,8 +14,8 @@ export type Locale = (typeof LOCALES)[number];
 export const DEFAULT_LOCALE: Locale = "en";
 export const LOCALE_LABELS: Record<Locale, string> = {
   en: "English",
-  es: "Espanol",
-  fr: "Francais",
+  es: "Español",
+  fr: "Français",
   "zh-Hans": "简体中文",
   "zh-Hant": "繁體中文",
 };
@@ -23,6 +23,49 @@ export const LOCALE_LABELS: Record<Locale, string> = {
 const TRANSLATIONS = {
   es: {
     "Deploy intelligence anywhere.": "Implementa inteligencia en cualquier lugar.",
+    "Nora — Run OpenClaw & Hermes on your infrastructure":
+      "Nora — Ejecuta OpenClaw y Hermes en tu infraestructura",
+    "Try a zero-key demo, then deploy, monitor, and operate OpenClaw and Hermes fleets on Docker or Kubernetes with Nora's Apache-2.0 control plane.":
+      "Prueba una demo sin claves y luego despliega, supervisa y opera flotas de OpenClaw y Hermes en Docker o Kubernetes con el plano de control Apache-2.0 de Nora.",
+    "Nora operator dashboard for OpenClaw and Hermes fleets":
+      "Panel de operador de Nora para flotas de OpenClaw y Hermes",
+    Docs: "Documentación",
+    Contribute: "Contribuir",
+    Star: "Dar estrella",
+    "Try Demo": "Probar demo",
+    Community: "Comunidad",
+    "Try the zero-key demo": "Prueba la demo sin claves",
+    "Star Nora on GitHub": "Dale una estrella a Nora en GitHub",
+    "Apache-2.0 control plane for agent runtimes":
+      "Plano de control Apache-2.0 para runtimes de agentes",
+    "Run OpenClaw and Hermes on infrastructure you control.":
+      "Ejecuta OpenClaw y Hermes en infraestructura bajo tu control.",
+    "Nora gives operators one place to deploy, observe, and control agent runtimes on GA Docker and Kubernetes targets. Start with a zero-key demo, then connect providers, inspect logs and metrics, open terminals, and operate the fleet from one dashboard.":
+      "Nora ofrece a los operadores un único lugar para desplegar, observar y controlar runtimes de agentes en destinos Docker y Kubernetes con disponibilidad general. Empieza con una demo sin claves y luego conecta proveedores, revisa registros y métricas, abre terminales y opera toda la flota desde un solo panel.",
+    "Star on GitHub": "Danos una estrella en GitHub",
+    "Self-host Nora": "Aloja Nora por tu cuenta",
+    "Docker + Kubernetes GA": "Docker + Kubernetes con disponibilidad general",
+    "Latest release": "Última versión",
+    "Read the docs": "Lee la documentación",
+    "Join the community": "Únete a la comunidad",
+    "Real product capture": "Captura real del producto",
+    "Nora operator dashboard showing active agents and recent deployments":
+      "Panel de operador de Nora con agentes activos y despliegues recientes",
+    "Seeded local capture: fleet health, queues, and deployment status.":
+      "Captura local con datos de ejemplo: salud de la flota, colas y estado de despliegue.",
+    "Watch 37s walkthrough": "Ver recorrido de 37 s",
+    "Open source": "Código abierto",
+    "Read the source, audit the architecture, and run Nora before you commit to it.":
+      "Lee el código, audita la arquitectura y ejecuta Nora antes de adoptarla.",
+    "Zero-key first proof": "Primera prueba sin claves",
+    "Deploy the built-in deterministic demo agent before connecting a paid model provider.":
+      "Despliega el agente de demo determinista integrado antes de conectar un proveedor de modelos de pago.",
+    "Self-hosted control": "Control autohospedado",
+    "Deploy the control plane on infrastructure you operate, with GA agent placement on Docker and Kubernetes.":
+      "Despliega el plano de control en infraestructura que operas, con agentes en Docker y Kubernetes con disponibilidad general.",
+    "Runtime operations": "Operaciones de runtime",
+    "Deploy OpenClaw or Hermes, manage provider keys, inspect logs, and open runtime terminals.":
+      "Despliega OpenClaw o Hermes, administra claves de proveedores, revisa registros y abre terminales de runtime.",
     "Fully open source. Commercial self-hosting allowed.":
       "Completamente open source. Autohospedaje comercial permitido.",
     Platform: "Plataforma",
@@ -96,6 +139,49 @@ const TRANSLATIONS = {
   },
   fr: {
     "Deploy intelligence anywhere.": "Deployer l'intelligence partout.",
+    "Nora — Run OpenClaw & Hermes on your infrastructure":
+      "Nora — Exécutez OpenClaw et Hermes sur votre infrastructure",
+    "Try a zero-key demo, then deploy, monitor, and operate OpenClaw and Hermes fleets on Docker or Kubernetes with Nora's Apache-2.0 control plane.":
+      "Essayez une démo sans clé, puis déployez, surveillez et exploitez des flottes OpenClaw et Hermes sur Docker ou Kubernetes avec le plan de contrôle Apache-2.0 de Nora.",
+    "Nora operator dashboard for OpenClaw and Hermes fleets":
+      "Tableau de bord opérateur Nora pour les flottes OpenClaw et Hermes",
+    Docs: "Documentation",
+    Contribute: "Contribuer",
+    Star: "Ajouter une étoile",
+    "Try Demo": "Essayer la démo",
+    Community: "Communauté",
+    "Try the zero-key demo": "Essayer la démo sans clé",
+    "Star Nora on GitHub": "Ajouter une étoile à Nora sur GitHub",
+    "Apache-2.0 control plane for agent runtimes":
+      "Plan de contrôle Apache-2.0 pour les runtimes d'agents",
+    "Run OpenClaw and Hermes on infrastructure you control.":
+      "Exécutez OpenClaw et Hermes sur une infrastructure que vous contrôlez.",
+    "Nora gives operators one place to deploy, observe, and control agent runtimes on GA Docker and Kubernetes targets. Start with a zero-key demo, then connect providers, inspect logs and metrics, open terminals, and operate the fleet from one dashboard.":
+      "Nora offre aux opérateurs un espace unique pour déployer, observer et contrôler des runtimes d'agents sur les cibles Docker et Kubernetes disponibles en production. Commencez par une démo sans clé, puis connectez des fournisseurs, consultez les journaux et les métriques, ouvrez des terminaux et exploitez toute la flotte depuis un seul tableau de bord.",
+    "Star on GitHub": "Ajouter une étoile sur GitHub",
+    "Self-host Nora": "Auto-héberger Nora",
+    "Docker + Kubernetes GA": "Docker + Kubernetes en disponibilité générale",
+    "Latest release": "Dernière version",
+    "Read the docs": "Lire la documentation",
+    "Join the community": "Rejoindre la communauté",
+    "Real product capture": "Capture réelle du produit",
+    "Nora operator dashboard showing active agents and recent deployments":
+      "Tableau de bord opérateur Nora affichant les agents actifs et les déploiements récents",
+    "Seeded local capture: fleet health, queues, and deployment status.":
+      "Capture locale avec données d'exemple : état de la flotte, files d'attente et statut des déploiements.",
+    "Watch 37s walkthrough": "Voir la visite de 37 s",
+    "Open source": "Code source ouvert",
+    "Read the source, audit the architecture, and run Nora before you commit to it.":
+      "Lisez le code, auditez l'architecture et exécutez Nora avant de l'adopter.",
+    "Zero-key first proof": "Première preuve sans clé",
+    "Deploy the built-in deterministic demo agent before connecting a paid model provider.":
+      "Déployez l'agent de démonstration déterministe intégré avant de connecter un fournisseur de modèles payant.",
+    "Self-hosted control": "Contrôle auto-hébergé",
+    "Deploy the control plane on infrastructure you operate, with GA agent placement on Docker and Kubernetes.":
+      "Déployez le plan de contrôle sur votre propre infrastructure, avec des agents sur Docker et Kubernetes en disponibilité générale.",
+    "Runtime operations": "Exploitation des runtimes",
+    "Deploy OpenClaw or Hermes, manage provider keys, inspect logs, and open runtime terminals.":
+      "Déployez OpenClaw ou Hermes, gérez les clés des fournisseurs, consultez les journaux et ouvrez des terminaux de runtime.",
     "Fully open source. Commercial self-hosting allowed.":
       "Entierement open source. Auto-hebergement commercial autorise.",
     Platform: "Plateforme",
@@ -170,6 +256,48 @@ const TRANSLATIONS = {
   },
   "zh-Hans": {
     "Deploy intelligence anywhere.": "在任何地方部署智能。",
+    "Nora — Run OpenClaw & Hermes on your infrastructure":
+      "Nora — 在您的基础设施上运行 OpenClaw 和 Hermes",
+    "Try a zero-key demo, then deploy, monitor, and operate OpenClaw and Hermes fleets on Docker or Kubernetes with Nora's Apache-2.0 control plane.":
+      "先试用零密钥演示，然后使用 Nora 的 Apache-2.0 控制平面在 Docker 或 Kubernetes 上部署、监控和运营 OpenClaw 与 Hermes 集群。",
+    "Nora operator dashboard for OpenClaw and Hermes fleets":
+      "用于 OpenClaw 和 Hermes 集群的 Nora 运维控制台",
+    Docs: "文档",
+    Contribute: "参与贡献",
+    Star: "加星",
+    "Try Demo": "试用演示",
+    Community: "社区",
+    "Try the zero-key demo": "试用零密钥演示",
+    "Star Nora on GitHub": "在 GitHub 上为 Nora 加星",
+    "Apache-2.0 control plane for agent runtimes": "面向智能体运行时的 Apache-2.0 控制平面",
+    "Run OpenClaw and Hermes on infrastructure you control.":
+      "在您掌控的基础设施上运行 OpenClaw 和 Hermes。",
+    "Nora gives operators one place to deploy, observe, and control agent runtimes on GA Docker and Kubernetes targets. Start with a zero-key demo, then connect providers, inspect logs and metrics, open terminals, and operate the fleet from one dashboard.":
+      "Nora 为运维人员提供统一界面，在正式可用的 Docker 和 Kubernetes 目标上部署、观察和控制智能体运行时。先从零密钥演示开始，再连接模型提供商、查看日志与指标、打开终端，并从一个控制台运营整个集群。",
+    "Star on GitHub": "在 GitHub 上加星",
+    "Self-host Nora": "自托管 Nora",
+    "Docker + Kubernetes GA": "Docker + Kubernetes 正式可用",
+    "Latest release": "最新版本",
+    "Read the docs": "阅读文档",
+    "Join the community": "加入社区",
+    "Real product capture": "真实产品截图",
+    "Nora operator dashboard showing active agents and recent deployments":
+      "展示活跃智能体和近期部署的 Nora 运维控制台",
+    "Seeded local capture: fleet health, queues, and deployment status.":
+      "带示例数据的本地截图：集群健康、队列和部署状态。",
+    "Watch 37s walkthrough": "观看 37 秒演示",
+    "Open source": "开源",
+    "Read the source, audit the architecture, and run Nora before you commit to it.":
+      "在采用 Nora 前阅读源码、审查架构并亲自运行。",
+    "Zero-key first proof": "首次验证无需密钥",
+    "Deploy the built-in deterministic demo agent before connecting a paid model provider.":
+      "在连接付费模型提供商前，先部署内置的确定性演示智能体。",
+    "Self-hosted control": "自托管控制",
+    "Deploy the control plane on infrastructure you operate, with GA agent placement on Docker and Kubernetes.":
+      "将控制平面部署在您运营的基础设施上，并在正式可用的 Docker 和 Kubernetes 目标上放置智能体。",
+    "Runtime operations": "运行时运维",
+    "Deploy OpenClaw or Hermes, manage provider keys, inspect logs, and open runtime terminals.":
+      "部署 OpenClaw 或 Hermes、管理提供商密钥、查看日志并打开运行时终端。",
     "Fully open source. Commercial self-hosting allowed.": "完全开源。允许商业自托管。",
     Platform: "平台",
     Workflow: "工作流",
@@ -238,6 +366,48 @@ const TRANSLATIONS = {
   },
   "zh-Hant": {
     "Deploy intelligence anywhere.": "在任何地方部署智慧。",
+    "Nora — Run OpenClaw & Hermes on your infrastructure":
+      "Nora — 在您的基礎設施上執行 OpenClaw 和 Hermes",
+    "Try a zero-key demo, then deploy, monitor, and operate OpenClaw and Hermes fleets on Docker or Kubernetes with Nora's Apache-2.0 control plane.":
+      "先試用零金鑰示範，再使用 Nora 的 Apache-2.0 控制平面，在 Docker 或 Kubernetes 上部署、監控及營運 OpenClaw 與 Hermes 叢集。",
+    "Nora operator dashboard for OpenClaw and Hermes fleets":
+      "用於 OpenClaw 和 Hermes 叢集的 Nora 營運控制台",
+    Docs: "文件",
+    Contribute: "參與貢獻",
+    Star: "加星",
+    "Try Demo": "試用示範",
+    Community: "社群",
+    "Try the zero-key demo": "試用零金鑰示範",
+    "Star Nora on GitHub": "在 GitHub 上為 Nora 加星",
+    "Apache-2.0 control plane for agent runtimes": "面向代理執行環境的 Apache-2.0 控制平面",
+    "Run OpenClaw and Hermes on infrastructure you control.":
+      "在您掌控的基礎設施上執行 OpenClaw 和 Hermes。",
+    "Nora gives operators one place to deploy, observe, and control agent runtimes on GA Docker and Kubernetes targets. Start with a zero-key demo, then connect providers, inspect logs and metrics, open terminals, and operate the fleet from one dashboard.":
+      "Nora 為營運人員提供單一介面，在正式可用的 Docker 和 Kubernetes 目標上部署、觀察及控制代理執行環境。先從零金鑰示範開始，再連接模型供應商、查看記錄與指標、開啟終端機，並從一個控制台營運整個叢集。",
+    "Star on GitHub": "在 GitHub 上加星",
+    "Self-host Nora": "自託管 Nora",
+    "Docker + Kubernetes GA": "Docker + Kubernetes 正式可用",
+    "Latest release": "最新版本",
+    "Read the docs": "閱讀文件",
+    "Join the community": "加入社群",
+    "Real product capture": "真實產品截圖",
+    "Nora operator dashboard showing active agents and recent deployments":
+      "顯示作用中代理與近期部署的 Nora 營運控制台",
+    "Seeded local capture: fleet health, queues, and deployment status.":
+      "含範例資料的本機截圖：叢集健康、佇列及部署狀態。",
+    "Watch 37s walkthrough": "觀看 37 秒導覽",
+    "Open source": "開源",
+    "Read the source, audit the architecture, and run Nora before you commit to it.":
+      "在採用 Nora 前閱讀原始碼、稽核架構並親自執行。",
+    "Zero-key first proof": "首次驗證無需金鑰",
+    "Deploy the built-in deterministic demo agent before connecting a paid model provider.":
+      "在連接付費模型供應商前，先部署內建的確定性示範代理。",
+    "Self-hosted control": "自託管控制",
+    "Deploy the control plane on infrastructure you operate, with GA agent placement on Docker and Kubernetes.":
+      "將控制平面部署在您營運的基礎設施上，並在正式可用的 Docker 和 Kubernetes 目標上放置代理。",
+    "Runtime operations": "執行環境營運",
+    "Deploy OpenClaw or Hermes, manage provider keys, inspect logs, and open runtime terminals.":
+      "部署 OpenClaw 或 Hermes、管理供應商金鑰、查看記錄並開啟執行環境終端機。",
     "Fully open source. Commercial self-hosting allowed.": "完全開源。允許商業自託管。",
     Platform: "平台",
     Workflow: "工作流程",
@@ -370,31 +540,7 @@ function setAnonymousPreferredLocale(locale: Locale | null) {
   }
 }
 
-function legacyAuthHeaders(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  const token = window.localStorage.getItem("token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 async function fetchLanguagePreference() {
-  try {
-    const userResponse = await fetch("/api/auth/me", {
-      credentials: "include",
-      headers: legacyAuthHeaders(),
-    });
-    if (userResponse.ok) {
-      const user = await userResponse.json().catch(() => ({}));
-      setAnonymousPreferredLocale(null);
-      return {
-        defaultLocale: normalizeLocale(user.defaultLocale),
-        preferredLocale: user.preferredLocale ? normalizeLocale(user.preferredLocale) : null,
-        effectiveLocale: normalizeLocale(user.effectiveLocale || user.defaultLocale),
-      };
-    }
-  } catch {
-    // Fall back to the public platform config below.
-  }
-
   const anonymousLocale = getAnonymousPreferredLocale();
 
   try {
@@ -417,24 +563,6 @@ async function fetchLanguagePreference() {
     preferredLocale: anonymousLocale,
     effectiveLocale: anonymousLocale || DEFAULT_LOCALE,
   };
-}
-
-async function persistPreferredLocale(locale: Locale | null) {
-  try {
-    const response = await fetch("/api/auth/profile", {
-      method: "PATCH",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...legacyAuthHeaders(),
-      },
-      body: JSON.stringify({ preferredLocale: locale }),
-    });
-    if (!response.ok) return null;
-    return response.json().catch(() => null);
-  } catch {
-    return null;
-  }
 }
 
 export function translateText(value: string, locale: Locale): string {
@@ -630,28 +758,20 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const setLocale = useCallback(
     async (nextLocale: Locale) => {
       const normalized = normalizeLocale(nextLocale);
-      const persisted = await persistPreferredLocale(normalized);
-      setAnonymousPreferredLocale(persisted ? null : normalized);
-      setPreferredLocale(
-        persisted?.preferredLocale ? normalizeLocale(persisted.preferredLocale) : normalized,
-      );
-      setDefaultLocale(normalizeLocale(persisted?.defaultLocale || defaultLocale));
+      setAnonymousPreferredLocale(normalized);
+      setPreferredLocale(normalized);
       setResolvedLocale(normalized);
       await router.push(router.pathname, router.asPath, { locale: normalized });
     },
-    [defaultLocale, router],
+    [router],
   );
 
   const clearLocalePreference = useCallback(async () => {
-    const persisted = await persistPreferredLocale(null);
     setAnonymousPreferredLocale(null);
-    const nextDefaultLocale = normalizeLocale(persisted?.defaultLocale || defaultLocale);
-    const nextEffectiveLocale = normalizeLocale(persisted?.effectiveLocale || nextDefaultLocale);
     setPreferredLocale(null);
-    setDefaultLocale(nextDefaultLocale);
-    setResolvedLocale(nextEffectiveLocale);
-    await router.push(router.pathname, router.asPath, { locale: nextEffectiveLocale });
-    return nextEffectiveLocale;
+    setResolvedLocale(defaultLocale);
+    await router.push(router.pathname, router.asPath, { locale: defaultLocale });
+    return defaultLocale;
   }, [defaultLocale, router]);
 
   const value = useMemo<I18nValue>(

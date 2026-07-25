@@ -8,7 +8,17 @@ const mockContainerManager = {
   status: jest.fn(),
   exec: jest.fn(),
 };
+const mockAssertRemoteHostAgentUse = jest.fn();
 const wsConnections = [];
+
+jest.mock("../remoteHosts", () => ({
+  assertRemoteHostAgentUse: (...args) => mockAssertRemoteHostAgentUse(...args),
+  isRemoteDockerAgent: (agent = {}) => {
+    const target = String(agent.deploy_target ?? agent.deployTarget ?? agent.backend_type ?? "");
+    return target === "remote-docker" || target === "remote" || target.startsWith("remote:");
+  },
+  isRemoteHostAccessRevokedError: (error) => error?.code === "REMOTE_HOST_ACCESS_REVOKED",
+}));
 
 class mockFakeWebSocket extends EventEmitter {
   constructor() {
@@ -51,6 +61,8 @@ function flushAsyncWork() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+const originalRemoteHostAuthRecheckMs = process.env.REMOTE_HOST_AUTH_RECHECK_MS;
+
 describe("exec stream websocket auth", () => {
   let attachExecStream;
   let server;
@@ -58,14 +70,29 @@ describe("exec stream websocket auth", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.JWT_SECRET = "secret";
+    process.env.REMOTE_HOST_AUTH_RECHECK_MS = "250";
     mockDb.query.mockReset();
     mockContainerManager.status.mockReset();
     mockContainerManager.exec.mockReset();
+    mockAssertRemoteHostAgentUse.mockReset();
+    mockAssertRemoteHostAgentUse.mockResolvedValue(null);
     wsConnections.length = 0;
 
     ({ attachExecStream } = require("../execStream"));
     server = new EventEmitter();
     attachExecStream(server);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  afterAll(() => {
+    if (originalRemoteHostAuthRecheckMs === undefined) {
+      delete process.env.REMOTE_HOST_AUTH_RECHECK_MS;
+    } else {
+      process.env.REMOTE_HOST_AUTH_RECHECK_MS = originalRemoteHostAuthRecheckMs;
+    }
   });
 
   function openExecStream(agentId, userPayload) {
@@ -219,5 +246,312 @@ describe("exec stream websocket auth", () => {
     ws.close();
     expect(backendStdin.destroyed || backendStdin.writableEnded).toBe(true);
     expect(backendStream.destroyed).toBe(true);
+  });
+
+  it("fails closed without overlapping slow remote host authorization checks", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+    const backendStream = new PassThrough();
+    const backendStdin = new PassThrough();
+    const agent = {
+      id: "agent-remote",
+      name: "Remote Agent",
+      status: "running",
+      container_id: "remote-container",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      user_id: "workspace-editor-1",
+    };
+    let rejectRecheck;
+    const slowRecheck = new Promise((_resolve, reject) => {
+      rejectRecheck = reject;
+    });
+
+    mockDb.query.mockResolvedValue({ rows: [agent] });
+    mockContainerManager.status.mockResolvedValue({ running: true });
+    mockContainerManager.exec.mockResolvedValue({
+      stream: backendStream,
+      stdin: backendStdin,
+    });
+    mockAssertRemoteHostAgentUse
+      .mockResolvedValueOnce({ id: "shared-host", access: "workspace", canDeploy: true })
+      .mockReturnValue(slowRecheck);
+
+    const ws = openExecStream(agent.id, { id: agent.user_id, role: "user" });
+    await flushAsyncWork();
+
+    await jest.advanceTimersByTimeAsync(250);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(2);
+
+    await jest.advanceTimersByTimeAsync(750);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(2);
+
+    rejectRecheck(new Error("authorization database unavailable"));
+    await flushAsyncWork();
+
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      message: "Unable to verify Remote Docker host access",
+      code: "REMOTE_HOST_AUTH_CHECK_FAILED",
+    });
+    expect(ws.closed).toBe(true);
+    expect(backendStream.destroyed).toBe(true);
+    expect(backendStdin.destroyed || backendStdin.writableEnded).toBe(true);
+  });
+
+  it("closes an active terminal when its workspace editor is demoted", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+    const backendStream = new PassThrough();
+    const backendStdin = new PassThrough();
+    const agent = {
+      id: "agent-editor-demoted",
+      name: "Shared Remote Agent",
+      status: "running",
+      container_id: "remote-container",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      user_id: "owner-1",
+    };
+
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [agent] })
+      .mockResolvedValueOnce({ rows: [{ role: "editor" }] })
+      .mockResolvedValueOnce({ rows: [agent] })
+      .mockResolvedValueOnce({ rows: [{ role: "viewer" }] });
+    mockContainerManager.status.mockResolvedValue({ running: true });
+    mockContainerManager.exec.mockResolvedValue({
+      stream: backendStream,
+      stdin: backendStdin,
+    });
+    mockAssertRemoteHostAgentUse.mockResolvedValue({ id: "shared-host" });
+
+    const ws = openExecStream(agent.id, { id: "editor-1", role: "user" });
+    await flushAsyncWork();
+    expect(ws.closed).toBe(false);
+
+    await jest.advanceTimersByTimeAsync(250);
+
+    expect(ws.sent).toContainEqual({ type: "error", message: "Agent not found" });
+    expect(ws.closed).toBe(true);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(1);
+    expect(backendStream.destroyed).toBe(true);
+    expect(backendStdin.destroyed || backendStdin.writableEnded).toBe(true);
+  });
+
+  it("fails closed when current actor access cannot be revalidated", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+    const backendStream = new PassThrough();
+    const backendStdin = new PassThrough();
+    const agent = {
+      id: "agent-access-check-failure",
+      name: "Remote Agent",
+      status: "running",
+      container_id: "remote-container",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      user_id: "owner-1",
+    };
+
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [agent] })
+      .mockRejectedValueOnce(new Error("membership database unavailable"));
+    mockContainerManager.status.mockResolvedValue({ running: true });
+    mockContainerManager.exec.mockResolvedValue({
+      stream: backendStream,
+      stdin: backendStdin,
+    });
+    mockAssertRemoteHostAgentUse.mockResolvedValue({ id: "shared-host" });
+
+    const ws = openExecStream(agent.id, { id: "owner-1", role: "user" });
+    await flushAsyncWork();
+    await jest.advanceTimersByTimeAsync(250);
+
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      message: "Unable to verify agent access",
+      code: "AGENT_ACCESS_CHECK_FAILED",
+    });
+    expect(ws.closed).toBe(true);
+    expect(backendStream.destroyed).toBe(true);
+    expect(backendStdin.destroyed || backendStdin.writableEnded).toBe(true);
+  });
+
+  it("sanitizes an initial Remote Docker authorization-store failure", async () => {
+    const agent = {
+      id: "agent-remote-auth-store",
+      name: "Remote Agent",
+      status: "running",
+      container_id: "remote-container",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      user_id: "owner-1",
+    };
+    mockDb.query.mockResolvedValue({ rows: [agent] });
+    mockAssertRemoteHostAgentUse.mockRejectedValueOnce(
+      Object.assign(new Error("password authentication failed for database"), { code: "28P01" }),
+    );
+
+    const ws = openExecStream(agent.id, { id: agent.user_id, role: "user" });
+    await flushAsyncWork();
+
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      message: "Unable to verify Remote Docker host access",
+      code: "REMOTE_HOST_AUTH_CHECK_FAILED",
+    });
+    expect(ws.closed).toBe(true);
+    expect(mockContainerManager.exec).not.toHaveBeenCalled();
+  });
+
+  it("closes a remote exec socket when access is revoked during an unresolved status check", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+    const agent = {
+      id: "agent-remote-hung-status",
+      name: "Remote Agent",
+      status: "running",
+      container_id: "remote-container",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      user_id: "workspace-editor-1",
+    };
+    const revokedError = Object.assign(new Error("Remote Docker host access has been revoked"), {
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
+
+    mockDb.query.mockResolvedValue({ rows: [agent] });
+    mockContainerManager.status.mockReturnValue(new Promise(() => {}));
+    mockAssertRemoteHostAgentUse
+      .mockResolvedValueOnce({ id: "shared-host", access: "workspace", canDeploy: true })
+      .mockRejectedValue(revokedError);
+
+    const ws = openExecStream(agent.id, { id: agent.user_id, role: "user" });
+    await flushAsyncWork();
+    expect(mockContainerManager.status).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(250);
+
+    expect(ws.sent).toContainEqual({
+      type: "error",
+      message: revokedError.message,
+      code: revokedError.code,
+    });
+    expect(ws.closed).toBe(true);
+    expect(mockContainerManager.exec).not.toHaveBeenCalled();
+  });
+
+  it("cleans up a remote exec stream that attaches after authorization closes the socket", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+    const backendStream = new PassThrough();
+    const backendStdin = new PassThrough();
+    const agent = {
+      id: "agent-remote-late-attach",
+      name: "Remote Agent",
+      status: "running",
+      container_id: "remote-container",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      user_id: "workspace-editor-1",
+    };
+    const revokedError = Object.assign(new Error("Remote Docker host access has been revoked"), {
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
+    let resolveExec;
+    const delayedExec = new Promise((resolve) => {
+      resolveExec = resolve;
+    });
+
+    mockDb.query.mockResolvedValue({ rows: [agent] });
+    mockContainerManager.status.mockResolvedValue({ running: true });
+    mockContainerManager.exec.mockReturnValue(delayedExec);
+    mockAssertRemoteHostAgentUse
+      .mockResolvedValueOnce({ id: "shared-host", access: "workspace", canDeploy: true })
+      .mockRejectedValue(revokedError);
+
+    const ws = openExecStream(agent.id, { id: agent.user_id, role: "user" });
+    await flushAsyncWork();
+    expect(mockContainerManager.exec).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(250);
+    expect(ws.closed).toBe(true);
+
+    resolveExec({ stream: backendStream, stdin: backendStdin });
+    await flushAsyncWork();
+
+    expect(backendStream.destroyed).toBe(true);
+    expect(backendStdin.destroyed || backendStdin.writableEnded).toBe(true);
+    expect(ws.sent).not.toContainEqual(
+      expect.objectContaining({ type: "system", message: expect.stringMatching(/^Connected to/) }),
+    );
+  });
+
+  it("closes active and rejects new remote exec sessions after the workspace host grant is revoked", async () => {
+    jest.useFakeTimers({ doNotFake: ["setImmediate"] });
+    const backendStream = new PassThrough();
+    const backendStdin = new PassThrough();
+    const agent = {
+      id: "agent-remote",
+      name: "Remote Agent",
+      status: "running",
+      container_id: "remote-container",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      user_id: "workspace-editor-1",
+    };
+    const revokedError = Object.assign(new Error("Remote Docker host access has been revoked"), {
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
+
+    mockDb.query.mockResolvedValue({ rows: [agent] });
+    mockContainerManager.status.mockResolvedValue({ running: true });
+    mockContainerManager.exec.mockResolvedValue({
+      stream: backendStream,
+      stdin: backendStdin,
+    });
+    mockAssertRemoteHostAgentUse
+      .mockResolvedValueOnce({ id: "shared-host", access: "workspace", canDeploy: true })
+      .mockRejectedValue(revokedError);
+
+    const activeWs = openExecStream(agent.id, { id: agent.user_id, role: "user" });
+    await flushAsyncWork();
+
+    expect(activeWs.closed).toBe(false);
+    expect(mockContainerManager.exec).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(250);
+
+    expect(activeWs.sent).toContainEqual({
+      type: "error",
+      message: revokedError.message,
+      code: revokedError.code,
+    });
+    expect(activeWs.closed).toBe(true);
+    expect(backendStream.destroyed).toBe(true);
+    expect(backendStdin.destroyed || backendStdin.writableEnded).toBe(true);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(2);
+
+    await jest.advanceTimersByTimeAsync(500);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(2);
+
+    openExecStream(agent.id, { id: agent.user_id, role: "user" });
+    const deniedWs = wsConnections.at(-1);
+    await flushAsyncWork();
+
+    expect(deniedWs.sent).toContainEqual({
+      type: "error",
+      message: revokedError.message,
+      code: revokedError.code,
+    });
+    expect(deniedWs.closed).toBe(true);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(3);
+    expect(mockContainerManager.exec).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,4 +1,34 @@
 services:
+  # One-shot ownership migration for volumes created by older root-running
+  # releases. New application containers run as uid/gid 1000 and stay read-only.
+  volume-permissions:
+    image: node:24-alpine
+    user: "0:0"
+    command: !override
+      - /bin/sh
+      - -c
+      - |-
+        set -eu
+        for dir in /var/lib/nora-upgrade /var/lib/nora-backups; do
+          marker="$$dir/.nora-owner-1000-v1"
+          [ ! -f "$$marker" ] || continue
+          if ! chown -R 1000:1000 "$$dir" ||
+            ! touch "$$marker" ||
+            ! chown 1000:1000 "$$marker"; then
+            echo "Failed to migrate Nora volume ownership: $$dir" >&2
+            exit 1
+          fi
+        done
+    network_mode: none
+    restart: "no"
+    read_only: true
+    cap_drop: !override [ALL]
+    cap_add: !override [CHOWN, DAC_OVERRIDE]
+    security_opt: !override [no-new-privileges:true]
+    volumes: !override
+      - nora_upgrade_state:/var/lib/nora-upgrade
+      - nora_backups:/var/lib/nora-backups
+
   nginx:
     ports: !override
       - "${NGINX_HTTP_PORT:-80}:80"
@@ -11,27 +41,52 @@ services:
 
   frontend-marketing:
     command: ["node", "server.js"]
+    user: "1000:1000"
     environment:
       PORT: "3000"
       NODE_ENV: production
       PLATFORM_MODE: ${PLATFORM_MODE:-selfhosted}
+    env_file: !override []
     restart: unless-stopped
+    read_only: true
+    cap_drop: !override [ALL]
+    cap_add: !override []
+    security_opt: !override [no-new-privileges:true]
+    tmpfs: !override
+      - /tmp:uid=1000,gid=1000,mode=1777
+      - /app/.next/cache:uid=1000,gid=1000,mode=0750,size=128m
     volumes: !override []
 
   frontend-dashboard:
     command: ["node", "server.js"]
+    user: "1000:1000"
     environment:
       PORT: "3000"
       NODE_ENV: production
     restart: unless-stopped
+    read_only: true
+    cap_drop: !override [ALL]
+    cap_add: !override []
+    security_opt: !override [no-new-privileges:true]
+    tmpfs: !override
+      - /tmp:uid=1000,gid=1000,mode=1777
+      - /app/.next/cache:uid=1000,gid=1000,mode=0750,size=128m
     volumes: !override []
 
   admin-dashboard:
     command: ["node", "server.js"]
+    user: "1000:1000"
     environment:
       PORT: "3000"
       NODE_ENV: production
     restart: unless-stopped
+    read_only: true
+    cap_drop: !override [ALL]
+    cap_add: !override []
+    security_opt: !override [no-new-privileges:true]
+    tmpfs: !override
+      - /tmp:uid=1000,gid=1000,mode=1777
+      - /app/.next/cache:uid=1000,gid=1000,mode=0750,size=128m
     volumes: !override []
 
   backend-api:
@@ -39,9 +94,28 @@ services:
       context: .
       dockerfile: backend-api/Dockerfile.prod
     command: ["npm", "start"]
+    user: "1000:1000"
+    environment:
+      JWT_SECRET: ""
+      ENCRYPTION_KEY: ""
+      NORA_BACKUP_ENCRYPTION_KEY: ""
+      NORA_AGENT_HUB_API_KEY_HASH_SECRET: ""
+      NORA_API_KEY_HASH_SECRET: ""
+      DB_PASSWORD: ""
     ports: !override
-      - "127.0.0.1:4100:4000"
+      - "127.0.0.1:${BACKEND_API_PORT:-4100}:4000"
     restart: unless-stopped
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
+    read_only: true
+    cap_drop: !override [ALL]
+    cap_add: !override []
+    security_opt: !override [no-new-privileges:true]
+    group_add: !override
+      - "${DOCKER_GID:-0}"
+    tmpfs: !override
+      - /tmp:uid=1000,gid=1000,mode=1777
     volumes: !override
       - ${NORA_HOST_REPO_DIR:-.}:/nora-host-repo:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -53,10 +127,28 @@ services:
       context: .
       dockerfile: workers/provisioner/Dockerfile.prod
     command: ["npm", "start"]
+    user: "1000:1000"
     environment:
       DEPLOYMENT_WORKER_CONCURRENCY: ${DEPLOYMENT_WORKER_CONCURRENCY:-6}
       NODE_PATH: /app/node_modules
+      JWT_SECRET: ""
+      ENCRYPTION_KEY: ""
+      NORA_BACKUP_ENCRYPTION_KEY: ""
+      NORA_AGENT_HUB_API_KEY_HASH_SECRET: ""
+      NORA_API_KEY_HASH_SECRET: ""
+      DB_PASSWORD: ""
     restart: unless-stopped
+    depends_on:
+      backend-api:
+        condition: service_healthy
+    read_only: true
+    cap_drop: !override [ALL]
+    cap_add: !override []
+    security_opt: !override [no-new-privileges:true]
+    group_add: !override
+      - "${DOCKER_GID:-0}"
+    tmpfs: !override
+      - /tmp:uid=1000,gid=1000,mode=1777
     volumes: !override
       - /var/run/docker.sock:/var/run/docker.sock
 
@@ -65,16 +157,38 @@ services:
       context: .
       dockerfile: workers/backup/Dockerfile.prod
     command: ["npm", "start"]
+    user: "1000:1000"
     environment:
       BACKUP_WORKER_CONCURRENCY: ${BACKUP_WORKER_CONCURRENCY:-2}
       NODE_PATH: /app/node_modules
+      JWT_SECRET: ""
+      ENCRYPTION_KEY: ""
+      NORA_BACKUP_ENCRYPTION_KEY: ""
+      NORA_AGENT_HUB_API_KEY_HASH_SECRET: ""
+      NORA_API_KEY_HASH_SECRET: ""
+      DB_PASSWORD: ""
     restart: unless-stopped
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
+      backend-api:
+        condition: service_healthy
+    read_only: true
+    cap_drop: !override [ALL]
+    cap_add: !override []
+    security_opt: !override [no-new-privileges:true]
+    group_add: !override
+      - "${DOCKER_GID:-0}"
+    tmpfs: !override
+      - /tmp:uid=1000,gid=1000,mode=1777
     volumes: !override
       - /var/run/docker.sock:/var/run/docker.sock
       - nora_backups:/var/lib/nora-backups
 
   postgres:
     restart: unless-stopped
+    security_opt: !override [no-new-privileges:true]
 
   redis:
     restart: unless-stopped
+    security_opt: !override [no-new-privileges:true]

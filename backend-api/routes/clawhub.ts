@@ -2,14 +2,24 @@
 const express = require("express");
 const { getSkillDetail, listSkills, searchSkills } = require("../clawhubClient");
 const { addClawhubJob, findInFlightClawhubJob, getClawhubJobStatus } = require("../redisQueue");
-const db = require("../db");
 const { runContainerCommand } = require("../authSync");
+const { requireScope, scopeByMethod } = require("../middleware/auth");
+const {
+  findAgentForRequest,
+  isRemoteDockerAgent,
+  requireApiKeyAgentScope,
+} = require("../middleware/ownership");
 const {
   mergeClawhubSkillState,
   normalizeSavedSkillEntry,
 } = require("../../agent-runtime/lib/clawhubReconciliation");
 
 const router = express.Router();
+router.use(
+  "/agents/:agentId/skills",
+  scopeByMethod("agents:read", "agents:write"),
+  requireApiKeyAgentScope("agentId"),
+);
 const OPENCLAW_WORKSPACE_PATH = "/root/.openclaw/workspace";
 const CLAWHUB_LOCKFILE_PATH = `${OPENCLAW_WORKSPACE_PATH}/.clawhub/lock.json`;
 const CLAWHUB_INSTALL_TIMEOUT_MS = (() => {
@@ -69,6 +79,13 @@ function normalizeInstalledSkillsLockfile(parsed) {
     .filter((entry) => entry.slug && entry.version);
 }
 
+/**
+ * Require an OpenClaw agent with recorded running/warning status and a container
+ * ID; this check does not probe the runtime.
+ *
+ * @param {Object|null} agent - Agent selected for a ClawHub operation.
+ * @returns {void}
+ */
 function validateClawhubMutableAgent(agent) {
   if (!agent) {
     const error = new Error("agent_not_found");
@@ -131,17 +148,18 @@ function sendClawhubMutationError(res, error) {
   });
 }
 
-async function loadOwnedAgent(agentId, userId) {
-  const result = await db.query(
-    `SELECT id, user_id, name, status, host, container_id, backend_type, runtime_family,
-            deploy_target, execution_target_id, sandbox_profile, clawhub_skills
-       FROM agents
-      WHERE id = $1 AND user_id = $2
-      LIMIT 1`,
-    [agentId, userId],
-  );
-  return result.rows[0] || null;
+/**
+ * Load an agent authorized for the current session or scoped API key request.
+ *
+ * @param {Object} req - Request carrying session or API-key authorization context.
+ * @param {string} agentId - Agent to load.
+ * @returns {Promise<Object|null>} Request-accessible agent row, or `null`.
+ */
+async function loadOwnedAgent(req, agentId) {
+  return findAgentForRequest(req, agentId);
 }
+
+// Public registry queries
 
 router.get("/skills", async (req, res) => {
   try {
@@ -189,9 +207,11 @@ router.get("/skills/:slug", async (req, res) => {
   }
 });
 
+// Authorized agent skill state and mutations
+
 router.get("/agents/:agentId/skills", async (req, res) => {
   try {
-    const agent = await loadOwnedAgent(req.params.agentId, req.user.id);
+    const agent = await loadOwnedAgent(req, req.params.agentId);
     validateClawhubMutableAgent(agent);
     const { output } = await runContainerCommand(
       agent,
@@ -213,7 +233,7 @@ router.get("/agents/:agentId/skills", async (req, res) => {
 
 router.post("/agents/:agentId/skills/:slug/install", async (req, res) => {
   try {
-    const agent = await loadOwnedAgent(req.params.agentId, req.user.id);
+    const agent = await loadOwnedAgent(req, req.params.agentId);
     validateClawhubMutableAgent(agent);
     const slug = typeof req.params.slug === "string" ? req.params.slug.trim() : "";
     if (!slug) {
@@ -292,7 +312,7 @@ router.post("/agents/:agentId/skills/:slug/install", async (req, res) => {
 
 router.post("/agents/:agentId/skills/:slug/delete", async (req, res) => {
   try {
-    const agent = await loadOwnedAgent(req.params.agentId, req.user.id);
+    const agent = await loadOwnedAgent(req, req.params.agentId);
     validateClawhubMutableAgent(agent);
     const slug = typeof req.params.slug === "string" ? req.params.slug.trim() : "";
     if (!slug) {
@@ -343,7 +363,9 @@ router.post("/agents/:agentId/skills/:slug/delete", async (req, res) => {
   }
 });
 
-router.get("/jobs/:jobId", async (req, res) => {
+// Request-scoped asynchronous job status
+
+router.get("/jobs/:jobId", requireScope("agents:read"), async (req, res) => {
   const jobId = typeof req.params.jobId === "string" ? req.params.jobId.trim() : "";
   if (!jobId) {
     return res.status(404).json({ error: "job_not_found" });
@@ -354,8 +376,16 @@ router.get("/jobs/:jobId", async (req, res) => {
     return res.status(404).json({ error: "job_not_found" });
   }
 
-  const agent = await loadOwnedAgent(status.agentId, req.user.id);
-  if (!agent) {
+  let agent;
+  try {
+    agent = await loadOwnedAgent(req, status.agentId);
+  } catch (error) {
+    if (error?.statusCode === 403 || error?.code === "session_required") {
+      return res.status(404).json({ error: "job_not_found" });
+    }
+    return res.status(500).json({ error: error.message });
+  }
+  if (!agent || (req.apiKey && isRemoteDockerAgent(agent))) {
     return res.status(404).json({ error: "job_not_found" });
   }
 

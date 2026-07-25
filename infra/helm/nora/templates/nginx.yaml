@@ -16,17 +16,25 @@ spec:
       annotations:
         checksum/nginx-config: {{ .Files.Get "files/nginx-k8s.conf" | sha256sum }}
     spec:
+      automountServiceAccountToken: {{ .Values.security.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.nginx.podSecurityContext | nindent 8 }}
+      {{- include "nora.preferredPodAntiAffinity" (dict "root" . "component" "nginx") | nindent 6 }}
       containers:
         - name: nginx
           image: {{ .Values.nginx.image }}
+          securityContext:
+            {{- toYaml .Values.nginx.containerSecurityContext | nindent 12 }}
           ports:
             - name: http
-              containerPort: 80
+              containerPort: 8080
           volumeMounts:
             - name: nginx-config
               mountPath: /etc/nginx/nginx.conf
               subPath: nginx.conf
               readOnly: true
+            - name: scratch
+              mountPath: /tmp
           readinessProbe:
             tcpSocket:
               port: http
@@ -43,6 +51,10 @@ spec:
         - name: nginx-config
           configMap:
             name: nora-nginx-config
+        - name: scratch
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
 ---
 apiVersion: v1
 kind: Service

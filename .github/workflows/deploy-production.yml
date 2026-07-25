@@ -13,7 +13,7 @@ on:
         required: false
         default: master
       version:
-        description: Override NORA_CURRENT_VERSION for this deploy
+        description: Override with an existing Nora product tag that points at the target commit
         required: false
         default: ""
 
@@ -26,10 +26,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  deployment-policy:
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'master')
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.policy.outputs.should_deploy }}
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'master' }}
+      TARGET_REF: ${{ github.event.inputs.ref || github.event.workflow_run.head_sha || github.event.repository.default_branch || 'master' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.TARGET_REF }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require an exact release tag for automatic deployment
+        id: policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"; then
+            echo "::error::Deployment target $(git rev-parse HEAD) is not reachable from $DEFAULT_BRANCH."
+            exit 1
+          fi
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          product_version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ $product_version_pattern ]]; then
+              product_tag="$tag"
+              break
+            fi
+          done < <(git tag --points-at HEAD)
+
+          if [ -z "${product_tag:-}" ]; then
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping automatic production deployment because the published commit has no exact Nora product release tag." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: deployment-policy
+    if: needs.deployment-policy.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -44,9 +94,11 @@ jobs:
       DEPLOY_ENV_FILE: ${{ vars.DEPLOY_ENV_FILE || '.env' }}
       DEPLOY_COMPOSE_FILES: ${{ vars.DEPLOY_COMPOSE_FILES || 'docker-compose.yml:infra/docker-compose.public-prod.yml:infra/docker-compose.public-tls.yml' }}
       NORA_GITHUB_REPO: ${{ vars.NORA_GITHUB_REPO || github.repository }}
-      INPUT_REF: ${{ github.event.inputs.ref || '' }}
+      AUTOMATIC_DEPLOYMENT: ${{ github.event_name == 'workflow_run' && 'true' || 'false' }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'master' }}
+      DEPLOY_TARGET_DIR: .deploy-target
       INPUT_VERSION: ${{ github.event.inputs.version || '' }}
-      WORKFLOW_RUN_SHA: ${{ github.event.workflow_run.head_sha || '' }}
+      TARGET_REF: ${{ github.event.inputs.ref || github.event.workflow_run.head_sha || github.event.repository.default_branch || 'master' }}
     steps:
       - name: Validate deployment config
         run: |
@@ -58,41 +110,86 @@ jobs:
             fi
           done
 
-      - name: Resolve target ref
-        id: target
-        run: |
-          set -euo pipefail
-          ref="${INPUT_REF:-}"
-          if [ -z "$ref" ] && [ -n "$WORKFLOW_RUN_SHA" ]; then
-            ref="$WORKFLOW_RUN_SHA"
-          fi
-          if [ -z "$ref" ]; then
-            ref="master"
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ steps.target.outputs.ref }}
+          ref: ${{ github.workflow_sha }}
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Inspect the requested deploy target without trusting its scripts
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ env.TARGET_REF }}
+          path: .deploy-target
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Revalidate target provenance after approval
+        shell: bash
+        working-directory: .deploy-target
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"; then
+            echo "::error::Deployment target $(git rev-parse HEAD) is not reachable from $DEFAULT_BRANCH."
+            exit 1
+          fi
+
+          if [ "$GITHUB_EVENT_NAME" != "workflow_run" ]; then
+            exit 0
+          fi
+
+          product_version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          exact_product_tag=""
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ $product_version_pattern ]]; then
+              exact_product_tag="$tag"
+              break
+            fi
+          done < <(git tag --points-at HEAD)
+          if [ -z "$exact_product_tag" ]; then
+            echo "::error::Automatic deployment target no longer has an exact Nora product release tag."
+            exit 1
+          fi
 
       - name: Compute deployed version metadata
         id: release_meta
         run: |
           set -euo pipefail
-          commit="$(git rev-parse HEAD)"
-          exact_tag="$(git tag --points-at HEAD | head -n 1 || true)"
+          target_dir="${DEPLOY_TARGET_DIR:-.}"
+          commit="$(git -C "$target_dir" rev-parse HEAD)"
+          product_version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          product_tags=()
+          while IFS= read -r candidate_tag; do
+            if [[ "$candidate_tag" =~ $product_version_pattern ]]; then
+              product_tags+=("$candidate_tag")
+            fi
+          done < <(git -C "$target_dir" tag --points-at HEAD)
+
+          exact_tag=""
+          if [ "${#product_tags[@]}" -gt 0 ]; then
+            exact_tag="$(printf '%s\n' "${product_tags[@]}" | sort -V | tail -n 1)"
+          fi
 
           version="${INPUT_VERSION:-}"
+          if [ -n "$version" ]; then
+            if [[ ! "$version" =~ $product_version_pattern ]]; then
+              echo "::error::Version override must be an exact Nora product tag such as v1.16.0; got '$version'."
+              exit 1
+            fi
+            version_commit="$(git -C "$target_dir" rev-parse --verify --quiet "refs/tags/${version}^{commit}" || true)"
+            if [ -z "$version_commit" ]; then
+              echo "::error::Version override must name an existing Nora product tag; got '$version'."
+              exit 1
+            fi
+            if [ "$version_commit" != "$commit" ]; then
+              echo "::error::Version override '$version' does not point at target commit '$commit'."
+              exit 1
+            fi
+          fi
           if [ -z "$version" ] && [ -n "$exact_tag" ]; then
             version="$exact_tag"
-          fi
-          if [ -z "$version" ]; then
-            latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-            if [ -n "$latest_tag" ] && git merge-base --is-ancestor "$latest_tag" HEAD; then
-              version="$latest_tag"
-            fi
           fi
           if [ -z "$version" ]; then
             version=""
@@ -114,9 +211,24 @@ jobs:
             CI Compose Pipeline
             CI Security
             CodeQL
+            Supply chain
           OPTIONAL_WORKFLOWS: |
             CodeQL
         run: node .github/workflows/scripts/require-workflow-success.mjs
+
+      - name: Check out the CI-gated deploy source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ steps.release_meta.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify deploy source checkout
+        env:
+          TARGET_COMMIT: ${{ steps.release_meta.outputs.commit }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_COMMIT"
 
       - name: Configure SSH
         run: |
@@ -128,27 +240,77 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Deploy on remote host
+        timeout-minutes: 90
         env:
-          TARGET_REF: ${{ steps.target.outputs.ref }}
           TARGET_VERSION: ${{ steps.release_meta.outputs.version }}
           TARGET_COMMIT: ${{ steps.release_meta.outputs.commit }}
         run: |
           set -euo pipefail
 
+          encode_remote_arg() {
+            local name="$1" value="$2"
+            case "$value" in
+              *$'\n'*|*$'\r'*)
+                echo "Deployment setting $name must not contain newlines." >&2
+                exit 1
+                ;;
+            esac
+            printf '%s' "$value" | base64 -w 0
+          }
+
+          DEPLOY_PATH_B64="$(encode_remote_arg DEPLOY_PATH "$DEPLOY_PATH")"
+          DEPLOY_ENV_FILE_B64="$(encode_remote_arg DEPLOY_ENV_FILE "$DEPLOY_ENV_FILE")"
+          DEPLOY_COMPOSE_FILES_B64="$(encode_remote_arg DEPLOY_COMPOSE_FILES "$DEPLOY_COMPOSE_FILES")"
+          TARGET_VERSION_B64="$(encode_remote_arg TARGET_VERSION "$TARGET_VERSION")"
+          TARGET_COMMIT_B64="$(encode_remote_arg TARGET_COMMIT "$TARGET_COMMIT")"
+          AUTOMATIC_DEPLOYMENT_B64="$(encode_remote_arg AUTOMATIC_DEPLOYMENT "$AUTOMATIC_DEPLOYMENT")"
+          DEFAULT_BRANCH_B64="$(encode_remote_arg DEFAULT_BRANCH "$DEFAULT_BRANCH")"
+          NORA_GITHUB_REPO_B64="$(encode_remote_arg NORA_GITHUB_REPO "$NORA_GITHUB_REPO")"
+
           ssh -i ~/.ssh/id_ed25519 \
+            -o BatchMode=yes \
+            -o ConnectTimeout=30 \
             -o IdentitiesOnly=yes \
+            -o ServerAliveCountMax=20 \
+            -o ServerAliveInterval=30 \
             -o StrictHostKeyChecking=yes \
             -p "$DEPLOY_PORT" \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "DEPLOY_PATH='$DEPLOY_PATH' \
-            DEPLOY_REF='$TARGET_REF' \
-            DEPLOY_ENV_FILE='$DEPLOY_ENV_FILE' \
-            DEPLOY_COMPOSE_FILES='$DEPLOY_COMPOSE_FILES' \
-            TARGET_VERSION='$TARGET_VERSION' \
-            TARGET_COMMIT='$TARGET_COMMIT' \
-            NORA_GITHUB_REPO='$NORA_GITHUB_REPO' \
-            bash -s" <<'REMOTE'
+            "bash -s -- \
+            '$DEPLOY_PATH_B64' \
+            '$DEPLOY_ENV_FILE_B64' \
+            '$DEPLOY_COMPOSE_FILES_B64' \
+            '$TARGET_VERSION_B64' \
+            '$TARGET_COMMIT_B64' \
+            '$AUTOMATIC_DEPLOYMENT_B64' \
+            '$DEFAULT_BRANCH_B64' \
+            '$NORA_GITHUB_REPO_B64'" <<'REMOTE'
           set -euo pipefail
+
+          if [ "$#" -ne 8 ]; then
+            echo "Expected eight encoded deployment arguments; received $#." >&2
+            exit 1
+          fi
+
+          decode_remote_arg() {
+            local encoded="$1"
+            case "$encoded" in
+              *[!A-Za-z0-9+/=]*)
+                echo "Invalid encoded deployment argument." >&2
+                exit 1
+                ;;
+            esac
+            printf '%s' "$encoded" | base64 --decode
+          }
+
+          DEPLOY_PATH="$(decode_remote_arg "$1")"
+          DEPLOY_ENV_FILE="$(decode_remote_arg "$2")"
+          DEPLOY_COMPOSE_FILES="$(decode_remote_arg "$3")"
+          TARGET_VERSION="$(decode_remote_arg "$4")"
+          TARGET_COMMIT="$(decode_remote_arg "$5")"
+          AUTOMATIC_DEPLOYMENT="$(decode_remote_arg "$6")"
+          DEFAULT_BRANCH="$(decode_remote_arg "$7")"
+          NORA_GITHUB_REPO="$(decode_remote_arg "$8")"
 
           cd "$DEPLOY_PATH"
 
@@ -159,10 +321,41 @@ jobs:
           fi
 
           git fetch --tags origin
-          git checkout "$DEPLOY_REF"
+          git checkout --detach "$TARGET_COMMIT"
+          if [ "$(git rev-parse HEAD)" != "$TARGET_COMMIT" ]; then
+            echo "Remote checkout does not match validated target commit $TARGET_COMMIT." >&2
+            exit 1
+          fi
 
-          if git ls-remote --exit-code --heads origin "$DEPLOY_REF" >/dev/null 2>&1; then
-            git pull --ff-only origin "$DEPLOY_REF"
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor "$TARGET_COMMIT" "origin/$DEFAULT_BRANCH"; then
+            echo "Deployment target $TARGET_COMMIT is not reachable from $DEFAULT_BRANCH." >&2
+            exit 1
+          fi
+
+          if [ "$AUTOMATIC_DEPLOYMENT" = "true" ]; then
+            if [ -z "$TARGET_VERSION" ]; then
+              echo "Automatic deployment lost its exact Nora product release version." >&2
+              exit 1
+            fi
+          fi
+
+          if [ -n "$TARGET_VERSION" ]; then
+            direct_tag_ref="refs/tags/${TARGET_VERSION}"
+            peeled_tag_ref="${direct_tag_ref}^{}"
+            remote_version_commit="$(
+              git ls-remote --tags origin "$direct_tag_ref" "$peeled_tag_ref" |
+                awk -v direct="$direct_tag_ref" -v peeled="$peeled_tag_ref" '
+                  $2 == direct { direct_commit = $1 }
+                  $2 == peeled { peeled_commit = $1 }
+                  END { print peeled_commit != "" ? peeled_commit : direct_commit }
+                '
+            )"
+            if [ -z "$remote_version_commit" ] || [ "$remote_version_commit" != "$TARGET_COMMIT" ]; then
+              echo "Release tag $TARGET_VERSION no longer points at target commit $TARGET_COMMIT." >&2
+              exit 1
+            fi
           fi
 
           if [ ! -f "$DEPLOY_ENV_FILE" ]; then
@@ -171,6 +364,26 @@ jobs:
             exit 1
           fi
 
+          read_deploy_env_value() {
+            local env_path="$1" name="$2" default_value="$3" line value first last
+            line="$(grep -E "^[[:space:]]*${name}[[:space:]]*=" "$env_path" 2>/dev/null | tail -n 1 || true)"
+            if [ -z "$line" ]; then
+              printf '%s\n' "$default_value"
+              return 0
+            fi
+            value="${line#*=}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            if [ "${#value}" -ge 2 ]; then
+              first="${value:0:1}"
+              last="${value: -1}"
+              if { [ "$first" = '"' ] && [ "$last" = '"' ]; } || { [ "$first" = "'" ] && [ "$last" = "'" ]; }; then
+                value="${value:1:${#value}-2}"
+              fi
+            fi
+            printf '%s\n' "$value"
+          }
+
           for required_key in JWT_SECRET ENCRYPTION_KEY DB_PASSWORD; do
             if ! grep -Eq "^${required_key}=.+" "$DEPLOY_ENV_FILE"; then
               echo "Deploy env file $DEPLOY_ENV_FILE is missing required key: $required_key" >&2
@@ -178,11 +391,19 @@ jobs:
             fi
           done
 
+          bash scripts/validate-paas-signup-protection.sh "$DEPLOY_ENV_FILE"
+
           bash infra/update-release-env.sh \
             "$DEPLOY_ENV_FILE" \
             "$TARGET_VERSION" \
             "$TARGET_COMMIT" \
             "$NORA_GITHUB_REPO"
+
+          bash infra/render-public-nginx.sh \
+            "$DEPLOY_ENV_FILE" \
+            "$DEPLOY_COMPOSE_FILES"
+
+          bash scripts/materialize-compose-secrets.sh "$DEPLOY_ENV_FILE"
 
           compose_args=(--env-file "$DEPLOY_ENV_FILE")
           IFS=':' read -r -a compose_files <<< "$DEPLOY_COMPOSE_FILES"
@@ -193,32 +414,69 @@ jobs:
           done
 
           export NORA_ENV_FILE="$DEPLOY_ENV_FILE"
+          echo "Rebuilding the pinned standard OpenClaw agent image."
+          docker build \
+            -f agent-runtime/Dockerfile.openclaw-agent \
+            -t nora-openclaw-agent:local \
+            agent-runtime/
+          enabled_sandbox_profiles="$(read_deploy_env_value "$DEPLOY_ENV_FILE" ENABLED_SANDBOX_PROFILES "")"
+          nemoclaw_sandbox_image="$(read_deploy_env_value "$DEPLOY_ENV_FILE" NEMOCLAW_SANDBOX_IMAGE "ghcr.io/solomon2773/nora-nemoclaw-agent:latest")"
+          normalized_sandbox_profiles="${enabled_sandbox_profiles//[[:space:]]/}"
+          case ",${normalized_sandbox_profiles}," in
+            *,nemoclaw,*)
+              if [ "$nemoclaw_sandbox_image" = "nora-nemoclaw-agent:local" ]; then
+                echo "Rebuilding the enabled local NemoClaw sandbox image."
+                docker build \
+                  -f agent-runtime/Dockerfile.nemoclaw-agent \
+                  -t nora-nemoclaw-agent:local \
+                  agent-runtime/
+              fi
+              ;;
+          esac
+          echo "Pre-validating the generated nginx config before replacing services."
+          docker compose "${compose_args[@]}" run --rm --no-deps --interactive=false -T nginx nginx -t
           echo "Code update only: preserving compose volumes and provisioned agent Docker/K8s/VM instances."
           docker compose "${compose_args[@]}" up -d --build
+          echo "Recreating nginx so the regenerated bind-mounted config inode is active."
+          docker compose "${compose_args[@]}" up -d --force-recreate --no-deps nginx
+          docker compose "${compose_args[@]}" exec -T nginx nginx -t </dev/null
           docker compose "${compose_args[@]}" ps
 
-          echo "Waiting for backend-api health..."
-          for attempt in $(seq 1 30); do
+          health_attempts=221
+          health_interval_seconds=3
+          health_window_seconds=$(( (health_attempts - 1) * health_interval_seconds ))
+          echo "Waiting for backend-api health: ${health_attempts} attempts every ${health_interval_seconds}s (${health_window_seconds}s from first to final attempt)."
+          for attempt in $(seq 1 "$health_attempts"); do
             if docker compose "${compose_args[@]}" exec -T backend-api \
-              node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"; then
+              node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" </dev/null; then
               echo "backend-api is healthy."
               break
             fi
 
-            if [ "$attempt" -eq 30 ]; then
-              echo "backend-api did not become healthy after deploy." >&2
+            if [ "$attempt" -eq "$health_attempts" ]; then
+              echo "backend-api did not become healthy after ${health_attempts} attempts every ${health_interval_seconds}s (${health_window_seconds}s first-to-final window)." >&2
               docker compose "${compose_args[@]}" ps >&2 || true
               docker compose "${compose_args[@]}" logs --tail=120 backend-api >&2 || true
               exit 1
             fi
 
-            sleep 3
+            sleep "$health_interval_seconds"
+          done
+
+          docker_probe='const http=require("http");const request=http.request({socketPath:"/var/run/docker.sock",path:"/_ping",method:"GET"},response=>{let body="";response.setEncoding("utf8");response.on("data",chunk=>body+=chunk);response.on("end",()=>process.exit(response.statusCode===200&&body.trim()==="OK"?0:1));});request.setTimeout(5000,()=>request.destroy(new Error("Docker socket timeout")));request.on("error",error=>{console.error(error.message);process.exit(1);});request.end();'
+          for service in backend-api worker-provisioner worker-backup; do
+            echo "Verifying Docker socket access from ${service}."
+            if ! docker compose "${compose_args[@]}" exec -T "$service" node -e "$docker_probe" </dev/null; then
+              echo "${service} cannot access /var/run/docker.sock after deployment." >&2
+              docker compose "${compose_args[@]}" ps "$service" >&2 || true
+              docker compose "${compose_args[@]}" logs --tail=80 "$service" >&2 || true
+              exit 1
+            fi
           done
           REMOTE
 
       - name: Deployment summary
         env:
-          TARGET_REF: ${{ steps.target.outputs.ref }}
           TARGET_VERSION: ${{ steps.release_meta.outputs.version }}
           TARGET_COMMIT: ${{ steps.release_meta.outputs.commit }}
         run: |

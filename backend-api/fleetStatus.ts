@@ -25,8 +25,14 @@ function minutesSince(fromMs, nowMs) {
   return (nowMs - fromMs) / MINUTE_MS;
 }
 
-// Pure: given an agent and the derived context numbers, return its attention
-// verdict. ctx timestamps are epoch ms (or null); now defaults to "now".
+/**
+ * Derive an agent's attention verdict from persisted state and epoch-ms context.
+ * A missing telemetry timestamp is never considered stale.
+ *
+ * @param {Object} agent - Agent identity and persisted status fields.
+ * @param {Object} ctx - Timing thresholds, timestamps, and budget signal.
+ * @returns {Object} Attention reasons sorted by severity.
+ */
 function deriveAttention(agent, ctx = {}) {
   const {
     now = Date.now(),
@@ -75,8 +81,8 @@ function deriveAttention(agent, ctx = {}) {
         label: "Approaching budget cap",
       });
     }
-    // Only flag stalled telemetry when stats exist but are old — a never-yet-
-    // reported brand-new agent (lastStatAt null) is not "stalled".
+    // Only flag stalled telemetry when stats exist but are old; a missing
+    // timestamp is not stale.
     const staleMin = minutesSince(lastStatAt, now);
     if (staleMin != null && staleMin >= staleTelemetryMinutes) {
       reasons.push({
@@ -101,14 +107,30 @@ function deriveAttention(agent, ctx = {}) {
   };
 }
 
-// Gather the per-agent signals for every agent the user can access (direct
-// ownership or workspace membership), then derive attention for each. Returns
-// only the agents that need attention, plus summary counts. Deps are injectable
-// for testing.
-async function getFleetAttention({ userId, dbClient = db, now = Date.now() } = {}) {
-  if (!userId) {
+/**
+ * Return attention-only results for a user's accessible fleet or a selected
+ * workspace. The total still counts every agent considered by the roll-up.
+ *
+ * @param {Object} options - User/workspace scope, database override, and evaluation time.
+ * @returns {Promise<Object>} Scoped fleet totals and attention entries.
+ */
+async function getFleetAttention({ userId, workspaceId, dbClient = db, now = Date.now() } = {}) {
+  if (!userId && !workspaceId) {
     return { generatedAt: new Date(now).toISOString(), total: 0, attentionCount: 0, agents: [] };
   }
+
+  const scopeClause = workspaceId
+    ? `EXISTS (
+         SELECT 1 FROM workspace_agents scoped_workspace_agents
+          WHERE scoped_workspace_agents.workspace_id = $1
+            AND scoped_workspace_agents.agent_id = a.id
+       )`
+    : `a.user_id = $1
+         OR a.id IN (
+              SELECT wa.agent_id FROM workspace_agents wa
+                JOIN workspace_members wm ON wm.workspace_id = wa.workspace_id
+               WHERE wm.user_id = $1
+            )`;
 
   const result = await dbClient.query(
     `SELECT a.id, a.name, a.status, a.paused_reason, a.runtime_family, a.deploy_target,
@@ -129,13 +151,8 @@ async function getFleetAttention({ userId, dbClient = db, now = Date.now() } = {
                   AS soft_crossed
            FROM agent_budgets b WHERE b.agent_id = a.id
        ) bud ON true
-      WHERE a.user_id = $1
-         OR a.id IN (
-              SELECT wa.agent_id FROM workspace_agents wa
-                JOIN workspace_members wm ON wm.workspace_id = wa.workspace_id
-               WHERE wm.user_id = $1
-            )`,
-    [userId],
+      WHERE ${scopeClause}`,
+    [workspaceId || userId],
   );
 
   const toMs = (value) => (value == null ? null : new Date(value).getTime());

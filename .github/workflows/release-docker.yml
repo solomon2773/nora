@@ -1,5 +1,9 @@
 name: Release Docker Images
 
+# Resolve the requested ref once, then use that immutable commit for every CI
+# decision, image build, SHA tag, and provenance label. The gate helper itself
+# comes from the immutable workflow commit rather than the publish target.
+
 on:
   push:
     branches:
@@ -16,6 +20,7 @@ on:
       - "frontend-marketing/**"
       - "backend-api/**"
       - "agent-runtime/**"
+      - "workers/backup/**"
       - "workers/provisioner/**"
   workflow_dispatch:
     inputs:
@@ -27,38 +32,55 @@ on:
 permissions:
   actions: read
   contents: read
-  packages: write
 
 concurrency:
   group: release-docker-${{ github.event.inputs.ref || github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/master' }}
+  cancel-in-progress: false
 
 jobs:
   resolve-target:
     runs-on: ubuntu-latest
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'master' }}
+      TARGET_REF: ${{ github.event.inputs.ref || github.sha }}
     outputs:
-      ref: ${{ steps.ref.outputs.ref }}
       sha: ${{ steps.sha.outputs.sha }}
+      tag: ${{ steps.sha.outputs.tag }}
     steps:
-      - name: Resolve target ref
-        id: ref
-        run: |
-          set -euo pipefail
-          ref="${{ github.event.inputs.ref || '' }}"
-          if [ -z "$ref" ]; then
-            ref="${{ github.ref }}"
-          fi
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ steps.ref.outputs.ref }}
+          ref: ${{ env.TARGET_REF }}
           fetch-depth: 0
           persist-credentials: false
       - name: Resolve target SHA
         id: sha
+        env:
+          DISPATCH_REF: ${{ github.event.inputs.ref || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
           set -euo pipefail
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          target_sha="$(git rev-parse HEAD)"
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor "${target_sha}" "origin/${DEFAULT_BRANCH}"; then
+            echo "::error::Image publication target ${target_sha} is not reachable from ${DEFAULT_BRANCH}."
+            exit 1
+          fi
+          echo "sha=$target_sha" >> "$GITHUB_OUTPUT"
+
+          release_tag_re='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          target_tag=""
+          if [[ -n "${EVENT_TAG}" ]]; then
+            if [[ ! "${EVENT_TAG}" =~ ${release_tag_re} ]]; then
+              echo "::error::Image release tags must be semantic Nora tags; got '${EVENT_TAG}'."
+              exit 1
+            fi
+            target_tag="${EVENT_TAG}"
+          elif [[ "${EVENT_NAME}" == "workflow_dispatch" && "${DISPATCH_REF}" =~ ${release_tag_re} ]]; then
+            target_tag="${DISPATCH_REF}"
+          fi
+          echo "tag=${target_tag}" >> "$GITHUB_OUTPUT"
 
   verify-required-ci:
     name: Verify CI workflows
@@ -72,12 +94,13 @@ jobs:
         CI Compose Pipeline
         CI Security
         CodeQL
+        Supply chain
       OPTIONAL_WORKFLOWS: |
         CodeQL
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ needs.resolve-target.outputs.ref }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
@@ -88,6 +111,10 @@ jobs:
   publish-images:
     name: "publish (${{ matrix.image }})"
     runs-on: ubuntu-latest
+    environment: container-publish
+    permissions:
+      contents: read
+      packages: write
     needs:
       - resolve-target
       - verify-required-ci
@@ -107,10 +134,12 @@ jobs:
             dockerfile: workers/provisioner/Dockerfile.prod
           - image: nora-worker-backup
             dockerfile: workers/backup/Dockerfile.prod
+          - image: nora-nemoclaw-agent
+            dockerfile: agent-runtime/Dockerfile.nemoclaw-agent
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ needs.resolve-target.outputs.ref }}
+          ref: ${{ needs.resolve-target.outputs.sha }}
           persist-credentials: false
       - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
       - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
@@ -123,9 +152,32 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=long,prefix=sha-
+            type=raw,value=sha-${{ needs.resolve-target.outputs.sha }}
             type=ref,event=tag
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-target.outputs.sha }}
+      - name: Revalidate target provenance before registry write
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'master' }}
+          TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+          TARGET_TAG: ${{ needs.resolve-target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor "${TARGET_SHA}" "origin/${DEFAULT_BRANCH}"; then
+            echo "::error::Image publication target ${TARGET_SHA} is no longer reachable from ${DEFAULT_BRANCH}."
+            exit 1
+          fi
+          if [[ -n "${TARGET_TAG}" ]]; then
+            git fetch --no-tags --force origin \
+              "+refs/tags/${TARGET_TAG}:refs/tags/__nora_publish_target"
+            current_tag_sha="$(git rev-parse 'refs/tags/__nora_publish_target^{commit}')"
+            if [[ "${current_tag_sha}" != "${TARGET_SHA}" ]]; then
+              echo "::error::Release tag ${TARGET_TAG} moved from ${TARGET_SHA} to ${current_tag_sha}."
+              exit 1
+            fi
+          fi
       - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
@@ -135,3 +187,59 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  promote-latest:
+    name: Promote latest images
+    runs-on: ubuntu-latest
+    environment: container-publish
+    permissions:
+      contents: read
+      packages: write
+    needs:
+      - resolve-target
+      - publish-images
+    concurrency:
+      group: release-docker-latest
+      cancel-in-progress: false
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'master' }}
+      IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+      TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Revalidate the default branch and promote immutable images
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          default_sha="$(git rev-parse "origin/${DEFAULT_BRANCH}")"
+          if [ "$TARGET_SHA" != "$default_sha" ]; then
+            echo "Skipping latest promotion because $TARGET_SHA is not the current $DEFAULT_BRANCH head ($default_sha)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          images=(
+            nora-admin-dashboard
+            nora-frontend-dashboard
+            nora-frontend-marketing
+            nora-backend-api
+            nora-worker-provisioner
+            nora-worker-backup
+            nora-nemoclaw-agent
+          )
+          for image in "${images[@]}"; do
+            docker buildx imagetools create \
+              --tag "${IMAGE_PREFIX}/${image}:latest" \
+              "${IMAGE_PREFIX}/${image}:sha-${TARGET_SHA}"
+          done

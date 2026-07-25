@@ -1,12 +1,6 @@
 import Link from "next/link";
 import { useCallback, useDeferredValue, useEffect, useState } from "react";
-import {
-  ArrowRight,
-  Loader2,
-  RefreshCw,
-  Search,
-  Server,
-} from "lucide-react";
+import { ArrowRight, Loader2, RefreshCw, Search, Server } from "lucide-react";
 import AdminLayout from "../../components/AdminLayout";
 import MetricCard from "../../components/MetricCard";
 import StatusBadge from "../../components/StatusBadge";
@@ -79,8 +73,8 @@ export default function FleetPage() {
               Global agent fleet
             </h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
-              Inspect every agent across all users, filter by status, and drill
-              into admin-only lifecycle controls and runtime diagnostics.
+              Inspect every agent across all users, filter by status, and drill into admin-only
+              lifecycle controls and runtime diagnostics.
             </p>
           </div>
 
@@ -113,9 +107,7 @@ export default function FleetPage() {
           />
           <MetricCard
             label="Queued / Deploying"
-            value={formatCount(
-              (statusCounts.queued || 0) + (statusCounts.deploying || 0)
-            )}
+            value={formatCount((statusCounts.queued || 0) + (statusCounts.deploying || 0))}
             icon={ArrowRight}
             tone="purple"
             caption="Work still in flight"
@@ -194,17 +186,13 @@ export default function FleetPage() {
                 </thead>
                 <tbody>
                   {filteredAgents.map((agent) => (
-                    <tr
-                      key={agent.id}
-                      className="border-b border-slate-100 last:border-b-0"
-                    >
+                    <tr key={agent.id} className="border-b border-slate-100 last:border-b-0">
                       <td className="px-2 py-4">
                         <div>
-                          <p className="text-sm font-semibold text-slate-950">
-                            {agent.name}
-                          </p>
+                          <p className="text-sm font-semibold text-slate-950">{agent.name}</p>
                           <p className="mt-1 text-xs text-slate-500">
-                            {formatShortId(agent.id)} · {agent.container_name || "no container name"}
+                            {formatShortId(agent.id)} ·{" "}
+                            {agent.container_name || "no container name"}
                           </p>
                         </div>
                       </td>

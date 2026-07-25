@@ -2,9 +2,9 @@
 
 > Query platform-level metrics, activity event logs, API performance data, per-agent metrics and summaries, and agent cost data from the Nora Monitoring API.
 
-The Monitoring API gives you observability into both the Nora platform and your individual agents. You can pull a high-level platform metrics summary, page through the activity event log, query detailed per-agent metrics with time range filters, retrieve pre-aggregated summary statistics, and fetch cost data. All metrics are scoped to agents you own — you cannot query data for another user's agents.
+The Monitoring API gives you observability into the Nora platform and the agents you can access. You can pull a high-level metrics summary, page through the activity event log, query detailed per-agent metrics with time range filters, retrieve pre-aggregated summary statistics, and fetch cost data. Session users follow normal ownership and workspace membership. A workspace API key with `monitoring:read` is restricted to agents and events in its exact bound workspace, even when the issuing user can access other workspaces.
 
-***
+---
 
 ## Platform metrics summary
 
@@ -16,14 +16,30 @@ GET /monitoring/metrics
 
 ### Response
 
-<ResponseField name="totalAgents" type="number">Total number of accessible agents.</ResponseField>
-<ResponseField name="activeAgents" type="number">Agents currently in `running` state.</ResponseField>
-<ResponseField name="deployingAgents" type="number">Agents currently in `deploying` state.</ResponseField>
-<ResponseField name="queuedAgents" type="number">Agents in `queued` state.</ResponseField>
-<ResponseField name="stoppedAgents" type="number">Agents in `stopped` state.</ResponseField>
-<ResponseField name="warningAgents" type="number">Agents in `warning` state.</ResponseField>
-<ResponseField name="errorAgents" type="number">Agents in `error` state.</ResponseField>
-<ResponseField name="totalDeployments" type="number">Total number of deployments.</ResponseField>
+<ResponseField name="totalAgents" type="number">
+  Total number of accessible agents.
+</ResponseField>
+<ResponseField name="activeAgents" type="number">
+  Agents currently in `running` state.
+</ResponseField>
+<ResponseField name="deployingAgents" type="number">
+  Agents currently in `deploying` state.
+</ResponseField>
+<ResponseField name="queuedAgents" type="number">
+  Agents in `queued` state.
+</ResponseField>
+<ResponseField name="stoppedAgents" type="number">
+  Agents in `stopped` state.
+</ResponseField>
+<ResponseField name="warningAgents" type="number">
+  Agents in `warning` state.
+</ResponseField>
+<ResponseField name="errorAgents" type="number">
+  Agents in `error` state.
+</ResponseField>
+<ResponseField name="totalDeployments" type="number">
+  Total number of deployments.
+</ResponseField>
 
 <ResponseField name="queue" type="object">
   Deployment queue job counts.
@@ -36,11 +52,12 @@ GET /monitoring/metrics
   </Expandable>
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/monitoring/metrics \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/monitoring/metrics \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -57,7 +74,7 @@ GET /monitoring/metrics
 }
 ```
 
-***
+---
 
 ## Fleet needs-attention roll-up
 
@@ -76,11 +93,12 @@ GET /monitoring/fleet-status
 <ResponseField name="attentionCount" type="number">Number of agents needing attention.</ResponseField>
 <ResponseField name="agents" type="array">Agents needing attention, errors first. Each has `agentId`, `name`, `status`, `severity`, and a `reasons` array of `{ code, severity, label }`.</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/monitoring/fleet-status \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/monitoring/fleet-status \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -94,20 +112,24 @@ GET /monitoring/fleet-status
       "name": "Billing bot",
       "status": "stopped",
       "severity": "error",
-      "reasons": [{ "code": "budget_paused", "severity": "error", "label": "Paused — budget cap reached" }]
+      "reasons": [
+        { "code": "budget_paused", "severity": "error", "label": "Paused — budget cap reached" }
+      ]
     },
     {
       "agentId": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
       "name": "Scraper",
       "status": "deploying",
       "severity": "warning",
-      "reasons": [{ "code": "stuck_deploying", "severity": "warning", "label": "Stuck deploying for 18m" }]
+      "reasons": [
+        { "code": "stuck_deploying", "severity": "warning", "label": "Stuck deploying for 18m" }
+      ]
     }
   ]
 }
 ```
 
-***
+---
 
 ## Activity event log
 
@@ -148,14 +170,22 @@ GET /monitoring/events
 </ParamField>
 
 <Note>
-  Supplying any of `page`, `search`, `type`, `from`, or `to` switches the response to a pagination envelope (with `limit` clamped to 10–100). Without those filters, a flat array is returned (`limit` 1–100, default 50).
+  Supplying any of `page`, `search`, `type`, `from`, or `to` switches the response to a pagination
+  envelope (with `limit` clamped to 10–100). Without those filters, a flat array is returned
+  (`limit` 1–100, default 50).
 </Note>
 
 ### Response
 
-<ResponseField name="id" type="string">Event UUID.</ResponseField>
-<ResponseField name="type" type="string">Event type slug, e.g. `agent_deployed`, `agent_redeployed`.</ResponseField>
-<ResponseField name="message" type="string">Human-readable description of the event.</ResponseField>
+<ResponseField name="id" type="string">
+  Event UUID.
+</ResponseField>
+<ResponseField name="type" type="string">
+  Event type slug, e.g. `agent_deployed`, `agent_redeployed`.
+</ResponseField>
+<ResponseField name="message" type="string">
+  Human-readable description of the event.
+</ResponseField>
 
 <ResponseField name="metadata" type="object">
   Additional context for the event.
@@ -165,18 +195,20 @@ GET /monitoring/events
   </Expandable>
 </ResponseField>
 
-<ResponseField name="created_at" type="string">ISO 8601 event timestamp.</ResponseField>
+<ResponseField name="created_at" type="string">
+  ISO 8601 event timestamp.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl (all events) theme={null}
-  curl "http://localhost:8080/api/monitoring/events?limit=20" \
-    -H "Authorization: Bearer $TOKEN"
-  ```
-
-  ```bash curl (by agent) theme={null}
-  curl "http://localhost:8080/api/monitoring/events?agentId=a1b2c3d4-e5f6-7890-abcd-ef1234567890&limit=10" \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl (all events) theme={null}
+curl "http://localhost:8080/api/monitoring/events?limit=20" \
+  -H "Authorization: Bearer $TOKEN"
+```
+```bash curl (by agent) theme={null}
+curl "http://localhost:8080/api/monitoring/events?agentId=a1b2c3d4-e5f6-7890-abcd-ef1234567890&limit=10" \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -191,7 +223,7 @@ GET /monitoring/events
 ]
 ```
 
-***
+---
 
 ## API performance data
 
@@ -202,7 +234,9 @@ GET /monitoring/performance
 ```
 
 <Note>
-  Unlike the other `/monitoring/*` endpoints, this one requires the platform-admin role. Non-admin callers receive `403 {"error": "Admin access required"}`.
+  Unlike the other `/monitoring/*` endpoints, this one requires a platform-admin **session**.
+  Workspace API keys are rejected with `403 session_required` even when issued by an admin; non-admin
+  sessions receive `403 {"error": "Admin access required"}`.
 </Note>
 
 ### Query parameters
@@ -215,15 +249,22 @@ GET /monitoring/performance
 
 Each record represents a single API call that was instrumented.
 
-<ResponseField name="value" type="number">Measured value (typically response time in ms).</ResponseField>
-<ResponseField name="metadata" type="object">Context for the measurement, such as path and method.</ResponseField>
-<ResponseField name="recorded_at" type="string">ISO 8601 timestamp when the metric was recorded.</ResponseField>
+<ResponseField name="value" type="number">
+  Measured value (typically response time in ms).
+</ResponseField>
+<ResponseField name="metadata" type="object">
+  Context for the measurement, such as path and method.
+</ResponseField>
+<ResponseField name="recorded_at" type="string">
+  ISO 8601 timestamp when the metric was recorded.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl "http://localhost:8080/api/monitoring/performance?since=2025-03-10T00:00:00Z" \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl "http://localhost:8080/api/monitoring/performance?since=2025-03-10T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -236,7 +277,7 @@ Each record represents a single API call that was instrumented.
 ]
 ```
 
-***
+---
 
 ## Agent metrics
 
@@ -268,18 +309,31 @@ GET /agents/:id/metrics
 
 ### Response
 
-<ResponseField name="id" type="string">Metric record UUID.</ResponseField>
-<ResponseField name="agent_id" type="string">Agent UUID.</ResponseField>
-<ResponseField name="metric_type" type="string">Metric category slug.</ResponseField>
-<ResponseField name="value" type="number">Numeric metric value.</ResponseField>
-<ResponseField name="metadata" type="object">Additional context for the metric.</ResponseField>
-<ResponseField name="recorded_at" type="string">ISO 8601 timestamp.</ResponseField>
+<ResponseField name="id" type="string">
+  Metric record UUID.
+</ResponseField>
+<ResponseField name="agent_id" type="string">
+  Agent UUID.
+</ResponseField>
+<ResponseField name="metric_type" type="string">
+  Metric category slug.
+</ResponseField>
+<ResponseField name="value" type="number">
+  Numeric metric value.
+</ResponseField>
+<ResponseField name="metadata" type="object">
+  Additional context for the metric.
+</ResponseField>
+<ResponseField name="recorded_at" type="string">
+  ISO 8601 timestamp.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl "http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/metrics?type=tokens&since=2025-03-10T00:00:00Z" \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl "http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/metrics?type=tokens&since=2025-03-10T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -295,7 +349,7 @@ GET /agents/:id/metrics
 ]
 ```
 
-***
+---
 
 ## Agent metrics summary
 
@@ -313,16 +367,25 @@ GET /agents/:id/metrics/summary
 
 ### Response
 
-<ResponseField name="total_tokens" type="number">Total LLM tokens consumed by this agent.</ResponseField>
-<ResponseField name="total_requests" type="number">Total LLM API requests made.</ResponseField>
-<ResponseField name="avg_response_ms" type="number">Average LLM response latency in milliseconds.</ResponseField>
-<ResponseField name="last_active_at" type="string">ISO 8601 timestamp of the most recent metric record.</ResponseField>
+<ResponseField name="total_tokens" type="number">
+  Total LLM tokens consumed by this agent.
+</ResponseField>
+<ResponseField name="total_requests" type="number">
+  Total LLM API requests made.
+</ResponseField>
+<ResponseField name="avg_response_ms" type="number">
+  Average LLM response latency in milliseconds.
+</ResponseField>
+<ResponseField name="last_active_at" type="string">
+  ISO 8601 timestamp of the most recent metric record.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/metrics/summary \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/metrics/summary \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -334,7 +397,7 @@ GET /agents/:id/metrics/summary
 }
 ```
 
-***
+---
 
 ## Agent cost
 
@@ -354,11 +417,21 @@ Use `period_start` and `period_end` instead of `period_days` for a custom UTC da
 
 ### Response
 
-<ResponseField name="token_cost" type="number">Estimated token cost in USD.</ResponseField>
-<ResponseField name="total_cost" type="number">Total estimated token cost in USD.</ResponseField>
-<ResponseField name="input_tokens" type="number">Input or prompt tokens recorded in the period.</ResponseField>
-<ResponseField name="output_tokens" type="number">Output or completion tokens recorded in the period.</ResponseField>
-<ResponseField name="total_tokens" type="number">Total tokens recorded in the period.</ResponseField>
+<ResponseField name="token_cost" type="number">
+  Estimated token cost in USD.
+</ResponseField>
+<ResponseField name="total_cost" type="number">
+  Total estimated token cost in USD.
+</ResponseField>
+<ResponseField name="input_tokens" type="number">
+  Input or prompt tokens recorded in the period.
+</ResponseField>
+<ResponseField name="output_tokens" type="number">
+  Output or completion tokens recorded in the period.
+</ResponseField>
+<ResponseField name="total_tokens" type="number">
+  Total tokens recorded in the period.
+</ResponseField>
 
 <ResponseField name="cost_details" type="object">
   Token pricing details.
@@ -368,14 +441,19 @@ Use `period_start` and `period_end` instead of `period_days` for a custom UTC da
   </Expandable>
 </ResponseField>
 
-<ResponseField name="periodStart" type="string">Start of the reporting period (ISO 8601).</ResponseField>
-<ResponseField name="periodEnd" type="string">End of the reporting period (ISO 8601).</ResponseField>
+<ResponseField name="periodStart" type="string">
+  Start of the reporting period (ISO 8601).
+</ResponseField>
+<ResponseField name="periodEnd" type="string">
+  End of the reporting period (ISO 8601).
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/cost \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/cost \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}

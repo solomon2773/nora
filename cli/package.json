@@ -1,6 +1,6 @@
 {
   "name": "@noraai/cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Nora command-line interface for managing agents, workspaces, and runtimes via the public REST API.",
   "license": "Apache-2.0",
   "type": "commonjs",

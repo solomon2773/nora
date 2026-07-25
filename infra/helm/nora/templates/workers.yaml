@@ -14,12 +14,19 @@ spec:
       labels:
         {{- include "nora.selectorLabels" (dict "root" . "component" "worker-provisioner") | nindent 8 }}
     spec:
+      automountServiceAccountToken: {{ .Values.security.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      {{- include "nora.preferredPodAntiAffinity" (dict "root" . "component" "worker-provisioner") | nindent 6 }}
       {{- include "nora.imagePullSecrets" . | nindent 6 }}
       {{- include "nora.waitForDbInit" . | nindent 6 }}
+        {{- include "nora.waitForApiInit" . | nindent 8 }}
       containers:
         - name: worker-provisioner
           image: {{ include "nora.image" (dict "root" . "name" "nora-worker-provisioner") }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
           ports:
             - name: health
               containerPort: 4001
@@ -28,12 +35,17 @@ spec:
             - name: DEPLOYMENT_WORKER_CONCURRENCY
               value: {{ .Values.workerProvisioner.concurrency | quote }}
             {{- include "nora.extraEnv" (dict "root" . "extra" .Values.commonEnv) | nindent 12 }}
-          {{- if .Values.kubeconfigs.existingSecret }}
           volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+            - name: runtime-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            {{- if .Values.kubeconfigs.existingSecret }}
             - name: kubeconfigs
               mountPath: /kubeconfigs
               readOnly: true
-          {{- end }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /health
@@ -48,12 +60,18 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.workerProvisioner.resources | nindent 12 }}
-      {{- if .Values.kubeconfigs.existingSecret }}
       volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: runtime-secrets
+          secret:
+            secretName: {{ include "nora.secretName" . }}
+        {{- if .Values.kubeconfigs.existingSecret }}
         - name: kubeconfigs
           secret:
             secretName: {{ .Values.kubeconfigs.existingSecret }}
-      {{- end }}
+        {{- end }}
 {{- if .Values.workerBackup.enabled }}
 ---
 apiVersion: apps/v1
@@ -63,7 +81,7 @@ metadata:
   labels:
     {{- include "nora.labels" (dict "root" . "component" "worker-backup") | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.workerBackup.replicas }}
   selector:
     matchLabels:
       {{- include "nora.selectorLabels" (dict "root" . "component" "worker-backup") | nindent 6 }}
@@ -72,12 +90,19 @@ spec:
       labels:
         {{- include "nora.selectorLabels" (dict "root" . "component" "worker-backup") | nindent 8 }}
     spec:
+      automountServiceAccountToken: {{ .Values.security.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      {{- include "nora.preferredPodAntiAffinity" (dict "root" . "component" "worker-backup") | nindent 6 }}
       {{- include "nora.imagePullSecrets" . | nindent 6 }}
       {{- include "nora.waitForDbInit" . | nindent 6 }}
+        {{- include "nora.waitForApiInit" . | nindent 8 }}
       containers:
         - name: worker-backup
           image: {{ include "nora.image" (dict "root" . "name" "nora-worker-backup") }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
           ports:
             - name: health
               containerPort: 4002
@@ -88,11 +113,16 @@ spec:
             - name: NODE_PATH
               value: /app/node_modules
             {{- include "nora.extraEnv" (dict "root" . "extra" .Values.commonEnv) | nindent 12 }}
-          {{- if .Values.backupsVolume.enabled }}
           volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+            - name: runtime-secrets
+              mountPath: /run/secrets
+              readOnly: true
+            {{- if .Values.backupsVolume.enabled }}
             - name: nora-backups
               mountPath: /var/lib/nora-backups
-          {{- end }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /health
@@ -107,10 +137,16 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.workerBackup.resources | nindent 12 }}
-      {{- if .Values.backupsVolume.enabled }}
       volumes:
+        - name: scratch
+          emptyDir:
+            sizeLimit: 2Gi
+        - name: runtime-secrets
+          secret:
+            secretName: {{ include "nora.secretName" . }}
+        {{- if .Values.backupsVolume.enabled }}
         - name: nora-backups
           persistentVolumeClaim:
             claimName: nora-backups
-      {{- end }}
+        {{- end }}
 {{- end }}

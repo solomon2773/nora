@@ -4,10 +4,22 @@
 
 The Agents API is the core of Nora. You use it to deploy new agent containers, control their lifecycle (start, stop, restart, redeploy, delete), poll live resource stats, and retrieve the gateway UI URL for direct browser access. Read endpoints include agents you own directly and agents shared with you through workspaces. Destructive deletion remains limited to the direct agent owner.
 
+<Warning>
+  A workspace API key is confined to agents assigned to its exact workspace. The same issuing user
+  may belong to other workspaces, but the key cannot list, read, mutate, proxy, export, or execute
+  against those agents. Existing Remote Docker agent operations are session-only because they can
+  reach host credentials and privileged cleanup paths.
+</Warning>
+
+Agent export and live-filesystem routes are session-only for every backend. Their allowed runtime
+roots can contain provider credentials, gateway secrets, paired-device state, and conversation
+sessions, so workspace API keys cannot call `/agents/:id/export` or `/agents/:id/files/*` even when
+the agent is assigned to the key's workspace.
+
 <Note>
   An agent moves through the following statuses: `queued` → `deploying` → `running`. From `running`
-  it can transition to `warning`, `error`, or `stopped`. Use `POST /agents/:id/redeploy` to recover an
-  agent that is in `warning`, `error`, or `stopped` state.
+  it can transition to `warning`, `error`, or `stopped`. Use `POST /agents/:id/redeploy` to recover
+  an agent that is in `warning`, `error`, or `stopped` state.
 </Note>
 
 ---
@@ -15,6 +27,9 @@ The Agents API is the core of Nora. You use it to deploy new agent containers, c
 ## List agents
 
 Returns all agents accessible to the authenticated user, ordered by creation time (newest first). Use `scope=owned` when a UI or integration needs only directly owned agents, such as assignment candidates or quota counters.
+
+For workspace API keys, both `accessible` and `owned` are evaluated inside the key's exact bound
+workspace, and the response does not include assignments from another workspace.
 
 ```
 GET /agents
@@ -27,11 +42,12 @@ GET /agents
   returns only directly owned agents.
 </ParamField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/agents \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/agents \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -76,32 +92,63 @@ POST /agents/deploy
   Human-readable agent name. Maximum 100 characters. Control characters are stripped. Defaults to `OpenClaw-Agent-<random>`.
 </ParamField>
 
-<ParamField body="sandbox" type="string" default="standard">
-  Sandbox type. `standard` (Docker) or `nemoclaw` (NVIDIA NemoClaw). The `nemoclaw` option requires
-  `nemoclaw` to be included in `ENABLED_SANDBOX_PROFILES` on the server.
+<ParamField body="runtime_family" type="string" default="server default">
+  Runtime contract to deploy: `openclaw` or `hermes`. If omitted, Nora uses the control plane's
+  configured default runtime family.
 </ParamField>
 
-<ParamField body="vcpu" type="number" default="2">
-  Number of virtual CPUs. Ignored on PaaS deployments (locked to subscription). On self-hosted,
-  clamped to operator limits.
+<ParamField body="deploy_target" type="string" default="server default">
+  Placement family: GA `docker` or `k8s`, or experimental `remote-docker` or `proxmox`. Registered
+  targets still require their concrete `execution_target_id`; Nora does not choose a cluster or
+  remote host automatically.
 </ParamField>
 
-<ParamField body="ram_mb" type="number" default="2048">
-  RAM allocation in MB. Ignored on PaaS. Minimum `512`.
+<ParamField body="execution_target_id" type="string" default="derived from deploy_target">
+  Concrete placement id. Use `docker` for local Docker, `k8s:<cluster-id>` for an Admin-registered
+  Kubernetes cluster, `remote:<host-id>` for a registered Remote Docker host, or `proxmox` for the
+  configured Proxmox target.
 </ParamField>
 
-<ParamField body="disk_gb" type="number" default="20">
-  Disk allocation in GB. Ignored on PaaS. Minimum `1`.
+<ParamField body="sandbox_profile" type="string" default="standard">
+  `standard` or experimental `nemoclaw`. Hermes supports only `standard`. `nemoclaw` requires the
+  profile to be enabled, and NemoClaw on Proxmox remains blocked. The legacy `sandbox` field is
+  still accepted as an alias, but new clients should send `sandbox_profile`.
+</ParamField>
+
+<ParamField body="vcpu" type="number" default="operator deployment default (fallback 1)">
+  Number of virtual CPUs. On self-hosted deployments, an explicit value is clamped to operator
+  limits. PaaS ignores the request value and uses the platform-wide deployment default.
+</ParamField>
+
+<ParamField body="ram_mb" type="number" default="operator deployment default (fallback 1024)">
+  RAM allocation in MB. PaaS ignores the request value and uses the platform-wide deployment
+  default. Minimum `512` when a self-hosted caller supplies a value.
+</ParamField>
+
+<ParamField body="disk_gb" type="number" default="operator deployment default (fallback 10)">
+  Requested disk size in GB. PaaS ignores the request value and uses the platform-wide deployment
+  default. Minimum `1` when a self-hosted caller supplies a value. Kubernetes and Proxmox use this
+  value for provisioned storage; Docker and Remote Docker store it as deployment metadata but do not
+  enforce it as a container storage quota.
+</ParamField>
+
+<ParamField body="migration_draft_id" type="string">
+  Optional migration draft UUID. Migration drafts can contain complete managed state, so this field
+  is session-only and returns `403 session_required` when supplied with a workspace API key.
 </ParamField>
 
 <Warning>
-  On PaaS deployments the `vcpu`, `ram_mb`, and `disk_gb` values are determined by your subscription
-  plan and cannot be overridden.
+  On PaaS deployments the operator-managed platform defaults determine `vcpu`, `ram_mb`, and
+  `disk_gb`; plan tiers currently control deployment count, not per-agent resource size.
 </Warning>
 
 ### Response
 
 Returns the newly created agent record.
+
+When a workspace API key creates a non-Remote agent, Nora creates the agent and its assignment to the
+key's workspace in one database statement before publishing any deployment job. Adoption and
+duplication follow the same workspace-binding rule.
 
 <ResponseField name="id" type="string">
   UUID of the new agent.
@@ -115,6 +162,18 @@ Returns the newly created agent record.
 <ResponseField name="sandbox_type" type="string">
   `standard` or `nemoclaw`.
 </ResponseField>
+<ResponseField name="runtime_family" type="string">
+  Resolved runtime family, `openclaw` or `hermes`.
+</ResponseField>
+<ResponseField name="deploy_target" type="string">
+  Resolved placement family, such as `docker`, `k8s`, or `remote-docker`.
+</ResponseField>
+<ResponseField name="execution_target_id" type="string">
+  Exact selected target, such as `docker`, `k8s:aks-eastus2`, or `remote:build-host`.
+</ResponseField>
+<ResponseField name="sandbox_profile" type="string">
+  Resolved sandbox profile, `standard` or `nemoclaw`.
+</ResponseField>
 <ResponseField name="vcpu" type="number">
   Allocated vCPU count.
 </ResponseField>
@@ -122,7 +181,8 @@ Returns the newly created agent record.
   Allocated RAM in MB.
 </ResponseField>
 <ResponseField name="disk_gb" type="number">
-  Allocated disk in GB.
+  Resolved disk request in GB. For Docker and Remote Docker this is metadata, not an enforced
+  storage quota.
 </ResponseField>
 <ResponseField name="node" type="string">
   Scheduler node assigned to this agent.
@@ -134,12 +194,22 @@ Returns the newly created agent record.
   ISO 8601 creation timestamp.
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
 ```bash curl theme={null}
 curl -X POST http://localhost:8080/api/agents/deploy \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"My Agent","vcpu":2,"ram_mb":2048,"disk_gb":20}'
+  -d '{
+    "name":"My Agent",
+    "runtime_family":"openclaw",
+    "deploy_target":"docker",
+    "execution_target_id":"docker",
+    "sandbox_profile":"standard",
+    "vcpu":2,
+    "ram_mb":2048,
+    "disk_gb":20
+  }'
 ```
 </CodeGroup>
 
@@ -148,6 +218,10 @@ curl -X POST http://localhost:8080/api/agents/deploy \
   "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "name": "My Agent",
   "status": "queued",
+  "runtime_family": "openclaw",
+  "deploy_target": "docker",
+  "execution_target_id": "docker",
+  "sandbox_profile": "standard",
   "sandbox_type": "standard",
   "vcpu": 2,
   "ram_mb": 2048,
@@ -158,10 +232,96 @@ curl -X POST http://localhost:8080/api/agents/deploy \
 }
 ```
 
-| Status | Condition                             |
-| ------ | ------------------------------------- |
-| `400`  | Name too long or NemoClaw not enabled |
-| `402`  | Billing limit reached                 |
+### Remote Docker and Hermes
+
+Remote-host administration is intentionally session-only. Register and manually test a personal
+host in **App -> Remote Hosts**, or have a platform admin create a platform host in **Admin -> Remote
+Hosts**, before using its `remote:<id>` target. Workspace API keys cannot call personal
+`/remote-hosts` or platform `/admin/remote-hosts` management endpoints, and every response masks
+stored SSH private keys, passwords, and passphrases.
+
+The dashboard currently lists registered Remote Docker hosts for OpenClaw only. Hermes Remote Docker
+is an experimental advanced API path. After registration and testing, deploy it with a session JWT:
+
+{/* prettier-ignore */}
+<CodeGroup>
+```bash curl theme={null}
+curl -X POST http://localhost:8080/api/agents/deploy \
+  -H "Authorization: Bearer $SESSION_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":"Hermes Remote",
+    "runtime_family":"hermes",
+    "deploy_target":"remote-docker",
+    "execution_target_id":"remote:build-host",
+    "sandbox_profile":"standard",
+    "vcpu":2,
+    "ram_mb":4096,
+    "disk_gb":20
+  }'
+```
+</CodeGroup>
+
+For a personal host, the session user must own it or have an `editor`, `admin`, or `owner` role in a
+workspace where it is shared. For a platform host, a platform admin, the all-accounts setting, a
+direct-user grant, a matching user-group grant, or an `editor+` workspace grant permits deployment.
+A workspace viewer can see a granted host but cannot deploy to it. The created agent belongs to the
+deploying user and is not automatically assigned to any workspace that supplied host access.
+
+Remote Docker placement and every existing-agent Remote Docker operation are session-only. A
+workspace API key receives `403 session_required` before host lookup, persistence, queue publication,
+gateway/file access, or lifecycle cleanup when the source, destination, or persisted agent uses
+Remote Docker. API-key deploys to non-Remote targets continue to use the normal `agents:write` scope
+and are automatically assigned to the key's workspace. After a session Remote Docker deployment,
+assign the agent explicitly if workspace access is required. Follow [Connect a Remote Docker
+host](/guides/remote-docker) for setup, then use the [backend
+reference](/configuration/provisioner-backends/remote-docker) for the full test, networking,
+capacity, sharing, and revocation contract.
+
+| Status | Condition                                                                                          |
+| ------ | -------------------------------------------------------------------------------------------------- |
+| `400`  | Invalid or unavailable runtime selection, unknown/inaccessible concrete target, or name too long   |
+| `402`  | Billing limit reached                                                                              |
+| `403`  | API key lacks `agents:write`, uses a migration draft, or targets a session-only Remote Docker path |
+
+---
+
+## Adopt an external runtime
+
+Register an already-running OpenClaw or Hermes endpoint without provisioning new compute. Nora
+stores the gateway credential encrypted, monitors and proxies the runtime, and marks the agent as
+`external`. Lifecycle actions are unavailable because Nora does not own the process; deleting the
+agent only deregisters it.
+
+```
+POST /agents/adopt
+```
+
+Provide `runtime_family`, either `url` or `host` plus optional `port`, and a cryptographically
+generated `gateway_token`. The token must contain at least 32 characters, have no whitespace, and
+be generated from a cryptographically secure random source. Hosted PaaS accepts only public
+endpoints; self-hosted operators may adopt a private-network endpoint that passes the gateway proxy's
+host and port safety checks. Nora rechecks this contract when an adopted runtime connects, so legacy
+rows with weak credential shapes fail closed until the external runtime token is rotated.
+
+```bash theme={null}
+GATEWAY_TOKEN="$(openssl rand -hex 32)"
+curl -X POST http://localhost:8080/api/agents/adopt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"Existing OpenClaw\",\"runtime_family\":\"openclaw\",\"url\":\"https://agent.example.com:18789\",\"gateway_token\":\"$GATEWAY_TOKEN\"}"
+```
+
+The provided token must already be configured on the external runtime; generating a replacement in
+the example is appropriate only when you can update that runtime to use the same value. Workspace
+API keys require `agents:write`, and successful adoptions are atomically assigned to the key's bound
+workspace.
+
+| Status | Condition                                                            |
+| ------ | -------------------------------------------------------------------- |
+| `400`  | Weak token, invalid runtime family, unsafe endpoint, or invalid port |
+| `402`  | Billing limit reached                                                |
+| `403`  | Missing `agents:write` scope                                         |
 
 ---
 
@@ -179,11 +339,12 @@ GET /agents/:id
   Agent UUID.
 </ParamField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -220,11 +381,12 @@ POST /agents/:id/start
 
 Returns the updated agent record with `status: "running"`.
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/start \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/start \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 | Status | Condition                               |
@@ -250,11 +412,12 @@ POST /agents/:id/stop
 
 Returns the updated agent record with `status: "stopped"`.
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stop \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stop \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ---
@@ -279,11 +442,12 @@ POST /agents/:id/restart
   `true` when the container was restarted.
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/restart \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/restart \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -319,11 +483,12 @@ POST /agents/:id/redeploy
   `queued`.
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/redeploy \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl -X POST http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/redeploy \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -356,11 +521,12 @@ DELETE /agents/:id
   `true` when the agent was deleted.
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X DELETE http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl -X DELETE http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -424,11 +590,12 @@ GET /agents/:id/stats
   Whether the container is currently running.
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stats \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stats \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -516,11 +683,12 @@ Returns an array of up to 2 000 stat records, ordered oldest-first.
   ISO 8601 timestamp when the sample was recorded.
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl (preset range) theme={null}
-  curl "http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stats/history?range=1h" \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl (preset range) theme={null}
+curl "http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stats/history?range=1h" \
+  -H "Authorization: Bearer $TOKEN"
+```
 
 ```bash curl (custom range) theme={null}
 curl "http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stats/history?from=2025-03-10T08:00:00Z&to=2025-03-10T09:00:00Z" \
@@ -571,11 +739,12 @@ GET /agents/:id/gateway-url
   Resolved host port number.
 </ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/gateway-url \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/agents/a1b2c3d4-e5f6-7890-abcd-ef1234567890/gateway-url \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}

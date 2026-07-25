@@ -11,8 +11,8 @@ const ENCRYPTION_KEY = /^[0-9a-fA-F]{64}$/.test(RAW_KEY) ? RAW_KEY : null;
 if (!ENCRYPTION_KEY) {
   console.error(
     "SECURITY WARNING: ENCRYPTION_KEY is not set or invalid. " +
-    "Sensitive credential writes are blocked until encryption at rest is configured. " +
-    "Set a 64-char hex key in .env to enable secure storage."
+      "Sensitive credential writes are blocked until encryption at rest is configured. " +
+      "Set a 64-char hex key in .env to enable secure storage.",
   );
 }
 
@@ -22,7 +22,9 @@ function isEncryptionConfigured() {
 
 function ensureEncryptionConfigured(context = "Sensitive credential storage") {
   if (ENCRYPTION_KEY) return;
-  const err = new Error(`${context} requires ENCRYPTION_KEY to be configured with a valid 64-char hex key`);
+  const err = new Error(
+    `${context} requires ENCRYPTION_KEY to be configured with a valid 64-char hex key`,
+  );
   err.statusCode = 503;
   throw err;
 }
@@ -74,8 +76,16 @@ function decrypt(data) {
     return decrypted;
   } catch (err) {
     console.error("Decryption failed (key mismatch or corrupted data):", err.message);
-    throw new DecryptionError("Failed to decrypt stored credential — encryption key may have rotated or data is corrupted");
+    throw new DecryptionError(
+      "Failed to decrypt stored credential — encryption key may have rotated or data is corrupted",
+    );
   }
 }
 
-module.exports = { encrypt, decrypt, isEncryptionConfigured, ensureEncryptionConfigured, DecryptionError };
+module.exports = {
+  encrypt,
+  decrypt,
+  isEncryptionConfigured,
+  ensureEncryptionConfigured,
+  DecryptionError,
+};

@@ -6,6 +6,7 @@
   },
   "scripts": {
     "start": "tsx worker.ts",
+    "test": "node --test \"*.test.js\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

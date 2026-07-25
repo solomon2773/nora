@@ -2,7 +2,7 @@
 
 > The self-hosted AI agent ops platform.
 
-Deploy, monitor, and operate OpenClaw and Hermes runtimes from one operator surface — runtime-neutral, Apache 2.0, and on infrastructure you control. Nora gives technical teams a single place to deploy agent runtimes into isolated environments, manage LLM provider keys, access chat, logs, terminal, and live filesystem workflows, connect integrations and channels, and monitor runtime activity, all from one dashboard.
+Deploy, monitor, and operate OpenClaw and Hermes runtimes from one operator surface — multi-runtime, Apache 2.0, and on infrastructure you control. Nora gives technical teams a single place to deploy supported agent runtimes into isolated environments, manage LLM provider keys, access chat, logs, terminal, and live filesystem workflows, connect integrations and channels, and monitor runtime activity, all from one dashboard.
 
 The core value is straightforward: if you care about infrastructure control, observability, repeatable operations, and a trustworthy operator surface, Nora gets you to a usable ops platform faster than building one. It is designed for serious operator use — individual builders can run it on a single machine, internal platform teams can standardize on it, and larger teams can keep full infrastructure control without giving up the open-source trust model.
 
@@ -12,7 +12,10 @@ The core value is straightforward: if you care about infrastructure control, obs
 
 <CardGroup cols={2}>
   <Card title="Deploy agent runtimes" icon="rocket">
-    Launch agent runtimes into isolated environments with configurable CPU, RAM, and disk. Manage agent lifecycle — deploy, restart, and remove — from a single operator surface.
+    Launch agent runtimes into isolated environments with configurable CPU and RAM plus
+    target-specific storage behavior. Docker and Remote Docker retain `disk_gb` as requested
+    metadata rather than enforcing a filesystem quota. Manage agent lifecycle — deploy, restart,
+    and remove — from a single operator surface.
   </Card>
 
 <Card title="Manage LLM provider keys" icon="key">
@@ -64,15 +67,16 @@ Nora is built around five properties that define what kind of product it is and 
   </Card>
 
 <Card title="Easy to use" icon="circle-check">
-  The fastest path to first proof is short: install, create an operator account, add one provider,
-  deploy one runtime, and validate the workflow. The installer handles dependencies, secrets, and
-  stack startup in one pass.
+  On local Docker installs, the fastest path to first proof is short: install, create an operator
+  account, launch the built-in zero-key demo agent, and validate chat, logs, metrics, and terminal
+  access. Kubernetes-only installs start with a configured model provider.
 </Card>
 
 <Card title="Expandable" icon="arrows-split-up-and-left">
-  [OpenClaw](https://github.com/openclaw/openclaw) is the best-supported runtime today. Nora is
-  designed to stay runtime-friendly by direction — the product and interfaces are kept open for
-  broader runtime integration over time.
+  [OpenClaw](https://github.com/openclaw/openclaw) is the best-supported runtime today and Hermes is
+  the second supported family. Runtime contracts, provisioner backends, CLI commands, and MCP tools
+  are kept in public source so contributors can extend the supported surface without relying on a
+  private plugin system.
 </Card>
 
 <Card title="Self-hostable" icon="hard-drive">
@@ -82,8 +86,10 @@ Nora is built around five properties that define what kind of product it is and 
 
 <Card title="Enterprise-capable" icon="buildings">
   Nora makes sense from single-host Docker evaluation through Kubernetes, private cloud, on-prem,
-  and AWS / Azure / GCP rollouts. Proxmox placement is planned. It is not a toy dashboard — it is
-  designed to grow with operator requirements.
+  operator-registered Remote Docker hosts, and AWS / Azure / GCP rollouts. Remote Docker and Proxmox
+  unprivileged LXC placement are experimental and require validation on the exact infrastructure
+  before production use. It is not a toy dashboard — it is designed to grow with operator
+  requirements.
 </Card>
 
   <Card title="Apache 2.0 licensed" icon="file-certificate">
@@ -93,21 +99,37 @@ Nora is built around five properties that define what kind of product it is and 
 
 ## Deployment footprint
 
-Nora is designed to grow with your infrastructure requirements. The same Docker Compose workflow is the foundation for every deployment path.
+Nora is designed to grow with your infrastructure requirements. Lead evaluation with a GA path; experimental and roadmap targets remain clearly labeled.
 
-| Footprint                   | When to use it                                                                          |
-| --------------------------- | --------------------------------------------------------------------------------------- |
-| **Single-host**             | First proof, lean teams, local evaluation                                               |
-| **Proxmox (planned)**       | Roadmap path for stronger isolation, private fleet control, self-hosted VM environments |
-| **Private cloud / on-prem** | Security-conscious internal platforms that need full infrastructure ownership           |
-| **AWS, Azure, GCP**         | Larger cloud-native or enterprise rollouts                                              |
+| Target / profile             | Maturity     | When to use it                                                                                                          |
+| ---------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| **Docker**                   | GA           | Fastest local or single-host proof and the recommended first install                                                    |
+| **Kubernetes**               | GA           | Cluster-backed placement on k3s, AKS, GKE, or EKS                                                                       |
+| **Remote Docker**            | Experimental | Explicit placement on a self-hosted, user-registered Docker machine reached over SSH; private networking required       |
+| **NemoClaw sandbox profile** | Experimental | NVIDIA/Nemotron-backed secure-sandbox evaluation with explicit contract validation                                      |
+| **Proxmox unprivileged LXC** | Experimental | OpenClaw and prepared Hermes images only; secure API TLS and pinned SSH; real-hardware smoke required before production |
+
+Remote Docker is not a capacity scheduler or failover layer. Its connection badge is the stored
+result of a manual backend-only test, and operators select one exact `remote:<id>` target per agent.
+Review the [Remote Docker guide](/configuration/provisioner-backends/remote-docker) before exposing a
+host or sharing it with a workspace.
+
+<Warning>
+  NemoClaw on Proxmox remains blocked. Do not present Proxmox as GA or as a hardware-isolation path
+  until the real-hardware release gate is complete.
+</Warning>
 
 ## Get started
 
 <CardGroup cols={2}>
-  <Card title="Quick start" icon="bolt" href="/quickstart">
-    Install Nora, create your operator account, add an LLM provider, and deploy your first agent runtime in under 15 minutes.
+  <Card title="Try the zero-key demo" icon="sparkles" href="https://nora.solomontsao.com/signup?intent=demo">
+    Create an operator account and, when local Docker is enabled, deploy the deterministic demo agent before supplying an external provider key.
   </Card>
+
+<Card title="Quick start" icon="bolt" href="/quickstart">
+  Install Nora, create your operator account, launch the demo or add a provider, and validate your
+  first agent runtime.
+</Card>
 
 <Card title="Self-hosting" icon="server" href="/self-hosting">
   Run Nora on your own infrastructure with the installer script or manual Docker Compose setup.
@@ -117,7 +139,11 @@ Nora is designed to grow with your infrastructure requirements. The same Docker 
   Explore the REST API for agents, providers, integrations, channels, workspaces, and monitoring.
 </Card>
 
-  <Card title="Guides" icon="book-open" href="/guides/deploy-agent">
-    Step-by-step walkthroughs for deploying agents, managing providers, wiring integrations, and more.
+<Card title="Guides" icon="book-open" href="/guides/deploy-agent">
+  Step-by-step walkthroughs for deploying agents, managing providers, wiring integrations, and more.
+</Card>
+
+  <Card title="Contribute" icon="github" href="https://github.com/solomon2773/nora/blob/master/CONTRIBUTING.md">
+    Pick a focused issue, improve a runtime or backend contract, or help harden the operator experience.
   </Card>
 </CardGroup>

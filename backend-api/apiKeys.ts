@@ -26,9 +26,15 @@ const SCOPE_DEFINITIONS = [
   { value: "monitoring:read", description: "Read monitoring metrics and events" },
   { value: "integrations:read", description: "Read integration configurations" },
   { value: "integrations:write", description: "Create and remove integrations" },
+  {
+    value: "admin:read",
+    description: "Run read-only platform diagnostics as an issuing platform admin",
+  },
 ];
 
 const KNOWN_SCOPES = new Set(SCOPE_DEFINITIONS.map((entry) => entry.value));
+
+// Input normalization and serialization
 
 function normalizeLabel(value) {
   const normalized = typeof value === "string" ? value.trim() : "";
@@ -73,6 +79,17 @@ function serializeApiKey(row = {}) {
   };
 }
 
+// Key lifecycle and verification
+
+/**
+ * Issue a workspace-scoped key with validated scopes, storing only its hash
+ * and returning the raw token once in the creation response.
+ *
+ * @param {string} workspaceId - Workspace that permanently binds the key.
+ * @param {string|null} createdBy - User issuing the key.
+ * @param {Object} [input={}] - Label, scopes, and optional expiration.
+ * @returns {Promise<Object>} Serialized key metadata plus the one-time raw key.
+ */
 async function createApiKey(workspaceId, createdBy, { label, scopes, expiresAt } = {}) {
   if (!workspaceId) {
     const error = new Error("workspaceId is required");
@@ -117,6 +134,13 @@ async function listApiKeys(workspaceId) {
   return result.rows.map(serializeApiKey);
 }
 
+/**
+ * Revoke a key only within its bound workspace, preserving the first revocation time.
+ *
+ * @param {string} keyId - Key to revoke.
+ * @param {string} workspaceId - Workspace that must own the key.
+ * @returns {Promise<Object|null>} Revoked key, or `null` when not found in the workspace.
+ */
 async function revokeApiKey(keyId, workspaceId) {
   const result = await db.query(
     `UPDATE api_keys
@@ -130,10 +154,13 @@ async function revokeApiKey(keyId, workspaceId) {
   return result.rows[0] ? serializeApiKey(result.rows[0]) : null;
 }
 
-// Returns { key, workspace, user } when the token is valid, otherwise null.
-// last_used_at is bumped on every successful verification so admins can spot
-// dormant tokens; if the token was hashed under a legacy secret we silently
-// rehash to the canonical secret.
+/**
+ * Verify an active, unexpired raw key and return its key, workspace, and issuing
+ * user context. Successful verification updates usage time and rotates legacy hashes.
+ *
+ * @param {string} rawKey - Presented Nora API key.
+ * @returns {Promise<Object|null>} Authentication context, or `null` when invalid.
+ */
 async function verifyApiKey(rawKey) {
   const normalized = String(rawKey || "").trim();
   if (!normalized) return null;
@@ -147,8 +174,11 @@ async function verifyApiKey(rawKey) {
             u.role AS user_role,
             u.name AS user_name
        FROM api_keys k
-       LEFT JOIN workspaces w ON w.id = k.workspace_id
-       LEFT JOIN users u ON u.id = k.created_by
+       JOIN workspaces w ON w.id = k.workspace_id
+       JOIN users u ON u.id = k.created_by
+       JOIN workspace_members issuer_membership
+         ON issuer_membership.workspace_id = k.workspace_id
+        AND issuer_membership.user_id = k.created_by
       WHERE k.key_hash = ANY($1::text[])
         AND k.status = $2
         AND k.revoked_at IS NULL
@@ -158,7 +188,7 @@ async function verifyApiKey(rawKey) {
     [candidates, KEY_STATUS_ACTIVE, primaryHash],
   );
   const row = result.rows[0];
-  if (!row) return null;
+  if (!row?.created_by) return null;
 
   if (row.key_hash && row.key_hash !== primaryHash) {
     await db.query("UPDATE api_keys SET key_hash = $1, last_used_at = NOW() WHERE id = $2", [

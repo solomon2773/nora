@@ -14,10 +14,14 @@ const crypto = require("crypto");
 const DEMO_PROVIDER_ID = "demo";
 const DEMO_MODEL_ID = "nora-demo-1";
 
-// Stable per-installation bearer token. Derived from JWT_SECRET so the worker
-// and backend agree without a new secret; not security-critical (the stub
-// returns canned text), the check just keeps the endpoint from being an open
-// relay for junk traffic.
+/**
+ * Derive a deterministic demo bearer token from the JWT secret, using a fixed
+ * demo seed when unset so backend and worker still agree. This token only gates
+ * canned stub traffic and is not a provider-security boundary.
+ *
+ * @param {Object} [env=process.env] - Environment containing the JWT secret.
+ * @returns {string} Deterministic demo token.
+ */
 function deriveDemoToken(env = process.env) {
   return crypto
     .createHmac("sha256", String(env.JWT_SECRET || "nora-demo"))
@@ -25,8 +29,12 @@ function deriveDemoToken(env = process.env) {
     .digest("hex");
 }
 
-// The stub URL as reachable FROM AGENT CONTAINERS (not the public origin) —
-// same resolution as buildRuntimeEnv's BACKEND_API_URL.
+/**
+ * Resolve the demo endpoint as reachable from agent containers, not browsers.
+ *
+ * @param {Object} [env=process.env] - Runtime backend URL configuration.
+ * @returns {string} Container-reachable OpenAI-compatible base URL.
+ */
 function demoLlmBaseUrl(env = process.env) {
   const backendUrl =
     env.AGENT_RUNTIME_BACKEND_API_URL || env.BACKEND_API_URL || "http://backend-api:4000";
@@ -46,8 +54,12 @@ function lastUserMessage(messages = []) {
   return "";
 }
 
-// Deterministic reply: a short demo-agent persona answer keyed off the user's
-// message. No randomness — tests and the e2e journey assert on this text.
+/**
+ * Build deterministic zero-cost demo text from the most recent user message.
+ *
+ * @param {Array} [messages=[]] - OpenAI-style conversation messages.
+ * @returns {string} Stable demo-agent reply.
+ */
 function buildDemoReply(messages = []) {
   const userText = lastUserMessage(messages).trim();
   const intro =
@@ -64,8 +76,14 @@ function buildDemoReply(messages = []) {
   ].join("\n");
 }
 
-// OpenAI chat-completions response envelope. `created` is caller-supplied so
-// responses stay deterministic where tests need them to be.
+/**
+ * Wrap a reply in an OpenAI chat-completions envelope, allowing stable caller
+ * identifiers and timestamps for deterministic tests.
+ *
+ * @param {string} reply - Assistant text to return.
+ * @param {Object} [options={}] - Model, timestamp, and response id overrides.
+ * @returns {Object} OpenAI-compatible completion payload.
+ */
 function buildCompletionPayload(reply, { model = DEMO_MODEL_ID, created, id } = {}) {
   return {
     id: id || `chatcmpl-nora-demo-${crypto.randomBytes(8).toString("hex")}`,
@@ -87,7 +105,13 @@ function buildCompletionPayload(reply, { model = DEMO_MODEL_ID, created, id } = 
   };
 }
 
-// Split a reply into SSE-sized word chunks (OpenAI delta framing).
+/**
+ * Split reply text into whitespace-preserving word groups for SSE delta framing.
+ *
+ * @param {string} reply - Reply text to stream.
+ * @param {number} [chunkWords=6] - Approximate words per chunk.
+ * @returns {Array} Ordered text chunks.
+ */
 function chunkReply(reply, chunkWords = 6) {
   const words = String(reply).split(/(\s+)/); // keep whitespace tokens
   const chunks = [];

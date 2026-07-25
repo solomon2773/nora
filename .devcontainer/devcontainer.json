@@ -1,0 +1,40 @@
+{
+  "name": "Nora contributor",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-24-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "version": "latest",
+      "moby": true
+    }
+  },
+  "containerEnv": {
+    "NPM_CONFIG_AUDIT": "false",
+    "NPM_CONFIG_FUND": "false"
+  },
+  "postCreateCommand": "npm run contributor:setup",
+  "forwardPorts": [8080, 3000, 4001, 4100],
+  "portsAttributes": {
+    "8080": {
+      "label": "Nora gateway"
+    },
+    "3000": {
+      "label": "Next.js development server"
+    },
+    "4001": {
+      "label": "Provisioner health"
+    },
+    "4100": {
+      "label": "Backend API"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker"
+      ]
+    }
+  },
+  "remoteUser": "node"
+}

@@ -12,6 +12,14 @@ const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const ASSIGNABLE_ROLES = ["admin", "editor", "viewer"]; // owner can only be created at workspace-create
 const ALL_ROLES = ["owner", "admin", "editor", "viewer"];
 
+// Invitation token security
+
+/**
+ * Resolve the HMAC secret for invitation tokens, rejecting non-test operation
+ * when no configured secret has at least 32 characters.
+ *
+ * @returns {string} Invitation-token hashing secret.
+ */
 function inviteHashSecret() {
   const candidates = [
     process.env.NORA_WORKSPACE_INVITE_SECRET,
@@ -80,6 +88,8 @@ function serializeInvitation(row) {
   };
 }
 
+// Membership lifecycle
+
 async function listMembers(workspaceId) {
   const result = await db.query(
     `SELECT m.workspace_id, m.user_id, m.role, m.invited_by, m.created_at,
@@ -109,6 +119,15 @@ async function countOwners(workspaceId) {
   return result.rows[0]?.n || 0;
 }
 
+/**
+ * Change a member role after a non-locking check rejects demotion of the
+ * currently observed last owner.
+ *
+ * @param {string} workspaceId - Workspace containing the member.
+ * @param {string} userId - Member whose role should change.
+ * @param {string} newRole - Valid workspace role to assign.
+ * @returns {Promise<Object|null>} Updated member, or `null` when absent.
+ */
 async function updateMemberRole(workspaceId, userId, newRole) {
   if (!ALL_ROLES.includes(newRole)) {
     const error = new Error(`Role must be one of: ${ALL_ROLES.join(", ")}`);
@@ -140,6 +159,14 @@ async function updateMemberRole(workspaceId, userId, newRole) {
   return serializeMember({ ...result.rows[0], ...userRow.rows[0] });
 }
 
+/**
+ * Remove a member after a non-locking check rejects removal of the currently
+ * observed last owner.
+ *
+ * @param {string} workspaceId - Workspace containing the member.
+ * @param {string} userId - Member to remove.
+ * @returns {Promise<boolean>} Whether a member was removed.
+ */
 async function removeMember(workspaceId, userId) {
   const current = await db.query(
     "SELECT role FROM workspace_members WHERE workspace_id = $1 AND user_id = $2",
@@ -158,6 +185,18 @@ async function removeMember(workspaceId, userId) {
   return true;
 }
 
+// Invitation lifecycle
+
+/**
+ * Create a seven-day, email-bound invitation, storing only its HMAC and
+ * returning the raw acceptance token once.
+ *
+ * @param {string} workspaceId - Workspace the recipient may join.
+ * @param {string} email - Recipient email address.
+ * @param {string} role - Assignable role granted on acceptance.
+ * @param {string} invitedBy - User issuing the invitation.
+ * @returns {Promise<Object>} Invitation metadata plus the one-time raw token.
+ */
 async function createInvitation(workspaceId, email, role, invitedBy) {
   assertAssignableRole(role);
   const normalizedEmail = normalizeEmail(email);
@@ -215,6 +254,15 @@ async function revokeInvitation(invitationId, workspaceId) {
   return result.rows[0] ? serializeInvitation(result.rows[0]) : null;
 }
 
+/**
+ * Accept an invitation only for its addressed user email after validating its
+ * token and state. Membership and invitation status are separate writes, so a
+ * later failure can leave the membership applied before acceptance is recorded.
+ *
+ * @param {string} rawToken - Raw invitation token presented by the user.
+ * @param {string} userId - Authenticated user accepting the invitation.
+ * @returns {Promise<Object>} Joined workspace id and assigned role.
+ */
 async function acceptInvitation(rawToken, userId) {
   const token = String(rawToken || "").trim();
   if (!token) {

@@ -11,6 +11,11 @@ Nora supports two upgrade paths for source-based self-hosted installs:
 
 Both paths rebuild the same Docker Compose stack. For public TLS and Kubernetes backends, make sure the deploy env file and compose file list match the command you normally use.
 
+Both supported upgrade runners also refresh generated public nginx policy, pre-validate it in a
+one-off container, and recreate only nginx after the main rebuild. This remount is required
+because `nginx.public.conf` is replaced atomically and an already-running single-file bind mount
+otherwise remains attached to the previous inode.
+
 ## Manual upgrade
 
 Run the manual upgrade from the Nora repo root on the host:
@@ -19,15 +24,23 @@ Run the manual upgrade from the Nora repo root on the host:
 ./setup.sh --update
 ```
 
-For deployments that do not use `setup.sh`, run the same compose stack that started the instance. Public TLS plus any Kubernetes backend uses:
+For deployments that do not use `setup.sh`, refresh the public config and run the same Compose
+stack that started the instance. Public TLS plus any Kubernetes backend uses:
 
 ```bash
-docker compose \
+compose=(docker compose \
   --env-file .env \
   -f docker-compose.yml \
   -f infra/docker-compose.public-tls.yml \
-  -f docker-compose.kubernetes.yml \
-  up -d --build
+  -f docker-compose.kubernetes.yml)
+
+bash infra/render-public-nginx.sh \
+  .env \
+  'docker-compose.yml:infra/docker-compose.public-tls.yml:docker-compose.kubernetes.yml'
+"${compose[@]}" run --rm --no-deps --interactive=false -T nginx nginx -t
+"${compose[@]}" up -d --build
+"${compose[@]}" up -d --force-recreate --no-deps nginx
+"${compose[@]}" exec -T nginx nginx -t </dev/null
 ```
 
 The Kubernetes overlay is shared by AKS, GKE, EKS, k3s, and other kubeconfig-based Kubernetes targets. Provider selection happens through the Admin Kubernetes cluster settings and mounted kubeconfigs, not through separate provider-specific compose files.
@@ -51,7 +64,7 @@ NORA_UPGRADE_COMPOSE_FILES=docker-compose.yml:infra/docker-compose.public-tls.ym
 NORA_UPGRADE_PUBLIC_HEALTH_URL=https://stage.example.com/api/health
 ```
 
-The backend mounts the host checkout read-only at `/nora-host-repo` for preflight file checks. The temporary upgrade runner mounts `NORA_HOST_REPO_DIR` read-write so it can fetch the target release, update release tracking in the deploy env file, and rebuild the stack.
+The backend mounts the host checkout read-only at `/nora-host-repo` for preflight file checks. The temporary upgrade runner mounts `NORA_HOST_REPO_DIR` read-write so it can fetch the target release, update release tracking in the deploy env file, refresh and activate generated nginx policy, and rebuild the stack.
 
 ## Admin flow
 

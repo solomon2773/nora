@@ -3,14 +3,19 @@ const express = require("express");
 const crypto = require("crypto");
 const db = require("../db");
 const integrations = require("../integrations");
+const llmProviders = require("../llmProviders");
 const mcpServers = require("../mcpServers");
 const { runtimeAuthHeaders } = require("../runtimeAuth");
 const { encrypt, decrypt } = require("../crypto");
 const { rpcCall } = require("../gatewayProxy");
 const { runContainerCommand, syncAuthToUserAgents } = require("../authSync");
 const { buildHermesIntegrationInstallCommand } = require("../integrationRuntimeFiles");
-const { requireAccessibleAgent } = require("../middleware/ownership");
-const { scopeByMethod } = require("../middleware/auth");
+const {
+  apiKeyWorkspaceId,
+  findAgentForRequest,
+  requireAccessibleAgent,
+} = require("../middleware/ownership");
+const { requireSession, scopeByMethod } = require("../middleware/auth");
 const { AGENT_RUNTIME_PORT } = require("../../agent-runtime/lib/contracts");
 const { runtimeUrlForAgent } = require("../../agent-runtime/lib/agentEndpoints");
 const { resolveAgentRuntimeFamily } = require("../agentRuntimeFields");
@@ -32,6 +37,277 @@ const DEFAULT_EMAIL_CRON_PROMPT =
   "Look for any new emails or calendar invites I should be aware of and summarize anything important for me.";
 const SINGLETON_INTEGRATION_PROVIDERS = new Set(["wecom"]);
 
+// Email cron lifecycle
+
+/**
+ * Register an email check-in cron for a ready agent, retrying gateway failures.
+ *
+ * @param {Object} agent - Runtime target that owns the cron.
+ * @param {string} integrationId - Email integration referenced by the job.
+ * @param {Object} pollingIntervalSeconds - Cron config; non-object input uses defaults.
+ * @returns {Promise<string|null>} Created cron id, or null when registration is unavailable.
+ */
+async function registerEmailCronJob(agent, integrationId, pollingIntervalSeconds) {
+  if (!agent || !["running", "warning"].includes(agent.status)) return null;
+  const cronConfig = normalizeEmailConfigInput({
+    cron:
+      pollingIntervalSeconds && typeof pollingIntervalSeconds === "object"
+        ? pollingIntervalSeconds
+        : {},
+  }).cron;
+  const intervalMinutes = Number.parseInt(String(cronConfig?.intervalMinutes || 60), 10);
+  const safeIntervalMinutes =
+    Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 60;
+  const prompt =
+    String(cronConfig?.prompt || DEFAULT_EMAIL_CRON_PROMPT).trim() || DEFAULT_EMAIL_CRON_PROMPT;
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const result = await rpcCall(agent, "cron.add", {
+        name: `email_checkin_${integrationId}`,
+        schedule: { kind: "interval", everyMs: safeIntervalMinutes * 60 * 1000 },
+        sessionTarget: "isolated",
+        payload: {
+          kind: "agentTurn",
+          message: prompt,
+          thinking: "minimal",
+          lightContext: true,
+          timeoutSeconds: 300,
+        },
+        delivery: { mode: "none" },
+        agentId: "main",
+      });
+      return result?.id || result?.cronId || null;
+    } catch (error) {
+      if (attempt === 4) {
+        console.warn(
+          `[email-cron] failed to create cron for integration ${integrationId}: ${error?.message || error}`,
+        );
+        return null;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+  }
+}
+
+async function removeEmailCronJob(agent, cronJobId) {
+  if (!agent || !cronJobId) return;
+  try {
+    await rpcCall(agent, "cron.remove", { id: cronJobId });
+  } catch {
+    // best-effort; gateway may be unavailable during teardown
+  }
+}
+
+function extractCronJobs(result) {
+  if (Array.isArray(result)) return result;
+  if (Array.isArray(result?.jobs)) return result.jobs;
+  return [];
+}
+
+function cronJobReferencesIntegration(job, integrationId) {
+  if (!job || !integrationId) return false;
+  const idText = String(integrationId);
+  const name = String(job?.name || "");
+  if (name === `email_checkin_${idText}`) return true;
+
+  const payload = job?.payload;
+  const message = String(payload?.message || "");
+  return message.includes(idText);
+}
+
+async function findEmailCronJobIds(agent, integrationId) {
+  if (!agent || !integrationId || !["running", "warning"].includes(agent.status)) return [];
+  try {
+    const result = await rpcCall(agent, "cron.list");
+    return extractCronJobs(result)
+      .filter((job) => cronJobReferencesIntegration(job, integrationId))
+      .map((job) => String(job?.id || job?.cronId || ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function removeEmailCronJobs(agent, cronJobIds = []) {
+  const uniqueIds = [...new Set((cronJobIds || []).filter(Boolean))];
+  for (const cronJobId of uniqueIds) {
+    await removeEmailCronJob(agent, cronJobId);
+  }
+}
+
+/**
+ * Replace an integration's email cron after best-effort removal of its prior job.
+ *
+ * @param {Object} agent - Runtime target that owns the cron.
+ * @param {string} integrationId - Email integration referenced by the job.
+ * @param {string|null} previousCronJobId - Previously persisted cron id.
+ * @param {Object} pollingIntervalSeconds - Cron config; non-object input uses defaults.
+ * @returns {Promise<string|null>} New cron id, or the prior id when replacement fails.
+ */
+async function reconcileEmailCronJob(
+  agent,
+  integrationId,
+  previousCronJobId,
+  pollingIntervalSeconds,
+) {
+  if (!agent || !integrationId) return previousCronJobId || null;
+
+  if (previousCronJobId) {
+    await removeEmailCronJob(agent, previousCronJobId);
+  }
+
+  const nextCronJobId = await registerEmailCronJob(agent, integrationId, pollingIntervalSeconds);
+  if (!nextCronJobId) return previousCronJobId || null;
+
+  return nextCronJobId;
+}
+
+// WeCom activation lifecycle
+
+async function updateWecomActivationState(agentId, integrationId, activation) {
+  if (!integrationId || !activation || typeof activation !== "object") return null;
+  return integrations.updateIntegration(integrationId, agentId, null, {
+    activation,
+  });
+}
+
+/**
+ * Activate a saved WeCom integration and persist its resulting lifecycle state.
+ *
+ * Activation failures are recorded best-effort before being exposed as a gateway error.
+ *
+ * @param {Object} agent - OpenClaw runtime target.
+ * @param {string} agentId - Agent that owns the integration.
+ * @param {string} integrationId - Saved WeCom integration to activate.
+ * @returns {Promise<Object>} Integration with the latest activation state.
+ */
+async function activateWecomIntegration(agent, agentId, integrationId) {
+  const savedIntegration = await integrations.getDecryptedIntegration(integrationId, agentId);
+  if (!savedIntegration) {
+    const error = new Error("Saved WeCom integration could not be loaded for activation.");
+    error.statusCode = 500;
+    throw error;
+  }
+
+  try {
+    const outcome = await activateWecomForOpenClawAgent(agent, savedIntegration.config || {}, {
+      runContainerCommand,
+      rpcCall,
+    });
+    return (
+      (await updateWecomActivationState(agentId, integrationId, outcome.activation)) ||
+      savedIntegration
+    );
+  } catch (error) {
+    const message =
+      String(error?.message || "WeCom activation failed.")
+        .trim()
+        .replace(/\s+/g, " ") || "WeCom activation failed.";
+    await updateWecomActivationState(agentId, integrationId, {
+      lifecycleStatus: "activation_failed",
+      readiness: "error",
+      lastError: message,
+      lastVerifiedAt: "",
+    }).catch(() => null);
+    const wrapped = new Error(message);
+    wrapped.statusCode = 502;
+    throw wrapped;
+  }
+}
+
+// Credential reconciliation safety
+
+function integrationMutationCommittedError(message, cause = null, syncResults = []) {
+  const error = new Error(message, cause ? { cause } : undefined);
+  error.statusCode = 502;
+  error.code = "INTEGRATION_RUNTIME_REVOCATION_UNCONFIRMED";
+  error.committed = true;
+  error.syncResults = Array.isArray(syncResults) ? syncResults : [];
+  return error;
+}
+
+function sendIntegrationRouteError(res, error) {
+  res.status(error.statusCode || 500).json({
+    error: error.message,
+    ...(error.code ? { code: error.code } : {}),
+    ...(error.committed ? { committed: true } : {}),
+    ...(Array.isArray(error.syncResults) ? { sync_results: error.syncResults } : {}),
+  });
+}
+
+async function withIntegrationProviderStateLock(agent, _provider, operation) {
+  if (!agent?.user_id || typeof llmProviders.withProviderStateLock !== "function") {
+    throw new Error("Integration provider-state locking is unavailable");
+  }
+  return llmProviders.withProviderStateLock(agent.user_id, () =>
+    operation({ providerLockHeld: true }),
+  );
+}
+
+async function reconcileIntegrationAuth(
+  agent,
+  {
+    providerLockHeld = false,
+    extraManagedEnvNames = [],
+    committedAction = "saved",
+    request = null,
+  } = {},
+) {
+  let results;
+  try {
+    results = await syncAuthToUserAgents(agent.user_id, agent.id, {
+      providerLockHeld,
+      ...(extraManagedEnvNames.length > 0 ? { extraManagedEnvNames } : {}),
+      ...(request?.apiKey ? { apiKeyWorkspaceId: apiKeyWorkspaceId(request) } : {}),
+    });
+  } catch (error) {
+    throw integrationMutationCommittedError(
+      `Integration ${committedAction}, but runtime credential reconciliation could not be confirmed`,
+      error,
+    );
+  }
+
+  const failed = (Array.isArray(results) ? results : []).filter(
+    (result) => result?.status === "failed",
+  );
+  const unsafe = failed.filter(
+    (result) => result.runtimeStopped !== true || result.quarantinePersisted !== true,
+  );
+  if (unsafe.length > 0) {
+    throw integrationMutationCommittedError(
+      `Integration ${committedAction}, but ${unsafe.length} runtime${unsafe.length === 1 ? "" : "s"} could not be stopped and quarantined after credential reconciliation failed`,
+      null,
+      results,
+    );
+  }
+
+  return {
+    sync_results: results,
+    ...(failed.length > 0
+      ? {
+          sync_warning: `${failed.length} runtime${failed.length === 1 ? " was" : "s were"} stopped and quarantined after credential reconciliation failed`,
+        }
+      : {}),
+  };
+}
+
+async function captureIntegrationCredentialEnvState(agentId) {
+  const [integrationEnv, mcpRuntimeState] = await Promise.all([
+    integrations.getIntegrationEnvVars(agentId),
+    typeof mcpServers.getEnabledMcpRuntimeState === "function"
+      ? mcpServers.getEnabledMcpRuntimeState(agentId)
+      : Promise.resolve({ managedEnvNames: [] }),
+  ]);
+  const gatewayEnvNames = Object.keys(integrationEnv || {});
+  return {
+    gatewayEnvNames,
+    managedEnvNames: [
+      ...new Set([...gatewayEnvNames, ...(mcpRuntimeState?.managedEnvNames || [])]),
+    ],
+  };
+}
+
 // Editor floor — integration configs include sensitive credentials, so viewers
 // don't see them. Per-route GET could be relaxed to viewer in a follow-up if
 // the redacted listing turns out to be useful for read-only operators.
@@ -42,6 +318,8 @@ router.use("/agents/:id/integrations", scopeByMethod("integrations:read", "integ
 // Per-agent MCP server management reuses the same access + scope gates.
 router.use("/agents/:id/mcp-servers", requireAccessibleAgent("editor", "id"));
 router.use("/agents/:id/mcp-servers", scopeByMethod("integrations:read", "integrations:write"));
+router.use("/integrations/twitter/oauth/callback", requireSession);
+router.use("/integrations/linkedin/oauth/callback", requireSession);
 
 function base64Url(buffer) {
   return Buffer.from(buffer)
@@ -88,6 +366,13 @@ function defaultTwitterOAuthRedirectPath(agentId) {
   return `/app/agents/${encodeURIComponent(agentId)}`;
 }
 
+/**
+ * Restrict OAuth completion redirects to Nora application paths.
+ *
+ * @param {*} value - Requested post-OAuth redirect.
+ * @param {string} agentId - Agent used for the safe fallback path.
+ * @returns {string} Local `/app/` redirect path.
+ */
 function normalizeRedirectPath(value, agentId) {
   const fallback = defaultTwitterOAuthRedirectPath(agentId);
   if (typeof value !== "string") return fallback;
@@ -106,6 +391,13 @@ function appendQuery(targetPath, params = {}) {
   return `${url.pathname}${url.search}`;
 }
 
+/**
+ * Parse a provider response and surface its most useful structured error detail.
+ *
+ * @param {Object} res - Fetch response.
+ * @param {string} label - Provider operation label.
+ * @returns {Promise<Object>} Parsed JSON object, or an empty object for an empty success body.
+ */
 async function readJsonResponse(res, label) {
   const rawText = await res.text().catch(() => "");
   let data = null;
@@ -249,7 +541,10 @@ async function fetchLinkedinOAuthUser(accessToken) {
   return readJsonResponse(res, "LinkedIn user lookup");
 }
 
-async function getAgentIntegrationRuntimeTarget(agentId) {
+async function getAgentIntegrationRuntimeTarget(agentId, request = null) {
+  if (request?.apiKey) {
+    return findAgentForRequest(request, agentId);
+  }
   const agentResult = await db.query(
     `SELECT id, container_id, host, runtime_host, runtime_port, status, gateway_token,
             gateway_host_port, gateway_host, gateway_port, backend_type,
@@ -260,25 +555,41 @@ async function getAgentIntegrationRuntimeTarget(agentId) {
   return agentResult.rows[0] || null;
 }
 
-async function syncIntegrationsToAgent(agentId, { strict = false, strictHermes = false } = {}) {
-  const agent = await getAgentIntegrationRuntimeTarget(agentId);
+/**
+ * Project stored integrations into the selected runtime and optionally surface sync failures.
+ *
+ * Strict modes surface Hermes manifest build/install failures or OpenClaw
+ * manifest-delivery failures. OpenClaw gateway env projection remains best effort.
+ *
+ * @param {string} agentId - Agent whose integration state should be projected.
+ * @param {Object} [options={}] - Failure policy, prior env names, and request authorization context.
+ * @returns {Promise<Object|null>} Runtime family and manifest sync outcome.
+ */
+async function syncIntegrationsToAgent(
+  agentId,
+  { strict = false, strictHermes = false, previousEnvNames = [], request = null } = {},
+) {
+  const agent = await getAgentIntegrationRuntimeTarget(agentId, request);
   if (!agent) return null;
 
   if (resolveAgentRuntimeFamily(agent) === "hermes") {
-    const syncData = await integrations.getIntegrationsForSync(agentId).catch(() => []);
-    const syncResults = await syncAuthToUserAgents(agent.user_id, agent.id);
-    const failedResult = Array.isArray(syncResults)
-      ? syncResults.find((entry) => entry?.agentId === agent.id && entry?.status === "failed")
-      : null;
-
-    if (strictHermes && failedResult) {
-      const error = new Error(
-        failedResult.error || "Failed to sync Hermes integrations to runtime",
-      );
-      error.statusCode = 502;
-      throw error;
+    let syncData;
+    try {
+      syncData = await integrations.getIntegrationsForSync(agentId);
+    } catch (error) {
+      const manifestError = error?.message || "Failed to build Hermes integration manifest";
+      if (strictHermes) {
+        const strictError = new Error(manifestError, { cause: error });
+        strictError.statusCode = error?.statusCode || 502;
+        strictError.code = error?.code || "HERMES_INTEGRATION_MANIFEST_FAILED";
+        throw strictError;
+      }
+      return {
+        runtimeFamily: "hermes",
+        manifestStatus: "failed",
+        manifestError,
+      };
     }
-
     let manifestStatus = "skipped";
     let manifestError = null;
     if (agent.container_id && ["running", "warning"].includes(agent.status)) {
@@ -302,15 +613,19 @@ async function syncIntegrationsToAgent(agentId, { strict = false, strictHermes =
 
     return {
       runtimeFamily: "hermes",
-      syncResults,
       manifestStatus,
       ...(manifestError ? { manifestError } : {}),
     };
   }
 
+  const activeRuntime = ["running", "warning"].includes(agent.status);
+  if (!activeRuntime) {
+    return { runtimeFamily: resolveAgentRuntimeFamily(agent), manifestStatus: "skipped" };
+  }
+
   const runtimeUrl = runtimeUrlForAgent(agent, "/integrations/sync");
   if (!runtimeUrl) {
-    if (strict && ["running", "warning"].includes(agent.status)) {
+    if (strict) {
       const error = new Error("Agent runtime not yet provisioned");
       error.statusCode = 409;
       throw error;
@@ -354,13 +669,22 @@ async function syncIntegrationsToAgent(agentId, { strict = false, strictHermes =
   // this block deliberately omits the error message and env contents — the
   // payload may include credentials, and an echoing runtime error would leak
   // them into clear-text logs. Status code (success/failure) is enough.
-  if (agent.status === "running") {
+  if (activeRuntime) {
     let envCount = 0;
+    let patchCount = 0;
     let pushOk = false;
     try {
       const envVars = await integrations.getIntegrationEnvVars(agentId);
       envCount = Object.keys(envVars).length;
-      if (envCount > 0) {
+      const envPatch = Object.fromEntries(
+        (Array.isArray(previousEnvNames) ? previousEnvNames : [])
+          .map((name) => String(name || "").trim())
+          .filter(Boolean)
+          .map((name) => [name, null]),
+      );
+      Object.assign(envPatch, envVars);
+      patchCount = Object.keys(envPatch).length;
+      if (patchCount > 0) {
         const configSnapshot = await rpcCall(agent, "config.get");
         const baseHash =
           typeof configSnapshot?.hash === "string" && configSnapshot.hash.trim()
@@ -368,7 +692,7 @@ async function syncIntegrationsToAgent(agentId, { strict = false, strictHermes =
             : null;
         if (!baseHash) throw new Error("runtime config hash unavailable");
         await rpcCall(agent, "config.patch", {
-          raw: JSON.stringify({ env: envVars }),
+          raw: JSON.stringify({ env: envPatch }),
           baseHash,
         });
         pushOk = true;
@@ -378,9 +702,9 @@ async function syncIntegrationsToAgent(agentId, { strict = false, strictHermes =
     } catch {
       pushOk = false;
     }
-    if (pushOk && envCount > 0) {
+    if (pushOk && patchCount > 0) {
       console.log(
-        `[sync-integrations] Pushed ${envCount} integration env var(s) to agent ${agentId} gateway`,
+        `[sync-integrations] Reconciled ${envCount} current integration env var(s) across ${patchCount} managed key(s) for agent ${agentId} gateway`,
       );
     } else if (!pushOk) {
       console.warn(`[sync-integrations] Gateway env push failed for agent ${agentId}`);
@@ -394,8 +718,63 @@ async function syncIntegrationsToAgent(agentId, { strict = false, strictHermes =
   };
 }
 
-async function invokeAgentIntegrationTool(agentId, payload = {}) {
-  const agent = await getAgentIntegrationRuntimeTarget(agentId);
+async function replaceOAuthIntegrationAndReconcile(agent, provider, accessToken, config, request) {
+  if (!agent) {
+    const error = new Error("Agent not found");
+    error.statusCode = 404;
+    throw error;
+  }
+  const runtimeFamily = resolveAgentRuntimeFamily(agent);
+  let result;
+  await withIntegrationProviderStateLock(agent, provider, async ({ providerLockHeld }) => {
+    let mutationCommitted = false;
+    try {
+      const previousEnvState = await captureIntegrationCredentialEnvState(agent.id);
+      result = await integrations.replaceIntegration(agent.id, provider, accessToken, config);
+      mutationCommitted = true;
+      if (runtimeFamily === "hermes") {
+        await syncIntegrationsToAgent(agent.id, {
+          strictHermes: true,
+          previousEnvNames: previousEnvState.gatewayEnvNames,
+          request,
+        });
+      } else {
+        await syncIntegrationsToAgent(agent.id, {
+          strict: true,
+          previousEnvNames: previousEnvState.gatewayEnvNames,
+          request,
+        });
+      }
+      await reconcileIntegrationAuth(agent, {
+        providerLockHeld,
+        extraManagedEnvNames: previousEnvState.managedEnvNames,
+        committedAction: "saved",
+        request,
+      });
+    } catch (error) {
+      if (mutationCommitted && !error?.committed) {
+        throw integrationMutationCommittedError(
+          "Integration saved, but runtime reconciliation could not be confirmed",
+          error,
+          error?.syncResults,
+        );
+      }
+      throw error;
+    }
+  });
+  return result;
+}
+
+/**
+ * Forward an integration tool invocation only to a running or warning non-Hermes runtime.
+ *
+ * @param {string} agentId - Target agent.
+ * @param {Object} [payload={}] - Runtime tool name and input.
+ * @param {Object|null} [request=null] - Optional API-key request used to scope agent access.
+ * @returns {Promise<Object>} Runtime invocation result.
+ */
+async function invokeAgentIntegrationTool(agentId, payload = {}, request = null) {
+  const agent = await getAgentIntegrationRuntimeTarget(agentId, request);
   if (!agent) {
     const error = new Error("Agent not found");
     error.statusCode = 404;
@@ -680,8 +1059,8 @@ router.get("/integrations/linkedin/oauth/callback", async (req, res) => {
       default_username: defaultUsername,
     };
 
-    await integrations.replaceIntegration(oauthState.agent_id, "linkedin", accessToken, config);
-    await syncIntegrationsToAgent(oauthState.agent_id, { strict: true });
+    const agent = await getAgentIntegrationRuntimeTarget(oauthState.agent_id, req);
+    await replaceOAuthIntegrationAndReconcile(agent, "linkedin", accessToken, config, req);
 
     return res.redirect(
       appendQuery(redirectPath, {
@@ -698,190 +1077,74 @@ router.get("/integrations/linkedin/oauth/callback", async (req, res) => {
         integration: "linkedin",
         status: "error",
         error: e.message || "LinkedIn OAuth failed",
+        ...(e.committed ? { committed: "true" } : {}),
       }),
     );
   }
 });
 
-async function registerEmailCronJob(agent, integrationId, pollingIntervalSeconds) {
-  if (!agent || !["running", "warning"].includes(agent.status)) return null;
-  const cronConfig = normalizeEmailConfigInput({
-    cron:
-      pollingIntervalSeconds && typeof pollingIntervalSeconds === "object"
-        ? pollingIntervalSeconds
-        : {},
-  }).cron;
-  const intervalMinutes = Number.parseInt(String(cronConfig?.intervalMinutes || 60), 10);
-  const safeIntervalMinutes =
-    Number.isFinite(intervalMinutes) && intervalMinutes > 0 ? intervalMinutes : 60;
-  const prompt =
-    String(cronConfig?.prompt || DEFAULT_EMAIL_CRON_PROMPT).trim() || DEFAULT_EMAIL_CRON_PROMPT;
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      const result = await rpcCall(agent, "cron.add", {
-        name: `email_checkin_${integrationId}`,
-        schedule: { kind: "interval", everyMs: safeIntervalMinutes * 60 * 1000 },
-        sessionTarget: "isolated",
-        payload: {
-          kind: "agentTurn",
-          message: prompt,
-          thinking: "minimal",
-          lightContext: true,
-          timeoutSeconds: 300,
-        },
-        delivery: { mode: "none" },
-        agentId: "main",
-      });
-      return result?.id || result?.cronId || null;
-    } catch (error) {
-      if (attempt === 4) {
-        console.warn(
-          `[email-cron] failed to create cron for integration ${integrationId}: ${error?.message || error}`,
-        );
-        return null;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
-    }
-  }
-}
-
-async function removeEmailCronJob(agent, cronJobId) {
-  if (!agent || !cronJobId) return;
-  try {
-    await rpcCall(agent, "cron.remove", { id: cronJobId });
-  } catch {
-    // best-effort; gateway may be unavailable during teardown
-  }
-}
-
-function extractCronJobs(result) {
-  if (Array.isArray(result)) return result;
-  if (Array.isArray(result?.jobs)) return result.jobs;
-  return [];
-}
-
-function cronJobReferencesIntegration(job, integrationId) {
-  if (!job || !integrationId) return false;
-  const idText = String(integrationId);
-  const name = String(job?.name || "");
-  if (name === `email_checkin_${idText}`) return true;
-
-  const payload = job?.payload;
-  const message = String(payload?.message || "");
-  return message.includes(idText);
-}
-
-async function findEmailCronJobIds(agent, integrationId) {
-  if (!agent || !integrationId || !["running", "warning"].includes(agent.status)) return [];
-  try {
-    const result = await rpcCall(agent, "cron.list");
-    return extractCronJobs(result)
-      .filter((job) => cronJobReferencesIntegration(job, integrationId))
-      .map((job) => String(job?.id || job?.cronId || ""))
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-async function removeEmailCronJobs(agent, cronJobIds = []) {
-  const uniqueIds = [...new Set((cronJobIds || []).filter(Boolean))];
-  for (const cronJobId of uniqueIds) {
-    await removeEmailCronJob(agent, cronJobId);
-  }
-}
-
-async function reconcileEmailCronJob(
-  agent,
-  integrationId,
-  previousCronJobId,
-  pollingIntervalSeconds,
-) {
-  if (!agent || !integrationId) return previousCronJobId || null;
-
-  if (previousCronJobId) {
-    await removeEmailCronJob(agent, previousCronJobId);
-  }
-
-  const nextCronJobId = await registerEmailCronJob(agent, integrationId, pollingIntervalSeconds);
-  if (!nextCronJobId) return previousCronJobId || null;
-
-  return nextCronJobId;
-}
-
-async function updateWecomActivationState(agentId, integrationId, activation) {
-  if (!integrationId || !activation || typeof activation !== "object") return null;
-  return integrations.updateIntegration(integrationId, agentId, null, {
-    activation,
-  });
-}
-
-async function activateWecomIntegration(agent, agentId, integrationId) {
-  const savedIntegration = await integrations.getDecryptedIntegration(integrationId, agentId);
-  if (!savedIntegration) {
-    const error = new Error("Saved WeCom integration could not be loaded for activation.");
-    error.statusCode = 500;
-    throw error;
-  }
-
-  try {
-    const outcome = await activateWecomForOpenClawAgent(agent, savedIntegration.config || {}, {
-      runContainerCommand,
-      rpcCall,
-    });
-    return (
-      (await updateWecomActivationState(agentId, integrationId, outcome.activation)) ||
-      savedIntegration
-    );
-  } catch (error) {
-    const message =
-      String(error?.message || "WeCom activation failed.")
-        .trim()
-        .replace(/\s+/g, " ") || "WeCom activation failed.";
-    await updateWecomActivationState(agentId, integrationId, {
-      lifecycleStatus: "activation_failed",
-      readiness: "error",
-      lastError: message,
-      lastVerifiedAt: "",
-    }).catch(() => null);
-    const wrapped = new Error(message);
-    wrapped.statusCode = 502;
-    throw wrapped;
-  }
-}
-
 router.post("/agents/:id/integrations", async (req, res) => {
   try {
     const { provider, token, config } = req.body;
     if (!provider) return res.status(400).json({ error: "Provider required" });
-    const agent = await getAgentIntegrationRuntimeTarget(req.params.id);
+    const agent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
     const runtimeFamily = resolveAgentRuntimeFamily(agent || {});
-    let result = SINGLETON_INTEGRATION_PROVIDERS.has(String(provider))
-      ? await integrations.replaceIntegration(req.params.id, provider, token, config)
-      : await integrations.connectIntegration(req.params.id, provider, token, config);
+    let result;
+    let authSync = null;
+    await withIntegrationProviderStateLock(agent, provider, async ({ providerLockHeld }) => {
+      let mutationCommitted = false;
+      try {
+        const previousEnvState = await captureIntegrationCredentialEnvState(req.params.id);
+        result = SINGLETON_INTEGRATION_PROVIDERS.has(String(provider))
+          ? await integrations.replaceIntegration(req.params.id, provider, token, config)
+          : await integrations.connectIntegration(req.params.id, provider, token, config);
+        mutationCommitted = true;
 
-    if (provider === "wecom" && runtimeFamily === "openclaw" && result?.id) {
-      const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id);
-      result = await activateWecomIntegration(latestAgent || agent, req.params.id, result.id);
-    }
+        if (provider === "wecom" && runtimeFamily === "openclaw" && result?.id) {
+          const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
+          result = await activateWecomIntegration(latestAgent || agent, req.params.id, result.id);
+        }
 
-    if (runtimeFamily === "hermes") {
-      await syncIntegrationsToAgent(req.params.id, { strictHermes: true });
-    } else {
-      await syncIntegrationsToAgent(req.params.id, { strict: true });
-      // Only LLM-backed integrations affect OpenClaw auth-profiles.json.
-      // Non-LLM integrations are already pushed through integration sync and
-      // gateway env RPC; restarting here can race a following sync request.
-      if (integrations.integrationProviderAffectsLlmAuth(provider)) {
-        syncAuthToUserAgents(req.user.id, req.params.id).catch(() => {});
+        if (runtimeFamily === "hermes") {
+          await syncIntegrationsToAgent(req.params.id, {
+            strictHermes: true,
+            previousEnvNames: previousEnvState.gatewayEnvNames,
+            request: req,
+          });
+        } else {
+          await syncIntegrationsToAgent(req.params.id, {
+            strict: true,
+            previousEnvNames: previousEnvState.gatewayEnvNames,
+            request: req,
+          });
+        }
+        authSync = await reconcileIntegrationAuth(agent, {
+          providerLockHeld,
+          extraManagedEnvNames: previousEnvState.managedEnvNames,
+          committedAction: "saved",
+          request: req,
+        });
+      } catch (error) {
+        if (mutationCommitted && !error?.committed) {
+          throw integrationMutationCommittedError(
+            "Integration saved, but runtime reconciliation could not be confirmed",
+            error,
+            error?.syncResults,
+          );
+        }
+        throw error;
       }
+    });
+
+    if (authSync && result && typeof result === "object") {
+      result = { ...result, ...authSync };
     }
 
     if (provider === "email" && result?.id) {
       const normalizedConfig = normalizeEmailConfigInput(config || {});
       const cronConfig = normalizedConfig?.cron || {};
-      const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id);
+      const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
       const cronJobId = cronConfig.enabled
         ? await registerEmailCronJob(latestAgent || agent, result.id, cronConfig)
         : null;
@@ -891,15 +1154,28 @@ router.post("/agents/:id/integrations", async (req, res) => {
       }
     }
 
+    // Auto-verify the stored credentials so broken keys surface at save time
+    // instead of at first agent use. Non-blocking: the row is already stored
+    // and synced — the outcome rides along for the UI to display.
+    if (result?.id) {
+      try {
+        const connectivity = await integrations.testIntegration(result.id, req.params.id);
+        result = { ...result, connectivity };
+      } catch (testError) {
+        result = { ...result, connectivity: { success: false, error: testError.message } };
+      }
+    }
+
     res.json(result);
   } catch (e) {
-    res.status(e.statusCode || 500).json({ error: e.message });
+    sendIntegrationRouteError(res, e);
   }
 });
 
 router.delete("/agents/:id/integrations/:iid", async (req, res) => {
   try {
-    const agent = await getAgentIntegrationRuntimeTarget(req.params.id);
+    const agent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
     const runtimeFamily = resolveAgentRuntimeFamily(agent || {});
     const existing = await integrations.listIntegrations(req.params.id);
     const current = Array.isArray(existing)
@@ -917,16 +1193,49 @@ router.delete("/agents/:id/integrations/:iid", async (req, res) => {
       await deactivateWecomForOpenClawAgent(agent, { rpcCall, runContainerCommand });
     }
 
-    const removed = await integrations.removeIntegration(req.params.iid, req.params.id);
+    let removed;
+    let authSync = null;
+    await withIntegrationProviderStateLock(
+      agent,
+      current?.provider,
+      async ({ providerLockHeld }) => {
+        let mutationCommitted = false;
+        try {
+          const previousEnvState = await captureIntegrationCredentialEnvState(req.params.id);
+          removed = await integrations.removeIntegration(req.params.iid, req.params.id);
+          mutationCommitted = true;
 
-    if (runtimeFamily === "hermes") {
-      await syncIntegrationsToAgent(req.params.id, { strictHermes: true });
-    } else {
-      await syncIntegrationsToAgent(req.params.id, { strict: true });
-      if (integrations.integrationProviderAffectsLlmAuth(removed?.provider)) {
-        syncAuthToUserAgents(req.user.id, req.params.id).catch(() => {});
-      }
-    }
+          if (runtimeFamily === "hermes") {
+            await syncIntegrationsToAgent(req.params.id, {
+              strictHermes: true,
+              previousEnvNames: previousEnvState.gatewayEnvNames,
+              request: req,
+            });
+          } else {
+            await syncIntegrationsToAgent(req.params.id, {
+              strict: true,
+              previousEnvNames: previousEnvState.gatewayEnvNames,
+              request: req,
+            });
+          }
+          authSync = await reconcileIntegrationAuth(agent, {
+            providerLockHeld,
+            extraManagedEnvNames: previousEnvState.managedEnvNames,
+            committedAction: "deleted",
+            request: req,
+          });
+        } catch (error) {
+          if (mutationCommitted && !error?.committed) {
+            throw integrationMutationCommittedError(
+              "Integration deleted, but runtime credential revocation could not be confirmed",
+              error,
+              error?.syncResults,
+            );
+          }
+          throw error;
+        }
+      },
+    );
 
     const fallbackCronJobId = removed?.cron_job_id || linkedCronJobId;
     const fallbackRuntimeCronJobIds =
@@ -935,15 +1244,16 @@ router.delete("/agents/:id/integrations/:iid", async (req, res) => {
       await removeEmailCronJobs(agent, [fallbackCronJobId, ...fallbackRuntimeCronJobIds]);
     }
 
-    res.json({ success: true });
+    res.json({ success: true, ...(authSync || {}) });
   } catch (e) {
-    res.status(e.statusCode || 500).json({ error: e.message });
+    sendIntegrationRouteError(res, e);
   }
 });
 
 router.put("/agents/:id/integrations/:iid", async (req, res) => {
   try {
-    const agent = await getAgentIntegrationRuntimeTarget(req.params.id);
+    const agent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
     const runtimeFamily = resolveAgentRuntimeFamily(agent || {});
     const existing = await integrations.listIntegrations(req.params.id);
     const current = Array.isArray(existing)
@@ -951,30 +1261,67 @@ router.put("/agents/:id/integrations/:iid", async (req, res) => {
       : null;
     if (!current) return res.status(404).json({ error: "Integration not found" });
 
-    let result = await integrations.updateIntegration(
-      req.params.iid,
-      req.params.id,
-      req.body?.token,
-      req.body?.config || {},
+    let result;
+    let authSync = null;
+    await withIntegrationProviderStateLock(
+      agent,
+      current?.provider,
+      async ({ providerLockHeld }) => {
+        let mutationCommitted = false;
+        try {
+          const previousEnvState = await captureIntegrationCredentialEnvState(req.params.id);
+          result = await integrations.updateIntegration(
+            req.params.iid,
+            req.params.id,
+            req.body?.token,
+            req.body?.config || {},
+          );
+          mutationCommitted = true;
+
+          if (result?.provider === "wecom" && runtimeFamily === "openclaw") {
+            const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
+            result = await activateWecomIntegration(latestAgent || agent, req.params.id, result.id);
+          }
+
+          if (runtimeFamily === "hermes") {
+            await syncIntegrationsToAgent(req.params.id, {
+              strictHermes: true,
+              previousEnvNames: previousEnvState.gatewayEnvNames,
+              request: req,
+            });
+          } else {
+            await syncIntegrationsToAgent(req.params.id, {
+              strict: true,
+              previousEnvNames: previousEnvState.gatewayEnvNames,
+              request: req,
+            });
+          }
+          authSync = await reconcileIntegrationAuth(agent, {
+            providerLockHeld,
+            extraManagedEnvNames: previousEnvState.managedEnvNames,
+            committedAction: "updated",
+            request: req,
+          });
+        } catch (error) {
+          if (mutationCommitted && !error?.committed) {
+            throw integrationMutationCommittedError(
+              "Integration updated, but runtime credential reconciliation could not be confirmed",
+              error,
+              error?.syncResults,
+            );
+          }
+          throw error;
+        }
+      },
     );
 
-    if (result?.provider === "wecom" && runtimeFamily === "openclaw") {
-      const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id);
-      result = await activateWecomIntegration(latestAgent || agent, req.params.id, result.id);
-    }
-
-    if (runtimeFamily === "hermes") {
-      await syncIntegrationsToAgent(req.params.id, { strictHermes: true });
-    } else {
-      await syncIntegrationsToAgent(req.params.id, { strict: true });
-      if (integrations.integrationProviderAffectsLlmAuth(result?.provider)) {
-        syncAuthToUserAgents(req.user.id, req.params.id).catch(() => {});
-      }
+    if (authSync && result && typeof result === "object") {
+      result = { ...result, ...authSync };
     }
 
     if (result?.provider === "email") {
       const previousCronJobId = current?.cron_job_id || null;
-      const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id);
+      const latestAgent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
       const runtimeCronJobIds = await findEmailCronJobIds(latestAgent || agent, result.id);
       const cronConfig = normalizeEmailConfigInput(req.body?.config || {}).cron || {};
       if (cronConfig.enabled) {
@@ -1000,7 +1347,7 @@ router.put("/agents/:id/integrations/:iid", async (req, res) => {
 
     res.json(result);
   } catch (e) {
-    res.status(e.statusCode || 500).json({ error: e.message });
+    sendIntegrationRouteError(res, e);
   }
 });
 
@@ -1100,8 +1447,8 @@ router.get("/integrations/twitter/oauth/callback", async (req, res) => {
       default_username: defaultUsername,
     };
 
-    await integrations.replaceIntegration(oauthState.agent_id, "twitter", accessToken, config);
-    await syncIntegrationsToAgent(oauthState.agent_id, { strict: true });
+    const agent = await getAgentIntegrationRuntimeTarget(oauthState.agent_id, req);
+    await replaceOAuthIntegrationAndReconcile(agent, "twitter", accessToken, config, req);
 
     return res.redirect(
       appendQuery(redirectPath, {
@@ -1118,6 +1465,7 @@ router.get("/integrations/twitter/oauth/callback", async (req, res) => {
         integration: "twitter",
         status: "error",
         error: e.message || "Twitter/X OAuth failed",
+        ...(e.committed ? { committed: "true" } : {}),
       }),
     );
   }
@@ -1125,7 +1473,7 @@ router.get("/integrations/twitter/oauth/callback", async (req, res) => {
 
 router.post("/agents/:id/integrations/:iid/test", async (req, res) => {
   try {
-    const agent = await getAgentIntegrationRuntimeTarget(req.params.id);
+    const agent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
     const runtimeFamily = resolveAgentRuntimeFamily(agent || {});
     const existing = await integrations.listIntegrations(req.params.id);
     const current = Array.isArray(existing)
@@ -1197,17 +1545,26 @@ router.post("/agents/:id/integrations/tools/invoke", async (req, res) => {
     // effort: a transient sync failure shouldn't block tool invocations
     // whose providers don't require a refresh.
     try {
-      await syncIntegrationsToAgent(req.params.id, { strict: false });
+      const agent = await getAgentIntegrationRuntimeTarget(req.params.id, req);
+      if (agent) {
+        await withIntegrationProviderStateLock(agent, null, () =>
+          syncIntegrationsToAgent(req.params.id, { strict: false, request: req }),
+        );
+      }
     } catch (syncError) {
       console.warn(
         `[integrations/tools/invoke] pre-invoke sync failed for agent ${req.params.id}: ${syncError?.message ?? syncError}`,
       );
     }
 
-    const result = await invokeAgentIntegrationTool(req.params.id, {
-      toolName,
-      input,
-    });
+    const result = await invokeAgentIntegrationTool(
+      req.params.id,
+      {
+        toolName,
+        input,
+      },
+      req,
+    );
     res.json(result);
   } catch (e) {
     res.status(e.statusCode || 500).json({ error: e.message });

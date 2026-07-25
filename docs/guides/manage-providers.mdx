@@ -40,7 +40,7 @@ Nora supports the following LLM providers:
 </Note>
 
 <Note>
-  Nora also ships a built-in **Demo** provider (`Demo (built-in, no key required)`) that needs no API key. It runs a deterministic stub served by the control plane itself (model `nora-demo-1`), so a fresh install can deploy a working agent and see a chat round-trip before any real provider key is added. Add it with `POST /api/llm-providers` and a body of `{"provider":"demo"}` (no key), or use the **Try the demo agent — no API key** button in the first-run flow. Replace it with a real provider key when you are ready to run production agents.
+  Nora also ships a built-in **Demo** provider (`Demo (built-in, no key required)`) that needs no API key. It runs a deterministic stub served by the control plane itself (model `nora-demo-1`). On installations with the local Docker target enabled, use **Launch local Docker demo — no API key** in the first-run flow; Nora creates the provider and demo agent atomically. The lower-level `POST /api/llm-providers` request with `{"provider":"demo"}` only creates the provider and does not make the one-click Docker activation available on Kubernetes-only deployments. Replace the demo with a real provider before production workloads.
 </Note>
 
 ## Add a provider key

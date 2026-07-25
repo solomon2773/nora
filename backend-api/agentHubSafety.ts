@@ -24,6 +24,13 @@ function pushIssue(issues, issue) {
   issues.push(issue);
 }
 
+/**
+ * Scan normalized template and memory files for sensitive paths and
+ * high-confidence secret material, returning at most ten publish blockers.
+ *
+ * @param {Object} [rawPayload={}] - Template payload proposed for publication.
+ * @returns {Array} Secret-scan issues safe to present to the publisher.
+ */
 function scanTemplatePayloadForSecrets(rawPayload = {}) {
   const payload = normalizeTemplatePayload(rawPayload);
   const issues = [];

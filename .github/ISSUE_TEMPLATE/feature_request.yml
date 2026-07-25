@@ -1,7 +1,7 @@
 name: Feature request
 description: Suggest a new feature, enhancement, or backend integration for Nora.
 title: "[feature] "
-labels: ["enhancement", "triage"]
+labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
@@ -30,6 +30,18 @@ body:
     attributes:
       label: Alternatives considered
       description: What workarounds exist today, and why are they insufficient?
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Contribution interest
+      description: Would you like to help implement this after the direction is agreed?
+      options:
+        - I can open a pull request
+        - I can help test or document it
+        - I am proposing the idea only
+    validations:
+      required: true
 
   - type: dropdown
     id: area

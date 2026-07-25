@@ -4,7 +4,8 @@ const {
   extractTemplateDefaultsFromSnapshot,
   extractTemplatePayloadFromSnapshot,
 } = require("./agentPayloads");
-const { isKnownBackend, normalizeBackendName } = require("../agent-runtime/lib/backendCatalog");
+const { normalizeBackendName } = require("../agent-runtime/lib/backendCatalog");
+const { parseSandboxProfile } = require("./agentRuntimeFields");
 
 function decodeMaybeString(value) {
   if (typeof value === "string") {
@@ -68,20 +69,13 @@ function normalizePositiveInt(value, fallback, { min = 1, max = 99999 } = {}) {
 }
 
 function normalizeSandbox(value, fallback = "standard") {
-  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (normalized === "nemoclaw") return "nemoclaw";
-  if (normalized === "standard") return "standard";
-  return fallback === "nemoclaw" ? "nemoclaw" : "standard";
+  return parseSandboxProfile(value) || parseSandboxProfile(fallback) || "standard";
 }
 
 function normalizeBackend(value, fallback = null) {
-  if (isKnownBackend(value)) {
-    return normalizeBackendName(value);
-  }
-  if (isKnownBackend(fallback)) {
-    return normalizeBackendName(fallback);
-  }
-  return null;
+  const candidate = String(value ?? "").trim() !== "" ? value : fallback;
+  if (String(candidate ?? "").trim() === "") return null;
+  return normalizeBackendName(candidate);
 }
 
 function normalizeImage(value, fallback = null) {
@@ -91,6 +85,14 @@ function normalizeImage(value, fallback = null) {
   return normalized || null;
 }
 
+/**
+ * Normalize editable file input into decoded path/content entries, falling
+ * back to the existing files when the field is not an array.
+ *
+ * @param {Array} value - Requested editable files.
+ * @param {Array} [fallbackFiles=[]] - Existing normalized payload files.
+ * @returns {Array} Editable text file entries with non-empty paths.
+ */
 function normalizeEditableFiles(value, fallbackFiles = []) {
   if (!Array.isArray(value)) return fallbackFiles;
 
@@ -112,6 +114,16 @@ function normalizeEditableFiles(value, fallbackFiles = []) {
     .filter((entry) => entry.path.trim());
 }
 
+/**
+ * Build synchronized listing and snapshot updates while preserving protected
+ * template identity fields unless the caller explicitly allows changing them.
+ *
+ * @param {Object} snapshot - Existing template snapshot.
+ * @param {Object} listing - Existing Agent Hub listing.
+ * @param {Object} [input={}] - Requested metadata, defaults, and file edits.
+ * @param {Object} [options={}] - Source and protected-field permissions.
+ * @returns {Object} Normalized listing and snapshot update payloads.
+ */
 function buildAgentHubTemplateUpdate(snapshot, listing, input = {}, options = {}) {
   const config = decodeMaybeString(snapshot?.config);
   const currentPayload = extractTemplatePayloadFromSnapshot(snapshot, {

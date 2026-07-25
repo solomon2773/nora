@@ -18,8 +18,11 @@ const { requireAdmin, requireSession } = require("../middleware/auth");
 
 const router = express.Router();
 
-router.use(requireSession);
-router.use(requireAdmin);
+// Scope the guards to this router's actual prefixes so an unmatched request
+// such as /admin/doctor can continue to the main admin router. Mount-wide
+// guards here previously intercepted every /admin request before route match.
+router.use("/workspaces", requireSession, requireAdmin);
+router.use("/members", requireSession, requireAdmin);
 
 router.get("/workspaces", async (_req, res, next) => {
   try {

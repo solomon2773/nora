@@ -5,4 +5,6 @@
 **/playwright-report/**
 **/test-results/**
 **/*.tsbuildinfo
-
+# Helm Go templates are validated by helm lint/template and kubeconform; plain
+# YAML Prettier cannot parse the embedded template actions.
+infra/helm/**/templates/**

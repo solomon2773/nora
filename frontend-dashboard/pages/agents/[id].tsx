@@ -13,6 +13,7 @@ import SettingsTab from "../../components/agents/SettingsTab";
 import NemoClawTab from "../../components/agents/NemoClawTab";
 import AgentFilesTab from "../../components/agents/AgentFilesTab";
 import BackupsTab from "../../components/agents/BackupsTab";
+import SchedulesTab from "../../components/agents/SchedulesTab";
 import StatusBadge from "../../components/agents/StatusBadge";
 import { useToast } from "../../components/Toast";
 import { fetchWithAuth } from "../../lib/api";
@@ -757,6 +758,8 @@ export default function AgentDetail() {
               agentContainerId={agent.container_id}
             />
           )}
+
+          {activeTab === "schedules" && <SchedulesTab agentId={id} />}
 
           {activeTab === "backups" && <BackupsTab agentId={id} />}
 

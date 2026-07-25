@@ -128,6 +128,13 @@ function normalizeRequirements(openClaw = null) {
   };
 }
 
+/**
+ * Parse skill Markdown frontmatter for OpenClaw requirements while preserving
+ * raw README content when frontmatter parsing fails.
+ *
+ * @param {string} [readme=""] - Skill Markdown content.
+ * @returns {Object} Clean README text and normalized runtime requirements.
+ */
 function parseSkillMarkdown(readme = "") {
   const raw = typeof readme === "string" ? readme : "";
   if (!raw.trim()) {
@@ -157,7 +164,9 @@ function normalizeSkillSummary(item = {}) {
   const source =
     item && typeof item === "object" && item.skill && typeof item.skill === "object"
       ? item.skill
-      : item;
+      : item && typeof item === "object"
+        ? item
+        : {};
 
   const slug = normalizeText(source.slug || source.installSlug || source.pagePath || source.id);
   if (!slug) return null;
@@ -272,6 +281,14 @@ async function parseJsonResponse(response, fallbackErrorMessage) {
   }
 }
 
+// Registry discovery and transport
+
+/**
+ * Discover the registry API base URL, falling back to the public ClawHub origin
+ * on network, status, or discovery-shape failures.
+ *
+ * @returns {Promise<string>} Registry base URL.
+ */
 async function fetchRegistryDiscoveryBaseUrl() {
   let response;
   try {
@@ -291,6 +308,15 @@ async function fetchRegistryDiscoveryBaseUrl() {
   return pickDiscoveryBaseUrl(payload) || DEFAULT_CLAWHUB_BASE_URL;
 }
 
+/**
+ * Fetch registry JSON through the discovered base URL and translate transport,
+ * status, and parse failures into stable ClawHub errors. With `allowNotFound`,
+ * transport failures and HTTP 404 responses both map to not-found.
+ *
+ * @param {string} pathname - Registry-relative path.
+ * @param {Object} [options={}] - Optional not-found mapping behavior.
+ * @returns {Promise<Object>} Parsed registry response.
+ */
 async function fetchRegistryJson(pathname, { allowNotFound = false } = {}) {
   const baseUrl = ensureTrailingSlash(await fetchRegistryDiscoveryBaseUrl());
   const url = new URL(pathname.replace(/^\/+/, ""), baseUrl);
@@ -345,6 +371,8 @@ async function fetchRegistryText(pathname, { allowNotFound = false } = {}) {
   return readResponseText(response);
 }
 
+// Public skill queries
+
 async function listSkills({ limit = 20, cursor = null } = {}) {
   const params = new URLSearchParams();
   params.set("limit", String(limit));
@@ -363,6 +391,13 @@ async function searchSkills({ q, limit = 20 } = {}) {
   return normalizeSkillListPayload(payload);
 }
 
+/**
+ * Load skill metadata and SKILL.md content, then merge their normalized
+ * requirements; registry transport failures also surface as not-found.
+ *
+ * @param {string} slug - ClawHub skill slug.
+ * @returns {Promise<Object>} Normalized skill detail and README.
+ */
 async function getSkillDetail(slug) {
   const normalizedSlug = normalizeText(slug);
   if (!normalizedSlug) {

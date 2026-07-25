@@ -28,11 +28,7 @@ function formatTimestamp(value) {
 function homeChannelLabel(homeChannel) {
   if (!homeChannel || typeof homeChannel !== "object") return null;
   return (
-    homeChannel.name ||
-    homeChannel.display_name ||
-    homeChannel.id ||
-    homeChannel.channel_id ||
-    null
+    homeChannel.name || homeChannel.display_name || homeChannel.id || homeChannel.channel_id || null
   );
 }
 
@@ -132,7 +128,7 @@ export default function HermesChannelsPanel({ agentId }) {
     return new Set(
       channels
         .filter((channel) => channel?.configured && !channel?.readOnly)
-        .map((channel) => channel.type)
+        .map((channel) => channel.type),
     );
   }, [channels]);
 
@@ -141,8 +137,7 @@ export default function HermesChannelsPanel({ agentId }) {
   }, [availableTypes, configuredTypes]);
 
   const activeDefinition =
-    availableTypes.find((type) => type.type === selectedType || type.id === selectedType) ||
-    null;
+    availableTypes.find((type) => type.type === selectedType || type.id === selectedType) || null;
 
   function closeEditor() {
     setShowEditor(false);
@@ -157,9 +152,7 @@ export default function HermesChannelsPanel({ agentId }) {
     setEditorMode("create");
     setSelectedType(nextType);
     setFormValues(
-      initialValuesForDefinition(
-        availableTypes.find((type) => type.type === nextType) || null
-      )
+      initialValuesForDefinition(availableTypes.find((type) => type.type === nextType) || null),
     );
     setShowEditor(true);
   }
@@ -193,7 +186,7 @@ export default function HermesChannelsPanel({ agentId }) {
         body: JSON.stringify(
           editorMode === "create"
             ? { type: selectedType, config: formValues }
-            : { config: formValues }
+            : { config: formValues },
         ),
       });
       const data = await res.json().catch(() => ({}));
@@ -214,9 +207,7 @@ export default function HermesChannelsPanel({ agentId }) {
         await loadChannels();
       }
 
-      toast.success(
-        editorMode === "create" ? "Channel saved to Hermes" : "Channel updated"
-      );
+      toast.success(editorMode === "create" ? "Channel saved to Hermes" : "Channel updated");
       closeEditor();
     } catch (nextError) {
       const message = nextError.message || "Failed to save Hermes channel";
@@ -232,10 +223,9 @@ export default function HermesChannelsPanel({ agentId }) {
     setError("");
 
     try {
-      const res = await fetchWithAuth(
-        `/api/agents/${agentId}/hermes-ui/channels/${channel.type}`,
-        { method: "DELETE" }
-      );
+      const res = await fetchWithAuth(`/api/agents/${agentId}/hermes-ui/channels/${channel.type}`, {
+        method: "DELETE",
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || "Failed to delete Hermes channel");
@@ -243,9 +233,7 @@ export default function HermesChannelsPanel({ agentId }) {
 
       setPayload({
         channels: Array.isArray(data?.channels) ? data.channels : [],
-        availableTypes: Array.isArray(data?.availableTypes)
-          ? data.availableTypes
-          : availableTypes,
+        availableTypes: Array.isArray(data?.availableTypes) ? data.availableTypes : availableTypes,
         gateway: data?.gateway || null,
         directoryUpdatedAt: data?.directoryUpdatedAt || null,
       });
@@ -266,7 +254,7 @@ export default function HermesChannelsPanel({ agentId }) {
     try {
       const res = await fetchWithAuth(
         `/api/agents/${agentId}/hermes-ui/channels/${channel.type}/test`,
-        { method: "POST" }
+        { method: "POST" },
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -308,7 +296,9 @@ export default function HermesChannelsPanel({ agentId }) {
             </p>
             <p className="mt-1 text-xs text-slate-500">
               Gateway snapshot updated{" "}
-              {formatTimestamp(payload.directoryUpdatedAt || payload.gateway?.updatedAt) || "recently"}.
+              {formatTimestamp(payload.directoryUpdatedAt || payload.gateway?.updatedAt) ||
+                "recently"}
+              .
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -408,10 +398,11 @@ export default function HermesChannelsPanel({ agentId }) {
                             </span>
                             <span
                               className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${channelTone(
-                                channel
+                                channel,
                               )}`}
                             >
-                              {channel.status?.state || (channel.configured ? "configured" : "idle")}
+                              {channel.status?.state ||
+                                (channel.configured ? "configured" : "idle")}
                             </span>
                             {channel.readOnly ? (
                               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold text-slate-500">
@@ -522,7 +513,8 @@ export default function HermesChannelsPanel({ agentId }) {
                   {editorMode === "create" ? "Add Hermes Channel" : "Edit Hermes Channel"}
                 </p>
                 <p className="mt-1 text-[11px] text-slate-500">
-                  Hermes stores these settings in its runtime configuration and may restart after save.
+                  Hermes stores these settings in its runtime configuration and may restart after
+                  save.
                 </p>
               </div>
               <button
@@ -546,8 +538,8 @@ export default function HermesChannelsPanel({ agentId }) {
                       setSelectedType(nextType);
                       setFormValues(
                         initialValuesForDefinition(
-                          availableTypes.find((type) => type.type === nextType) || null
-                        )
+                          availableTypes.find((type) => type.type === nextType) || null,
+                        ),
                       );
                     }}
                     className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30"

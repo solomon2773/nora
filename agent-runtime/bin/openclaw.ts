@@ -31,7 +31,10 @@ const HELP = `
 function formatBytes(bytes) {
   const units = ["B", "KB", "MB", "GB"];
   let i = 0;
-  while (bytes >= 1024 && i < units.length - 1) { bytes /= 1024; i++; }
+  while (bytes >= 1024 && i < units.length - 1) {
+    bytes /= 1024;
+    i++;
+  }
   return `${bytes.toFixed(1)} ${units[i]}`;
 }
 
@@ -82,8 +85,24 @@ const commands = {
     console.log("\x1b[36m── Health Checks ─────────────────────────\x1b[0m\n");
     const checks = [
       { name: "Node.js runtime", test: () => !!process.version },
-      { name: "File system (writable)", test: () => { require("fs").writeFileSync("/tmp/.openclaw-health", "ok"); return true; } },
-      { name: "Network (DNS)", test: () => { try { require("dns").lookupService("127.0.0.1", 80, () => {}); return true; } catch { return false; } } },
+      {
+        name: "File system (writable)",
+        test: () => {
+          require("fs").writeFileSync("/tmp/.openclaw-health", "ok");
+          return true;
+        },
+      },
+      {
+        name: "Network (DNS)",
+        test: () => {
+          try {
+            require("dns").lookupService("127.0.0.1", 80, () => {});
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      },
       { name: "Memory available", test: () => os.freemem() > 50 * 1024 * 1024 },
       { name: "Agent env vars set", test: () => !!process.env.AGENT_ID },
     ];
@@ -99,7 +118,9 @@ const commands = {
         allOk = false;
       }
     }
-    console.log(`\n  ${allOk ? "\x1b[32mAll checks passed\x1b[0m" : "\x1b[33mSome checks failed\x1b[0m"}\n`);
+    console.log(
+      `\n  ${allOk ? "\x1b[32mAll checks passed\x1b[0m" : "\x1b[33mSome checks failed\x1b[0m"}\n`,
+    );
   },
 
   logs() {

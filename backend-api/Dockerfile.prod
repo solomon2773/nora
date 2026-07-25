@@ -1,5 +1,10 @@
 FROM node:24-alpine
 WORKDIR /app
+ENV NODE_ENV=production
+ENV HOME=/tmp/nora-home
+ENV NPM_CONFIG_CACHE=/tmp/npm-cache
+
+RUN apk add --no-cache su-exec
 
 COPY backend-api/package.json backend-api/package-lock.json* ./
 RUN npm ci --omit=dev || npm install --omit=dev
@@ -8,6 +13,12 @@ COPY tsconfig.base.json /tsconfig.base.json
 COPY backend-api/ ./
 COPY agent-runtime /agent-runtime
 COPY workers/provisioner/backends /app/backends
+COPY --chown=root:root infra/container-entrypoint.sh /usr/local/bin/nora-container-entrypoint
+RUN mkdir -p /var/lib/nora-upgrade /var/lib/nora-backups /tmp/nora-home /tmp/npm-cache \
+  && chmod 0755 /usr/local/bin/nora-container-entrypoint \
+  && chown -R node:node /var/lib/nora-upgrade /var/lib/nora-backups /tmp/nora-home /tmp/npm-cache
 
 EXPOSE 4000
+USER node
+ENTRYPOINT ["/usr/local/bin/nora-container-entrypoint"]
 CMD ["npm", "start"]

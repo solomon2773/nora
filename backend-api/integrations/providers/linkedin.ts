@@ -60,14 +60,27 @@ export const linkedinProvider: Provider = {
     return { primary: "LINKEDIN_ACCESS_TOKEN", config: {} };
   },
 
-  // Strip OAuth app-side secrets from runtime sync payloads — these
-  // belong to the Nora platform's LinkedIn app, not the agent.
+  /**
+   * Remove control-plane OAuth app and refresh secrets before runtime sync.
+   *
+   * @param {Object} config - Decrypted LinkedIn integration config.
+   * @returns {Object} Runtime-safe provider config.
+   */
   sanitizeForSync(config: Record<string, unknown>): Record<string, unknown> {
     return Object.fromEntries(
       Object.entries(config || {}).filter(([key]) => !APP_SECRET_KEYS.has(key)),
     );
   },
 
+  /**
+   * Refresh a near-expiry OAuth token, leaving transport exceptions retryable.
+   *
+   * Any non-2xx response or successful response without an access token returns `failed`.
+   *
+   * @param {Object} row - Integration row with stored OAuth config.
+   * @param {Object} deps - Network, crypto, and persistence dependencies.
+   * @returns {Promise<Object>} Refresh outcome; persistence remains the service's responsibility.
+   */
   async refreshCredentials(row: IntegrationRow, deps: ProviderDeps): Promise<RefreshOutcome> {
     if (!row?.id) return { row, refreshed: false };
 
@@ -108,6 +121,7 @@ export const linkedinProvider: Provider = {
     });
 
     let tokenData: any = null;
+    let rejection: string | null = null;
     try {
       const response = await deps.fetch(LINKEDIN_TOKEN_URL, {
         method: "POST",
@@ -116,21 +130,31 @@ export const linkedinProvider: Provider = {
       });
       tokenData = await (response as any).json().catch(() => ({}));
       if (!response.ok) {
-        const message =
+        // The endpoint answered and said no — revoked/expired grant, not a blip.
+        rejection =
           stringValue(tokenData?.error_description) ||
           stringValue(tokenData?.error) ||
           `HTTP ${response.status}`;
-        throw new Error(message);
       }
     } catch (error: any) {
+      // Transient (network/DNS) — retry on the next sync without alarming the operator.
       console.warn(
         `[integrations] Failed to refresh LinkedIn OAuth token for integration ${row.id}: ${error?.message ?? error}`,
       );
       return { row, refreshed: false };
     }
 
+    if (rejection) {
+      console.warn(
+        `[integrations] LinkedIn rejected OAuth token refresh for integration ${row.id}: ${rejection}`,
+      );
+      return { row, refreshed: false, failed: true, error: rejection };
+    }
+
     const accessToken = stringValue(tokenData.access_token);
-    if (!accessToken) return { row, refreshed: false };
+    if (!accessToken) {
+      return { row, refreshed: false, failed: true, error: "Token response had no access_token" };
+    }
 
     deps.ensureEncryptionConfigured("LinkedIn OAuth token refresh");
     const nextConfig = {

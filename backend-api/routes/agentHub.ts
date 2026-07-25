@@ -22,6 +22,7 @@ const {
   resolveContainerName,
   sanitizeAgentName,
   serializeAgent,
+  stripInternalTemplateMetadata,
   summarizeTemplatePayload,
 } = require("../agentPayloads");
 const { getDefaultAgentImage } = require("../../agent-runtime/lib/agentImages");
@@ -33,6 +34,7 @@ const {
   normalizeBackendName,
 } = require("../../agent-runtime/lib/backendCatalog");
 const { asyncHandler } = require("../middleware/errorHandler");
+const { requireSession } = require("../middleware/auth");
 const {
   buildAgentContext,
   buildAuditMetadata,
@@ -47,6 +49,11 @@ const {
 } = require("../agentRuntimeFields");
 
 const router = express.Router();
+// Agent Hub publishing, installation, reporting, and installation-key
+// lifecycle can cross workspace and upstream-hub boundaries. Keep the entire
+// authenticated UI surface behind a browser session until dedicated scopes
+// and workspace-bound contracts are introduced.
+router.use(requireSession);
 router.use(createMutationFailureAuditMiddleware("agent_hub"));
 
 function stripAsciiControlCharacters(value) {
@@ -178,6 +185,14 @@ function assertRuntimeSelectionAvailable(runtimeFields) {
   return status;
 }
 
+/**
+ * Validate a template's runtime selection and verify any Kubernetes or remote
+ * execution target is available to the future owning user.
+ *
+ * @param {Object} runtimeFields - Requested runtime and target selection.
+ * @param {string} ownerUserId - User who will own the instantiated agent.
+ * @returns {Promise<Object>} Validated runtime-selection status.
+ */
 async function assertRuntimeTargetAvailable(runtimeFields, ownerUserId) {
   const status = assertRuntimeSelectionAvailable(runtimeFields);
   await assertKubernetesExecutionTargetAvailable(runtimeFields);
@@ -211,6 +226,14 @@ async function getOwnedAgent(agentId, userId) {
   return result.rows[0] || null;
 }
 
+/**
+ * Allow published platform/internal listings to all signed-in users while
+ * retaining owner access to listings that are not generally visible.
+ *
+ * @param {Object} listing - Listing being requested.
+ * @param {string} userId - Requesting user.
+ * @returns {boolean} Whether the listing may be accessed.
+ */
 function canAccessPublishedListing(listing, userId) {
   if (!listing) return false;
   if (
@@ -255,6 +278,14 @@ async function getAgentHubRemoteSettings() {
   };
 }
 
+/**
+ * Combine a local listing with its snapshot, deployment defaults, and either a
+ * compact template summary or full file content.
+ *
+ * @param {Object} listing - Local Agent Hub listing.
+ * @param {Object} [options={}] - Whether decoded template content is included.
+ * @returns {Promise<Object>} Listing detail for API responses.
+ */
 async function buildListingTemplateDetail(listing, options = {}) {
   const snapshot = listing?.snapshot_id ? await snapshots.getSnapshot(listing.snapshot_id) : null;
   const templatePayload = snapshot
@@ -309,12 +340,16 @@ function isRemoteListingId(value) {
 }
 
 function buildRemoteTemplateDetail(remoteDetail, options = {}) {
-  const templatePayload = remoteDetail.templatePayload || remoteDetail.template_payload || {};
+  const templatePayload = stripInternalTemplateMetadata(
+    remoteDetail.templatePayload || remoteDetail.template_payload || {},
+  );
   const template = summarizeTemplatePayload(templatePayload, {
     includeContent: options.includeContent === true,
   });
   return {
     ...remoteDetail,
+    templatePayload,
+    template_payload: undefined,
     id: remoteDetail.id || `hub:${remoteDetail.remote_id}`,
     remote: true,
     source_type: "community",
@@ -366,10 +401,19 @@ function buildCentralSubmissionPayload(listing, snapshot, templatePayload) {
       templateKey: snapshot.template_key || null,
     },
     defaults: extractTemplateDefaultsFromSnapshot(snapshot),
-    templatePayload,
+    templatePayload: stripInternalTemplateMetadata(templatePayload),
   };
 }
 
+/**
+ * Submit a local listing to the central hub and convert remote failure into a
+ * persistable share-status result instead of rejecting the local workflow.
+ *
+ * @param {Object} listing - Local listing metadata.
+ * @param {Object} snapshot - Snapshot referenced by the listing.
+ * @param {Object} templatePayload - Template content being shared.
+ * @returns {Promise<Object>} Submitted or failed central-share state.
+ */
 async function submitToCentralHub(listing, snapshot, templatePayload) {
   const settings = await getAgentHubRemoteSettings();
   try {
@@ -390,6 +434,8 @@ async function submitToCentralHub(listing, snapshot, templatePayload) {
     };
   }
 }
+
+// Catalog, settings, and API-key management
 
 router.get(
   "/",
@@ -470,6 +516,8 @@ router.delete(
     res.json(key);
   }),
 );
+
+// Publishing and installation
 
 router.post(
   "/share",
@@ -635,7 +683,7 @@ router.post(
         template_key: detail.snapshot?.templateKey || detail.snapshot?.template_key || null,
       };
       defaults = detail.defaults || {};
-      templatePayload = remoteDetail.templatePayload || remoteDetail.template_payload || {};
+      templatePayload = detail.templatePayload;
       remoteInstall = true;
     } else {
       listing = await agentHubStore.getListing(listingId);
@@ -924,7 +972,7 @@ router.get(
         },
         snapshot: detail.snapshot || null,
         defaults: detail.defaults || {},
-        templatePayload: remoteDetail.templatePayload || remoteDetail.template_payload || {},
+        templatePayload: detail.templatePayload,
       };
       const filenameSeed = detail.slug || detail.name || "nora-agent-hub-template";
       const filename = `${filenameSeed.replace(/[^a-z0-9-]+/gi, "-").toLowerCase() || "nora-agent-hub-template"}.nora-template.json`;

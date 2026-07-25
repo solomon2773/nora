@@ -36,9 +36,7 @@ function runWithCancellableTimeout(factory, timeoutMs, message) {
       reject(error);
     }, timeoutMs);
   });
-  const work = Promise.resolve().then(() =>
-    factory({ signal: controller.signal, controller }),
-  );
+  const work = Promise.resolve().then(() => factory({ signal: controller.signal, controller }));
   return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 

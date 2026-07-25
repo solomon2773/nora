@@ -46,13 +46,79 @@ const summarize = (tag, summary, params = [agentParam], scopes = null) => ({
   responses: ok("Success"),
 });
 
+const scheduleParam = {
+  name: "scheduleId",
+  in: "path",
+  required: true,
+  schema: { type: "string", format: "uuid" },
+};
+const scheduleSchema = {
+  type: "object",
+  required: ["id", "agent_id", "name", "cron", "timezone", "action_type", "enabled"],
+  properties: {
+    id: { type: "string", format: "uuid" },
+    agent_id: { type: "string", format: "uuid" },
+    name: { type: "string" },
+    cron: { type: "string" },
+    timezone: { type: "string" },
+    action_type: { type: "string", enum: ["prompt", "restart", "stop", "start", "redeploy"] },
+    prompt: { type: ["string", "null"] },
+    enabled: { type: "boolean" },
+    last_run_at: { type: ["string", "null"], format: "date-time" },
+    last_status: { type: ["string", "null"] },
+    next_run_at: { type: ["string", "null"], format: "date-time" },
+  },
+  additionalProperties: true,
+};
+const scheduleInput = {
+  type: "object",
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 120 },
+    cron: { type: "string", minLength: 1 },
+    timezone: { type: "string", default: "UTC" },
+    action_type: {
+      type: "string",
+      enum: ["prompt", "restart", "stop", "start", "redeploy"],
+      default: "prompt",
+    },
+    actionType: { type: "string", description: "Alias for action_type." },
+    prompt: { type: ["string", "null"], maxLength: 8000 },
+    enabled: { type: "boolean" },
+  },
+  additionalProperties: false,
+};
+const versionParam = {
+  name: "versionId",
+  in: "path",
+  required: true,
+  schema: { type: "string", format: "uuid" },
+};
+const versionSchema = {
+  type: "object",
+  required: ["id", "agentId", "versionNumber", "config", "source", "createdAt"],
+  properties: {
+    id: { type: "string", format: "uuid" },
+    agentId: { type: "string", format: "uuid" },
+    versionNumber: { type: "integer", minimum: 1 },
+    config: { type: "object", additionalProperties: true },
+    createdBy: { type: ["string", "null"], format: "uuid" },
+    message: { type: ["string", "null"] },
+    source: {
+      type: "string",
+      enum: ["edit", "deploy", "redeploy", "duplicate", "hub-install", "restore", "rollback"],
+    },
+    createdAt: { type: "string", format: "date-time" },
+  },
+  additionalProperties: false,
+};
+
 module.exports = {
   "/agents": {
     get: {
       tags: ["Agents"],
       summary: "List agents accessible to the caller",
       description:
-        "Direct ownership plus workspace-shared agents. API keys see the agents of their bound workspace.",
+        "Direct ownership plus workspace-shared agents. API keys see only agents assigned to their exact bound workspace; scope=owned applies inside that same boundary.",
       "x-required-scopes": ["agents:read"],
       parameters: [
         {
@@ -70,7 +136,7 @@ module.exports = {
       tags: ["Agents"],
       summary: "Provision and deploy a new agent",
       description:
-        "Queues the deployment and returns the created agent; poll GET /agents/{id} until status is 'running'.",
+        "Queues the deployment and returns the created agent; poll GET /agents/{id} until status is 'running'. A workspace API-key deployment is atomically assigned to the key's bound workspace. API keys may deploy non-Remote targets with agents:write, but migration drafts and Remote Docker placement require a session JWT.",
       "x-required-scopes": ["agents:write"],
       requestBody: {
         required: true,
@@ -88,12 +154,38 @@ module.exports = {
                 vcpu: { type: "integer", minimum: 1 },
                 ram_mb: { type: "integer", minimum: 512 },
                 disk_gb: { type: "integer", minimum: 1 },
+                migration_draft_id: {
+                  type: "string",
+                  format: "uuid",
+                  description: "Session-only migration draft to materialize into the new agent.",
+                },
               },
             },
           },
         },
       },
-      responses: ok("The created agent (status 'queued')", agentSummary),
+      responses: {
+        ...ok("The created agent (status 'queued')", agentSummary),
+        403: {
+          description:
+            "Missing agents:write scope, or a workspace API key attempted session-only migration-draft or Remote Docker deployment.",
+        },
+      },
+    },
+  },
+  "/agents/activate-demo": {
+    post: {
+      tags: ["Agents"],
+      summary: "Activate or reuse the zero-key local Docker demo",
+      description:
+        "Session-only. Serializes activation per user, ensures the built-in demo provider, repairs a missing durable queue handoff, and returns the same durably marked OpenClaw agent on retries. New activation requires a reachable local Docker daemon.",
+      "x-session-required": true,
+      responses: {
+        ...ok("The new or existing demo agent", agentSummary),
+        403: { description: "A workspace API key attempted this session-only activation." },
+        402: { description: "Agent quota or subscription does not allow activation" },
+        503: { description: "The local Docker daemon is unavailable" },
+      },
     },
   },
   "/agents/adopt": {
@@ -101,7 +193,7 @@ module.exports = {
       tags: ["Agents"],
       summary: "Adopt an already-running external runtime",
       description:
-        "Registers an existing OpenClaw or Hermes runtime that Nora did not provision, by its reachable URL + gateway token. Creates an agent with deploy_target='external' and status='running' (no provisioning). Nora monitors and proxies it; lifecycle actions are unavailable and delete is a deregister.",
+        "Registers an existing OpenClaw or Hermes runtime that Nora did not provision, by its reachable URL + gateway token. Creates an agent with deploy_target='external' and status='running' (no provisioning). API-key adoptions are atomically assigned to the key's bound workspace. Nora monitors and proxies the runtime; lifecycle actions are unavailable and delete is a deregister.",
       "x-required-scopes": ["agents:write"],
       requestBody: {
         required: true,
@@ -125,7 +217,10 @@ module.exports = {
                 },
                 gateway_token: {
                   type: "string",
-                  description: "Gateway/API token for the existing runtime.",
+                  minLength: 32,
+                  maxLength: 4096,
+                  description:
+                    "High-entropy gateway/API token for the existing runtime. Use a cryptographically generated secret of at least 32 characters with no whitespace.",
                 },
               },
             },
@@ -137,6 +232,12 @@ module.exports = {
           description: "The adopted external agent (status 'running')",
           content: { "application/json": { schema: agentSummary } },
         },
+        400: {
+          description:
+            "Invalid runtime family, weak gateway token, unsafe endpoint, or unsupported port.",
+        },
+        402: { description: "Agent quota or subscription does not allow adoption." },
+        403: { description: "The API key lacks the agents:write scope." },
       },
     },
   },
@@ -144,6 +245,8 @@ module.exports = {
     get: {
       tags: ["Agents"],
       summary: "Get one agent with live-reconciled status",
+      description:
+        "Workspace API keys are restricted to agents assigned to their exact bound workspace. Existing Remote Docker agent operations require a session JWT.",
       "x-required-scopes": ["agents:read"],
       parameters: [agentParam],
       responses: ok("Agent detail", agentSummary),
@@ -179,18 +282,26 @@ const tail = {
     post: summarize("Agents", "Restart a running agent in place", [agentParam], ["agents:write"]),
   },
   "/agents/{id}/redeploy": {
-    post: summarize(
-      "Agents",
-      "Tear down and re-provision the runtime (agent must be stopped/warning/error)",
-      [agentParam],
-      ["agents:write"],
-    ),
+    post: {
+      ...summarize(
+        "Agents",
+        "Tear down and re-provision the runtime (agent must be stopped/warning/error)",
+        [agentParam],
+        ["agents:write"],
+      ),
+      description:
+        "Workspace API keys may redeploy only when neither the current nor requested placement is Remote Docker. Any Remote Docker replacement requires a session JWT.",
+    },
   },
   "/agents/{id}/delete": {
     post: summarize("Agents", "Delete an agent (legacy POST form)", [agentParam], ["agents:write"]),
   },
   "/agents/{id}/duplicate": {
-    post: summarize("Agents", "Duplicate an agent's configuration", [agentParam], ["agents:write"]),
+    post: {
+      ...summarize("Agents", "Duplicate an agent's configuration", [agentParam], ["agents:write"]),
+      description:
+        "Workspace API keys may duplicate only when neither the source nor destination uses Remote Docker. Remote Docker source capture or placement requires a session JWT.",
+    },
   },
   "/agents/{id}/budget": {
     get: {
@@ -258,24 +369,138 @@ const tail = {
       ["agents:write"],
     ),
   },
+  "/agents/{id}/schedules": {
+    get: {
+      tags: ["Schedules"],
+      summary: "List the agent's scheduled runs",
+      parameters: [agentParam],
+      "x-required-scopes": ["agents:read"],
+      "x-required-agent-role": "viewer",
+      responses: ok("Schedules", { type: "array", items: scheduleSchema }),
+    },
+    post: {
+      tags: ["Schedules"],
+      summary: "Create a recurring prompt or lifecycle schedule",
+      description:
+        "Cron expressions are evaluated in the supplied IANA timezone and must respect the server's minimum interval.",
+      parameters: [agentParam],
+      "x-required-scopes": ["agents:write"],
+      "x-required-agent-role": "editor",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              ...scheduleInput,
+              required: ["name", "cron"],
+            },
+          },
+        },
+      },
+      responses: {
+        201: {
+          description: "Created schedule",
+          content: { "application/json": { schema: scheduleSchema } },
+        },
+      },
+    },
+  },
+  "/agents/{id}/schedules/{scheduleId}": {
+    put: {
+      tags: ["Schedules"],
+      summary: "Update or enable/disable a schedule",
+      parameters: [agentParam, scheduleParam],
+      "x-required-scopes": ["agents:write"],
+      "x-required-agent-role": "editor",
+      requestBody: {
+        required: true,
+        content: { "application/json": { schema: scheduleInput } },
+      },
+      responses: ok("Updated schedule", scheduleSchema),
+    },
+    delete: {
+      tags: ["Schedules"],
+      summary: "Delete a schedule",
+      parameters: [agentParam, scheduleParam],
+      "x-required-scopes": ["agents:write"],
+      "x-required-agent-role": "editor",
+      responses: ok("Schedule deleted", {
+        type: "object",
+        required: ["success"],
+        properties: { success: { type: "boolean" } },
+      }),
+    },
+  },
+  "/agents/{id}/schedules/{scheduleId}/runs": {
+    get: {
+      tags: ["Schedules"],
+      summary: "List recent audit events for a schedule's runs",
+      parameters: [
+        agentParam,
+        scheduleParam,
+        {
+          name: "limit",
+          in: "query",
+          schema: { type: "integer", minimum: 1, maximum: 100, default: 25 },
+        },
+      ],
+      "x-required-scopes": ["agents:read"],
+      "x-required-agent-role": "viewer",
+      responses: ok("Schedule run events", {
+        type: "array",
+        items: { type: "object", additionalProperties: true },
+      }),
+    },
+  },
   "/agents/{id}/versions": {
-    get: summarize("Agents", "List configuration version history", [agentParam], ["agents:read"]),
+    get: {
+      tags: ["Agents"],
+      summary: "List configuration version history",
+      parameters: [
+        agentParam,
+        {
+          name: "limit",
+          in: "query",
+          schema: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+        },
+      ],
+      "x-required-scopes": ["agents:read"],
+      "x-required-agent-role": "viewer",
+      responses: ok("Configuration versions, newest first", {
+        type: "array",
+        items: versionSchema,
+      }),
+    },
   },
   "/agents/{id}/versions/{versionId}": {
-    get: summarize(
-      "Agents",
-      "Get one configuration version",
-      [agentParam, { name: "versionId", in: "path", required: true, schema: { type: "string" } }],
-      ["agents:read"],
-    ),
+    get: {
+      tags: ["Agents"],
+      summary: "Get one configuration version",
+      parameters: [agentParam, versionParam],
+      "x-required-scopes": ["agents:read"],
+      "x-required-agent-role": "viewer",
+      responses: ok("Configuration version", versionSchema),
+    },
   },
   "/agents/{id}/rollback/{versionId}": {
-    post: summarize(
-      "Agents",
-      "Roll back to a configuration version (queues a redeploy)",
-      [agentParam, { name: "versionId", in: "path", required: true, schema: { type: "string" } }],
-      ["agents:write"],
-    ),
+    post: {
+      tags: ["Agents"],
+      summary: "Roll back to a configuration version and redeploy when needed",
+      description:
+        "Snapshots the current config first, restores the selected version, re-materializes template wiring, and queues a redeploy when the agent has a runtime. Rollback of a Remote Docker agent requires a session JWT.",
+      parameters: [agentParam, versionParam],
+      "x-required-scopes": ["agents:write"],
+      "x-required-agent-role": "editor",
+      responses: ok("Rollback result", {
+        type: "object",
+        required: ["success", "restored", "redeployed"],
+        properties: {
+          success: { type: "boolean" },
+          restored: versionSchema,
+          redeployed: { type: "boolean" },
+        },
+      }),
+    },
   },
   "/agents/{id}/stats": {
     get: summarize("Monitoring", "Live runtime stats snapshot", [agentParam], ["agents:read"]),

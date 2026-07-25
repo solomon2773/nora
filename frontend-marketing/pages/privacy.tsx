@@ -1,5 +1,5 @@
-import Head from "next/head";
 import Link from "next/link";
+import SeoHead from "../components/SeoHead";
 
 // NOTE: Boilerplate for a self-hosted-OSS product + hosted reference deployment.
 // Have it reviewed by counsel and set a real contact address before launch.
@@ -19,13 +19,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function Privacy() {
   return (
     <>
-      <Head>
-        <title>Privacy Policy | Nora</title>
-        <meta
-          name="description"
-          content="How Nora handles data on the hosted reference deployment. Nora is open source and self-hostable; operators of self-hosted instances control their own data."
-        />
-      </Head>
+      <SeoHead
+        title="Privacy Policy | Nora"
+        description="How the hosted Nora reference deployment handles data, and how data ownership differs when you run Nora on your own infrastructure."
+        path="/privacy"
+      />
 
       <div className="site-shell min-h-screen px-4 pb-16 pt-4 text-brand-ink sm:px-6">
         <header className="mx-auto flex max-w-3xl items-center justify-between rounded-2xl border border-brand-cyan/25 bg-white/90 px-4 py-3 shadow-xl shadow-brand-ink/10 backdrop-blur-xl sm:px-5">

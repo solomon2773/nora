@@ -1,45 +1,49 @@
 // @ts-nocheck
 const { createProviderRegistry } = require("../integrations/providers/base/registry");
 
-// A minimal stub fallback that mirrors what the integrations service
-// installs when a catalog id has no strategy registered yet.
-function makeStubFallback(providerId) {
+// A fail-closed fallback mirroring the integrations service behavior for a
+// stale catalog id whose provider strategy is not present in this deployment.
+function makeFailClosedFallback(providerId) {
+  const unsupportedMessage = `No integration strategy is registered for provider "${providerId}"`;
   return {
     id: providerId,
     authType: "custom",
     async test() {
       return {
-        success: true,
-        message: "Credentials stored — no strategy registered for this provider yet",
+        success: false,
+        error: unsupportedMessage,
       };
     },
     mapToEnv() {
-      return { primary: null, config: {} };
+      throw new Error(unsupportedMessage);
     },
   };
 }
 
 describe("createProviderRegistry", () => {
-  it("falls back to the stub provider for unregistered ids", async () => {
-    const registry = createProviderRegistry(makeStubFallback);
+  it("fails closed for unregistered ids", async () => {
+    const registry = createProviderRegistry(makeFailClosedFallback);
 
     const provider = registry.resolve("unknown-id");
     expect(provider.id).toBe("unknown-id");
     expect(provider.authType).toBe("custom");
 
-    const env = provider.mapToEnv({
-      row: { provider: "unknown-id" },
-      token: null,
-      config: { whatever: "x" },
-    });
-    expect(env).toEqual({ primary: null, config: {} });
+    expect(() =>
+      provider.mapToEnv({
+        row: { provider: "unknown-id" },
+        token: null,
+        config: { whatever: "x" },
+      }),
+    ).toThrow('No integration strategy is registered for provider "unknown-id"');
 
     const result = await provider.test(
       { row: { provider: "unknown-id" }, token: "x", config: {} },
       { fetch: jest.fn(), assertSafeUrl: async (u) => u },
     );
-    expect(result.success).toBe(true);
-    expect(result.message).toContain("no strategy registered");
+    expect(result).toEqual({
+      success: false,
+      error: 'No integration strategy is registered for provider "unknown-id"',
+    });
   });
 
   it("registered providers override the fallback", () => {
@@ -53,7 +57,7 @@ describe("createProviderRegistry", () => {
         return { primary: "STUB_PRIMARY", config: { stubKey: "STUB_ENV" } };
       },
     };
-    const registry = createProviderRegistry(makeStubFallback);
+    const registry = createProviderRegistry(makeFailClosedFallback);
 
     expect(registry.has("github")).toBe(false);
     registry.register(stub);
@@ -71,7 +75,7 @@ describe("createProviderRegistry", () => {
   });
 
   it("lists registered providers", () => {
-    const registry = createProviderRegistry(makeStubFallback);
+    const registry = createProviderRegistry(makeFailClosedFallback);
     const a = {
       id: "a",
       authType: "api_key",

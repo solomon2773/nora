@@ -7,19 +7,23 @@ licensed for editorial use. Questions: open an issue on
 ## What Nora is (one line)
 
 > Nora is the self-hosted control plane for AI agents — deploy, observe, and operate
-> OpenClaw and Hermes agent runtimes on GA Docker and Kubernetes targets. NemoClaw is
-> experimental; Proxmox is planned. Open source, Apache-2.0, no vendor lock-in.
+> OpenClaw and Hermes agent runtimes on GA Docker and Kubernetes targets. Self-hosted Remote Docker brings
+> experimental BYOC placement over pinned SSH plus a private runtime network; the OpenClaw-only NemoClaw profile and Proxmox unprivileged LXC are also
+> experimental, with Proxmox still requiring real-hardware smoke before production. Open source,
+> Apache-2.0, no vendor lock-in.
 
 ## One paragraph
 
 > Nora is an operator-facing platform for running AI agents on your own infrastructure.
 > From a single control plane you deploy agent runtimes (OpenClaw or Hermes), manage LLM
-> provider keys, wire up 69 integrations, and watch everything live — chat, logs, metrics,
+> provider keys, configure a 69-entry credential/connectivity catalog, and watch everything live — chat, logs, metrics,
 > and a real terminal into each agent. It runs entirely self-hosted via a one-line installer
 > on Docker, scales to Kubernetes (k3s/AKS/GKE/EKS), and is fully open source under
 > Apache-2.0 — including commercial self-hosting and a built-in PaaS mode for operators
-> who want to host Nora for their own customers. The NemoClaw sandbox profile is experimental,
-> and Proxmox placement is planned rather than supported in the current release.
+> who want to host Nora for their own customers. Self-hosted Remote Docker BYOC placement and the OpenClaw-only NemoClaw
+> sandbox profile are experimental. Proxmox unprivileged LXC placement is also experimental for OpenClaw and prepared Hermes
+> images, uses secure API TLS plus pinned SSH, and remains gated on real-hardware smoke before
+> production; NemoClaw on Proxmox is blocked.
 
 ## Full description
 
@@ -27,44 +31,52 @@ licensed for editorial use. Questions: open an issue on
 > deployment topology. Nora takes the opposite stance: it is a self-hosted ops platform that
 > puts the entire agent lifecycle on infrastructure you control. Operators get one surface to
 > deploy and manage runtimes across GA Docker and Kubernetes targets, rotate provider keys
-> stored AES-256-GCM encrypted, connect 69 first-class integrations (GitHub, Slack, AWS,
+> stored AES-256-GCM encrypted, configure a 69-entry integration catalog (GitHub, Slack, AWS,
 > Azure, GCP, Anthropic, OpenAI, and more), and observe each agent through chat, streaming
 > logs, live metrics, and a browser terminal. Two runtime families are supported — OpenClaw
 > (the broadest operator path) and Hermes — plus an experimental NVIDIA NemoClaw secure-sandbox
-> profile for GPU-backed execution. Proxmox placement is a planned execution target and remains
-> blocked in the current release. Nora is open source under Apache-2.0, which means teams can
+> profile for policy-enforced execution with NVIDIA/Nemotron-backed inference. Proxmox unprivileged LXC placement is experimental for
+> OpenClaw and prepared Hermes images, with secure API TLS, pinned SSH, and a required
+> real-hardware smoke gate before production; NemoClaw on Proxmox remains blocked. Nora is open
+> source under Apache-2.0, which means teams can
 > read the code before they adopt it, run it commercially on their own hardware, or operate it
 > in PaaS mode as the basis for their own product.
 
 ## Facts
 
 - **License:** Apache-2.0 (commercial self-hosting allowed)
-- **Current release:** v1.12.0
+- **Current release:** [latest GitHub release](https://github.com/solomon2773/nora/releases/latest)
 - **Install:** one-line installer (`curl … | bash` / `iwr … | iex`) or Docker Compose
 - **Stack:** Node 24 LTS; Express control plane; Next.js operator/admin/marketing UIs;
-  PostgreSQL 15; Redis 7 + BullMQ; worker-provisioner with pluggable backend adapters
-- **Integrations:** 69 providers (developer tools, cloud, comms, analytics, data, LLMs)
+  PostgreSQL 15; Redis 7 + BullMQ; worker-provisioner with adapter-based deployment targets
+- **First proof:** built-in deterministic demo provider and demo agent; no external API key or model bill
+- **Integrations:** 69 credential/connectivity entries (developer tools, cloud, comms, analytics, data, LLMs); executable tools depend on runtime skills or MCP adapters
 - **Security:** AES-256-GCM key encryption, bcrypt password hashing, constant-time auth,
   webhook SSRF guards, JWT sessions
 - **Repo:** https://github.com/solomon2773/nora
 - **Docs:** https://noradocs.solomontsao.com
 - **Site:** https://nora.solomontsao.com
+- **Contribute:** https://github.com/solomon2773/nora/blob/master/CONTRIBUTING.md
+- **Community:** https://github.com/solomon2773/nora/discussions
 
 ## Runtime maturity matrix
 
 Source of truth: `agent-runtime/lib/backendCatalog.ts`. Lead coverage with the GA path.
 
-| Runtime family         | Docker | Kubernetes | Proxmox |
-| ---------------------- | ------ | ---------- | ------- |
-| **OpenClaw** (default) | GA     | GA         | Roadmap |
-| **Hermes**             | GA     | GA         | Roadmap |
+| Runtime family         | Docker | Remote Docker | Kubernetes | Proxmox unprivileged LXC             |
+| ---------------------- | ------ | ------------- | ---------- | ------------------------------------ |
+| **OpenClaw** (default) | GA     | Experimental  | GA         | Experimental                         |
+| **Hermes**             | GA     | Experimental  | GA         | Experimental (prepared image needed) |
 
 - **GA** — release-ready default path for normal onboarding.
-- **Roadmap** — planned but not supported in the current release; Proxmox remains
-  release-blocked for normal onboarding.
-- **Experimental** — the **NemoClaw** secure-sandbox profile (NVIDIA GPU); promising, under
-  active contract validation. Applies on top of any runtime/target when the `nemoclaw`
-  sandbox profile is selected.
+- **Experimental (Remote Docker)** — self-hosted-only registered BYOC host reached over SSH with a pinned host key;
+  validate the host from Nora and keep the published runtime ports on a private encrypted network.
+- **Experimental (Proxmox)** — requires secure API TLS, pinned SSH, a prepared runtime image
+  where applicable, and successful real-hardware smoke before production use.
+- **Experimental** — the **NemoClaw** secure-sandbox profile for OpenClaw with NVIDIA-backed
+  inference; promising and under active contract validation. It is available on supported Docker,
+  Remote Docker, and Kubernetes targets. Hermes does not support NemoClaw, and NemoClaw on Proxmox
+  remains blocked.
 
 ## Brand assets
 
@@ -85,7 +97,7 @@ Product screenshots (12, operator + admin surfaces) live in
 [`../readme-assets/`](../readme-assets) — e.g. `proof-operator-dashboard.png`,
 `proof-operator-deploy-flow.png`, `proof-operator-fleet.png`, `proof-admin-agent-hub.png`.
 
-Demo video: [60-second walkthrough (MP4)](https://github.com/solomon2773/nora/raw/master/.github/readme-assets/walkthrough.mp4)
+Demo video: [37-second walkthrough (MP4)](https://nora.solomontsao.com/walkthrough.mp4)
 
 ## Color palette
 

@@ -1,6 +1,12 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "name": "Nora",
+  "description": "Self-hosted control plane for operating OpenClaw and Hermes agents on Docker and Kubernetes, with experimental Remote Docker and Proxmox placement.",
+  "seo": {
+    "metatags": {
+      "keywords": "self-hosted AI agents, OpenClaw, Hermes, Docker, Kubernetes, Remote Docker, Proxmox"
+    }
+  },
   "theme": "mint",
   "logo": {
     "light": "/logo/light.png",
@@ -46,6 +52,7 @@
             "pages": [
               "configuration/provisioner-backends",
               "configuration/provisioner-backends/docker",
+              "configuration/provisioner-backends/remote-docker",
               "configuration/provisioner-backends/proxmox",
               {
                 "group": "Kubernetes",
@@ -67,6 +74,7 @@
         "group": "Guides",
         "pages": [
           "guides/deploy-agent",
+          "guides/remote-docker",
           "guides/manage-providers",
           "guides/integrations",
           {
@@ -149,6 +157,7 @@
           "guides/mcp-server",
           "guides/monitoring",
           "guides/opentelemetry",
+          "guides/scheduled-agents",
           "guides/doctor",
           "guides/alert-rules",
           "guides/backups",

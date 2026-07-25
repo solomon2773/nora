@@ -51,9 +51,12 @@ export default function SessionsPanel({ agentId }) {
 
   async function handleDelete(sessionKey) {
     try {
-      const res = await fetchWithAuth(`/api/agents/${agentId}/gateway/sessions/${encodeURIComponent(sessionKey)}`, {
-        method: "DELETE",
-      });
+      const res = await fetchWithAuth(
+        `/api/agents/${agentId}/gateway/sessions/${encodeURIComponent(sessionKey)}`,
+        {
+          method: "DELETE",
+        },
+      );
       if (res.ok) {
         setSessions((prev) => prev.filter((s) => (s.key || s.id) !== sessionKey));
         if ((selectedSession?.key || selectedSession?.id) === sessionKey) setSelectedSession(null);
@@ -66,7 +69,9 @@ export default function SessionsPanel({ agentId }) {
   async function handleViewSession(session) {
     const key = session.key || session.id;
     try {
-      const res = await fetchWithAuth(`/api/agents/${agentId}/gateway/sessions/${encodeURIComponent(key)}`);
+      const res = await fetchWithAuth(
+        `/api/agents/${agentId}/gateway/sessions/${encodeURIComponent(key)}`,
+      );
       if (res.ok) {
         const data = await res.json();
         setSelectedSession({ ...data, key });
@@ -130,42 +135,45 @@ export default function SessionsPanel({ agentId }) {
           {sessions.map((session) => {
             const sessionKey = session.key || session.id || session.sessionId;
             return (
-            <div
-              key={sessionKey}
-              className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between hover:border-blue-200 transition-colors cursor-pointer"
-              onClick={() => handleViewSession(session)}
-            >
-              <div className="flex items-center gap-3">
-                <MessageSquare size={14} className="text-slate-400" />
-                <div>
-                  <p className="text-sm font-bold text-slate-700">
-                    {session.name || session.label || sessionKey?.slice(0, 24)}
-                  </p>
-                  <p className="text-[10px] text-slate-400 font-mono">{sessionKey}</p>
-                  {(session.created_at || session.createdAt || session.ts) && (
-                    <p className="text-[10px] text-slate-400">
-                      {new Date(session.created_at || session.createdAt || session.ts).toLocaleString()}
+              <div
+                key={sessionKey}
+                className="bg-white border border-slate-200 rounded-xl px-4 py-3 flex items-center justify-between hover:border-blue-200 transition-colors cursor-pointer"
+                onClick={() => handleViewSession(session)}
+              >
+                <div className="flex items-center gap-3">
+                  <MessageSquare size={14} className="text-slate-400" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-700">
+                      {session.name || session.label || sessionKey?.slice(0, 24)}
                     </p>
+                    <p className="text-[10px] text-slate-400 font-mono">{sessionKey}</p>
+                    {(session.created_at || session.createdAt || session.ts) && (
+                      <p className="text-[10px] text-slate-400">
+                        {new Date(
+                          session.created_at || session.createdAt || session.ts,
+                        ).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  {(session.message_count ?? session.messageCount ?? session.turns) !==
+                    undefined && (
+                    <span className="text-[10px] text-slate-400">
+                      {session.message_count ?? session.messageCount ?? session.turns} msgs
+                    </span>
                   )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(sessionKey);
+                    }}
+                    className="text-slate-300 hover:text-red-500 transition-colors p-1"
+                  >
+                    <Trash2 size={12} />
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                {(session.message_count ?? session.messageCount ?? session.turns) !== undefined && (
-                  <span className="text-[10px] text-slate-400">
-                    {session.message_count ?? session.messageCount ?? session.turns} msgs
-                  </span>
-                )}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete(sessionKey);
-                  }}
-                  className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            </div>
             );
           })}
         </div>
@@ -176,7 +184,8 @@ export default function SessionsPanel({ agentId }) {
         <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-slate-600">
-              Session: {selectedSession.name || selectedSession.label || selectedSession.key?.slice(0, 24)}
+              Session:{" "}
+              {selectedSession.name || selectedSession.label || selectedSession.key?.slice(0, 24)}
             </h4>
             <button
               onClick={() => setSelectedSession(null)}
@@ -188,13 +197,20 @@ export default function SessionsPanel({ agentId }) {
           {selectedSession.messages?.length > 0 ? (
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {selectedSession.messages.map((msg, i) => (
-                <div key={i} className={`text-xs p-2 rounded-lg ${
-                  msg.role === "user" ? "bg-blue-50 text-blue-800" :
-                  msg.role === "assistant" ? "bg-slate-100 text-slate-700" :
-                  "bg-amber-50 text-amber-700"
-                }`}>
+                <div
+                  key={i}
+                  className={`text-xs p-2 rounded-lg ${
+                    msg.role === "user"
+                      ? "bg-blue-50 text-blue-800"
+                      : msg.role === "assistant"
+                        ? "bg-slate-100 text-slate-700"
+                        : "bg-amber-50 text-amber-700"
+                  }`}
+                >
                   <span className="font-bold capitalize">{msg.role}: </span>
-                  <span className="whitespace-pre-wrap">{typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content)}</span>
+                  <span className="whitespace-pre-wrap">
+                    {typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content)}
+                  </span>
                 </div>
               ))}
             </div>

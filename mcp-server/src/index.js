@@ -4,14 +4,15 @@
 // Stdio transport: stdout belongs to the protocol. Anything human-facing goes
 // to stderr; never console.log in this process.
 
-import { pathToFileURL } from "node:url";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createApi } from "./client.js";
 import { registerAgentTools } from "./tools/agents.js";
 import { registerMonitoringTools } from "./tools/monitoring.js";
 
-export const SERVER_INFO = { name: "nora", version: "0.1.0" };
+export const SERVER_INFO = { name: "nora", version: "0.1.4" };
 
 export function createServer({ api, env = process.env } = {}) {
   const server = new McpServer(SERVER_INFO, {
@@ -38,8 +39,21 @@ export async function main() {
   console.error("Nora MCP server ready (stdio)");
 }
 
-const isDirectRun = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isDirectRun) {
+function isDirectRun() {
+  const entrypointPath = process.argv[1];
+  const modulePath = fileURLToPath(import.meta.url);
+  if (!entrypointPath || !fs.existsSync(entrypointPath) || !fs.existsSync(modulePath)) {
+    return false;
+  }
+
+  try {
+    return fs.realpathSync(entrypointPath) === fs.realpathSync(modulePath);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) {
   main().catch((error) => {
     console.error(error);
     process.exit(1);

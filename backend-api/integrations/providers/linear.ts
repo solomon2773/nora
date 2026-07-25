@@ -24,9 +24,15 @@ export const linearProvider: Provider = {
       });
       if (!res.ok) throw new Error(`Linear API returned ${res.status}`);
       const data: any = await res.json();
+      if (Array.isArray(data?.errors) && data.errors.length > 0) {
+        throw new Error("Linear API rejected the credentials");
+      }
+      if (!data?.data?.viewer) {
+        throw new Error("Linear API did not return the authenticated viewer");
+      }
       return {
         success: true,
-        message: `Connected as ${data.data?.viewer?.name || "verified"}`,
+        message: `Connected as ${data.data.viewer.name || "verified"}`,
       };
     } catch (e: any) {
       return { success: false, error: e?.message ?? String(e) };

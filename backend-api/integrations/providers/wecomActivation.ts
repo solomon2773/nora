@@ -103,6 +103,12 @@ function buildAccountConfig(account: Record<string, any> = {}) {
   return entry;
 }
 
+/**
+ * Project Nora's selected WeCom mode and accounts into OpenClaw `channels.wecom` config.
+ *
+ * @param {Object} [config={}] - Canonical secret-bearing WeCom configuration.
+ * @returns {Object} OpenClaw plugin channel configuration.
+ */
 export function buildWecomOpenClawChannelConfig(config: WecomConfig = {}): Record<string, any> {
   const mode = stringValue(config?.mode || "bot") || "bot";
   const defaultAccount = config?.defaultAccount || {};
@@ -324,6 +330,17 @@ function canonicalizeWecomConfig(value: unknown): unknown {
   return next;
 }
 
+/**
+ * Install and enable the WeCom plugin, replace stale runtime config, reload, and verify presence.
+ *
+ * Stopped agents return a deferred activation without runtime side effects. Running-agent steps
+ * are sequential and are not rolled back if a later command fails.
+ *
+ * @param {Object} agent - OpenClaw agent runtime record.
+ * @param {Object} normalizedConfig - Canonical secret-bearing WeCom configuration.
+ * @param {Object} deps - Container-command and gateway RPC boundaries.
+ * @returns {Promise<Object>} Deferred or active lifecycle outcome.
+ */
 export async function activateWecomForOpenClawAgent(
   agent: Record<string, any>,
   normalizedConfig: WecomConfig,
@@ -431,6 +448,17 @@ export async function activateWecomForOpenClawAgent(
   };
 }
 
+/**
+ * Compare the installed plugin's complete runtime config with Nora's saved WeCom state.
+ *
+ * Verification failures are returned as activation status rather than thrown; stopped agents
+ * report pending activation.
+ *
+ * @param {Object} agent - OpenClaw agent runtime record.
+ * @param {Object} normalizedConfig - Canonical secret-bearing WeCom configuration.
+ * @param {Object} deps - Container-command and gateway RPC boundaries.
+ * @returns {Promise<Object>} Connectivity and activation-state result for the caller to persist.
+ */
 export async function verifyWecomForOpenClawAgent(
   agent: Record<string, any>,
   normalizedConfig: WecomConfig,
@@ -533,6 +561,16 @@ export async function verifyWecomForOpenClawAgent(
   }
 }
 
+/**
+ * Remove WeCom runtime config and plugin state from an active OpenClaw agent.
+ *
+ * Stopped agents and active agents without a config hash are no-ops. Removal is sequential and not
+ * transactional, so later failure leaves earlier changes applied.
+ *
+ * @param {Object} agent - OpenClaw agent runtime record.
+ * @param {Object} deps - Gateway RPC and container-command boundaries.
+ * @returns {Promise<void>}
+ */
 export async function deactivateWecomForOpenClawAgent(
   agent: Record<string, any>,
   deps: {

@@ -11,7 +11,7 @@
 #
 # Build (once per host, or after bumping a pinned version):
 #   docker build \
-#     --build-arg OPENCLAW_VERSION=latest \
+#     --build-arg OPENCLAW_VERSION=2026.6.11 \
 #     --build-arg TSX_VERSION=4.21.0 \
 #     -f agent-runtime/Dockerfile.openclaw-agent \
 #     -t nora-openclaw-agent:local \
@@ -22,7 +22,9 @@
 
 FROM node:24-slim
 
-ARG OPENCLAW_VERSION=latest
+# Keep aligned with lib/openclawDefaults.ts. Nora bumps this only after the
+# activation and Gateway compatibility proof passes for the new release.
+ARG OPENCLAW_VERSION=2026.6.11
 ARG TSX_VERSION=4.21.0
 
 # Git is needed by some openclaw skills that clone templates at runtime;

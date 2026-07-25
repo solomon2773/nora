@@ -16,9 +16,14 @@ export default function ConfirmDialog({ open, title, message, confirmLabel, onCo
           </div>
           <div className="flex-1">
             <h3 className="text-lg font-bold text-slate-900">{title || "Confirm Action"}</h3>
-            <p className="text-sm text-slate-500 mt-1 leading-relaxed">{message || "Are you sure?"}</p>
+            <p className="text-sm text-slate-500 mt-1 leading-relaxed">
+              {message || "Are you sure?"}
+            </p>
           </div>
-          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600 transition-colors">
+          <button
+            onClick={onCancel}
+            className="text-slate-400 hover:text-slate-600 transition-colors"
+          >
             <X size={18} />
           </button>
         </div>

@@ -5,12 +5,7 @@ jest.mock("../authSync", () => ({
   runContainerCommand: (...args) => mockRunContainerCommand(...args),
 }));
 
-const {
-  createDirectory,
-  listFiles,
-  rootsForAgent,
-  writeFile,
-} = require("../agentFiles");
+const { createDirectory, listFiles, rootsForAgent, writeFile } = require("../agentFiles");
 
 describe("agentFiles", () => {
   beforeEach(() => {
@@ -29,7 +24,7 @@ describe("agentFiles", () => {
           access: "rw",
           kind: "file",
         }),
-      ])
+      ]),
     );
   });
 
@@ -45,7 +40,7 @@ describe("agentFiles", () => {
           access: "ro",
           kind: "directory",
         }),
-      ])
+      ]),
     );
   });
 
@@ -61,7 +56,7 @@ describe("agentFiles", () => {
         id: "openclaw-config",
         access: "rw",
         kind: "file",
-      })
+      }),
     );
     expect(result.entries).toEqual([
       expect.objectContaining({
@@ -82,8 +77,8 @@ describe("agentFiles", () => {
         { runtime_family: "openclaw" },
         "openclaw-config",
         "openclaw.json",
-        Buffer.from('{"runtime":"ok"}').toString("base64")
-      )
+        Buffer.from('{"runtime":"ok"}').toString("base64"),
+      ),
     ).resolves.toEqual({ success: true });
 
     expect(mockRunContainerCommand).toHaveBeenCalledTimes(1);
@@ -95,8 +90,8 @@ describe("agentFiles", () => {
         { runtime_family: "openclaw" },
         "openclaw-config",
         "workspace/notes.txt",
-        Buffer.from("nope").toString("base64")
-      )
+        Buffer.from("nope").toString("base64"),
+      ),
     ).rejects.toMatchObject({
       statusCode: 403,
       message: "Only openclaw.json can be edited from this filesystem root",
@@ -107,7 +102,7 @@ describe("agentFiles", () => {
 
   it("rejects directory mutations for the dedicated config root", async () => {
     await expect(
-      createDirectory({ runtime_family: "openclaw" }, "openclaw-config", "backup")
+      createDirectory({ runtime_family: "openclaw" }, "openclaw-config", "backup"),
     ).rejects.toMatchObject({
       statusCode: 403,
       message:

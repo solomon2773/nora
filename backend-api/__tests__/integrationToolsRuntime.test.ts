@@ -65,6 +65,31 @@ describe("runtime integration tool execution", () => {
     expect(execution.invokeCommand).toContain("nora-integration-tool twitter_post_tweet");
   });
 
+  it("marks supported LinkedIn tools as executable via runtime skill", () => {
+    const execution = buildIntegrationToolExecutionMetadata(
+      { provider: "linkedin" },
+      {
+        name: "linkedin_post_share",
+        operation: "ugcPosts.create",
+        inputSchema: {
+          type: "object",
+          properties: {
+            text: { type: "string" },
+          },
+          required: ["text"],
+        },
+      },
+    );
+
+    expect(execution).toMatchObject({
+      executable: true,
+      executionState: "runtime_skill",
+      executionSurface: "exec",
+      runtimeToolName: "linkedin_post_share",
+    });
+    expect(execution.invokeCommand).toContain("nora-integration-tool linkedin_post_share");
+  });
+
   it("loads synced integrations from the split runtime catalog and details files", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nora-integrations-"));
     const catalog = buildSplitIntegrationManifest([
@@ -344,6 +369,73 @@ describe("runtime integration tool execution", () => {
       expect.objectContaining({
         id: "1900000000000000000",
         text: "Hello from Nora",
+      }),
+    );
+  });
+
+  it("posts a LinkedIn share through the connected user token", async () => {
+    const fetchImpl = jest.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      headers: {
+        get: (name: string) =>
+          String(name).toLowerCase() === "x-restli-id" ? "urn:li:share:123" : null,
+      },
+      text: async () => "",
+    });
+
+    const result = await executeIntegrationToolInvocation({
+      toolName: "linkedin_post_share",
+      input: { text: "Hello from Nora", visibility: "PUBLIC" },
+      integrations: [
+        {
+          provider: "linkedin",
+          name: "LinkedIn",
+          config: {
+            access_token: "linkedin-user-token",
+            sub: "person-123",
+          },
+          toolSpecs: [
+            {
+              name: "linkedin_post_share",
+              operation: "ugcPosts.create",
+            },
+          ],
+        },
+      ],
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://api.linkedin.com/v2/ugcPosts",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer linkedin-user-token",
+          "Content-Type": "application/json",
+          "X-Restli-Protocol-Version": "2.0.0",
+        }),
+        body: JSON.stringify({
+          author: "urn:li:person:person-123",
+          lifecycleState: "PUBLISHED",
+          specificContent: {
+            "com.linkedin.ugc.ShareContent": {
+              shareCommentary: { text: "Hello from Nora" },
+              shareMediaCategory: "NONE",
+            },
+          },
+          visibility: {
+            "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC",
+          },
+        }),
+      }),
+    );
+    expect(result.result.share).toEqual(
+      expect.objectContaining({
+        id: "urn:li:share:123",
+        author: "urn:li:person:person-123",
+        text: "Hello from Nora",
+        visibility: "PUBLIC",
       }),
     );
   });

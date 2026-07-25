@@ -23,7 +23,6 @@ async function tail(args, flags) {
   const intervalMs = Math.max(1000, Number(flags.interval || 5000));
   console.log(`Tailing events every ${intervalMs}ms (Ctrl+C to stop)…`);
   let lastSeen = null;
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       const data = await api.get("/api/monitoring/events", { query: { limit: 50 } });

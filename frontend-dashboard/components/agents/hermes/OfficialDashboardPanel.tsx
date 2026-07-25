@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  LayoutDashboard,
-  Loader2,
-  Maximize2,
-  RefreshCw,
-} from "lucide-react";
+import { AlertTriangle, LayoutDashboard, Loader2, Maximize2, RefreshCw } from "lucide-react";
 
 const DASHBOARD_BOOT_MESSAGE =
   "Fresh Hermes deployments can take a couple of minutes while the official dashboard boots.";
@@ -25,8 +19,7 @@ export default function OfficialDashboardPanel({
     typeof dashboardInfo?.ready === "boolean"
       ? dashboardInfo.ready
       : Boolean(runtimeInfo?.health?.ok);
-  const dashboardError =
-    dashboardInfo?.error || runtimeError || DASHBOARD_BOOT_MESSAGE;
+  const dashboardError = dashboardInfo?.error || runtimeError || DASHBOARD_BOOT_MESSAGE;
 
   useEffect(() => {
     setIframeLoaded(false);
@@ -80,9 +73,7 @@ export default function OfficialDashboardPanel({
     return (
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-8 flex flex-col items-center gap-3">
         <AlertTriangle size={32} className="text-amber-500" />
-        <p className="text-sm font-bold text-slate-700">
-          Official Hermes dashboard unavailable
-        </p>
+        <p className="text-sm font-bold text-slate-700">Official Hermes dashboard unavailable</p>
         <p className="text-xs text-slate-500">{runtimeError}</p>
         <button
           onClick={handleRefresh}
@@ -95,22 +86,16 @@ export default function OfficialDashboardPanel({
   }
 
   return (
-    <div
-      className="flex flex-col"
-      style={{ height: "calc(100vh - 260px)", minHeight: "500px" }}
-    >
+    <div className="flex flex-col" style={{ height: "calc(100vh - 260px)", minHeight: "500px" }}>
       <div className="flex items-center justify-between px-4 py-2 bg-slate-900 rounded-t-xl border border-slate-700 shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <div
             className={`w-2 h-2 rounded-full ${
-              dashboardReady && iframeLoaded
-                ? "bg-green-500"
-                : "bg-amber-500 animate-pulse"
+              dashboardReady && iframeLoaded ? "bg-green-500" : "bg-amber-500 animate-pulse"
             }`}
           />
           <span className="text-xs font-mono text-slate-400 truncate">
-            {dashboardInfo?.url || "Hermes dashboard"} &middot; Port{" "}
-            {dashboardInfo?.port || "9119"}
+            {dashboardInfo?.url || "Hermes dashboard"} &middot; Port {dashboardInfo?.port || "9119"}
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">

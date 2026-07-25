@@ -3,6 +3,7 @@
 // src/commands/. Auth + transport is centralized in src/client.js.
 
 const { parseArgs } = require("./args");
+const { version } = require("../package.json");
 
 const commands = {
   login: require("./commands/login"),
@@ -21,11 +22,15 @@ function printRootHelp() {
   }
   console.log("\nGlobal:");
   console.log("  --help          Show help");
+  console.log("  --version       Show version");
   console.log("\nEnv:");
   console.log("  NORA_HOST       Override host from config (e.g. https://nora.example.com)");
   console.log("  NORA_TOKEN      Override token (e.g. nora_…)");
   console.log("  NORA_WORKSPACE_ID  Override active workspace");
-  console.log("\nDocs: https://github.com/solomon2773/nora");
+  console.log("\nRepository: https://github.com/solomon2773/nora");
+  console.log(
+    "If Nora is useful to you, consider starring it—it helps other operators discover the project.",
+  );
 }
 
 function printSubcommandHelp(name, cmd) {
@@ -39,6 +44,10 @@ function printSubcommandHelp(name, cmd) {
 
 async function main(argv) {
   const { positional, flags } = parseArgs(argv);
+  if (flags.version) {
+    console.log(version);
+    return 0;
+  }
   if (flags.help && positional.length === 0) {
     printRootHelp();
     return 0;

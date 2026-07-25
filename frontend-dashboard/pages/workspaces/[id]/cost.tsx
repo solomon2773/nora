@@ -26,8 +26,8 @@ import {
 const PERIOD_DAYS_OPTIONS = [7, 30, 90];
 const BUDGET_PERIODS: Array<"daily" | "weekly" | "monthly"> = ["daily", "weekly", "monthly"];
 
-function formatUsd(value: number): string {
-  return `$${value.toFixed(2)}`;
+function formatUsd(value?: number | null): string {
+  return `$${Number(value || 0).toFixed(2)}`;
 }
 
 function formatNumber(value?: number | null): string {

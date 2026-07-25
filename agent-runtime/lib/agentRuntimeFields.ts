@@ -2,10 +2,10 @@
 const {
   DEFAULT_RUNTIME_FAMILY,
   backendForRuntimeSelection,
+  deployTargetFromExecutionTargetId,
   getDefaultDeployTarget,
   getDefaultRuntimeFamily,
   getDefaultSandboxProfile,
-  isKnownDeployTarget,
   isKnownRuntimeFamily,
   isKnownSandboxProfile,
   normalizeExecutionTargetId,
@@ -14,35 +14,83 @@ const {
   normalizeSandboxProfileName,
 } = require("./backendCatalog");
 
+const LEGACY_BACKEND_TYPE_ALIASES = new Set(["hermes", "nemoclaw"]);
+
 function hasText(value) {
   return typeof value === "string" ? value.trim() !== "" : value != null;
 }
 
+function firstTextValue(...values) {
+  return values.find((value) => hasText(value)) ?? null;
+}
+
+function unknownRuntimeSelectionError(label, code, value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  const error = new Error(`Unknown ${label}: ${normalized}`);
+  error.code = code;
+  error.statusCode = 400;
+  return error;
+}
+
 function parseRuntimeFamily(value) {
-  if (!isKnownRuntimeFamily(value)) return null;
+  if (!hasText(value)) return null;
+  if (!isKnownRuntimeFamily(value)) {
+    throw unknownRuntimeSelectionError("runtime family", "UNKNOWN_RUNTIME_FAMILY", value);
+  }
   return normalizeRuntimeFamilyName(value);
 }
 
-function parseDeployTarget(value) {
-  if (!isKnownDeployTarget(value)) return null;
-  return normalizeDeployTargetName(value);
+function parseDeployTarget(value, { allowLegacyBackendAlias = false } = {}) {
+  if (!hasText(value)) return null;
+
+  const normalizedValue = String(value).trim().toLowerCase();
+  if (allowLegacyBackendAlias && LEGACY_BACKEND_TYPE_ALIASES.has(normalizedValue)) {
+    return null;
+  }
+
+  try {
+    return normalizeDeployTargetName(value);
+  } catch (error) {
+    if (error?.code === "UNKNOWN_DEPLOY_TARGET" && error.statusCode == null) {
+      error.statusCode = 400;
+    }
+    throw error;
+  }
 }
 
-function parseExecutionTargetId(value) {
-  return normalizeExecutionTargetId(value);
+function parseExecutionTargetId(value, { allowLegacyBackendAlias = false } = {}) {
+  if (!hasText(value)) return null;
+
+  const normalizedValue = String(value).trim().toLowerCase();
+  if (allowLegacyBackendAlias && LEGACY_BACKEND_TYPE_ALIASES.has(normalizedValue)) {
+    return null;
+  }
+
+  const executionTargetId = normalizeExecutionTargetId(value);
+  if (executionTargetId) return executionTargetId;
+
+  // Reuse the canonical deploy-target error contract so request handlers and
+  // persisted-row consumers fail closed with one stable code/status shape.
+  parseDeployTarget(value);
+  return null;
 }
 
 function parseSandboxProfile(value) {
-  if (!isKnownSandboxProfile(value)) return null;
+  if (!hasText(value)) return null;
+  if (!isKnownSandboxProfile(value)) {
+    throw unknownRuntimeSelectionError("sandbox profile", "UNKNOWN_SANDBOX_PROFILE", value);
+  }
   return normalizeSandboxProfileName(value);
 }
 
-function normalizeRequestedDeployTarget(value) {
-  return parseDeployTarget(value);
+function normalizeRequestedDeployTarget(value, options = {}) {
+  return parseDeployTarget(value, options);
 }
 
-function normalizeRequestedExecutionTargetId(value) {
-  return parseExecutionTargetId(value);
+function normalizeRequestedExecutionTargetId(value, options = {}) {
+  return parseExecutionTargetId(value, options);
 }
 
 function resolveFallbackRuntimeFields(fallback = {}) {
@@ -84,15 +132,18 @@ function resolveAgentSandboxProfile(agent = {}) {
 
 function resolveAgentDeployTarget(agent = {}) {
   const explicitDeployTarget = parseDeployTarget(
-    agent.deploy_target ??
-      agent.deployTarget ??
-      agent.execution_target_id ??
+    firstTextValue(
+      agent.deploy_target,
+      agent.deployTarget,
+      agent.execution_target_id,
       agent.executionTargetId,
+    ),
   );
   if (explicitDeployTarget) return explicitDeployTarget;
 
   const backendDeployTarget = parseDeployTarget(
     agent.backend_type ?? agent.backendType ?? agent.backend,
+    { allowLegacyBackendAlias: true },
   );
   if (backendDeployTarget) return backendDeployTarget;
 
@@ -109,10 +160,12 @@ function resolveAgentDeployTarget(agent = {}) {
 
 function resolveAgentExecutionTargetId(agent = {}) {
   const explicitExecutionTarget = parseExecutionTargetId(
-    agent.execution_target_id ??
-      agent.executionTargetId ??
-      agent.deploy_target ??
+    firstTextValue(
+      agent.execution_target_id,
+      agent.executionTargetId,
+      agent.deploy_target,
       agent.deployTarget,
+    ),
   );
   if (explicitExecutionTarget) return explicitExecutionTarget;
 
@@ -153,6 +206,15 @@ function buildAgentRuntimeFields(agent = {}) {
     ...agent,
     runtime_family: runtimeFamily,
   });
+  const executionDeployTarget = deployTargetFromExecutionTargetId(executionTargetId);
+  if (executionDeployTarget !== deployTarget) {
+    const error = new Error(
+      `Execution target ${executionTargetId} belongs to deploy target ${executionDeployTarget}, not ${deployTarget}.`,
+    );
+    error.code = "RUNTIME_SELECTION_TARGET_MISMATCH";
+    error.statusCode = 400;
+    throw error;
+  }
   const sandboxProfile = resolveAgentSandboxProfile({
     ...agent,
     runtime_family: runtimeFamily,
@@ -207,10 +269,10 @@ function resolveRequestedRuntimeFields({ request = {}, fallback = {} } = {}) {
   const requestedExecutionTargetId =
     normalizeRequestedExecutionTargetId(rawRequestedExecutionTarget) ||
     normalizeRequestedExecutionTargetId(rawRequestedDeployTarget) ||
-    normalizeRequestedExecutionTargetId(rawRequestedBackend);
+    normalizeRequestedExecutionTargetId(rawRequestedBackend, { allowLegacyBackendAlias: true });
   const requestedDeployTarget =
     normalizeRequestedDeployTarget(rawRequestedDeployTarget) ||
-    normalizeRequestedDeployTarget(rawRequestedBackend) ||
+    normalizeRequestedDeployTarget(rawRequestedBackend, { allowLegacyBackendAlias: true }) ||
     normalizeRequestedDeployTarget(requestedExecutionTargetId);
   const requestedSandboxProfile = parseSandboxProfile(
     request.sandbox_profile ??

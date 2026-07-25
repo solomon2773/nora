@@ -86,7 +86,7 @@ module.exports = {
     get: {
       tags: ["Monitoring"],
       summary: "Raw API performance metric records",
-      "x-required-scopes": ["monitoring:read"],
+      "x-session-required": true,
       parameters: [{ name: "since", in: "query", schema: { type: "string", format: "date-time" } }],
       responses: ok("Metric records"),
     },

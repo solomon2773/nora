@@ -5,6 +5,8 @@ const db = require("./db");
 
 const WORKSPACE_ROLE_RANK = { viewer: 0, editor: 1, admin: 2, owner: 3 };
 
+// Serialization and normalization
+
 function normalizeAgentRole(role) {
   const trimmed = typeof role === "string" ? role.trim() : "";
   return trimmed.slice(0, 80) || "member";
@@ -94,6 +96,15 @@ function serializeAccessibleAgent(row) {
   };
 }
 
+// Workspace lifecycle
+
+/**
+ * Create a workspace and its initial owner membership in one transaction.
+ *
+ * @param {string} userId - User creating and owning the workspace.
+ * @param {string} name - Workspace name.
+ * @returns {Promise<Object>} Persisted workspace row.
+ */
 async function createWorkspace(userId, name) {
   const client = await db.connect();
   try {
@@ -119,10 +130,13 @@ async function createWorkspace(userId, name) {
   }
 }
 
+/**
+ * List workspaces where a user is a member, retaining the legacy creator-as-owner fallback.
+ *
+ * @param {string} userId - User whose memberships should be listed.
+ * @returns {Promise<Array>} Workspaces with effective role and member/agent counts.
+ */
 async function listWorkspaces(userId) {
-  // Returns every workspace where the user is a member, plus their role.
-  // Falls back to the legacy single-owner field for any workspace that
-  // hasn't been backfilled yet (the schema migration backfills them).
   const result = await db.query(
     `SELECT w.*,
             COALESCE(m.role, CASE WHEN w.user_id = $1 THEN 'owner' ELSE NULL END) AS role,
@@ -143,6 +157,18 @@ async function listWorkspaces(userId) {
   return result.rows;
 }
 
+// Agent assignment and access views
+
+/**
+ * Assign or update an agent in a workspace, optionally requiring the caller's
+ * direct ownership of that agent before the upsert.
+ *
+ * @param {string} workspaceId - Workspace receiving the agent.
+ * @param {string} agentId - Agent being assigned.
+ * @param {string} [role="member"] - Assignment label stored with the link.
+ * @param {string|null} [userId=null] - Optional direct owner required for the agent.
+ * @returns {Promise<Object>} Persisted workspace-agent assignment.
+ */
 async function addAgent(workspaceId, agentId, role = "member", userId = null) {
   if (userId) {
     const ownership = await db.query("SELECT id FROM agents WHERE id = $1 AND user_id = $2", [
@@ -198,6 +224,14 @@ async function getWorkspaceAgents(workspaceId, userId = null) {
   return result.rows.map(serializeWorkspaceAgent);
 }
 
+/**
+ * List a user's directly owned agents and mark whether each is already assigned
+ * to the requested workspace.
+ *
+ * @param {string} workspaceId - Workspace used to mark current assignments.
+ * @param {string} userId - Direct owner whose agents are candidates.
+ * @returns {Promise<Array>} Candidate agents with assignment state.
+ */
 async function listAgentCandidates(workspaceId, userId) {
   const result = await db.query(
     `SELECT a.id, a.name, a.status, a.backend_type, a.runtime_family, a.deploy_target,
@@ -225,7 +259,45 @@ async function removeAgent(workspaceId, agentId) {
   return result.rows[0] || null;
 }
 
-async function listAccessibleAgents(userId, { scope = "accessible" } = {}) {
+/**
+ * List agents available through direct ownership or workspace membership,
+ * optionally restricting the result to directly owned agents or one workspace.
+ *
+ * @param {string} userId - User whose agent access should be resolved.
+ * @param {Object} [options={}] - Optional ownership scope and workspace filter.
+ * @returns {Promise<Array>} Agents with effective role and workspace context.
+ */
+async function listAccessibleAgents(userId, { scope = "accessible", workspaceId = null } = {}) {
+  if (workspaceId) {
+    const ownedOnly = scope === "owned" ? "AND a.user_id = $1" : "";
+    const result = await db.query(
+      `SELECT a.*,
+              (a.user_id = $1) AS is_direct_owner,
+              CASE
+                WHEN a.user_id = $1 THEN 'owner'
+                ELSE COALESCE(wm.role, CASE WHEN w.user_id = $1 THEN 'owner' ELSE NULL END)
+              END AS effective_role,
+              jsonb_build_array(
+                jsonb_build_object(
+                  'id', w.id,
+                  'name', w.name,
+                  'role', COALESCE(wm.role, CASE WHEN w.user_id = $1 THEN 'owner' ELSE NULL END)
+                )
+              ) AS workspaces
+         FROM workspace_agents wa
+         JOIN agents a ON a.id = wa.agent_id
+         JOIN workspaces w ON w.id = wa.workspace_id
+         LEFT JOIN workspace_members wm
+           ON wm.workspace_id = w.id AND wm.user_id = $1
+        WHERE wa.workspace_id = $2
+          AND (a.user_id = $1 OR wm.user_id = $1 OR w.user_id = $1)
+          ${ownedOnly}
+        ORDER BY a.created_at DESC`,
+      [userId, workspaceId],
+    );
+    return result.rows.map(serializeAccessibleAgent);
+  }
+
   if (scope === "owned") {
     const result = await db.query(
       `SELECT a.*,

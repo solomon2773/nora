@@ -8,22 +8,22 @@ Runs on `/app/*` behind nginx. Users manage their AI agents, configure LLM provi
 
 ## Pages
 
-| Route                       | Description                                                                                              |
-| --------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `/app`                      | Redirects to `/app/agents`                                                                               |
-| `/app/dashboard`            | Dashboard home: fleet roll-up, quick stats, and activation checklist                                     |
-| `/app/getting-started`      | First-run activation checklist / zero-key demo onboarding                                                |
-| `/app/agents`               | Agent fleet list with status indicators                                                                  |
-| `/app/agents/[id]`          | Agent detail with runtime-filtered tab interface (up to 10 tabs)                                         |
-| `/app/agents/[id]/versions` | Agent deploy-draft version history                                                                       |
-| `/app/deploy`               | Deploy a new agent (Docker or K8s/Kubernetes GA; Proxmox visible only as release-blocked roadmap target) |
-| `/app/agent-hub`            | Browse, share, and install agent templates                                                               |
-| `/app/workspaces`           | Manage isolated workspaces                                                                               |
-| `/app/monitoring`           | Real-time metrics via SSE                                                                                |
-| `/app/logs`                 | Standalone cross-agent log browser                                                                       |
-| `/app/cost`                 | All-workspaces cost dashboard (grouped by workspace)                                                     |
-| `/app/clawhub`              | ClawHub skill catalog browser used when building a deploy draft                                          |
-| `/app/settings`             | User profile, LLM provider keys, connected accounts                                                      |
+| Route                       | Description                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------------- |
+| `/app`                      | Redirects to `/app/agents`                                                            |
+| `/app/dashboard`            | Dashboard home: fleet roll-up, quick stats, and activation checklist                  |
+| `/app/getting-started`      | First-run activation checklist; zero-key demo when local Docker is enabled            |
+| `/app/agents`               | Agent fleet list with status indicators                                               |
+| `/app/agents/[id]`          | Agent detail with runtime-filtered tab interface (up to 10 tabs)                      |
+| `/app/agents/[id]/versions` | Agent deploy-draft version history                                                    |
+| `/app/deploy`               | Deploy a new agent (Docker or K8s/Kubernetes GA; Proxmox LXC opt-in and experimental) |
+| `/app/agent-hub`            | Browse, share, and install agent templates                                            |
+| `/app/workspaces`           | Manage isolated workspaces                                                            |
+| `/app/monitoring`           | Real-time metrics via SSE                                                             |
+| `/app/logs`                 | Standalone cross-agent log browser                                                    |
+| `/app/cost`                 | All-workspaces cost dashboard (grouped by workspace)                                  |
+| `/app/clawhub`              | ClawHub skill catalog browser used when building a deploy draft                       |
+| `/app/settings`             | User profile, LLM provider keys, connected accounts                                   |
 
 ## Agent Detail Tabs
 
@@ -44,18 +44,18 @@ Channels and Integrations are not top-level tabs — they are sub-panels inside 
 
 ## Key Components
 
-| Component                                   | Purpose                                             |
-| ------------------------------------------- | --------------------------------------------------- |
-| `AgentTerminal.tsx`                         | xterm.js terminal with FitAddon, WebSocket          |
-| `TabBar.tsx`                                | Runtime-filtered tab navigation bar (up to 10 tabs) |
-| `OpenClawTab.tsx`                           | 7-panel OpenClaw interface                          |
-| `ChannelsTab.tsx`                           | Channel CRUD with dynamic config forms              |
-| `IntegrationsTab.tsx`                       | Catalog browser with 17-category filter             |
-| `IntegrationCard.tsx`                       | Card with config modal for connecting               |
-| `BudgetSection.tsx`                         | Per-agent LLM budget hard caps (Settings tab)       |
-| `McpServersSection.tsx`                     | Per-agent MCP server management (Integrations panel)|
-| `LLMSetupWizard.tsx`                        | 3-step provider setup (select → configure → done)   |
-| `Layout.tsx` / `Sidebar.tsx` / `Topbar.tsx` | App shell layout                                    |
+| Component                                   | Purpose                                              |
+| ------------------------------------------- | ---------------------------------------------------- |
+| `AgentTerminal.tsx`                         | xterm.js terminal with FitAddon, WebSocket           |
+| `TabBar.tsx`                                | Runtime-filtered tab navigation bar (up to 10 tabs)  |
+| `OpenClawTab.tsx`                           | 7-panel OpenClaw interface                           |
+| `ChannelsTab.tsx`                           | Channel CRUD with dynamic config forms               |
+| `IntegrationsTab.tsx`                       | Catalog browser with 17-category filter              |
+| `IntegrationCard.tsx`                       | Card with config modal for connecting                |
+| `BudgetSection.tsx`                         | Per-agent LLM budget hard caps (Settings tab)        |
+| `McpServersSection.tsx`                     | Per-agent MCP server management (Integrations panel) |
+| `LLMSetupWizard.tsx`                        | 3-step provider setup (select → configure → done)    |
+| `Layout.tsx` / `Sidebar.tsx` / `Topbar.tsx` | App shell layout                                     |
 
 ## Development
 

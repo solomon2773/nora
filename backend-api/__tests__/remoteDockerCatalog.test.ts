@@ -32,9 +32,11 @@ describe("remote-docker deploy target recognition", () => {
       expect(normalizeDeployTargetName("REMOTE:My-Laptop")).toBe("remote-docker");
     });
 
-    it("does not let remote-docker change the docker fallback for unknown targets", () => {
-      expect(normalizeDeployTargetName("moon")).toBe("docker");
+    it("defaults only absent targets to docker and rejects unknown targets", () => {
+      expect(() => normalizeDeployTargetName("moon")).toThrow("Unknown deploy target: moon");
       expect(normalizeDeployTargetName("")).toBe("docker");
+      expect(normalizeDeployTargetName(null)).toBe("docker");
+      expect(normalizeDeployTargetName(undefined)).toBe("docker");
       expect(normalizeDeployTargetName("docker")).toBe("docker");
     });
 
@@ -111,6 +113,20 @@ describe("remote-docker deploy target recognition", () => {
       expect(status.available).toBe(true);
       expect(status.issue).toBeNull();
       expect(status.deployTarget).toBe("remote-docker");
+    });
+
+    it("lets NemoClaw target a registered remote Docker host when the sandbox is enabled", () => {
+      process.env.ENABLED_SANDBOX_PROFILES = "standard,nemoclaw";
+      const status = getRuntimeSelectionStatus({
+        runtime_family: "openclaw",
+        deploy_target: "remote-docker",
+        execution_target_id: "remote:my-laptop",
+        sandbox_profile: "nemoclaw",
+      });
+      expect(status.available).toBe(true);
+      expect(status.issue).toBeNull();
+      expect(status.deployTarget).toBe("remote-docker");
+      expect(status.sandboxProfile).toBe("nemoclaw");
     });
   });
 

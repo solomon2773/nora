@@ -24,6 +24,11 @@ function boolValue(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function mailEndpointUrl(host: string, port: number): string {
+  const normalizedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `https://${normalizedHost}:${port}`;
+}
+
 function setNested(target: Record<string, any>, path: string, value: unknown) {
   const parts = path.split(".");
   let cursor = target;
@@ -37,6 +42,14 @@ function setNested(target: Record<string, any>, path: string, value: unknown) {
   cursor[parts[0]] = value;
 }
 
+/**
+ * Expand dotted input, apply provider defaults, and canonicalize current Email config sections.
+ *
+ * Legacy polling, initial-sync, and mailbox-scope fields are intentionally removed.
+ *
+ * @param {Object} [rawConfig={}] - Partial nested or dotted Email configuration.
+ * @returns {Object} Canonical IMAP, SMTP, cron, auth, and verification config.
+ */
 export function normalizeEmailConfigInput(rawConfig: Record<string, unknown> = {}): EmailConfig {
   const next: Record<string, any> = {};
 
@@ -101,9 +114,17 @@ export const emailProvider: Provider = {
   id: "email",
   authType: "custom",
 
-  async test(ctx: DecryptedIntegration, _deps: ProviderDeps): Promise<ConnectivityResult> {
+  async test(ctx: DecryptedIntegration, deps: ProviderDeps): Promise<ConnectivityResult> {
     const normalized = normalizeEmailConfigInput(ctx.config || {});
     if (ctx.token) normalized.auth.password = ctx.token;
+    await deps.assertSafeUrl(
+      mailEndpointUrl(normalized.imap.host, normalized.imap.port),
+      "Email IMAP endpoint",
+    );
+    await deps.assertSafeUrl(
+      mailEndpointUrl(normalized.smtp.host, normalized.smtp.port),
+      "Email SMTP endpoint",
+    );
     return testEmailConnection(normalized);
   },
 

@@ -9,10 +9,42 @@ const {
   parseUploadedMigrationBuffer,
 } = require("../agentMigrations");
 const { asyncHandler } = require("../middleware/errorHandler");
+const { requireAdmin, requireSession } = require("../middleware/auth");
 const { createMutationFailureAuditMiddleware } = require("../auditLog");
 
 const router = express.Router();
 router.use(createMutationFailureAuditMiddleware("agent_migration"));
+router.use(requireSession);
+
+function normalizePlatformMode() {
+  return (
+    String(process.env.PLATFORM_MODE || "")
+      .trim()
+      .toLowerCase() || "selfhosted"
+  );
+}
+
+function requireSelfHostedDockerInspection(req, res, next) {
+  if (normalizePlatformMode() !== "selfhosted") {
+    return res.status(403).json({
+      error: "Live migration inspection is only available in self-hosted mode",
+      code: "live_inspect_selfhosted_only",
+    });
+  }
+
+  const transport = String(req.body?.transport || "")
+    .trim()
+    .toLowerCase();
+  if (transport !== "docker") {
+    return res.status(400).json({
+      error: "Live migration inspection requires the local Docker transport",
+      code: "live_inspect_docker_only",
+    });
+  }
+
+  req.body.transport = transport;
+  next();
+}
 
 router.post(
   "/upload",
@@ -28,11 +60,13 @@ router.post(
     });
 
     res.json({ draft: draft.preview });
-  })
+  }),
 );
 
 router.post(
   "/live-inspect",
+  requireAdmin,
+  requireSelfHostedDockerInspection,
   asyncHandler(async (req, res) => {
     const manifest = await buildLiveMigrationManifest(req.body || {});
     const draft = await createMigrationDraft({
@@ -43,7 +77,7 @@ router.post(
     });
 
     res.json({ draft: draft.preview });
-  })
+  }),
 );
 
 router.get(
@@ -55,7 +89,7 @@ router.get(
     }
 
     res.json({ draft: draft.preview });
-  })
+  }),
 );
 
 router.delete(
@@ -73,7 +107,7 @@ router.delete(
 
     const deleted = await deleteOwnedMigrationDraft(req.params.id, req.user.id);
     res.json({ success: deleted });
-  })
+  }),
 );
 
 module.exports = router;

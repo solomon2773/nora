@@ -1,0 +1,523 @@
+# Remote Docker provisioner backend
+
+> Run Nora agents on a personal or platform Docker machine that the Nora control plane reaches over SSH.
+
+Remote Docker is Nora's experimental bring-your-own-compute path for a standalone Docker host. A
+user can register a personal machine in the operator dashboard, or a platform admin can register a
+platform machine in Admin. After a narrow SSH/Docker connection test, authorized users select its
+concrete `remote:<id>` execution target when deploying an agent.
+
+<Tip>
+  Want the shortest operator path? Follow [Connect a Remote Docker host](/guides/remote-docker) for
+  a registration-to-validation walkthrough, then return here for the full security, sharing,
+  capacity, backup, and retirement contract.
+</Tip>
+
+<Warning>
+  Remote Docker is experimental. Validate lifecycle, readiness, networking, backups, and recovery on
+  your exact host before placing production workloads on it. Remote agent ports bind to `0.0.0.0` on
+  the registered machine, so the firewall requirements below are mandatory on any shared or
+  internet-reachable network. Remote Docker is available only from a self-hosted Nora control plane;
+  hosted mode disables registration and use.
+</Warning>
+
+<Note>
+  If an existing installation is switched from self-hosted mode to hosted PaaS mode, Nora blocks new
+  Remote Docker registration, placement, and active use. Persisted Remote Docker agents retain only
+  the explicit **Stop** and **Delete** cleanup paths, and those paths still require the original
+  trusted SSH host-key pin.
+</Note>
+
+## How it works
+
+Nora connects to the registered machine's Docker daemon through SSH. It does not require an
+unauthenticated Docker TCP socket or a Docker context on the Nora control-plane host. The remote
+adapter reuses Nora's Docker lifecycle and runtime bootstrap, while PostgreSQL reserves published
+ports independently for each registered host.
+
+SSH encrypts Docker control traffic only. Readiness, runtime APIs, OpenClaw gateway traffic, Hermes
+dashboard traffic, and OpenClaw live backup/export reads use plain HTTP or WebSocket connections to
+the published agent ports. Remote Hermes backup capture instead uses the Docker API over the same
+SSH transport as lifecycle operations. Put the Nora control plane and remote host on the same
+trusted private network or an encrypted overlay such as WireGuard or Tailscale. Do not send the
+published agent ports across the public internet.
+
+Personal remote hosts are user-owned records registered under **App -> Remote Hosts**
+(`/app/remote-hosts`). They start private and can be shared to workspaces. Platform remote hosts are
+control-plane-owned records registered under **Admin -> Remote Hosts** (`/admin/remote-hosts`). They
+start restricted, can grant all accounts, direct users, user groups, or workspaces, survive creator
+deletion, and can be managed by any platform admin. Personal rows remain read-only in the Admin
+fleet view.
+
+## Host compatibility
+
+The implemented contract is a Docker API connection over SSH that launches Linux container images.
+A Linux server or VM running Docker Engine is the lowest-risk path. Nora does not publish a certified
+host matrix for Linux distributions, CPU architectures, rootless Docker, Docker Desktop, macOS, or
+Windows.
+
+- The SSH user's default Docker context must reach the intended daemon without an interactive prompt.
+- The host architecture must be supported by every selected runtime image.
+- Windows-native container mode is not compatible with Nora's current Linux container images.
+- Docker Desktop in Linux-container mode, rootless Docker, macOS, and Windows may have different
+  port-forwarding, daemon-context, filesystem, and reboot behavior. Treat them as untested until you
+  complete the full validation sequence below.
+- Nora does not install or configure SSH, Docker, Tailscale, WireGuard, host firewalls, or registry
+  credentials on the remote machine.
+
+Passing **Test** is not an OS certification or workload compatibility result.
+
+## Prerequisites
+
+Before registration, prepare the remote machine with:
+
+- an SSH server reachable from `backend-api`, `worker-provisioner`, and, when backups are used,
+  `worker-backup`;
+- a Docker CLI and running Docker daemon;
+- an SSH account that can run `docker version` and manage containers without an interactive prompt;
+- outbound DNS and HTTPS access to the container registries, package registries, model providers,
+  and integrations used by the selected runtime;
+- enough CPU, memory, storage, and image-cache space for the planned agents; and
+- a stable address that the Nora control plane can use for SSH and agent gateway traffic.
+
+Docker daemon access is effectively root-equivalent on most hosts. Prefer a dedicated remote machine
+and a dedicated SSH identity, and protect that identity as a privileged credential.
+
+The Nora control plane must have a valid `ENCRYPTION_KEY`. Remote-host private keys, passwords, and
+key passphrases are encrypted before storage and are never returned by the API.
+
+<CodeGroup>
+```bash Docker Compose theme={null}
+# 32 random bytes encoded as 64 hexadecimal characters
+ENCRYPTION_KEY=<64-hex-character-key>
+
+ENABLED_RUNTIME_FAMILIES=openclaw
+ENABLED_BACKENDS=docker
+ENABLED_SANDBOX_PROFILES=standard
+
+````
+
+```yaml Helm values theme={null}
+# Keep the chart's cluster-hosted sentinel; Remote Docker hosts are added dynamically.
+enabledRuntimeFamilies: openclaw
+enabledBackends: k8s
+enabledSandboxProfiles: standard
+````
+
+</CodeGroup>
+
+For Helm, provide `ENCRYPTION_KEY` through the chart's configured secret rather than placing it in
+`values.yaml`.
+
+Do not add `remote-docker` to `ENABLED_BACKENDS`. Successfully tested hosts are injected dynamically
+as concrete targets such as `remote:build-host`; `ENABLED_BACKENDS` controls only the static backend
+list. Enable Hermes or NemoClaw only when you intend to validate those experimental runtime paths:
+
+```bash theme={null}
+# Optional: enable the Hermes runtime family.
+ENABLED_RUNTIME_FAMILIES=openclaw,hermes
+
+# Optional: enable the NemoClaw sandbox after completing its NVIDIA prerequisites.
+ENABLED_SANDBOX_PROFILES=standard,nemoclaw
+```
+
+## Network and firewall requirements
+
+The default published-port range is configurable with `DOCKER_AGENT_PORT_RANGE_MIN` and
+`DOCKER_AGENT_PORT_RANGE_MAX`, but both values must remain inside `19000-19999`.
+
+| Source                                                        | Destination                         | Protocol and port                            | Purpose                                                                                                                    | Recommended restriction                                                             |
+| ------------------------------------------------------------- | ----------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Nora `backend-api`, `worker-provisioner`, and `worker-backup` | Remote host                         | TCP `22` or the configured SSH port          | Connection test from `backend-api`; Docker transport for provisioning, lifecycle, and Remote Hermes backup capture         | Allow only every Nora control-plane or worker egress address                        |
+| Nora `backend-api`, `worker-provisioner`, and `worker-backup` | Remote host's gateway address       | TCP configured subrange within `19000-19999` | Readiness, OpenClaw gateway/runtime traffic, Hermes runtime/dashboard proxy traffic, and OpenClaw live backup/export reads | Allow only Nora control-plane and worker addresses; never expose the range publicly |
+| Remote host                                                   | Registries and configured providers | DNS plus outbound HTTPS                      | Pull images/packages and reach model or integration APIs                                                                   | Use an egress allowlist where practical                                             |
+| Operator browser                                              | Nora application origin             | HTTPS                                        | Registration, deployment, logs, terminal, and proxied runtime UI                                                           | The browser does not need direct SSH or Docker access                               |
+
+Remote OpenClaw and Hermes adapters publish their required host ports on `0.0.0.0` because the
+control plane is on another machine. Hermes publishes both its runtime API and dashboard port; treat
+the dashboard as sensitive even though Nora normally reaches it through the authenticated proxy.
+
+Tailscale, WireGuard, or another encrypted private network can provide the SSH and gateway path. Use
+the private address as **SSH host** and, when necessary, **Gateway address**. Tailscale is
+connectivity transport, not a Nora provisioner backend, and Nora does not install or configure it.
+
+## Register a host
+
+Choose the registry that matches the intended ownership:
+
+1. For a personal host, sign in to Nora and open **App -> Remote Hosts**. The signed-in user owns and
+   manages the record.
+2. For a platform host, sign in as a platform admin, open **Admin -> Remote Hosts**, and select
+   **Add platform host**. Any platform admin can manage the resulting record.
+3. Enter the connection details and choose key or password authentication.
+4. Submit the registration, then select **Test** or **Test connection**. A host is not deployable
+   until this manual test succeeds.
+
+| Field               | Required          | Description                                                                                                                        |
+| ------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Label**           | Yes               | Human-readable name. The dashboard derives the stable target id from this label; session API callers may supply an explicit id.    |
+| **Gateway address** | No                | Hostname or IP that `backend-api` should use for published agent ports. Defaults to the SSH host. Do not include a scheme or port. |
+| **SSH host**        | Yes               | DNS name or IP reachable from Nora's backend and provisioner worker.                                                               |
+| **Port**            | Yes               | SSH port, normally `22`.                                                                                                           |
+| **SSH user**        | Yes               | Account allowed to run Docker without an interactive prompt.                                                                       |
+| **Authentication**  | Yes               | **SSH private key** is preferred; password authentication is available when required.                                              |
+| **SSH private key** | For key auth      | Complete private-key content. Use a dedicated key with the narrowest practical host access.                                        |
+| **Key passphrase**  | No                | Passphrase for an encrypted private key.                                                                                           |
+| **SSH password**    | For password auth | Password used only when password authentication is selected.                                                                       |
+
+Remote-host ids are unique across the Nora installation. The dashboard normalizes the label into a
+2-64 character lowercase id containing letters, numbers, and dashes, so choose a distinctive label
+whose normalized form will not collide with another personal or platform host. Session API callers
+may instead supply an explicit id with the same constraints. Deleting a personal or platform host
+permanently reserves its id with a tombstone; use a new id for any replacement instead of attempting
+to reuse the previous `remote:<id>` identity.
+
+Stored private keys, passwords, and passphrases are masked in every response. When the personal owner
+or a platform admin edits a host, leaving a secret field blank preserves the stored value. Users who
+only have deployment access cannot edit the connection profile or credentials. Changing SSH
+connection details, credentials, Docker settings, or the gateway address clears the previous
+successful-test state, so the host must pass **Test** again. Credential rotation preserves the
+existing host-key pin. Changing the SSH host or port clears that pin because it identifies a
+different network endpoint.
+
+Changing **Gateway address** or the global Docker agent port range does not rewrite the endpoint or
+port reservations already persisted on existing agents. Drain and replace those agents before the
+change, and keep the old private route and firewall allowance in place until the old agents are
+deleted. Re-running **Test** validates the edited registration only; it does not migrate workloads.
+
+<Warning>
+  Stop, migrate, or delete every workload on the registration before changing its SSH host or port,
+  resetting its SSH pin, or intentionally changing the machine's SSH host identity. Those actions
+  can remove or invalidate the trust needed for safe cleanup. Do not repoint a registration that
+  still has agents on the old machine.
+</Warning>
+
+## What the Test button checks
+
+**Test** is deliberately narrow:
+
+1. The `backend-api` process opens SSH to the registered address under a 10-second overall probe
+   deadline, including SSH readiness and the Docker command/stream.
+2. It runs `docker version --format '{{.Server.Version}}'` as the registered user.
+3. It captures the presented SSH host key and, on first trust, stores it as the host's pin.
+4. It records `ok` only when both the Docker command succeeds and Nora captured a host key; otherwise
+   the host remains unavailable.
+
+A stored Test result is trusted only when the registration also has its SSH host-key pin. A legacy
+row upgraded from an older Nora version can still contain `last_test_status=ok` without a pin; Nora
+treats that row as untrusted, does not offer it for deployment, and requires **Test** again from a
+trusted network.
+
+It does **not** ask `worker-provisioner` or `worker-backup` to connect, create a container, pull an
+image, allocate or bind a port, check the gateway address, wait for runtime readiness, run lifecycle
+actions, or test backup/restore.
+
+Actual provisioning and Docker lifecycle traffic use `docker system dial-stdio` over the registered
+SSH session. Passing **Test** proves only that the lighter `docker version` probe worked from
+`backend-api`; it does not prove that the provisioner or backup worker can establish their own
+Docker API transport.
+
+<Warning>
+  Nora does not continuously health-check registered remote hosts. A successful manual test has no
+  expiry or freshness TTL: the host remains selectable from that stored result until connection
+  inputs change, the host is disabled, its pin is reset, or a later manual test fails. Re-run
+  **Test** after Docker, SSH, VPN, firewall, address, credential, or host maintenance, and before a
+  critical deployment.
+</Warning>
+
+Use a disposable agent deployment to verify the provisioner worker, image pull/build, published-port
+routing, readiness, and lifecycle path. If you rely on backups, run a backup and restore exercise as
+well. Watch the services that actually perform those operations:
+
+<CodeGroup>
+```bash Docker Compose theme={null}
+docker compose logs -f backend-api worker-provisioner worker-backup
+```
+
+```bash Helm theme={null}
+kubectl logs -n <namespace> \
+  -l 'app.kubernetes.io/component in (backend-api,worker-provisioner,worker-backup)' \
+  --all-containers=true --prefix --max-log-requests=10 -f
+```
+
+</CodeGroup>
+
+## SSH host-key security
+
+The first successful **Test** pins the public host key presented by the SSH server. This is trust on
+first use (TOFU): perform the first test from a trusted network and verify that the DNS name or IP
+reaches the intended machine.
+
+After the key is pinned, a different key for the same registration is rejected. Nora does not
+silently replace the pin. If the machine was intentionally rebuilt or its SSH host key was rotated,
+verify the replacement key through a trusted console or another out-of-band path. In the host's
+owning surface—**App -> Remote Hosts** for a personal host or **Admin -> Remote Hosts** for a platform
+host—open **Reset SSH pin**, type the exact host label or id, and confirm. Nora clears only the stored
+pin and previous Test result; it does not change the SSH address or credentials. Active use stays
+blocked until you run **Test** successfully and Nora captures and pins the replacement key.
+
+The retained pin is also the identity check for cleanup after access is revoked. While a registration
+has no pin, Nora refuses **Stop** and **Delete** instead of accepting an unknown SSH key for a
+destructive Docker operation. The remote container may therefore remain running. Verify the machine
+out of band, ask the host owner to run **Test** and restore trust when the same verified machine is
+still registered, or remove the runtime manually on the verified host.
+
+Manual container removal does not clear the Nora agent row, release its recorded placement, or make
+the host registration deletable. Nora has no force-delete bypass for a missing pin: restore trust on
+the same verified registration with **Test**, then retry agent deletion. If that machine and its
+identity are permanently unavailable, keep the residual record isolated and treat it as an orphan
+risk until you can reconcile it through an operator-controlled recovery.
+
+Do not use the reset action merely to make a mismatch disappear. If you cannot independently verify
+why the key changed, treat it as a possible interception attempt and leave the host blocked.
+
+<Warning>
+  A successful SSH login alone is not sufficient. **Test** must also run `docker version`
+  successfully as the registered user. Do not work around Docker permission errors by exposing an
+  insecure Docker TCP listener.
+</Warning>
+
+## Runtime support
+
+| Runtime path        | Adapter status | Current operator UI                                                                                                                            |
+| ------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenClaw + standard | Experimental   | Registered, tested hosts available to the user are selectable in the Deploy flow.                                                              |
+| OpenClaw + NemoClaw | Experimental   | Selectable when `nemoclaw` is enabled and the remote host satisfies the NemoClaw prerequisites.                                                |
+| Hermes + standard   | Experimental   | Backend, API, worker, readiness, dashboard, and backup paths are implemented. The current Hermes Deploy picker does not list registered hosts. |
+| Hermes + NemoClaw   | Unsupported    | Hermes supports only the standard sandbox profile.                                                                                             |
+
+The dashboard currently merges registered hosts into OpenClaw's target list only. Treat Hermes
+Remote Docker as an advanced, session-first API path until the Hermes picker exposes it. It is not
+part of Nora's current published real-host OS certification matrix.
+
+## Deploy and validate
+
+After **Test** reports that Docker is reachable:
+
+1. Open **Deploy Agent** and choose the runtime family. For the dashboard Remote Docker path, select
+   **OpenClaw**.
+2. Under **Execution Target**, choose the remote host by its label and `remote:<id>` target.
+3. Select **Standard** or **NemoClaw**, configure the model and resources, and deploy.
+4. Wait for Nora's readiness check to report the agent as ready.
+5. From the agent page, verify lifecycle actions, logs, terminal access, chat/gateway access, and any
+   enabled integrations.
+6. On the remote machine, confirm that the Nora-managed containers are running and that their
+   published ports are inside the configured range.
+
+```bash theme={null}
+ssh operator@remote-host 'docker version && docker ps'
+```
+
+For a production candidate, also test restart, credential rotation, backup/restore, host reboot
+recovery, and agent deletion. A successful connection test proves only that `backend-api` reached SSH
+and ran the Docker version command; it is not a worker, network, capacity, or lifecycle smoke test.
+
+## Hermes advanced API path
+
+First register and test a personal host through **App -> Remote Hosts**, or a platform host through
+**Admin -> Remote Hosts**, with a signed-in session. Then use a session JWT to call the normal agent
+deployment endpoint with the exact target id:
+
+```bash curl theme={null}
+curl -X POST "$NORA_ORIGIN/api/agents/deploy" \
+  -H "Authorization: Bearer $SESSION_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Hermes on build host",
+    "runtime_family": "hermes",
+    "deploy_target": "remote-docker",
+    "execution_target_id": "remote:build-host",
+    "sandbox_profile": "standard",
+    "vcpu": 2,
+    "ram_mb": 4096,
+    "disk_gb": 20
+  }'
+```
+
+For a personal host, the authenticated user must own it or hold an `editor`, `admin`, or `owner` role
+in a workspace where it is shared. For a platform host, platform-admin status, all-account access, a
+direct-user grant, a matching user-group grant, or an `editor+` workspace grant permits deployment.
+The new agent belongs directly to the deploying user; it is not automatically assigned to a
+workspace that supplied host access.
+
+<Note>
+  Personal `/api/remote-hosts` and platform `/api/admin/remote-hosts` management routes, Remote
+  Docker placement mutations, and existing-agent Remote Docker operations are session-only.
+  Workspace API keys cannot register, list, test, update, grant, or delete remote hosts, and they
+  receive `403 session_required` before host lookup, persistence, queue publication, gateway/file
+  access, lifecycle changes, or cleanup. This applies when deploy, duplicate, redeploy, or rollback
+  uses a Remote Docker source or destination and when the persisted agent already runs there. API
+  responses never return stored SSH private keys, passwords, or passphrases. Use a session JWT for
+  the advanced deployment, then assign the new agent to a workspace explicitly when team access is
+  required.
+</Note>
+
+See [Agents API: deploy an agent](/api/agents#deploy-an-agent) for the complete request contract.
+
+## Placement and capacity limits
+
+Remote Docker is explicit placement, not a scheduler across your registered machines:
+
+- Every deployment selects one concrete `remote:<id>` target. Nora does not choose another remote
+  host automatically.
+- Nora reserves published ports per host and rejects port-range exhaustion, but it does not perform
+  a host-side listener probe or automatic retry around unrelated processes that bind a reserved
+  port. Keep the configured range dedicated to Nora. It also does not perform aggregate CPU,
+  memory, disk, GPU, image-cache, or maximum-agent admission against the host.
+- `vcpu` and `ram_mb` become Docker CPU and memory limits. `disk_gb` is stored as deployment metadata
+  for Docker and Remote Docker; it does not create a Docker filesystem, volume, image-cache, or log
+  quota. Those files can grow until the remote host filesystem is full.
+- Per-container CPU and memory settings do not prove that the host has enough aggregate capacity.
+- Deployment-worker concurrency is global queue concurrency, not a per-host capacity limit.
+- Nora does not automatically fail over, drain, migrate, reschedule, or rebalance remote-host agents
+  when a host becomes unreachable or overloaded.
+- Nora does not provide a host-centric workload inventory or drain lock. Sharing compute does not
+  give the host owner access to agents deployed by workspace members.
+- Use one Nora registration and allocation authority per physical Docker daemon. Port reservations
+  are keyed by `remote:<id>`, not by daemon identity, so duplicate registrations can allocate the
+  same physical host port. Separate Nora control planes that intentionally share a daemon must use
+  non-overlapping `DOCKER_AGENT_PORT_RANGE_MIN`/`MAX` subranges.
+
+Monitor capacity on the remote machine and keep enough headroom for pulls, restarts, backups, and
+parallel deployments. Plan maintenance and recovery manually.
+
+## Backups and restore
+
+Remote Docker backups use the persisted agent owner as the authorization identity. Nora re-checks
+that owner's current personal ownership or qualifying platform/workspace grant throughout live
+capture. Removing the final access path aborts an in-flight export instead of publishing an empty or
+stale archive. OpenClaw live export reads use the private published runtime path, while Remote Hermes
+capture uses the pinned Docker-over-SSH transport.
+
+Before relying on recovery, create a backup, download or inspect its completed record, and exercise
+a copy restore to a deployable execution target. In-place restore is platform-admin-only and holds
+the same per-agent provision lock as redeploy, rollback, and worker provisioning. A restore still
+requires valid backup encryption material, current target authorization, and a reachable target; it
+does not bypass a revoked Remote Docker grant or an untrusted SSH host key.
+
+See [Managed backups and restore](/guides/backups) for storage, encryption, scheduling, permissions,
+and restore workflow details.
+
+## Ownership and access grants
+
+| Host type | Created and managed in    | Default access | Who can manage connection and credentials |
+| --------- | ------------------------- | -------------- | ----------------------------------------- |
+| Personal  | **App -> Remote Hosts**   | Private        | Its direct user owner                     |
+| Platform  | **Admin -> Remote Hosts** | Restricted     | Any platform admin                        |
+
+A personal host can be granted to workspaces where its owner is a member. A platform host can grant
+all accounts, direct users, user groups, or workspaces. Platform hosts belong to the control plane,
+not the admin account that created them, so creator deletion does not delete or orphan the host.
+
+| Access path                 | See host | Deploy | Manage host or credentials |
+| --------------------------- | -------- | ------ | -------------------------- |
+| Personal owner              | Yes      | Yes    | Yes                        |
+| Platform admin              | Yes      | Yes    | Platform hosts only        |
+| Platform **all accounts**   | Yes      | Yes    | No                         |
+| Platform direct-user grant  | Yes      | Yes    | No                         |
+| Platform user-group grant   | Yes      | Yes    | No                         |
+| Granted workspace `viewer`  | Yes      | No     | No                         |
+| Granted workspace `editor+` | Yes      | Yes    | No                         |
+
+Grant evaluation is additive and fail-closed. Platform-admin status, all-account access, a direct
+grant, or a matching group grant permits deployment. A workspace path follows its current
+role: viewers can see, while editors, admins, and owners can deploy. The strongest current path wins,
+so a direct grant permits deployment even if the same user is only a viewer in a granted workspace.
+There is no explicit deny grant. Removing one path revokes access only when no other current path
+qualifies.
+
+Nora resolves authorization from current database state before decrypting credentials for an
+operation. Stored secrets stay masked in every response; granted users can select the host for
+deployment but can never read or edit its SSH private key, password, or passphrase. A host grant
+shares compute placement, not agent ownership. The deploying user owns the new agent, and Nora does
+not automatically add it to a workspace that supplied access.
+
+## Unshare or retire a host safely
+
+Revoking a personal workspace share or a platform all-account, direct-user, user-group, or workspace
+grant changes authorization only. It does not stop, migrate, delete, or rebalance containers already
+running on that machine, and it does not remove existing agent-to-workspace assignments. For an agent
+whose direct owner loses their final qualifying path, Nora re-checks current host access before new
+or queued deployment work, start/restart, live runtime and gateway requests,
+logs, terminal/exec, environment updates, backup capture, non-stop scheduled actions, and ClawHub
+operations. Live status and telemetry collection stops, and active gateway, log, terminal, and
+metrics streams are periodically rechecked and closed after revocation. The durable agent record,
+its stored lifecycle status, and previously collected telemetry history remain readable to users who
+still have access to the agent, but they are no longer live. **Stop**—manual or scheduled—and
+**Delete** remain available as explicit cleanup paths only while the registration retains the
+original trusted SSH host-key pin.
+
+The agent record and remote container still exist until an authorized user stops or deletes them.
+The access change revokes Nora-mediated active use; it does not shut down the workload on the host,
+migrate it, or revoke a client that can reach a published runtime port directly outside Nora.
+
+The fail-safe exception is a direct Remote Hermes maintenance command that is already in flight when
+authorization is lost or its Docker attach stream becomes unconfirmable. Hermes does not expose
+Nora's abort-aware runtime `/exec` endpoint, so Nora stops that agent container and records it as
+`stopped` to guarantee the privileged command cannot continue in the background. OpenClaw commands
+use the runtime endpoint and terminate only the command process group; they do not stop the agent.
+
+If the pin is absent because it was reset, the SSH endpoint changed, or the row predates host-key
+pinning, cleanup fails closed with HTTP `409` (`REMOTE_HOST_CLEANUP_PIN_REQUIRED`). Nora marks the
+failure as an orphan risk and keeps the agent record so the operation can be retried safely; it does
+not claim that the remote container stopped or was deleted.
+
+Use this drain procedure before removing a user's final qualifying access path:
+
+1. Coordinate with the affected workspace members to inventory agents whose `execution_target_id` is
+   the host's `remote:<id>`, and inspect the remote Docker host as a second source of truth. Nora does
+   not currently give the host owner a host-centric workload list or automatic access to member-owned
+   agents.
+2. Announce a placement freeze. Nora has no automatic drain flag, so users must stop choosing the
+   target while you move workloads.
+3. Back up or export each affected agent, create its replacement on another execution target, and
+   validate chat, logs, integrations, and recovery there.
+4. Delete the old Remote Docker agents after the replacements are healthy. This destroys their old
+   containers and releases Nora's port reservations.
+5. Remove the personal share or platform grant only after the affected agents no longer depend on it.
+6. If retiring the host entirely, delete the registration after all non-deleted agents stop
+   referencing it. Nora rejects host deletion with `409` while such references remain.
+
+The same drain rule applies before a platform admin deletes the owner of a personal host. Nora
+returns `409 REMOTE_HOSTS_IN_USE` when any non-deleted agent—including an agent owned by another
+workspace member—still references that user's personal Remote Docker host. Platform hosts are not
+owned by their creator account and survive its deletion; any remaining platform admin can continue
+to manage their credentials, access, Test state, and SSH pin.
+
+For an urgent security incident, remove every applicable grant to revoke Nora-mediated active use,
+then use the retained **Stop** or **Delete** cleanup path, close direct network access to the published
+ports, and rotate the SSH credential. This cleanup path still requires the previously trusted pin. If
+host identity cannot be verified or the pin is already absent, isolate the machine and published
+ports, inspect it out of band, and remove the runtime manually. Do not assume the authorization
+change itself removed the workload from the remote machine.
+
+## Troubleshooting
+
+| Symptom                                           | Checks                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Host is missing from Deploy                       | Confirm it is enabled, configured, and its latest manual **Test** succeeded with a stored SSH pin. Then confirm personal ownership or a current platform/workspace grant; a workspace viewer cannot deploy. Legacy `Test: OK` rows without a pin must pass **Test** again. Confirm OpenClaw is selected. The current Hermes picker does not merge registered remote hosts; use the advanced API path. |
+| Test passes but deployment fails                  | The test ran only from `backend-api`. Inspect `worker-provisioner` logs, verify worker SSH/firewall reachability, image-registry egress, free host capacity, published ports, and the gateway address. Re-run **Test** because the stored success has no expiry.                                                                                                                                      |
+| SSH connection times out or is refused            | Check the address and port, SSH service, route or VPN, and firewall rules from `backend-api`, `worker-provisioner`, and `worker-backup` where applicable.                                                                                                                                                                                                                                             |
+| Authentication fails                              | Confirm the SSH user and selected auth mode. Paste the complete private key, supply its passphrase when required, and check the server's authorized-key or password policy.                                                                                                                                                                                                                           |
+| `docker version` fails                            | Install/start Docker and grant the SSH account non-interactive daemon access. Test with the same user and its default Docker context outside Nora.                                                                                                                                                                                                                                                    |
+| Host-key mismatch                                 | Stop and verify the machine identity and replacement key out of band. If rotation or rebuild was intentional, use the explicit **Reset SSH pin** confirmation flow, then run **Test** to pin the new key. Otherwise treat it as a possible interception attempt.                                                                                                                                      |
+| Agent deploys but never becomes ready             | Verify **Gateway address**, allow the configured `19000-19999` subrange from Nora, and confirm the published container ports are listening on the remote host.                                                                                                                                                                                                                                        |
+| Agent remains after access revocation             | Expected: revocation removes authorization only. Follow the drain procedure above and explicitly migrate or delete the agent/container.                                                                                                                                                                                                                                                               |
+| Active use is denied after access revocation      | Expected when the agent owner has no other qualifying path. Nora blocks active operations and closes rechecked streams. **Stop** and **Delete** remain cleanup-only escape hatches when the original trusted SSH pin is still stored.                                                                                                                                                                 |
+| Stop or Delete reports a missing pin              | Nora will not accept an unknown SSH key for cleanup. The agent record is retained and the remote container may still be running. Verify the host out of band; restore the pin with **Test** on the same verified registration where possible, or remove the runtime manually.                                                                                                                         |
+| Admin user deletion returns `REMOTE_HOSTS_IN_USE` | One or more agents still reference a personal Remote Docker host owned by that user. Inventory and migrate or delete every referenced agent, including agents owned by workspace members, before retrying account deletion. Platform hosts survive creator deletion.                                                                                                                                  |
+| Hermes dashboard cannot load                      | Confirm both allocated runtime and dashboard ports are firewalled to and reachable from `backend-api`. Do not expose the dashboard directly to the internet.                                                                                                                                                                                                                                          |
+| No free gateway port is available                 | Remove stale agents/reservations where appropriate, free unrelated listeners, or widen the configured subrange while keeping it inside `19000-19999`.                                                                                                                                                                                                                                                 |
+| Deleted host id cannot be registered              | Expected: Nora permanently reserves deleted personal and platform host ids to prevent a new credential target from inheriting an old `remote:<id>` identity. Register the replacement with a new id.                                                                                                                                                                                                  |
+| Remote host disk keeps growing                    | `disk_gb` is not a Docker or Remote Docker storage quota. Inspect Docker images, volumes, container writable layers, and logs on the host, and monitor the underlying filesystem capacity.                                                                                                                                                                                                            |
+| Image pull or provider calls fail                 | Check the host architecture, remote-host DNS, outbound HTTPS, registry credentials, provider credentials, and any egress proxy or allowlist.                                                                                                                                                                                                                                                          |
+
+## Related references
+
+- [Connect a Remote Docker host](/guides/remote-docker)
+- [Choose a provisioner backend](/configuration/provisioner-backends)
+- [Deploy an agent](/guides/deploy-agent)
+- [Workspaces and Remote Docker grants](/concepts/workspaces#sharing-a-remote-docker-host)
+- [Agents API](/api/agents#deploy-an-agent)
+- [Environment variables](/configuration/environment-variables#docker-agent-published-ports)
+- [NemoClaw sandbox](/guides/nemoclaw)

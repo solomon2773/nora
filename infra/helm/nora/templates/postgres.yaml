@@ -26,9 +26,14 @@ spec:
       labels:
         {{- include "nora.selectorLabels" (dict "root" . "component" "postgres") | nindent 8 }}
     spec:
+      automountServiceAccountToken: {{ .Values.security.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.postgresql.podSecurityContext | nindent 8 }}
       containers:
         - name: postgres
           image: {{ .Values.postgresql.image }}
+          securityContext:
+            {{- toYaml .Values.postgresql.containerSecurityContext | nindent 12 }}
           ports:
             - name: postgres
               containerPort: 5432
@@ -37,11 +42,8 @@ spec:
               value: {{ .Values.postgresql.auth.username | quote }}
             - name: POSTGRES_DB
               value: {{ .Values.postgresql.auth.database | quote }}
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "nora.secretName" . }}
-                  key: DB_PASSWORD
+            - name: POSTGRES_PASSWORD_FILE
+              value: /run/secrets/DB_PASSWORD
             # Keep data out of the volume root so initdb tolerates lost+found.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
@@ -50,6 +52,13 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: db-schema
               mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            - name: runtime
+              mountPath: /var/run/postgresql
+            - name: scratch
+              mountPath: /tmp
+            - name: runtime-secrets
+              mountPath: /run/secrets
               readOnly: true
           readinessProbe:
             exec:
@@ -67,6 +76,15 @@ spec:
         - name: db-schema
           configMap:
             name: nora-db-schema
+        - name: runtime
+          emptyDir: {}
+        - name: scratch
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+        - name: runtime-secrets
+          secret:
+            secretName: {{ include "nora.secretName" . }}
   volumeClaimTemplates:
     - metadata:
         name: pgdata

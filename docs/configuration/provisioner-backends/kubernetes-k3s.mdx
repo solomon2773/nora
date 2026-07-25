@@ -144,6 +144,16 @@ cd e2e
 KUBECONFIG_PATH=$PWD/../.secrets/k3s-kubeconfig npm run smoke:k8s-k3s
 ```
 
+To include NemoClaw in the same adapter path, enable the sandbox profile on the Nora stack, export
+`NVIDIA_API_KEY`, and run:
+
+```bash theme={null}
+cd e2e
+K8S_SMOKE_CELLS=openclaw:nemoclaw \
+  KUBECONFIG_PATH=$PWD/../.secrets/k3s-kubeconfig \
+  npm run smoke:k8s-k3s
+```
+
 The script brings up the Compose stack with `docker-compose.kubernetes.yml`, registers the K3s cluster in Admin, deploys an agent, verifies Kubernetes objects, and exercises stop/start/restart. It exits non-zero on any failure. Set `KEEP_ENV=true` to leave the stack running for inspection.
 
 ## Promote to production

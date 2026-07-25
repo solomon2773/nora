@@ -7,6 +7,8 @@ const DEFAULT_EVENT_LIMIT = 20;
 const DEFAULT_AUDIT_PAGE_LIMIT = 30;
 const MAX_AUDIT_PAGE_LIMIT = 100;
 
+// ── Event filtering and ownership scope ─────────────────────────
+
 function normalizePositiveInteger(
   value,
   defaultValue,
@@ -76,13 +78,60 @@ function joinWhereClauses(clauses = []) {
   return normalized.length ? `WHERE ${normalized.join(" AND ")}` : "";
 }
 
+/**
+ * Build the SQL boundary for events attributable to a user directly or through
+ * an owned/workspace-accessible agent. Optional agent filtering stays inside
+ * that same user scope; values are always returned as query parameters.
+ *
+ * @param {string} userId - User whose event visibility is being enforced.
+ * @param {Object} options - Agent filter, table alias, and parameter offset.
+ * @returns {Object} Parameterized WHERE clause and values.
+ */
 function buildUserEventScopeClause(
   userId,
-  { agentId = null, tableAlias = "e", startIndex = 1 } = {},
+  { agentId = null, workspaceId = null, tableAlias = "e", startIndex = 1 } = {},
 ) {
   const prefix = tableAlias ? `${tableAlias}.` : "";
   const params = [];
   let parameterIndex = startIndex - 1;
+
+  if (workspaceId) {
+    params.push(workspaceId);
+    parameterIndex += 1;
+    const workspaceParamIndex = parameterIndex;
+    const clauses = [
+      `(
+        ${prefix}metadata #>> '{workspace,id}' = $${workspaceParamIndex}::text
+        OR EXISTS (
+          SELECT 1
+            FROM workspace_agents scoped_workspace_agents
+           WHERE scoped_workspace_agents.workspace_id = $${workspaceParamIndex}::uuid
+             AND (
+               scoped_workspace_agents.agent_id::text = ${prefix}metadata->>'agentId'
+               OR scoped_workspace_agents.agent_id::text = ${prefix}metadata #>> '{agent,id}'
+               OR scoped_workspace_agents.agent_id::text = ${prefix}metadata #>> '{sourceAgent,id}'
+             )
+        )
+      )`,
+    ];
+
+    if (agentId) {
+      params.push(agentId);
+      parameterIndex += 1;
+      clauses.push(
+        `(
+          ${prefix}metadata #>> '{agent,id}' = $${parameterIndex}
+          OR ${prefix}metadata #>> '{sourceAgent,id}' = $${parameterIndex}
+          OR ${prefix}metadata->>'agentId' = $${parameterIndex}
+        )`,
+      );
+    }
+
+    return {
+      whereClause: joinWhereClauses(clauses),
+      params,
+    };
+  }
 
   params.push(userId);
   parameterIndex += 1;
@@ -161,6 +210,10 @@ async function queryUserEvents(userId, options = {}, { limit = null, offset = 0 
   const scope = buildUserEventScopeClause(userId, {
     agentId:
       typeof options.agentId === "string" && options.agentId.trim() ? options.agentId.trim() : null,
+    workspaceId:
+      typeof options.workspaceId === "string" && options.workspaceId.trim()
+        ? options.workspaceId.trim()
+        : null,
     tableAlias: "e",
   });
   const filter = buildEventWhereClause(normalizeEventFilters(options), {
@@ -185,42 +238,74 @@ async function queryUserEvents(userId, options = {}, { limit = null, offset = 0 
   return result.rows;
 }
 
+// ── Monitoring summaries and event reads ────────────────────────
+
+/**
+ * Return agent and deployment counts for either one user's accessible fleet or
+ * the platform. User-scoped queue counts are status-derived; platform queue
+ * lookup failures fall back to zeros.
+ *
+ * @param {Object|string} options - Optional user scope, or a legacy user ID.
+ * @returns {Promise<Object>} Monitoring counters and queue summary.
+ */
 async function getMetrics(options = {}) {
   const normalizedOptions = typeof options === "string" ? { userId: options } : options || {};
   const userId =
     typeof normalizedOptions.userId === "string" && normalizedOptions.userId.trim()
       ? normalizedOptions.userId.trim()
       : null;
+  const workspaceId =
+    typeof normalizedOptions.workspaceId === "string" && normalizedOptions.workspaceId.trim()
+      ? normalizedOptions.workspaceId.trim()
+      : null;
 
-  const agentCountsQuery = userId
+  const agentCountsQuery = workspaceId
     ? db.query(
         `SELECT a.status, count(DISTINCT a.id)::int
+           FROM workspace_agents wa
+           INNER JOIN agents a ON a.id = wa.agent_id
+          WHERE wa.workspace_id = $1
+          GROUP BY a.status`,
+        [workspaceId],
+      )
+    : userId
+      ? db.query(
+          `SELECT a.status, count(DISTINCT a.id)::int
            FROM agents a
            LEFT JOIN workspace_agents wa ON wa.agent_id = a.id
            LEFT JOIN workspace_members wm
              ON wm.workspace_id = wa.workspace_id AND wm.user_id = $1
           WHERE a.user_id = $1 OR wm.user_id = $1
           GROUP BY a.status`,
-        [userId],
-      )
-    : db.query("SELECT status, count(*)::int FROM agents GROUP BY status");
+          [userId],
+        )
+      : db.query("SELECT status, count(*)::int FROM agents GROUP BY status");
 
-  const deploymentCountQuery = userId
+  const deploymentCountQuery = workspaceId
     ? db.query(
         `SELECT count(DISTINCT d.id)::int as total
+           FROM deployments d
+           INNER JOIN workspace_agents wa ON wa.agent_id = d.agent_id
+          WHERE wa.workspace_id = $1`,
+        [workspaceId],
+      )
+    : userId
+      ? db.query(
+          `SELECT count(DISTINCT d.id)::int as total
            FROM deployments d
            INNER JOIN agents a ON a.id = d.agent_id
            LEFT JOIN workspace_agents wa ON wa.agent_id = a.id
            LEFT JOIN workspace_members wm
              ON wm.workspace_id = wa.workspace_id AND wm.user_id = $1
           WHERE a.user_id = $1 OR wm.user_id = $1`,
-        [userId],
-      )
-    : db.query("SELECT count(*)::int as total FROM deployments");
+          [userId],
+        )
+      : db.query("SELECT count(*)::int as total FROM deployments");
 
-  const userCountQuery = userId
-    ? Promise.resolve({ rows: [] })
-    : db.query("SELECT count(*)::int as total FROM users");
+  const userCountQuery =
+    userId || workspaceId
+      ? Promise.resolve({ rows: [] })
+      : db.query("SELECT count(*)::int as total FROM users");
 
   const [agentCounts, deploymentCount, userCount] = await Promise.all([
     agentCountsQuery,
@@ -234,7 +319,7 @@ async function getMetrics(options = {}) {
   });
 
   let queueStats = { waiting: 0, active: 0, completed: 0, failed: 0 };
-  if (userId) {
+  if (userId || workspaceId) {
     queueStats = {
       waiting: statusMap.queued || 0,
       active: statusMap.deploying || 0,
@@ -261,7 +346,7 @@ async function getMetrics(options = {}) {
     queue: queueStats,
   };
 
-  if (!userId) {
+  if (!userId && !workspaceId) {
     result.totalUsers = userCount.rows[0]?.total || 0;
   }
 
@@ -289,6 +374,14 @@ async function getUserRecentEvents(userId, options = {}) {
   });
 }
 
+/**
+ * Page events through the user/agent ownership boundary and expose event types
+ * available anywhere in that same scope, independent of the active filters.
+ *
+ * @param {string} userId - User whose visibility is enforced.
+ * @param {Object} options - Filters, agent scope, page, and limit.
+ * @returns {Promise<Object>} Scoped page, counts, and available event types.
+ */
 async function getUserEventsPage(userId, options = {}) {
   const limit = normalizePositiveInteger(options.limit, DEFAULT_AUDIT_PAGE_LIMIT, {
     min: 10,
@@ -302,6 +395,10 @@ async function getUserEventsPage(userId, options = {}) {
     typeof options.agentId === "string" && options.agentId.trim() ? options.agentId.trim() : null;
   const scope = buildUserEventScopeClause(userId, {
     agentId: scopedAgentId,
+    workspaceId:
+      typeof options.workspaceId === "string" && options.workspaceId.trim()
+        ? options.workspaceId.trim()
+        : null,
     tableAlias: "e",
   });
   const filter = buildEventWhereClause(normalizeEventFilters(options), {
@@ -375,10 +472,27 @@ async function getAuditEventsPage(options = {}) {
   };
 }
 
+/**
+ * Export all platform events matching the filters without applying user scope.
+ * Authorization must therefore be enforced by the caller.
+ *
+ * @param {Object} filters - Search, type, and date filters.
+ * @returns {Promise<Array>} Matching events ordered newest first.
+ */
 async function exportEvents(filters = {}) {
   return queryEvents(normalizeEventFilters(filters));
 }
 
+/**
+ * Persist an enriched audit event, then trigger alert evaluation asynchronously.
+ * Persistence errors propagate; alert loading and delivery failures never undo
+ * the recorded event.
+ *
+ * @param {string} type - Event type used for audit and alert matching.
+ * @param {string} message - Human-readable event message.
+ * @param {Object} metadata - Event context enriched with source metadata.
+ * @returns {Promise<void>}
+ */
 async function logEvent(type, message, metadata = {}) {
   const enrichedMetadata = ensureAuditSourceMetadata(metadata);
   await db.query("INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)", [

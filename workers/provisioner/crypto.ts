@@ -11,8 +11,8 @@ const ENCRYPTION_KEY = /^[0-9a-fA-F]{64}$/.test(RAW_KEY) ? RAW_KEY : null;
 if (!ENCRYPTION_KEY) {
   console.error(
     "SECURITY WARNING: ENCRYPTION_KEY is not set or invalid. " +
-    "Sensitive data (API keys, tokens) will be stored in PLAINTEXT. " +
-    "Set a 64-char hex key in .env to enable encryption at rest."
+      "Sensitive data (API keys, tokens) will be stored in PLAINTEXT. " +
+      "Set a 64-char hex key in .env to enable encryption at rest.",
   );
 }
 
@@ -61,7 +61,9 @@ function decrypt(data) {
     return decrypted;
   } catch (err) {
     console.error("Decryption failed (key mismatch or corrupted data):", err.message);
-    throw new DecryptionError("Failed to decrypt stored credential — encryption key may have rotated or data is corrupted");
+    throw new DecryptionError(
+      "Failed to decrypt stored credential — encryption key may have rotated or data is corrupted",
+    );
   }
 }
 

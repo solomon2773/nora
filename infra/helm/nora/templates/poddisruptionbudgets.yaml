@@ -1,0 +1,27 @@
+{{- if .Values.availability.podDisruptionBudgets }}
+{{- $components := list
+      (dict "name" "nginx" "replicas" .Values.nginx.replicas)
+      (dict "name" "frontend-marketing" "replicas" .Values.frontendMarketing.replicas)
+      (dict "name" "frontend-dashboard" "replicas" .Values.frontendDashboard.replicas)
+      (dict "name" "admin-dashboard" "replicas" .Values.adminDashboard.replicas)
+      (dict "name" "backend-api" "replicas" .Values.backendApi.replicas)
+      (dict "name" "worker-provisioner" "replicas" .Values.workerProvisioner.replicas)
+      (dict "name" "worker-backup" "replicas" .Values.workerBackup.replicas "enabled" .Values.workerBackup.enabled)
+}}
+{{- range $component := $components }}
+{{- if and (gt (int $component.replicas) 1) (ne $component.enabled false) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nora-{{ $component.name }}
+  labels:
+    {{- include "nora.labels" (dict "root" $ "component" $component.name) | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "nora.selectorLabels" (dict "root" $ "component" $component.name) | nindent 6 }}
+---
+{{- end }}
+{{- end }}
+{{- end }}

@@ -13,7 +13,7 @@ If you are evaluating Nora or have just started self-hosting it, the questions b
   </Accordion>
 
   <Accordion title="Can I use Nora in production?">
-    Yes. Nora is designed for serious operator use. Individual builders, internal AI platform teams, and larger enterprise environments can all run it. It is built to stay credible from single-host Docker evaluation through Kubernetes, private cloud, and AWS/Azure/GCP rollout footprints. Proxmox placement is planned but not supported in the current release.
+    Yes. Nora is designed for serious operator use. Individual builders, internal AI platform teams, and larger enterprise environments can all run it. Docker and Kubernetes are the GA deployment paths. Proxmox LXC placement is available as an opt-in experimental target and should pass the real-host smoke in your environment before production use.
 
     If you need rollout help, deployment review, or paid support for a production environment, the [GitHub Discussions](https://github.com/solomon2773/nora/discussions) path and the [deployment and support options](https://nora.solomontsao.com/pricing) page are the right starting points.
 
@@ -73,7 +73,7 @@ If you are evaluating Nora or have just started self-hosting it, the questions b
   <Accordion title="What is NemoClaw?">
     NemoClaw is an experimental sandbox profile with OpenShell policy controls, powered by NVIDIA Nemotron models. It provides a secure, isolated execution environment for agent runtimes that require tighter operational controls.
 
-    NemoClaw is disabled by default. To enable it, add `nemoclaw` to `ENABLED_SANDBOX_PROFILES` (e.g. `ENABLED_SANDBOX_PROFILES=standard,nemoclaw`) and provide a valid `NVIDIA_API_KEY` in your `.env` file. See the [troubleshooting guide](/support/troubleshooting) if NemoClaw fails to start after enabling it.
+    NemoClaw is an OpenClaw-only profile and is disabled by default. To enable it, add `nemoclaw` to `ENABLED_SANDBOX_PROFILES` (e.g. `ENABLED_SANDBOX_PROFILES=standard,nemoclaw`) and save an NVIDIA provider key in **Settings** or provide a platform fallback with `NVIDIA_API_KEY`. It can deploy to local Docker, self-hosted Remote Docker hosts, k3s, and managed Kubernetes targets once those execution targets are connected. Hermes does not support NemoClaw, and NemoClaw on Proxmox remains blocked. See the [troubleshooting guide](/support/troubleshooting) if NemoClaw fails to start after enabling it.
 
   </Accordion>
 

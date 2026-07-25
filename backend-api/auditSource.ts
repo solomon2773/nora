@@ -33,12 +33,7 @@ function readRequestIp(req) {
     return forwardedFor.split(",")[0].trim();
   }
 
-  return (
-    req.ip ||
-    req.socket?.remoteAddress ||
-    req.connection?.remoteAddress ||
-    null
-  );
+  return req.ip || req.socket?.remoteAddress || req.connection?.remoteAddress || null;
 }
 
 function normalizeSourceAccount(account = {}) {
@@ -60,6 +55,14 @@ function buildSourceLabel(kind, account, service, explicitLabel) {
   return service ? `System · ${service}` : "System";
 }
 
+/**
+ * Build canonical account, request, or system provenance from an Express
+ * request and optional source overrides.
+ *
+ * @param {Object|null} req - Express request when the event originated over HTTP.
+ * @param {Object} [source={}] - Explicit provenance fields that override request values.
+ * @returns {Object} Compacted audit-source metadata.
+ */
 function buildSourceMetadata(req, source = {}) {
   const sourceObject =
     source && typeof source === "object" && !Array.isArray(source)
@@ -91,14 +94,11 @@ function buildSourceMetadata(req, source = {}) {
             email: req.user.email || null,
             role: req.user.role || null,
           }
-        : null)
+        : null),
   );
   const resolvedKind = kind || (account ? "account" : req ? "request" : "system");
   const resolvedService =
-    service ||
-    process.env.AUDIT_SOURCE_SERVICE ||
-    process.env.SERVICE_NAME ||
-    "backend-api";
+    service || process.env.AUDIT_SOURCE_SERVICE || process.env.SERVICE_NAME || "backend-api";
 
   return compactObject({
     kind: resolvedKind,
@@ -108,11 +108,7 @@ function buildSourceMetadata(req, source = {}) {
     area: area || null,
     method: method || req?.method || null,
     route: route || req?.originalUrl || req?.path || null,
-    origin:
-      origin ||
-      readRequestHeader(req, "origin") ||
-      readRequestHeader(req, "referer") ||
-      null,
+    origin: origin || readRequestHeader(req, "origin") || readRequestHeader(req, "referer") || null,
     ip: ip || readRequestIp(req) || null,
     userAgent: userAgent || readRequestHeader(req, "user-agent") || null,
     account,
@@ -120,6 +116,13 @@ function buildSourceMetadata(req, source = {}) {
   });
 }
 
+/**
+ * Resolve canonical source metadata from an event's source, legacy actor, or
+ * system fallback representation.
+ *
+ * @param {Object} [metadata={}] - Stored event metadata.
+ * @returns {Object} Canonical audit-source metadata.
+ */
 function resolveAuditSource(metadata = {}) {
   if (metadata?.source) {
     return buildSourceMetadata(null, metadata.source);
@@ -136,6 +139,13 @@ function resolveAuditSource(metadata = {}) {
   return buildSourceMetadata(null, {});
 }
 
+/**
+ * Preserve event metadata while ensuring every event contains canonical provenance.
+ *
+ * @param {*} [metadata={}] - Event metadata candidate.
+ * @param {Object|null} [req=null] - Optional Express request supplying provenance.
+ * @returns {Object} Metadata with a normalized `source` field.
+ */
 function ensureAuditSourceMetadata(metadata = {}, req = null) {
   const base =
     metadata && typeof metadata === "object" && !Array.isArray(metadata)

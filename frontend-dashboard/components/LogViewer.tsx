@@ -83,11 +83,13 @@ export default function LogViewer({
   }, [visible]);
 
   const exportLogs = useCallback(() => {
-    const text = logs.map(log => {
-      const ts = log.timestamp ? `[${log.timestamp}]` : "";
-      const level = log.level ? ` ${log.level}` : "";
-      return `${ts}${level} ${log.message || ""}`;
-    }).join("\n");
+    const text = logs
+      .map((log) => {
+        const ts = log.timestamp ? `[${log.timestamp}]` : "";
+        const level = log.level ? ` ${log.level}` : "";
+        return `${ts}${level} ${log.message || ""}`;
+      })
+      .join("\n");
 
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
@@ -106,12 +108,17 @@ export default function LogViewer({
   };
 
   return (
-    <div className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden" style={{ height: "100%" }}>
+    <div
+      className="bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden"
+      style={{ height: "100%" }}
+    >
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/50">
         <div className="flex items-center gap-2">
           <Terminal size={14} className="text-slate-500" />
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Live Logs</span>
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+            Live Logs
+          </span>
           <span className="text-[10px] text-slate-600">{logs.length} entries</span>
         </div>
         <div className="flex items-center gap-3">
@@ -148,10 +155,11 @@ export default function LogViewer({
       </div>
 
       {/* Log output */}
-      <div className="overflow-y-auto p-4 font-mono text-xs leading-relaxed space-y-0.5 scrollbar-thin scrollbar-thumb-slate-800" style={{ height: "calc(100% - 45px)" }}>
-        {logs.length === 0 && (
-          <p className="text-slate-600 italic">Waiting for logs...</p>
-        )}
+      <div
+        className="overflow-y-auto p-4 font-mono text-xs leading-relaxed space-y-0.5 scrollbar-thin scrollbar-thumb-slate-800"
+        style={{ height: "calc(100% - 45px)" }}
+      >
+        {logs.length === 0 && <p className="text-slate-600 italic">Waiting for logs...</p>}
         {logs.map((log, i) => (
           <div key={i} className="flex gap-2 hover:bg-white/[0.02] px-1 -mx-1 rounded">
             {log.timestamp && (
@@ -160,7 +168,9 @@ export default function LogViewer({
               </span>
             )}
             {log.level && (
-              <span className={`font-bold shrink-0 w-12 ${levelColors[log.level] || "text-slate-400"}`}>
+              <span
+                className={`font-bold shrink-0 w-12 ${levelColors[log.level] || "text-slate-400"}`}
+              >
                 {log.level}
               </span>
             )}
@@ -169,8 +179,8 @@ export default function LogViewer({
                 log.type === "system"
                   ? "text-cyan-400"
                   : log.type === "error"
-                  ? "text-red-400"
-                  : "text-slate-300"
+                    ? "text-red-400"
+                    : "text-slate-300"
               }
             >
               {log.message}

@@ -1,0 +1,12 @@
+Dockerfile
+AGENTS.md
+MIGRATION_PLAN.md
+PUBLIC_PRIVATE_SPLIT.md
+server.json
+test/
+tsconfig.json
+tsconfig.tsbuildinfo
+*.mcpb
+node_modules/.package-lock.json
+node_modules/@types/
+node_modules/typescript/

@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "nora": {
+      "type": "local",
+      "command": "npx",
+      "args": ["-y", "@noraai/mcp-server@0.1.4"],
+      "env": {
+        "NORA_MCP_ALLOW_DESTRUCTIVE": "false"
+      },
+      "tools": [
+        "list_agents",
+        "get_agent",
+        "get_agent_stats",
+        "get_agent_versions",
+        "get_platform_metrics",
+        "get_fleet_status",
+        "list_monitoring_events",
+        "get_agent_metrics",
+        "get_agent_metrics_summary",
+        "get_agent_cost"
+      ]
+    }
+  }
+}

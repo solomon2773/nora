@@ -1,0 +1,857 @@
+name: Proxmox Real Hardware
+run-name: Proxmox hardware gate @ ${{ github.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_families:
+        description: Runtime families to create and destroy on the real Proxmox node
+        required: true
+        type: choice
+        options:
+          - openclaw
+          - openclaw,hermes
+      keep_on_failure:
+        description: Preserve a failed LXC for operator diagnosis
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: proxmox-real-hardware
+  cancel-in-progress: false
+
+jobs:
+  validate-target:
+    name: Validate trusted target
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a commit reachable from the default branch
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/master" ]; then
+            echo "::error::Dispatch this protected workflow from the master branch only"
+            exit 1
+          fi
+          git fetch --no-tags origin master
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "Validated Proxmox hardware target SHA: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+
+  lifecycle-smoke:
+    name: Destructive lifecycle smoke
+    runs-on: [self-hosted, linux, x64, nora-proxmox]
+    needs: validate-target
+    environment: proxmox-real-hardware
+    timeout-minutes: 120
+    env:
+      COMPOSE_PROJECT_NAME: nora-proxmox-${{ github.run_id }}-${{ github.run_attempt }}
+      BACKEND_API_PORT: "44100"
+      NODE_ENV: production
+      ENABLED_BACKENDS: docker,proxmox
+      ENABLED_RUNTIME_FAMILIES: ${{ inputs.runtime_families }}
+      ENABLED_SANDBOX_PROFILES: standard
+      PROXMOX_SMOKE_RUNTIME_FAMILIES: ${{ inputs.runtime_families }}
+      PROXMOX_SMOKE_KEEP_ON_FAILURE: ${{ inputs.keep_on_failure }}
+      PROXMOX_API_URL: ${{ secrets.PROXMOX_API_URL }}
+      PROXMOX_TOKEN_ID: ${{ secrets.PROXMOX_TOKEN_ID }}
+      PROXMOX_TOKEN_SECRET: ${{ secrets.PROXMOX_TOKEN_SECRET }}
+      PROXMOX_VERIFY_TLS: "true"
+      PROXMOX_CA_CERT: ${{ secrets.PROXMOX_CA_CERT }}
+      PROXMOX_ALLOW_INSECURE_HTTP: "false"
+      PROXMOX_NODE: ${{ vars.PROXMOX_NODE }}
+      PROXMOX_TEMPLATE: ${{ vars.PROXMOX_TEMPLATE }}
+      PROXMOX_HERMES_TEMPLATE: ${{ vars.PROXMOX_HERMES_TEMPLATE }}
+      PROXMOX_ROOTFS_STORAGE: ${{ vars.PROXMOX_ROOTFS_STORAGE }}
+      PROXMOX_BRIDGE: ${{ vars.PROXMOX_BRIDGE }}
+      PROXMOX_SSH_HOST: ${{ secrets.PROXMOX_SSH_HOST }}
+      PROXMOX_SSH_USER: ${{ secrets.PROXMOX_SSH_USER }}
+      PROXMOX_SSH_PORT: ${{ vars.PROXMOX_SSH_PORT || '22' }}
+      PROXMOX_SSH_PRIVATE_KEY: ${{ secrets.PROXMOX_SSH_PRIVATE_KEY }}
+      PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE: ${{ secrets.PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE }}
+      PROXMOX_SSH_PASSWORD: ${{ secrets.PROXMOX_SSH_PASSWORD }}
+      PROXMOX_SSH_HOST_FINGERPRINT: ${{ secrets.PROXMOX_SSH_HOST_FINGERPRINT }}
+      PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY: "false"
+      PROXMOX_PCT_COMMAND: ${{ vars.PROXMOX_PCT_COMMAND || 'pct' }}
+      PROXMOX_SUDO: ${{ vars.PROXMOX_SUDO }}
+      PROXMOX_OFFLINE_STAGE_COMMAND: ${{ vars.PROXMOX_OFFLINE_STAGE_COMMAND }}
+      PROXMOX_NODE_MAJOR: ${{ vars.PROXMOX_NODE_MAJOR || '24' }}
+      PROXMOX_OPENCLAW_PACKAGE: ${{ vars.PROXMOX_OPENCLAW_PACKAGE }}
+      PROXMOX_HERMES_BIN: ${{ vars.PROXMOX_HERMES_BIN || '/opt/hermes/.venv/bin/hermes' }}
+      PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD: "false"
+    steps:
+      - id: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.validate-target.outputs.sha }}
+          persist-credentials: false
+
+      - name: Initialize qualification artifact paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="${RUNNER_TEMP}/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            printf 'NORA_PROXMOX_FACTS_COLLECTOR=%s-facts.cjs\n' "$prefix"
+            printf 'NORA_PROXMOX_FACTS_BEFORE=%s-facts-before.json\n' "$prefix"
+            printf 'NORA_PROXMOX_FACTS_AFTER=%s-facts-after.json\n' "$prefix"
+            printf 'NORA_PROXMOX_SMOKE_LOG=%s-smoke.log\n' "$prefix"
+            printf 'NORA_PROXMOX_CLEANUP_EVIDENCE=%s-cleanup.json\n' "$prefix"
+            printf 'NORA_PROXMOX_QUALIFICATION_RECORD=%s-qualification.json\n' "$prefix"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify runner and external gate configuration
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v docker >/dev/null
+          command -v node >/dev/null
+          command -v openssl >/dev/null
+
+          compose_version="$(docker compose version --short | sed 's/^v//; s/[^0-9.].*$//')"
+          IFS=. read -r compose_major compose_minor compose_patch <<< "$compose_version"
+          compose_major="${compose_major:-0}"
+          compose_minor="${compose_minor:-0}"
+          compose_patch="${compose_patch:-0}"
+          if (( compose_major < 2 || (compose_major == 2 && compose_minor < 24) || (compose_major == 2 && compose_minor == 24 && compose_patch < 4) )); then
+            echo "::error::Docker Compose 2.24.4 or newer is required; found ${compose_version:-unknown}"
+            exit 1
+          fi
+
+          missing=0
+          required=(
+            PROXMOX_API_URL
+            PROXMOX_TOKEN_ID
+            PROXMOX_TOKEN_SECRET
+            PROXMOX_NODE
+            PROXMOX_TEMPLATE
+            PROXMOX_ROOTFS_STORAGE
+            PROXMOX_BRIDGE
+            PROXMOX_SSH_HOST
+            PROXMOX_SSH_USER
+            PROXMOX_SSH_HOST_FINGERPRINT
+            PROXMOX_OPENCLAW_PACKAGE
+          )
+          if [ "$PROXMOX_SSH_USER" != "root" ]; then
+            required+=(PROXMOX_OFFLINE_STAGE_COMMAND)
+          fi
+          for name in "${required[@]}"; do
+            if [[ ! "${!name:-}" =~ [^[:space:]] ]]; then
+              echo "::error::The proxmox-real-hardware environment must define $name"
+              missing=1
+            fi
+          done
+          if [[ "${PROXMOX_OFFLINE_STAGE_COMMAND:-}" =~ [^[:space:]] ]]; then
+            helper="$PROXMOX_OFFLINE_STAGE_COMMAND"
+            if [[ ! "$helper" =~ ^/[A-Za-z0-9_./-]+$ ]] ||
+              [[ "$helper" == */ || "$helper" == *//* || "$helper" == *"/../"* || "$helper" == */.. || "$helper" == *"/./"* || "$helper" == */. ]]; then
+              echo "::error::PROXMOX_OFFLINE_STAGE_COMMAND must be one absolute helper path without arguments or traversal"
+              missing=1
+            fi
+          fi
+          if [[ ! "${PROXMOX_SSH_PRIVATE_KEY:-}" =~ [^[:space:]] ]] && [[ ! "${PROXMOX_SSH_PASSWORD:-}" =~ [^[:space:]] ]]; then
+            echo "::error::Define PROXMOX_SSH_PRIVATE_KEY or PROXMOX_SSH_PASSWORD as an environment secret"
+            missing=1
+          fi
+          if [[ ",${PROXMOX_SMOKE_RUNTIME_FAMILIES}," == *,hermes,* ]] && [[ ! "${PROXMOX_HERMES_TEMPLATE:-}" =~ [^[:space:]] ]]; then
+            echo "::error::PROXMOX_HERMES_TEMPLATE is required for the Hermes smoke cell"
+            missing=1
+          fi
+          if ! node <<'NODE'
+          const spec = String(process.env.PROXMOX_OPENCLAW_PACKAGE || "");
+          const packageName = String.raw`(?:@[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?|[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)`;
+          const numericIdentifier = String.raw`(?:0|[1-9]\d*)`;
+          const prereleaseIdentifier = String.raw`(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)`;
+          const exactVersion = String.raw`${numericIdentifier}\.${numericIdentifier}\.${numericIdentifier}(?:-${prereleaseIdentifier}(?:\.${prereleaseIdentifier})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?`;
+          const exactPackageSpec = new RegExp(`^${packageName}@${exactVersion}$`);
+
+          if (!exactPackageSpec.test(spec)) {
+            console.error(
+              "::error::PROXMOX_OPENCLAW_PACKAGE must be one npm registry package spec pinned to an exact SemVer (for example openclaw@2026.6.11); dist-tags such as latest, ranges, aliases, URLs, and git refs are not accepted",
+            );
+            process.exit(1);
+          }
+          NODE
+          then
+            missing=1
+          fi
+          test "$missing" -eq 0
+
+      - name: Assemble ephemeral Compose inputs
+        id: assemble
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          env_file="$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.env"
+          override_file="$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.override.yml"
+          wrapper_file="$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-compose"
+          secrets_dir="$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-secrets"
+
+          # Publish paths before writing secrets so the always() cleanup step
+          # can scrub partial inputs even if this preparation step fails.
+          {
+            printf 'NORA_ENV_FILE=%s\n' "$env_file"
+            printf 'NORA_PROXMOX_COMPOSE_OVERRIDE=%s\n' "$override_file"
+            printf 'NORA_PROXMOX_COMPOSE=%s\n' "$wrapper_file"
+            printf 'NORA_PROXMOX_COMPOSE_SECRETS=%s\n' "$secrets_dir"
+          } >> "$GITHUB_ENV"
+
+          install -m 600 /dev/null "$NORA_PROXMOX_FACTS_COLLECTOR"
+          cat > "$NORA_PROXMOX_FACTS_COLLECTOR" <<'NODE'
+          const ProxmoxBackend = require("/app/backends/proxmox");
+
+          const runtimeFamilies = String(process.env.PROXMOX_SMOKE_RUNTIME_FAMILIES || "openclaw")
+            .split(",")
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean);
+
+          function shellQuote(value) {
+            return `'${String(value).replace(/'/g, `'"'"'`)}'`;
+          }
+
+          function cleanLine(value, maximumLength = 240) {
+            return String(value || "")
+              .replace(/[\u0000-\u001f\u007f]+/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, maximumLength);
+          }
+
+          async function runReadOnly(backend, executable, args = []) {
+            const directCommand = [executable, ...args].map(shellQuote).join(" ");
+            try {
+              return await backend._sshExec(directCommand, { timeout: 300000 });
+            } catch (directError) {
+              if (backend.sshUser === "root") throw directError;
+              return backend._sshExec(backend._hostCommand(executable, args), { timeout: 300000 });
+            }
+          }
+
+          async function discoverPveVersion(backend) {
+            try {
+              const version = await backend._requestData("GET", "/version");
+              const result = {
+                version: cleanLine(version?.version),
+                release: cleanLine(version?.release),
+                repository_id: cleanLine(version?.repoid),
+                source: "api",
+              };
+              if (result.version || result.release || result.repository_id) return result;
+            } catch {
+              // The version endpoint can be permission-restricted; fall back to the host CLI.
+            }
+            try {
+              const result = await runReadOnly(backend, "pveversion");
+              const display = cleanLine(result.stdout);
+              return display ? { display, source: "ssh" } : null;
+            } catch {
+              return null;
+            }
+          }
+
+          async function hashTemplate(backend, runtimeFamily, reference) {
+            const pathResult = await runReadOnly(backend, "pvesm", ["path", reference]);
+            const templatePath = String(pathResult.stdout || "")
+              .split(/\r?\n/)
+              .map((value) => value.trim())
+              .find((value) => value.startsWith("/"));
+            if (!templatePath || /[\r\n\0]/.test(templatePath)) {
+              throw new Error(`Unable to resolve the ${runtimeFamily} template to one absolute path`);
+            }
+            const hashResult = await runReadOnly(backend, "sha256sum", ["--", templatePath]);
+            const match = String(hashResult.stdout || "").match(/^([0-9a-fA-F]{64})\s+/);
+            if (!match) {
+              throw new Error(`Unable to collect a SHA256 for the ${runtimeFamily} template`);
+            }
+            return {
+              runtime_family: runtimeFamily,
+              reference,
+              sha256: match[1].toLowerCase(),
+            };
+          }
+
+          (async () => {
+            const backend = new ProxmoxBackend();
+            backend._assertConfigured();
+            const templates = [];
+            for (const runtimeFamily of runtimeFamilies) {
+              const reference =
+                runtimeFamily === "hermes"
+                  ? String(process.env.PROXMOX_HERMES_TEMPLATE || "")
+                  : String(process.env.PROXMOX_TEMPLATE || "");
+              if (!reference) throw new Error(`Missing template for ${runtimeFamily}`);
+              templates.push(await hashTemplate(backend, runtimeFamily, reference));
+            }
+            process.stdout.write(
+              `${JSON.stringify({
+                captured_at: new Date().toISOString(),
+                pve_version: await discoverPveVersion(backend),
+                templates,
+              })}\n`,
+            );
+          })().catch((error) => {
+            console.error(`[proxmox-qualification] ${cleanLine(error?.message || error)}`);
+            process.exitCode = 1;
+          });
+          NODE
+
+          install -m 600 /dev/null "$env_file"
+          {
+            printf 'NODE_ENV=production\n'
+            printf 'PLATFORM_MODE=selfhosted\n'
+            printf 'DB_HOST=postgres\n'
+            printf 'DB_USER=nora\n'
+            printf 'DB_PASSWORD=%s\n' "$(openssl rand -hex 24)"
+            printf 'DB_NAME=nora\n'
+            printf 'DB_PORT=5432\n'
+            printf 'REDIS_HOST=redis\n'
+            printf 'REDIS_PORT=6379\n'
+            printf 'PORT=4000\n'
+            printf 'JWT_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf 'ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)"
+            printf 'NORA_BACKUP_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)"
+            printf 'NORA_AGENT_HUB_API_KEY_HASH_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf 'NORA_API_KEY_HASH_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf 'NORA_COMPOSE_SECRETS_DIR=%s\n' "$secrets_dir"
+            printf 'NORA_UPGRADE_STATE_VOLUME=%s-upgrade-state\n' "$COMPOSE_PROJECT_NAME"
+            printf 'KEY_STORAGE=database\n'
+            printf 'ENABLED_BACKENDS=docker,proxmox\n'
+            printf 'ENABLED_RUNTIME_FAMILIES=%s\n' "$ENABLED_RUNTIME_FAMILIES"
+            printf 'ENABLED_SANDBOX_PROFILES=standard\n'
+          } > "$env_file"
+
+          bash scripts/materialize-compose-secrets.sh "$env_file"
+
+          install -m 600 /dev/null "$override_file"
+          cat > "$override_file" <<'YAML'
+          x-proxmox-environment: &proxmox-environment
+            PROXMOX_API_URL:
+            PROXMOX_TOKEN_ID:
+            PROXMOX_TOKEN_SECRET:
+            PROXMOX_VERIFY_TLS:
+            PROXMOX_CA_CERT:
+            PROXMOX_ALLOW_INSECURE_HTTP:
+            PROXMOX_NODE:
+            PROXMOX_TEMPLATE:
+            PROXMOX_HERMES_TEMPLATE:
+            PROXMOX_ROOTFS_STORAGE:
+            PROXMOX_BRIDGE:
+            PROXMOX_SSH_HOST:
+            PROXMOX_SSH_USER:
+            PROXMOX_SSH_PORT:
+            PROXMOX_SSH_PRIVATE_KEY:
+            PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE:
+            PROXMOX_SSH_PASSWORD:
+            PROXMOX_SSH_HOST_FINGERPRINT:
+            PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY:
+            PROXMOX_PCT_COMMAND:
+            PROXMOX_SUDO:
+            PROXMOX_OFFLINE_STAGE_COMMAND:
+            PROXMOX_NODE_MAJOR:
+            PROXMOX_OPENCLAW_PACKAGE:
+            PROXMOX_HERMES_BIN:
+            PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD:
+
+          services:
+            backend-api:
+              environment:
+                <<: *proxmox-environment
+              ports: !reset []
+            worker-provisioner:
+              environment:
+                <<: *proxmox-environment
+            postgres:
+              ports: !reset []
+          YAML
+
+          install -m 700 /dev/null "$wrapper_file"
+          cat > "$wrapper_file" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${NORA_ENV_FILE:?NORA_ENV_FILE is required}"
+          : "${NORA_PROXMOX_COMPOSE_OVERRIDE:?NORA_PROXMOX_COMPOSE_OVERRIDE is required}"
+          : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}"
+
+          while IFS='=' read -r name value || [ -n "$name" ]; do
+            if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              echo "Invalid key in the ephemeral Nora environment" >&2
+              exit 1
+            fi
+            export "$name=$value"
+          done < "$NORA_ENV_FILE"
+
+          exec docker compose \
+            --env-file "$NORA_ENV_FILE" \
+            -f "$GITHUB_WORKSPACE/docker-compose.yml" \
+            -f "$NORA_PROXMOX_COMPOSE_OVERRIDE" \
+            "$@"
+          BASH
+
+          export NORA_ENV_FILE="$env_file"
+          export NORA_PROXMOX_COMPOSE_OVERRIDE="$override_file"
+          "$wrapper_file" config --quiet
+          "$wrapper_file" config --format json | node -e '
+            const fs = require("fs");
+            const config = JSON.parse(fs.readFileSync(0, "utf8"));
+            const required = [
+              "PROXMOX_API_URL",
+              "PROXMOX_TOKEN_ID",
+              "PROXMOX_TOKEN_SECRET",
+              "PROXMOX_NODE",
+              "PROXMOX_TEMPLATE",
+              "PROXMOX_ROOTFS_STORAGE",
+              "PROXMOX_BRIDGE",
+              "PROXMOX_SSH_HOST",
+              "PROXMOX_SSH_USER",
+              "PROXMOX_SSH_HOST_FINGERPRINT",
+              "PROXMOX_OPENCLAW_PACKAGE",
+            ];
+            for (const serviceName of ["backend-api", "worker-provisioner"]) {
+              const environment = config.services?.[serviceName]?.environment || {};
+              const serviceRequired = [...required];
+              if (String(environment.PROXMOX_SSH_USER || "").trim() !== "root") {
+                serviceRequired.push("PROXMOX_OFFLINE_STAGE_COMMAND");
+              }
+              const missing = serviceRequired.filter((name) => !String(environment[name] || "").trim());
+              if (missing.length) {
+                throw new Error(`${serviceName} is missing protected Proxmox inputs: ${missing.join(", ")}`);
+              }
+              if (
+                String(environment.PROXMOX_OPENCLAW_PACKAGE) !==
+                String(process.env.PROXMOX_OPENCLAW_PACKAGE)
+              ) {
+                throw new Error(
+                  `${serviceName} did not preserve the exact PROXMOX_OPENCLAW_PACKAGE spec`,
+                );
+              }
+            }
+          '
+
+      - name: Start isolated Nora control-plane services
+        id: start
+        run: |
+          "$NORA_PROXMOX_COMPOSE" up -d --build postgres redis backend-api worker-provisioner
+
+      - name: Wait for the provisioner health gate
+        id: health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..180}; do
+            if "$NORA_PROXMOX_COMPOSE" ps --format json worker-provisioner | grep -q '"Health":"healthy"'; then
+              exit 0
+            fi
+            sleep 2
+          done
+          "$NORA_PROXMOX_COMPOSE" ps
+          exit 1
+
+      - name: Capture pre-smoke hardware facts
+        id: facts_before
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          install -m 600 /dev/null "$NORA_PROXMOX_FACTS_BEFORE"
+          "$NORA_PROXMOX_COMPOSE" exec -T worker-provisioner ./node_modules/.bin/tsx - \
+            < "$NORA_PROXMOX_FACTS_COLLECTOR" > "$NORA_PROXMOX_FACTS_BEFORE"
+          node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' \
+            "$NORA_PROXMOX_FACTS_BEFORE"
+
+      - name: Run destructive real-hardware lifecycle gate
+        id: smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          while IFS='=' read -r name value || [ -n "$name" ]; do
+            if [[ ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              echo "Invalid key in the ephemeral Nora environment" >&2
+              exit 1
+            fi
+            export "$name=$value"
+          done < "$NORA_ENV_FILE"
+          export COMPOSE_FILE="$GITHUB_WORKSPACE/docker-compose.yml:$NORA_PROXMOX_COMPOSE_OVERRIDE"
+          install -m 600 /dev/null "$NORA_PROXMOX_SMOKE_LOG"
+          {
+            e2e/scripts/run-proxmox-smoke.sh
+          } 2>&1 | tee "$NORA_PROXMOX_SMOKE_LOG"
+
+      - name: Capture post-smoke hardware facts
+        id: facts_after
+        if: ${{ always() && steps.start.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test -x "$NORA_PROXMOX_COMPOSE"
+          test -f "$NORA_PROXMOX_FACTS_COLLECTOR"
+          install -m 600 /dev/null "$NORA_PROXMOX_FACTS_AFTER"
+          "$NORA_PROXMOX_COMPOSE" exec -T worker-provisioner ./node_modules/.bin/tsx - \
+            < "$NORA_PROXMOX_FACTS_COLLECTOR" > "$NORA_PROXMOX_FACTS_AFTER"
+          node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' \
+            "$NORA_PROXMOX_FACTS_AFTER"
+
+      - name: Stop isolated Nora services
+        id: cleanup
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup_status=0
+          compose_down_attempted=0
+          compose_down_status=-1
+          env_file="${NORA_ENV_FILE:-$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.env}"
+          override_file="${NORA_PROXMOX_COMPOSE_OVERRIDE:-$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.override.yml}"
+          wrapper_file="${NORA_PROXMOX_COMPOSE:-$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-compose}"
+          secrets_dir="${NORA_PROXMOX_COMPOSE_SECRETS:-$RUNNER_TEMP/nora-proxmox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-secrets}"
+          if [ -x "$wrapper_file" ]; then
+            export NORA_ENV_FILE="$env_file"
+            export NORA_PROXMOX_COMPOSE_OVERRIDE="$override_file"
+            compose_down_attempted=1
+            set +e
+            "$wrapper_file" down -v --remove-orphans
+            compose_down_status=$?
+            set -e
+            if [ "$compose_down_status" -ne 0 ]; then
+              cleanup_status="$compose_down_status"
+            fi
+          fi
+          for path in "$env_file" "$override_file" "$wrapper_file"; do
+            rm -f "$path"
+          done
+          rm -rf "$secrets_dir"
+          files_removed=true
+          for path in "$env_file" "$override_file" "$wrapper_file"; do
+            if [ -e "$path" ]; then
+              files_removed=false
+            fi
+          done
+          secrets_removed=true
+          if [ -e "$secrets_dir" ]; then
+            secrets_removed=false
+          fi
+          install -m 600 /dev/null "$NORA_PROXMOX_CLEANUP_EVIDENCE"
+          COMPOSE_DOWN_ATTEMPTED="$compose_down_attempted" \
+          COMPOSE_DOWN_STATUS="$compose_down_status" \
+          EPHEMERAL_FILES_REMOVED="$files_removed" \
+          SECRETS_DIRECTORY_REMOVED="$secrets_removed" \
+            node <<'NODE' > "$NORA_PROXMOX_CLEANUP_EVIDENCE"
+          const integer = (value) => Number.parseInt(String(value), 10);
+          process.stdout.write(
+            `${JSON.stringify({
+              compose_down_attempted: process.env.COMPOSE_DOWN_ATTEMPTED === "1",
+              compose_down_exit_code: integer(process.env.COMPOSE_DOWN_STATUS),
+              ephemeral_compose_inputs_removed: process.env.EPHEMERAL_FILES_REMOVED === "true",
+              ephemeral_secrets_directory_removed:
+                process.env.SECRETS_DIRECTORY_REMOVED === "true",
+            })}\n`,
+          );
+          NODE
+          exit "$cleanup_status"
+
+      - name: Emit Proxmox qualification record
+        id: qualification
+        if: always()
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ needs.validate-target.outputs.sha }}
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+          ASSEMBLE_OUTCOME: ${{ steps.assemble.outcome }}
+          START_OUTCOME: ${{ steps.start.outcome }}
+          HEALTH_OUTCOME: ${{ steps.health.outcome }}
+          FACTS_BEFORE_OUTCOME: ${{ steps.facts_before.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          FACTS_AFTER_OUTCOME: ${{ steps.facts_after.outcome }}
+          CLEANUP_OUTCOME: ${{ steps.cleanup.outcome }}
+        run: |
+          set -euo pipefail
+          umask 077
+          node <<'NODE'
+          const fs = require("fs");
+
+          function readJson(filePath) {
+            try {
+              return JSON.parse(fs.readFileSync(filePath, "utf8"));
+            } catch {
+              return null;
+            }
+          }
+
+          function readText(filePath) {
+            try {
+              return fs.readFileSync(filePath, "utf8");
+            } catch {
+              return "";
+            }
+          }
+
+          const runtimeFamilies = String(process.env.PROXMOX_SMOKE_RUNTIME_FAMILIES || "openclaw")
+            .split(",")
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean);
+          const keepOnFailure = process.env.PROXMOX_SMOKE_KEEP_ON_FAILURE === "true";
+          const factsBefore = readJson(process.env.NORA_PROXMOX_FACTS_BEFORE);
+          const factsAfter = readJson(process.env.NORA_PROXMOX_FACTS_AFTER);
+          const cleanupEvidence = readJson(process.env.NORA_PROXMOX_CLEANUP_EVIDENCE);
+          const smokeLines = readText(process.env.NORA_PROXMOX_SMOKE_LOG).split(/\r?\n/);
+          const observed = Object.fromEntries(
+            runtimeFamilies.map((runtimeFamily) => [
+              runtimeFamily,
+              { created: false, passed: false, preserved: false, cleanupFailed: false },
+            ]),
+          );
+          let activeRuntime = null;
+          for (const line of smokeLines) {
+            const create = line.match(
+              /^\[proxmox-smoke\] creating (openclaw|hermes) cell [a-zA-Z0-9-]+$/,
+            );
+            if (create && observed[create[1]]) {
+              activeRuntime = create[1];
+              observed[activeRuntime].created = true;
+            }
+            const passed = line.match(
+              /^\[proxmox-smoke\] (openclaw|hermes) lifecycle passed \(vmid=\d+\)$/,
+            );
+            if (passed && observed[passed[1]]) {
+              observed[passed[1]].passed = true;
+              activeRuntime = null;
+            }
+            const preserved = line.match(
+              /^\[proxmox-smoke\] preserving failed (openclaw|hermes) LXC vmid=\d+ because PROXMOX_SMOKE_KEEP_ON_FAILURE=true$/,
+            );
+            if (preserved && observed[preserved[1]]) {
+              observed[preserved[1]].preserved = true;
+              activeRuntime = preserved[1];
+            }
+            if (
+              activeRuntime &&
+              /^\[proxmox-smoke\] cleanup failed for vmid=\d+:/.test(line)
+            ) {
+              observed[activeRuntime].cleanupFailed = true;
+            }
+          }
+
+          const cells = runtimeFamilies.map((runtimeFamily) => {
+            const cell = observed[runtimeFamily];
+            if (cell.passed) {
+              return {
+                runtime_family: runtimeFamily,
+                result: "passed",
+                cleanup: "destroy_confirmed",
+                cleanup_evidence: "lifecycle pass includes destroy plus post-destroy absence check",
+              };
+            }
+            if (!cell.created) {
+              return {
+                runtime_family: runtimeFamily,
+                result: "not_run",
+                cleanup: "not_applicable",
+                cleanup_evidence: "no cell creation marker was emitted",
+              };
+            }
+            if (cell.preserved) {
+              return {
+                runtime_family: runtimeFamily,
+                result: "failed",
+                cleanup: "preserved_by_request",
+                cleanup_evidence: "keep_on_failure preservation marker was emitted",
+              };
+            }
+            if (cell.cleanupFailed) {
+              return {
+                runtime_family: runtimeFamily,
+                result: "failed",
+                cleanup: "failed",
+                cleanup_evidence: "the smoke emitted an explicit cleanup failure marker",
+              };
+            }
+            return {
+              runtime_family: runtimeFamily,
+              result: "failed",
+              cleanup: keepOnFailure ? "preservation_not_confirmed" : "attempted_no_error_reported",
+              cleanup_evidence: keepOnFailure
+                ? "keep_on_failure was requested but no preservation marker was emitted"
+                : "the failure cleanup path ran without an explicit cleanup error marker",
+            };
+          });
+
+          function normalizedTemplates(facts) {
+            if (!Array.isArray(facts?.templates)) return null;
+            return facts.templates
+              .map((template) => ({
+                runtime_family: String(template.runtime_family || ""),
+                reference: String(template.reference || ""),
+                sha256: String(template.sha256 || "").toLowerCase(),
+              }))
+              .sort((left, right) => left.runtime_family.localeCompare(right.runtime_family));
+          }
+
+          const templatesBefore = normalizedTemplates(factsBefore);
+          const templatesAfter = normalizedTemplates(factsAfter);
+          const templatesComplete = (templates) =>
+            Array.isArray(templates) &&
+            templates.length === runtimeFamilies.length &&
+            templates.every(
+              (template) =>
+                runtimeFamilies.includes(template.runtime_family) &&
+                template.reference &&
+                /^[0-9a-f]{64}$/.test(template.sha256),
+            );
+          const templateHashesStable =
+            templatesComplete(templatesBefore) &&
+            templatesComplete(templatesAfter) &&
+            JSON.stringify(templatesBefore) === JSON.stringify(templatesAfter);
+          const controlPlaneCleanupConfirmed = Boolean(
+            cleanupEvidence?.compose_down_attempted &&
+              cleanupEvidence?.compose_down_exit_code === 0 &&
+              cleanupEvidence?.ephemeral_compose_inputs_removed &&
+              cleanupEvidence?.ephemeral_secrets_directory_removed,
+          );
+          const stepOutcomes = {
+            checkout: process.env.CHECKOUT_OUTCOME,
+            configuration: process.env.VERIFY_OUTCOME,
+            compose_assembly: process.env.ASSEMBLE_OUTCOME,
+            control_plane_start: process.env.START_OUTCOME,
+            health_gate: process.env.HEALTH_OUTCOME,
+            facts_before: process.env.FACTS_BEFORE_OUTCOME,
+            lifecycle_smoke: process.env.SMOKE_OUTCOME,
+            facts_after: process.env.FACTS_AFTER_OUTCOME,
+            control_plane_cleanup: process.env.CLEANUP_OUTCOME,
+          };
+          const requiredStepsPassed = Object.values(stepOutcomes).every(
+            (outcome) => outcome === "success",
+          );
+          const allCellsPassed = cells.every((cell) => cell.result === "passed");
+          let tsxPackageSpec = "";
+          try {
+            const runtimeBootstrap = fs.readFileSync(
+              `${process.env.GITHUB_WORKSPACE}/agent-runtime/lib/runtimeBootstrap.ts`,
+              "utf8",
+            );
+            tsxPackageSpec =
+              runtimeBootstrap.match(
+                /const TSX_PACKAGE_SPEC =\s*process\.env\.OPENCLAW_TSX_PACKAGE \|\| "([^"]+)";/,
+              )?.[1] || "";
+          } catch {
+            tsxPackageSpec = "";
+          }
+
+          let temporaryInputsScrubbed = true;
+          for (const filePath of [
+            process.env.NORA_PROXMOX_FACTS_COLLECTOR,
+            process.env.NORA_PROXMOX_FACTS_BEFORE,
+            process.env.NORA_PROXMOX_FACTS_AFTER,
+            process.env.NORA_PROXMOX_SMOKE_LOG,
+            process.env.NORA_PROXMOX_CLEANUP_EVIDENCE,
+          ]) {
+            try {
+              fs.rmSync(filePath, { force: true });
+            } catch {
+              temporaryInputsScrubbed = false;
+            }
+          }
+
+          const passed = Boolean(
+            requiredStepsPassed &&
+              allCellsPassed &&
+              templateHashesStable &&
+              controlPlaneCleanupConfirmed &&
+              tsxPackageSpec &&
+              temporaryInputsScrubbed,
+          );
+          const record = {
+            schema_version: 1,
+            qualification: passed ? "passed" : "failed",
+            maturity: "experimental",
+            generated_at: new Date().toISOString(),
+            candidate_sha: process.env.CANDIDATE_SHA,
+            repository: process.env.GITHUB_REPOSITORY,
+            workflow: {
+              run_id: process.env.GITHUB_RUN_ID,
+              run_attempt: process.env.GITHUB_RUN_ATTEMPT,
+              url: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+              ref: process.env.GITHUB_REF,
+            },
+            target: {
+              pve_version: factsAfter?.pve_version || factsBefore?.pve_version || null,
+              node: process.env.PROXMOX_NODE,
+              rootfs_storage: process.env.PROXMOX_ROOTFS_STORAGE,
+              bridge: process.env.PROXMOX_BRIDGE,
+              templates: templatesAfter || templatesBefore || [],
+              template_hashes_stable_during_gate: templateHashesStable,
+            },
+            runtime: {
+              families: runtimeFamilies,
+              package_specs: {
+                openclaw: process.env.PROXMOX_OPENCLAW_PACKAGE,
+                tsx: tsxPackageSpec,
+              },
+              node_major: process.env.PROXMOX_NODE_MAJOR,
+              hermes_binary: runtimeFamilies.includes("hermes")
+                ? process.env.PROXMOX_HERMES_BIN
+                : null,
+            },
+            ssh: {
+              authentication: String(process.env.PROXMOX_SSH_PRIVATE_KEY || "").trim()
+                ? "private_key"
+                : "password",
+              privilege_mode:
+                process.env.PROXMOX_SSH_USER === "root" ? "root_direct" : "non_root_helper",
+              host_key_verification: "pinned_sha256",
+            },
+            keep_on_failure: keepOnFailure,
+            evidence: {
+              step_outcomes: stepOutcomes,
+              cells,
+              control_plane_cleanup: cleanupEvidence,
+              temporary_qualification_inputs_scrubbed: temporaryInputsScrubbed,
+            },
+          };
+          fs.writeFileSync(
+            process.env.NORA_PROXMOX_QUALIFICATION_RECORD,
+            `${JSON.stringify(record, null, 2)}\n`,
+            { mode: 0o600 },
+          );
+          process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
+          if (!passed) process.exitCode = 1;
+          NODE
+
+      - name: Upload Proxmox qualification record
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proxmox-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.NORA_PROXMOX_QUALIFICATION_RECORD }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Scrub qualification record from the runner
+        if: always()
+        shell: bash
+        run: |
+          rm -f \
+            "$NORA_PROXMOX_FACTS_COLLECTOR" \
+            "$NORA_PROXMOX_FACTS_BEFORE" \
+            "$NORA_PROXMOX_FACTS_AFTER" \
+            "$NORA_PROXMOX_SMOKE_LOG" \
+            "$NORA_PROXMOX_CLEANUP_EVIDENCE" \
+            "$NORA_PROXMOX_QUALIFICATION_RECORD"

@@ -20,6 +20,7 @@ coverage/
 e2e/.env.real
 e2e/integrations/.env.providers
 docker-compose.override.yml
+docker-compose.override.yml.legacy-*
 nginx.public.conf
 nginx.conf.tls
 

@@ -16,8 +16,10 @@ describe("isGatewayAvailableStatus", () => {
 });
 
 describe("reconcileAgentStatus", () => {
-  it("preserves warning when the container is still running", () => {
-    expect(reconcileAgentStatus("warning", true)).toBe("warning");
+  it("self-heals warning to running when the container is live", () => {
+    // warning is a point-in-time readiness miss; once the runtime is
+    // demonstrably live it must recover like stopped/error do.
+    expect(reconcileAgentStatus("warning", true)).toBe("running");
   });
 
   it("downgrades warning to stopped when the container is no longer running", () => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 // @ts-nocheck
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 const API_BASE_URL = process.env.API_BASE_URL || "http://127.0.0.1:4100";
 const KUBECTL_BIN = process.env.KUBECTL_BIN || "kubectl";
@@ -31,25 +31,51 @@ const K8S_LOAD_BALANCER_READY_INTERVAL_MS = Number.parseInt(
 const POLL_INTERVAL_MS = Number.parseInt(process.env.K8S_SMOKE_POLL_MS || "5000", 10);
 // First boot can spend several minutes installing OpenClaw and bundled plugins.
 const POLL_TIMEOUT_MS = Number.parseInt(process.env.K8S_SMOKE_TIMEOUT_MS || "600000", 10);
-const RUNTIME_FAMILIES = (process.env.K8S_SMOKE_RUNTIME_FAMILIES || "openclaw")
+const CLEANUP_TIMEOUT_MS = Number.parseInt(process.env.K8S_SMOKE_CLEANUP_TIMEOUT_MS || "15000", 10);
+const RUNTIME_FAMILIES = (process.env.K8S_SMOKE_RUNTIME_FAMILIES || "openclaw,hermes")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
+const PEER_POD_NAME = process.env.K8S_SMOKE_PEER_POD_NAME || "k8s-smoke-peer";
+const SMOKE_CELLS = (process.env.K8S_SMOKE_CELLS || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const NEMOCLAW_MODEL = process.env.NEMOCLAW_DEFAULT_MODEL || "nvidia/nemotron-3-super-120b-a12b";
 
 const RUNTIMES = {
   openclaw: {
     label: "OpenClaw",
-    deploymentName: (agentId) => `oclaw-agent-${agentId}`,
+    policyNames: ["nora-openclaw-default-deny-ingress", "nora-openclaw-allow-trusted-ingress"],
+    blockedPorts: [18789, 9090],
     embedPath: (agentId, token) =>
       `/agents/${agentId}/gateway/embed?token=${encodeURIComponent(token)}`,
   },
   hermes: {
     label: "Hermes",
-    deploymentName: (agentId) => `hermes-agent-${agentId}`,
+    policyNames: ["nora-hermes-default-deny-ingress", "nora-hermes-allow-trusted-ingress"],
+    blockedPorts: [8642, 9119],
     embedPath: (agentId, token) =>
       `/agents/${agentId}/hermes-ui/embed?token=${encodeURIComponent(token)}`,
   },
 };
+
+function parseSmokeCells() {
+  const entries =
+    SMOKE_CELLS.length > 0
+      ? SMOKE_CELLS
+      : RUNTIME_FAMILIES.map((runtimeFamily) => `${runtimeFamily}:standard`);
+  return entries.map((entry) => {
+    const [runtimeFamilyRaw, sandboxProfileRaw] = entry.split(":");
+    const runtimeFamily = String(runtimeFamilyRaw || "").trim();
+    const sandboxProfile = String(sandboxProfileRaw || "standard").trim() || "standard";
+    return {
+      key: `${runtimeFamily}:${sandboxProfile}`,
+      runtimeFamily,
+      sandboxProfile,
+    };
+  });
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,10 +103,69 @@ async function api(path, { method = "GET", token = null, body, expectOk = true }
   }
 
   if (expectOk && !response.ok) {
-    throw new Error(`${method} ${path} failed with ${response.status}: ${typeof parsed === "string" ? parsed : JSON.stringify(parsed)}`);
+    throw new Error(
+      `${method} ${path} failed with ${response.status}: ${typeof parsed === "string" ? parsed : JSON.stringify(parsed)}`,
+    );
   }
 
   return { response, body: parsed };
+}
+
+async function apiWithTimeout(path, { timeoutMs = CLEANUP_TIMEOUT_MS, ...options } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = {};
+    if (options.token) headers.Authorization = `Bearer ${options.token}`;
+    if (options.body !== undefined) headers["Content-Type"] = "application/json";
+
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: options.method || "GET",
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    let parsed = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = raw;
+      }
+    }
+
+    if ((options.expectOk ?? true) && !response.ok) {
+      throw new Error(
+        `${options.method || "GET"} ${path} failed with ${response.status}: ${
+          typeof parsed === "string" ? parsed : JSON.stringify(parsed)
+        }`,
+      );
+    }
+
+    return { response, body: parsed };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function retryApi(path, options = {}, { timeoutMs = POLL_TIMEOUT_MS } = {}) {
+  const startedAt = Date.now();
+  let lastError = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      return await api(path, options);
+    } catch (error) {
+      lastError = error?.message || String(error);
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `${options.method || "GET"} ${path} did not succeed: ${lastError || "no response"}`,
+  );
 }
 
 function kubectl(...args) {
@@ -91,8 +176,27 @@ function kubectl(...args) {
   }).trim();
 }
 
+function kubectlStatus(...args) {
+  const result = spawnSync(KUBECTL_BIN, args, {
+    encoding: "utf8",
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    status: result.status ?? 1,
+    stdout: String(result.stdout || "").trim(),
+    stderr: String(result.stderr || "").trim(),
+  };
+}
+
 function namespaceForRuntime(runtimeFamily) {
   return runtimeFamily === "hermes" ? K8S_HERMES_NAMESPACE : K8S_OPENCLAW_NAMESPACE;
+}
+
+function deployedResourceName(agent, runtimeFamily) {
+  const containerId = String(agent?.container_id || "").trim();
+  if (containerId) return containerId;
+  return runtimeFamily === "hermes" ? `hermes-agent-${agent.id}` : `oclaw-agent-${agent.id}`;
 }
 
 function parseServiceAnnotations() {
@@ -145,33 +249,69 @@ async function registerKubernetesCluster(token) {
   });
 }
 
+async function testKubernetesCluster(token) {
+  const { body } = await api(`/admin/kubernetes-clusters/${K8S_CLUSTER_ID}/test`, {
+    method: "POST",
+    token,
+  });
+  if (body?.lastTestStatus !== "ok") {
+    throw new Error(
+      `Kubernetes cluster connection test did not pass: ${JSON.stringify({
+        lastTestStatus: body?.lastTestStatus,
+        lastTestMessage: body?.lastTestMessage,
+        supportsNetworkPolicy: body?.supportsNetworkPolicy,
+        policyEngine: body?.policyEngine,
+      })}`,
+    );
+  }
+  return body;
+}
+
 async function waitForAgentStatus(token, agentId, allowedStatuses) {
   const startedAt = Date.now();
+  let lastError = null;
 
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
-    const { body } = await api(`/agents/${agentId}`, { token });
-    if (allowedStatuses.includes(body.status)) {
-      return body;
+    try {
+      const { body } = await api(`/agents/${agentId}`, { token });
+      if (allowedStatuses.includes(body.status)) {
+        return body;
+      }
+      lastError = `last status=${body.status}`;
+    } catch (error) {
+      lastError = error?.message || String(error);
     }
     await sleep(POLL_INTERVAL_MS);
   }
 
-  throw new Error(`Timed out waiting for agent ${agentId} to reach one of: ${allowedStatuses.join(", ")}`);
+  throw new Error(
+    `Timed out waiting for agent ${agentId} to reach one of: ${allowedStatuses.join(
+      ", ",
+    )}; ${lastError || "no status response"}`,
+  );
 }
 
 async function waitForGateway(token, agentId) {
   const startedAt = Date.now();
+  let lastError = null;
 
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
-    const { response } = await api(`/agents/${agentId}/gateway/status`, {
-      token,
-      expectOk: false,
-    });
-    if (response.ok) return;
+    try {
+      const { response, body } = await api(`/agents/${agentId}/gateway/status`, {
+        token,
+        expectOk: false,
+      });
+      if (response.ok) return;
+      lastError = `${response.status}: ${typeof body === "string" ? body : JSON.stringify(body)}`;
+    } catch (error) {
+      lastError = error?.message || String(error);
+    }
     await sleep(POLL_INTERVAL_MS);
   }
 
-  throw new Error(`Timed out waiting for gateway readiness on agent ${agentId}`);
+  throw new Error(
+    `Timed out waiting for gateway readiness on agent ${agentId}; ${lastError || "no response"}`,
+  );
 }
 
 async function waitForHermesUi(token, agentId) {
@@ -179,19 +319,23 @@ async function waitForHermesUi(token, agentId) {
   let last = null;
 
   while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
-    const { response, body } = await api(`/agents/${agentId}/hermes-ui`, {
-      token,
-      expectOk: false,
-    });
-    last = body;
-    if (response.ok && body?.health?.ok && body?.dashboard?.ready) return;
+    try {
+      const { response, body } = await api(`/agents/${agentId}/hermes-ui`, {
+        token,
+        expectOk: false,
+      });
+      last = body;
+      if (response.ok && body?.health?.ok && body?.dashboard?.ready) return;
+    } catch (error) {
+      last = error?.message || String(error);
+    }
     await sleep(POLL_INTERVAL_MS);
   }
 
   throw new Error(
     `Timed out waiting for Hermes UI readiness on agent ${agentId}; last response: ${JSON.stringify(
-      last
-    )}`
+      last,
+    )}`,
   );
 }
 
@@ -203,11 +347,90 @@ async function waitForRuntimeSurface(token, agent) {
   await waitForGateway(token, agent.id);
 }
 
-function assertK8sResources(runtimeFamily, agentId) {
+function assertK8sResources(runtimeFamily, agent) {
+  const namespace = namespaceForRuntime(runtimeFamily);
+  const resourceName = deployedResourceName(agent, runtimeFamily);
+  kubectl("get", "deployment", resourceName, "-n", namespace);
+  kubectl("get", "service", resourceName, "-n", namespace);
+}
+
+function assertPolicyStatus(agent, runtimeFamily) {
+  const status = agent.networkPolicyStatus;
+  if (!status) {
+    throw new Error(`${runtimeFamily} agent ${agent.id} did not expose networkPolicyStatus`);
+  }
+  if (status.policyStatus !== "supported") {
+    throw new Error(
+      `${runtimeFamily} agent ${agent.id} expected policyStatus=supported, received ${JSON.stringify(status)}`,
+    );
+  }
+  if (!status.policyBundleAttempted || !status.policyBundleApplied) {
+    throw new Error(
+      `${runtimeFamily} agent ${agent.id} expected applied policy bundle, received ${JSON.stringify(status)}`,
+    );
+  }
+}
+
+function assertNetworkPoliciesExist(runtimeFamily) {
   const runtime = RUNTIMES[runtimeFamily];
   const namespace = namespaceForRuntime(runtimeFamily);
-  kubectl("get", "deployment", runtime.deploymentName(agentId), "-n", namespace);
-  kubectl("get", "service", runtime.deploymentName(agentId), "-n", namespace);
+  for (const policyName of runtime.policyNames) {
+    kubectl("get", "networkpolicy", policyName, "-n", namespace);
+  }
+}
+
+function ensurePeerPod(namespace) {
+  const existing = kubectlStatus("get", "pod", PEER_POD_NAME, "-n", namespace, "-o", "name");
+  if (existing.status !== 0) {
+    kubectl(
+      "run",
+      PEER_POD_NAME,
+      "-n",
+      namespace,
+      "--image=busybox:1.36",
+      "--restart=Never",
+      "--labels",
+      "app=k8s-smoke-peer",
+      "--command",
+      "--",
+      "sh",
+      "-c",
+      "sleep 3600",
+    );
+  }
+  kubectl(
+    "wait",
+    "--for=condition=Ready",
+    `pod/${PEER_POD_NAME}`,
+    "-n",
+    namespace,
+    "--timeout=180s",
+  );
+}
+
+function assertPeerPodBlocked(runtimeFamily, agent) {
+  const runtime = RUNTIMES[runtimeFamily];
+  const namespace = namespaceForRuntime(runtimeFamily);
+  const serviceName = deployedResourceName(agent, runtimeFamily);
+  ensurePeerPod(namespace);
+
+  for (const port of runtime.blockedPorts) {
+    const probe = kubectlStatus(
+      "exec",
+      "-n",
+      namespace,
+      PEER_POD_NAME,
+      "--",
+      "sh",
+      "-c",
+      `wget -T 5 -qO- http://${serviceName}:${port} >/dev/null`,
+    );
+    if (probe.status === 0) {
+      throw new Error(
+        `${runtime.label} service ${serviceName}:${port} was reachable from peer pod ${PEER_POD_NAME}; expected ingress isolation`,
+      );
+    }
+  }
 }
 
 function isHttpUrl(value) {
@@ -216,9 +439,35 @@ function isHttpUrl(value) {
 
 async function fetchRuntimeEmbed(runtimeFamily, agentId, token) {
   const runtime = RUNTIMES[runtimeFamily];
-  const embedResponse = await fetch(`${API_BASE_URL}${runtime.embedPath(agentId, token)}`);
-  if (!embedResponse.ok) {
-    throw new Error(`${runtime.label} embed returned ${embedResponse.status}`);
+  const startedAt = Date.now();
+  let lastError = null;
+
+  while (Date.now() - startedAt < POLL_TIMEOUT_MS) {
+    try {
+      const embedResponse = await fetch(`${API_BASE_URL}${runtime.embedPath(agentId, token)}`);
+      if (embedResponse.ok) return;
+      lastError = `${runtime.label} embed returned ${embedResponse.status}`;
+    } catch (error) {
+      lastError = error?.message || String(error);
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  throw new Error(`${runtime.label} embed did not become reachable: ${lastError || "unknown"}`);
+}
+
+async function cleanupAgent(token, agentId) {
+  try {
+    await apiWithTimeout(`/agents/${agentId}`, {
+      method: "DELETE",
+      token,
+      expectOk: false,
+    });
+  } catch (error) {
+    const message = String(error?.message || error);
+    console.warn(
+      `Cleanup delete for agent ${agentId} did not finish within ${CLEANUP_TIMEOUT_MS}ms: ${message}`,
+    );
   }
 }
 
@@ -228,16 +477,31 @@ async function main() {
   const password = "SmokePassword123!";
   let token = null;
   const agentIds = [];
+  const peerNamespaces = new Set();
   const results = [];
+  const cells = parseSmokeCells();
 
   try {
-    const unsupportedRuntime = RUNTIME_FAMILIES.find((runtimeFamily) => !RUNTIMES[runtimeFamily]);
+    const unsupportedRuntime = cells.find((cell) => !RUNTIMES[cell.runtimeFamily]);
     if (unsupportedRuntime) {
       throw new Error(
-        `Unsupported K8S_SMOKE_RUNTIME_FAMILIES entry: ${unsupportedRuntime}. Supported values: ${Object.keys(
-          RUNTIMES
-        ).join(", ")}`
+        `Unsupported K8s smoke runtime entry: ${unsupportedRuntime.runtimeFamily}. Supported values: ${Object.keys(
+          RUNTIMES,
+        ).join(", ")}`,
       );
+    }
+    const invalidSandbox = cells.find(
+      (cell) =>
+        cell.sandboxProfile !== "standard" &&
+        !(cell.runtimeFamily === "openclaw" && cell.sandboxProfile === "nemoclaw"),
+    );
+    if (invalidSandbox) {
+      throw new Error(
+        `Unsupported K8S_SMOKE_CELLS entry: ${invalidSandbox.key}. Use runtime:sandbox pairs such as openclaw:standard,openclaw:nemoclaw,hermes:standard.`,
+      );
+    }
+    if (cells.some((cell) => cell.sandboxProfile === "nemoclaw") && !process.env.NVIDIA_API_KEY) {
+      throw new Error("K8S_SMOKE_CELLS includes openclaw:nemoclaw but NVIDIA_API_KEY is not set");
     }
 
     await api("/auth/signup", {
@@ -252,18 +516,22 @@ async function main() {
     token = login.body.token;
 
     await registerKubernetesCluster(token);
+    await testKubernetesCluster(token);
 
-    for (const runtimeFamily of RUNTIME_FAMILIES) {
+    for (const cell of cells) {
+      const { runtimeFamily, sandboxProfile } = cell;
       const runtime = RUNTIMES[runtimeFamily];
       const deploy = await api("/agents/deploy", {
         method: "POST",
         token,
         body: {
-          name: `${runtime.label} K8s Smoke ${stamp}`,
+          name: `${runtime.label} ${sandboxProfile === "nemoclaw" ? "NemoClaw " : ""}K8s Smoke ${stamp}`,
           runtime_family: runtimeFamily,
           backend_type: "k8s",
           deploy_target: K8S_EXECUTION_TARGET_ID,
           execution_target_id: K8S_EXECUTION_TARGET_ID,
+          sandbox_profile: sandboxProfile,
+          ...(sandboxProfile === "nemoclaw" ? { model: NEMOCLAW_MODEL } : {}),
         },
       });
       const agentId = deploy.body.id;
@@ -279,24 +547,32 @@ async function main() {
       }
       if (runningAgent.runtime_family !== runtimeFamily) {
         throw new Error(
-          `Expected runtime_family=${runtimeFamily}, received ${runningAgent.runtime_family}`
+          `Expected runtime_family=${runtimeFamily}, received ${runningAgent.runtime_family}`,
         );
       }
       if (runningAgent.backend_type !== "k8s") {
         throw new Error(`Expected backend_type=k8s, received ${runningAgent.backend_type}`);
       }
+      if ((runningAgent.sandbox_profile || "standard") !== sandboxProfile) {
+        throw new Error(
+          `Expected sandbox_profile=${sandboxProfile}, received ${runningAgent.sandbox_profile}`,
+        );
+      }
 
-      assertK8sResources(runtimeFamily, agentId);
+      assertPolicyStatus(runningAgent, runtimeFamily);
+      assertK8sResources(runtimeFamily, runningAgent);
+      assertNetworkPoliciesExist(runtimeFamily);
+      peerNamespaces.add(namespaceForRuntime(runtimeFamily));
 
       let surfaceUrl = null;
       if (runtimeFamily === "openclaw") {
-        const gatewayUrl = await api(`/agents/${agentId}/gateway-url`, { token });
+        const gatewayUrl = await retryApi(`/agents/${agentId}/gateway-url`, { token });
         surfaceUrl = gatewayUrl.body.url;
         if (!isHttpUrl(surfaceUrl)) {
           throw new Error(`Unexpected gateway URL payload: ${JSON.stringify(gatewayUrl.body)}`);
         }
       } else {
-        const hermesUi = await api(`/agents/${agentId}/hermes-ui`, { token });
+        const hermesUi = await retryApi(`/agents/${agentId}/hermes-ui`, { token });
         surfaceUrl = hermesUi.body?.dashboard?.url || hermesUi.body?.url;
         if (!isHttpUrl(surfaceUrl)) {
           throw new Error(`Unexpected Hermes UI payload: ${JSON.stringify(hermesUi.body)}`);
@@ -305,40 +581,43 @@ async function main() {
 
       await waitForRuntimeSurface(token, runningAgent);
       await fetchRuntimeEmbed(runtimeFamily, agentId, token);
+      assertPeerPodBlocked(runtimeFamily, runningAgent);
 
-      await api(`/agents/${agentId}/stop`, { method: "POST", token });
+      await retryApi(`/agents/${agentId}/stop`, { method: "POST", token });
       await waitForAgentStatus(token, agentId, ["stopped"]);
 
-      await api(`/agents/${agentId}/start`, { method: "POST", token });
+      await retryApi(`/agents/${agentId}/start`, { method: "POST", token });
       const restartedAgent = await waitForAgentStatus(token, agentId, ["running", "warning"]);
       await waitForRuntimeSurface(token, restartedAgent);
 
-      await api(`/agents/${agentId}/restart`, { method: "POST", token });
+      await retryApi(`/agents/${agentId}/restart`, { method: "POST", token });
       const restartedAgainAgent = await waitForAgentStatus(token, agentId, ["running", "warning"]);
       await waitForRuntimeSurface(token, restartedAgainAgent);
 
       results.push({
         runtimeFamily,
+        sandboxProfile,
         agentId,
         surfaceUrl,
-        deployment: runtime.deploymentName(agentId),
+        deployment: deployedResourceName(restartedAgainAgent, runtimeFamily),
       });
     }
 
-    console.log(JSON.stringify({
-      ok: true,
-      agents: results,
-      namespace: K8S_NAMESPACE,
-      executionTarget: K8S_EXECUTION_TARGET_ID,
-    }));
+    console.log(
+      JSON.stringify({
+        ok: true,
+        agents: results,
+        namespace: K8S_NAMESPACE,
+        executionTarget: K8S_EXECUTION_TARGET_ID,
+      }),
+    );
   } finally {
+    for (const namespace of peerNamespaces) {
+      kubectlStatus("delete", "pod", PEER_POD_NAME, "-n", namespace, "--ignore-not-found=true");
+    }
     if (token) {
       for (const agentId of agentIds.reverse()) {
-        await api(`/agents/${agentId}`, {
-          method: "DELETE",
-          token,
-          expectOk: false,
-        });
+        await cleanupAgent(token, agentId);
       }
     }
   }

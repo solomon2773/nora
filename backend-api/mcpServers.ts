@@ -19,6 +19,11 @@
 
 const db = require("./db");
 const { loadCatalog } = require("./integrations/catalog/catalogLoader");
+const {
+  buildMcpManagedEnv,
+  buildMcpManagedEnvNames,
+  buildMcpServersConfig,
+} = require("../agent-runtime/lib/mcpServersConfig");
 
 // provider id -> how to turn its decrypted credential into MCP server env.
 //   primaryEnv: the env var the MCP server reads the access token from.
@@ -37,8 +42,12 @@ function isSupportedProvider(provider) {
   return Object.prototype.hasOwnProperty.call(SUPPORTED_MCP_PROVIDERS, provider);
 }
 
-// Catalog entries for the supported providers that actually declare a usable
-// stdio MCP server. Returns [{ provider, name, npmPackage, docsUrl, notes }].
+/**
+ * Select supported catalog providers that declare a usable stdio MCP package.
+ *
+ * @param {Array} [catalog=loadCatalog()] - Integration catalog entries.
+ * @returns {Array} Supported MCP server descriptors.
+ */
 function loadMcpCatalog(catalog = loadCatalog()) {
   const items = Array.isArray(catalog) ? catalog : [];
   const out = [];
@@ -72,13 +81,32 @@ function normalizeEnabledIds(value) {
   return out;
 }
 
+function getManagedMcpEnvNames() {
+  const placeholders = [];
+  for (const [provider, mapping] of Object.entries(SUPPORTED_MCP_PROVIDERS)) {
+    const env = {};
+    if (mapping.primaryEnv) env[mapping.primaryEnv] = "managed";
+    for (const envName of Object.values(mapping.configEnv || {}))
+      if (envName) env[envName] = "managed";
+    placeholders.push({ name: provider, npmPackage: "managed", env });
+  }
+  return buildMcpManagedEnvNames(placeholders);
+}
+
 async function getAgentMcpServerIds(agentId, { dbClient = db } = {}) {
   const result = await dbClient.query("SELECT mcp_servers FROM agents WHERE id = $1", [agentId]);
   if (result.rows.length === 0) return null; // agent not found
   return normalizeEnabledIds(result.rows[0].mcp_servers);
 }
 
-// Persist the enabled provider ids (validated against the supported set).
+/**
+ * Submit a normalized, deduplicated set of supported MCP provider identifiers.
+ *
+ * @param {string} agentId - Agent whose MCP selection should be replaced.
+ * @param {Array} providerIds - Requested provider identifiers or descriptors.
+ * @param {Object} [options={}] - Optional database dependency override.
+ * @returns {Promise<Array>} Normalized identifiers submitted; a zero-row update is not detected.
+ */
 async function setAgentMcpServerIds(agentId, providerIds, { dbClient = db } = {}) {
   const ids = normalizeEnabledIds(providerIds);
   await dbClient.query("UPDATE agents SET mcp_servers = $1::jsonb WHERE id = $2", [
@@ -88,8 +116,13 @@ async function setAgentMcpServerIds(agentId, providerIds, { dbClient = db } = {}
   return ids;
 }
 
-// For the management UI: every supported MCP server, annotated with whether the
-// agent has the integration connected and whether the server is enabled.
+/**
+ * List supported MCP servers with their connected-integration and enabled state.
+ *
+ * @param {string} agentId - Agent whose MCP availability should be summarized.
+ * @param {Object} [options={}] - Optional database and catalog overrides.
+ * @returns {Promise<Array>} Management-facing MCP server descriptors.
+ */
 async function getAvailableMcpServers(agentId, { dbClient = db, catalog } = {}) {
   const enabledIds = (await getAgentMcpServerIds(agentId, { dbClient })) || [];
   const connectedResult = await dbClient.query(
@@ -108,11 +141,13 @@ async function getAvailableMcpServers(agentId, { dbClient = db, catalog } = {}) 
   }));
 }
 
-// PURE: turn the agent's enabled ids + already-decrypted integration creds into
-// the entries buildMcpServersConfig expects. The worker calls this at deploy
-// (it has decrypted tokens in hand) — no DB or crypto here, so it is unit
-// testable. integrationsByProvider: { gitlab: { token, config: {api_url} } }.
-// An enabled provider with no connected/credentialed integration is skipped.
+/**
+ * Convert enabled providers and already-decrypted integration credentials into
+ * runtime MCP entries, skipping providers without a usable catalog or token.
+ *
+ * @param {Object} [options={}] - Enabled ids, decrypted integrations, and catalog.
+ * @returns {Array} Runtime MCP package and environment entries.
+ */
 function resolveMcpEntries({ enabledIds = [], integrationsByProvider = {}, catalog } = {}) {
   const byProvider = Object.fromEntries(loadMcpCatalog(catalog).map((e) => [e.provider, e]));
   const entries = [];
@@ -131,13 +166,55 @@ function resolveMcpEntries({ enabledIds = [], integrationsByProvider = {}, catal
   return entries;
 }
 
+async function getEnabledMcpRuntimeState(
+  agentId,
+  { dbClient = db, integrationsModule = null, catalog } = {},
+) {
+  const enabledIds = (await getAgentMcpServerIds(agentId, { dbClient })) || [];
+  // Always return the complete supported alias universe. Once an MCP server is
+  // disabled its id disappears from enabledIds, but its previous managed alias
+  // still has to be explicitly removed from an existing runtime.
+  const managedEnvNames = getManagedMcpEnvNames();
+  if (enabledIds.length === 0) {
+    return { enabledIds, entries: [], desiredServers: {}, env: {}, managedEnvNames };
+  }
+
+  const active = await dbClient.query(
+    "SELECT id, provider FROM integrations WHERE agent_id = $1 AND status = 'active'",
+    [agentId],
+  );
+  const enabled = new Set(enabledIds);
+  const integrationApi = integrationsModule || require("./integrations");
+  const integrationsByProvider = {};
+  for (const row of active.rows || []) {
+    if (!enabled.has(row.provider) || integrationsByProvider[row.provider]) continue;
+    const decrypted = await integrationApi.getDecryptedIntegration(row.id, agentId);
+    if (!decrypted) continue;
+    integrationsByProvider[row.provider] = {
+      token: decrypted.access_token || "",
+      config: decrypted.config || {},
+    };
+  }
+
+  const entries = resolveMcpEntries({ enabledIds, integrationsByProvider, catalog });
+  return {
+    enabledIds,
+    entries,
+    desiredServers: buildMcpServersConfig(entries),
+    env: buildMcpManagedEnv(entries),
+    managedEnvNames,
+  };
+}
+
 module.exports = {
   SUPPORTED_MCP_PROVIDERS,
   isSupportedProvider,
   loadMcpCatalog,
   normalizeEnabledIds,
+  getManagedMcpEnvNames,
   getAgentMcpServerIds,
   setAgentMcpServerIds,
   getAvailableMcpServers,
   resolveMcpEntries,
+  getEnabledMcpRuntimeState,
 };

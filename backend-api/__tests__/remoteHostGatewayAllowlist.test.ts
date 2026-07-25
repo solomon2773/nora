@@ -5,26 +5,109 @@
  * RFC1918), while never widening the allowlist for other agents and still
  * enforcing the hard blocked-IP floor.
  */
-jest.mock("../db", () => ({ query: jest.fn() }));
+const { EventEmitter } = require("events");
+
+const mockDbQuery = jest.fn();
+const mockGatewaySockets = [];
+jest.mock("../db", () => ({ query: (...args) => mockDbQuery(...args) }));
 jest.mock("../integrations", () => ({}));
 jest.mock("../metrics", () => ({ recordMetric: jest.fn(), recordTokenUsage: jest.fn() }));
 jest.mock("../agentBudgets", () => ({ checkAndEnforce: jest.fn() }));
-jest.mock("ws", () => ({ WebSocket: class {}, WebSocketServer: class {} }));
+jest.mock("ws", () => {
+  const { EventEmitter: MockEventEmitter } = jest.requireActual("events");
+
+  class MockWebSocket extends MockEventEmitter {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    static CLOSED = 3;
+
+    constructor(url) {
+      super();
+      this.url = url;
+      this.readyState = MockWebSocket.CONNECTING;
+      this.sent = [];
+      this.closed = false;
+      mockGatewaySockets.push(this);
+    }
+
+    send(payload) {
+      this.sent.push(payload.toString());
+    }
+
+    close() {
+      if (this.readyState === MockWebSocket.CLOSED) return;
+      this.closed = true;
+      this.readyState = MockWebSocket.CLOSED;
+      this.emit("close", 1000, Buffer.alloc(0));
+    }
+  }
+
+  class MockWebSocketServer {
+    constructor() {
+      this.handlers = {};
+    }
+
+    on(event, handler) {
+      this.handlers[event] = handler;
+      return this;
+    }
+
+    handleUpgrade() {}
+  }
+
+  return { WebSocket: MockWebSocket, WebSocketServer: MockWebSocketServer };
+});
 
 const mockGetRemoteHostByExecutionTarget = jest.fn();
 const mockUserCanUseRemoteHost = jest.fn().mockResolvedValue(false);
+const mockAssertRemoteHostAgentUse = jest.fn();
 jest.mock("../remoteHosts", () => ({
+  assertRemoteHostAgentUse: (...args) => mockAssertRemoteHostAgentUse(...args),
   getRemoteHostByExecutionTarget: (...args) => mockGetRemoteHostByExecutionTarget(...args),
+  isRemoteDockerAgent: (agent = {}) =>
+    [
+      agent.deploy_target,
+      agent.deployTarget,
+      agent.backend_type,
+      agent.backendType,
+      agent.execution_target_id,
+      agent.executionTargetId,
+    ].some((value) => {
+      const normalized = String(value || "")
+        .trim()
+        .toLowerCase();
+      return (
+        normalized === "remote-docker" ||
+        normalized === "remote" ||
+        normalized.startsWith("remote:")
+      );
+    }),
+  isRemoteHostAccessRevokedError: (error) => error?.code === "REMOTE_HOST_ACCESS_REVOKED",
+  toPublicRemoteHostAuthorizationError: (error) => {
+    if (error?.code === "REMOTE_HOST_ACCESS_REVOKED") return error;
+    return Object.assign(new Error("Unable to verify Remote Docker host access"), {
+      code: "REMOTE_HOST_AUTH_CHECK_FAILED",
+      statusCode: 503,
+      cause: error,
+    });
+  },
   userCanUseRemoteHost: (...args) => mockUserCanUseRemoteHost(...args),
 }));
 
+const originalRemoteHostAuthRecheckMs = process.env.REMOTE_HOST_AUTH_RECHECK_MS;
+process.env.REMOTE_HOST_AUTH_RECHECK_MS = "250";
+
 const {
+  allowedGatewayHostsForAgent,
+  attachGatewayWS,
   resolveSafeGatewayHttpTarget,
   resolveSafeHermesDashboardTarget,
   assertExternalEndpointReachable,
+  rpcCall,
 } = require("../gatewayProxy");
 
 const PUBLIC_IP = "203.0.113.5";
+const originalPlatformMode = process.env.PLATFORM_MODE;
 
 function remoteAgent(overrides = {}) {
   return {
@@ -38,10 +121,61 @@ function remoteAgent(overrides = {}) {
   };
 }
 
+function createClientWebSocket() {
+  const ws = new EventEmitter();
+  ws.readyState = 1;
+  ws.sent = [];
+  ws.closed = false;
+  ws.send = jest.fn((payload) => {
+    ws.sent.push(JSON.parse(payload.toString()));
+  });
+  ws.close = jest.fn(() => {
+    if (ws.closed) return;
+    ws.closed = true;
+    ws.readyState = 3;
+    ws.emit("close");
+  });
+  return ws;
+}
+
+async function flushPromiseWork() {
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
+}
+
 beforeEach(() => {
+  process.env.PLATFORM_MODE = "selfhosted";
+  mockDbQuery.mockReset();
   mockGetRemoteHostByExecutionTarget.mockReset();
   mockUserCanUseRemoteHost.mockReset();
   mockUserCanUseRemoteHost.mockResolvedValue(false);
+  mockAssertRemoteHostAgentUse.mockReset();
+  mockGatewaySockets.length = 0;
+  mockAssertRemoteHostAgentUse.mockImplementation(async (agent) => {
+    const host = await mockGetRemoteHostByExecutionTarget(agent.execution_target_id);
+    if (host?.ownerUserId === agent.user_id) return host;
+    if (host && (await mockUserCanUseRemoteHost(agent.user_id, host.id))) return host;
+    throw Object.assign(new Error("Remote Docker host access has been revoked"), {
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
+  });
+});
+
+afterEach(() => {
+  for (const socket of mockGatewaySockets) socket.close();
+  jest.useRealTimers();
+});
+
+afterAll(() => {
+  if (originalPlatformMode === undefined) delete process.env.PLATFORM_MODE;
+  else process.env.PLATFORM_MODE = originalPlatformMode;
+  if (originalRemoteHostAuthRecheckMs === undefined) {
+    delete process.env.REMOTE_HOST_AUTH_RECHECK_MS;
+  } else {
+    process.env.REMOTE_HOST_AUTH_RECHECK_MS = originalRemoteHostAuthRecheckMs;
+  }
 });
 
 describe("remote-host gateway allowlist (HTTP proxy)", () => {
@@ -57,6 +191,38 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
     expect(mockGetRemoteHostByExecutionTarget).toHaveBeenCalledWith("remote:my-vps");
   });
 
+  it("treats a legacy backend-only Remote Docker row as grant-controlled", async () => {
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue({
+      id: "my-vps",
+      ownerUserId: "user-2",
+      gatewayHost: PUBLIC_IP,
+      sshHost: PUBLIC_IP,
+    });
+    const legacyAgent = remoteAgent({ deploy_target: "", backend_type: "remote-docker" });
+
+    await expect(resolveSafeGatewayHttpTarget(legacyAgent, "status")).rejects.toMatchObject({
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
+  });
+
+  it("fails closed on authorization-store errors even when the gateway address is private", async () => {
+    const authError = new Error("authorization database unavailable");
+    mockAssertRemoteHostAgentUse.mockRejectedValue(authError);
+
+    await expect(
+      resolveSafeGatewayHttpTarget(
+        remoteAgent({ gateway_host: "10.0.0.25", runtime_host: "10.0.0.25" }),
+        "status",
+      ),
+    ).rejects.toMatchObject({
+      message: "Unable to verify Remote Docker host access",
+      code: "REMOTE_HOST_AUTH_CHECK_FAILED",
+      statusCode: 503,
+      cause: authError,
+    });
+  });
+
   it("does NOT trust a remote host registered by a different operator", async () => {
     // Cross-tenant execution_target_id reference: the host belongs to user-2 and is
     // NOT shared to user-1 (userCanUseRemoteHost defaults to false).
@@ -66,9 +232,10 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
       gatewayHost: PUBLIC_IP,
       sshHost: PUBLIC_IP,
     });
-    await expect(resolveSafeGatewayHttpTarget(remoteAgent(), "status")).rejects.toThrow(
-      /not an allowed gateway address/i,
-    );
+    await expect(resolveSafeGatewayHttpTarget(remoteAgent(), "status")).rejects.toMatchObject({
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
     expect(mockUserCanUseRemoteHost).toHaveBeenCalledWith("user-1", "my-vps");
   });
 
@@ -88,9 +255,10 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
 
   it("rejects a public host when no matching remote host is registered", async () => {
     mockGetRemoteHostByExecutionTarget.mockResolvedValue(null);
-    await expect(resolveSafeGatewayHttpTarget(remoteAgent(), "status")).rejects.toThrow(
-      /not an allowed gateway address/i,
-    );
+    await expect(resolveSafeGatewayHttpTarget(remoteAgent(), "status")).rejects.toMatchObject({
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
   });
 
   it("fails closed on a null-owner host — runs the grant check, does not short-circuit", async () => {
@@ -101,9 +269,10 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
       sshHost: PUBLIC_IP,
     });
     // userCanUseRemoteHost defaults to false → no grant → blocked.
-    await expect(resolveSafeGatewayHttpTarget(remoteAgent(), "status")).rejects.toThrow(
-      /not an allowed gateway address/i,
-    );
+    await expect(resolveSafeGatewayHttpTarget(remoteAgent(), "status")).rejects.toMatchObject({
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
     expect(mockUserCanUseRemoteHost).toHaveBeenCalledWith("user-1", "my-vps");
   });
 
@@ -120,6 +289,7 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
   it("still blocks dangerous addresses even for a registered remote host", async () => {
     mockGetRemoteHostByExecutionTarget.mockResolvedValue({
       id: "my-vps",
+      ownerUserId: "user-1",
       gatewayHost: "169.254.169.254",
       sshHost: "169.254.169.254",
     });
@@ -127,6 +297,24 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
     await expect(resolveSafeGatewayHttpTarget(linkLocal, "status")).rejects.toThrow(
       /not an allowed gateway address/i,
     );
+  });
+
+  it("blocks historical Remote Docker rows before a hosted-mode registry lookup", async () => {
+    process.env.PLATFORM_MODE = "paas";
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue({
+      id: "my-vps",
+      ownerUserId: "user-1",
+      gatewayHost: "10.0.0.7",
+      sshHost: "10.0.0.7",
+    });
+
+    await expect(
+      resolveSafeGatewayHttpTarget(remoteAgent({ gateway_host: "10.0.0.7" }), "status"),
+    ).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
   });
 
   it("trusts a k8s agent's operator-provisioned (public LoadBalancer) address", async () => {
@@ -178,6 +366,290 @@ describe("remote-host gateway allowlist (HTTP proxy)", () => {
     const target = await resolveSafeGatewayHttpTarget(dockerAgent, "status");
     expect(target.url).toBe("http://10.0.0.10:19000/status");
     expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("hosted-mode Remote Docker gateway shutdown", () => {
+  beforeEach(() => {
+    process.env.PLATFORM_MODE = "paas";
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue({
+      id: "my-vps",
+      ownerUserId: "user-1",
+      gatewayHost: PUBLIC_IP,
+      sshHost: PUBLIC_IP,
+    });
+  });
+
+  it("rejects the shared allowlist boundary even when a historical public host resolves", async () => {
+    await expect(allowedGatewayHostsForAgent(remoteAgent())).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects pooled RPC before opening or reusing a remote gateway connection", async () => {
+    await expect(
+      rpcCall(remoteAgent({ gateway_token: "legacy-gateway-token" }), "status"),
+    ).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects the Remote Hermes embed path before consulting the host registry", async () => {
+    await expect(
+      resolveSafeHermesDashboardTarget({
+        ...remoteAgent(),
+        runtime_family: "hermes",
+        runtime_host: PUBLIC_IP,
+        dashboard_port: 19044,
+      }),
+    ).rejects.toMatchObject({
+      code: "REMOTE_HOSTS_DISABLED_IN_PAAS",
+      statusCode: 403,
+    });
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+
+  it("rejects the WebSocket relay for a historical Remote Docker agent", async () => {
+    const agent = {
+      ...remoteAgent(),
+      status: "running",
+      gateway_token: "legacy-gateway-token",
+    };
+    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    const server = { on: jest.fn() };
+    const wss = attachGatewayWS(server);
+    const ws = { send: jest.fn(), close: jest.fn() };
+
+    await wss.handlers.connection(ws, {}, agent.id, { id: agent.user_id });
+
+    expect(ws.send).toHaveBeenCalledWith(
+      expect.stringContaining("Remote Docker gateway access is disabled in hosted mode"),
+    );
+    expect(ws.close).toHaveBeenCalledTimes(1);
+    expect(mockGetRemoteHostByExecutionTarget).not.toHaveBeenCalled();
+  });
+});
+
+describe("remote-host gateway relay grant revocation", () => {
+  it("does not open an upstream socket after the relay client disconnects during authorization", async () => {
+    let releaseAuthorization;
+    const authorization = new Promise((resolve) => {
+      releaseAuthorization = resolve;
+    });
+    const agent = {
+      ...remoteAgent(),
+      status: "running",
+      gateway_token: "legacy-gateway-token",
+    };
+    const host = {
+      id: "my-vps",
+      ownerUserId: agent.user_id,
+      gatewayHost: PUBLIC_IP,
+      sshHost: PUBLIC_IP,
+    };
+    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    mockAssertRemoteHostAgentUse.mockImplementationOnce(() => authorization);
+
+    const server = { on: jest.fn() };
+    const wss = attachGatewayWS(server);
+    const clientWs = createClientWebSocket();
+    const connecting = wss.handlers.connection(clientWs, {}, agent.id, { id: agent.user_id });
+    await flushPromiseWork();
+
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(1);
+    clientWs.close();
+    releaseAuthorization(host);
+    await connecting;
+
+    expect(mockGatewaySockets).toHaveLength(0);
+    expect(clientWs.sent).toHaveLength(0);
+  });
+
+  it("rechecks the host grant immediately before sending the relay credential", async () => {
+    let grantActive = true;
+    const agent = {
+      ...remoteAgent(),
+      status: "running",
+      gateway_token: "legacy-gateway-token",
+    };
+    const host = {
+      id: "my-vps",
+      ownerUserId: "host-owner-2",
+      gatewayHost: PUBLIC_IP,
+      sshHost: PUBLIC_IP,
+    };
+
+    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue(host);
+    mockUserCanUseRemoteHost.mockImplementation(async () => grantActive);
+
+    const server = { on: jest.fn() };
+    const wss = attachGatewayWS(server);
+    const clientWs = createClientWebSocket();
+    await wss.handlers.connection(clientWs, {}, agent.id, { id: agent.user_id });
+
+    const authorizationCallsBeforeGatewayHandshake = mockAssertRemoteHostAgentUse.mock.calls.length;
+    const gatewayWs = mockGatewaySockets[0];
+    gatewayWs.readyState = 1;
+    gatewayWs.emit("open");
+
+    grantActive = false;
+    gatewayWs.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          type: "event",
+          event: "connect.challenge",
+          payload: { nonce: "relay-nonce" },
+        }),
+      ),
+    );
+    await flushPromiseWork();
+
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(
+      authorizationCallsBeforeGatewayHandshake + 1,
+    );
+    expect(gatewayWs.sent).toHaveLength(0);
+    expect(clientWs.sent).toContainEqual({
+      type: "error",
+      message: "Remote Docker host access has been revoked",
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+    });
+    expect(clientWs.closed).toBe(true);
+    expect(gatewayWs.closed).toBe(true);
+  });
+
+  it("closes the active relay, stops forwarding, and rejects a new relay after revocation", async () => {
+    jest.useFakeTimers();
+    let grantActive = true;
+    const agent = {
+      ...remoteAgent(),
+      status: "running",
+      gateway_token: "legacy-gateway-token",
+    };
+    const host = {
+      id: "my-vps",
+      ownerUserId: "host-owner-2",
+      gatewayHost: PUBLIC_IP,
+      sshHost: PUBLIC_IP,
+    };
+
+    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue(host);
+    mockUserCanUseRemoteHost.mockImplementation(async () => grantActive);
+
+    const server = { on: jest.fn() };
+    const wss = attachGatewayWS(server);
+    const clientWs = createClientWebSocket();
+
+    await wss.handlers.connection(clientWs, {}, agent.id, { id: agent.user_id });
+
+    expect(mockGatewaySockets).toHaveLength(1);
+    const gatewayWs = mockGatewaySockets[0];
+    gatewayWs.readyState = 1;
+    gatewayWs.emit("open");
+
+    const challenge = {
+      type: "event",
+      event: "connect.challenge",
+      payload: { nonce: "relay-nonce" },
+    };
+    gatewayWs.emit("message", Buffer.from(JSON.stringify(challenge)));
+    await flushPromiseWork();
+
+    expect(clientWs.sent).toContainEqual(challenge);
+    expect(gatewayWs.sent.map((payload) => JSON.parse(payload))).toContainEqual(
+      expect.objectContaining({ id: "__relay_connect__", method: "connect" }),
+    );
+
+    gatewayWs.emit(
+      "message",
+      Buffer.from(JSON.stringify({ id: "__relay_connect__", ok: true, payload: {} })),
+    );
+    await flushPromiseWork();
+
+    const beforeRevocation = { type: "req", id: "before-revocation", method: "status" };
+    clientWs.emit("message", Buffer.from(JSON.stringify(beforeRevocation)));
+    await flushPromiseWork();
+    expect(gatewayWs.sent.map((payload) => JSON.parse(payload))).toContainEqual(beforeRevocation);
+
+    grantActive = false;
+    await jest.advanceTimersByTimeAsync(250);
+
+    expect(clientWs.sent).toContainEqual({
+      type: "error",
+      message: "Remote Docker host access has been revoked",
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+    });
+    expect(clientWs.closed).toBe(true);
+    expect(gatewayWs.closed).toBe(true);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(4);
+
+    await jest.advanceTimersByTimeAsync(250);
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(4);
+
+    const gatewaySendCount = gatewayWs.sent.length;
+    clientWs.emit(
+      "message",
+      Buffer.from(JSON.stringify({ type: "req", id: "after-revocation", method: "status" })),
+    );
+    gatewayWs.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({ type: "event", event: "post-revocation", payload: { leaked: true } }),
+      ),
+    );
+    await flushPromiseWork();
+
+    expect(gatewayWs.sent).toHaveLength(gatewaySendCount);
+    expect(clientWs.sent).not.toContainEqual(expect.objectContaining({ event: "post-revocation" }));
+
+    const deniedClientWs = createClientWebSocket();
+    await wss.handlers.connection(deniedClientWs, {}, agent.id, { id: agent.user_id });
+
+    expect(deniedClientWs.sent).toContainEqual({
+      type: "error",
+      message: "Remote Docker host access has been revoked",
+    });
+    expect(deniedClientWs.closed).toBe(true);
+    expect(mockGatewaySockets).toHaveLength(1);
+  });
+
+  it("closes the relay without exposing authorization-store failures", async () => {
+    jest.useFakeTimers();
+    const agent = {
+      ...remoteAgent(),
+      status: "running",
+      gateway_token: "legacy-gateway-token",
+    };
+    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    mockGetRemoteHostByExecutionTarget.mockResolvedValue({
+      id: "my-vps",
+      ownerUserId: agent.user_id,
+      gatewayHost: PUBLIC_IP,
+      sshHost: PUBLIC_IP,
+    });
+
+    const server = { on: jest.fn() };
+    const wss = attachGatewayWS(server);
+    const clientWs = createClientWebSocket();
+    await wss.handlers.connection(clientWs, {}, agent.id, { id: agent.user_id });
+
+    const internalError = new Error("postgres connection string leaked here");
+    mockAssertRemoteHostAgentUse.mockRejectedValue(internalError);
+    await jest.advanceTimersByTimeAsync(250);
+
+    expect(clientWs.sent).toContainEqual({
+      type: "error",
+      message: "Unable to verify Remote Docker host access",
+      code: "REMOTE_HOST_AUTH_CHECK_FAILED",
+    });
+    expect(JSON.stringify(clientWs.sent)).not.toContain(internalError.message);
+    expect(clientWs.closed).toBe(true);
   });
 });
 
@@ -250,9 +722,10 @@ describe("hermes dashboard embed-proxy allowlist (SSRF)", () => {
       runtime_host: PUBLIC_IP,
       runtime_port: 19042,
     };
-    await expect(resolveSafeHermesDashboardTarget(agent)).rejects.toThrow(
-      /not an allowed gateway address/i,
-    );
+    await expect(resolveSafeHermesDashboardTarget(agent)).rejects.toMatchObject({
+      code: "REMOTE_HOST_ACCESS_REVOKED",
+      statusCode: 403,
+    });
   });
 
   it("trusts a k8s Hermes agent's provisioned (public LoadBalancer/NodePort) dashboard", async () => {

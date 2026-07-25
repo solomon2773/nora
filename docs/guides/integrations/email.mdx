@@ -1,6 +1,6 @@
-# Email (SMTP)
+# Email (IMAP + SMTP)
 
-> Where to get SMTP credentials and how to connect them to Nora.
+> Connect a mailbox over IMAP and SMTP with certificate verification enabled by default.
 
 Email integrations let your agents send messages via any SMTP relay — your own Postfix server, Google Workspace SMTP, AWS SES, Mailgun, SendGrid (via SMTP), Mailtrap, etc. Nora stores the credentials encrypted and the agent runtime sends mail through the configured relay.
 
@@ -22,29 +22,40 @@ For Google Workspace and other 2FA-protected accounts, use an **app password** �
 ## Connect in Nora
 
 <Steps>
-  <Step title="Open the Email (SMTP) integration">
-    From an agent's detail page, open the **Integrations** tab and find **Email (SMTP)**.
+  <Step title="Open the Email (IMAP + SMTP) integration">
+    From an agent's detail page, open the **Integrations** tab and find **Email (IMAP + SMTP)**.
   </Step>
 
-<Step title="Fill in the SMTP fields">
-  | Field | Example | | -------------- | -------------------------------- | | SMTP Host |
-  `smtp.gmail.com` | | SMTP Port | `587` (STARTTLS) or `465` (TLS) | | Username | `you@example.com`
-  or `apikey` | | Password | the app password / API secret | | From Address | `you@example.com` |
+<Step title="Fill in the mailbox fields">
+  Add the IMAP and SMTP host, port, TLS mode, username, app password, and From address. Use port
+  `993` for IMAP TLS and either `587` for SMTP STARTTLS or `465` for implicit SMTP TLS when your
+  provider supports those defaults. Nora requires IMAP TLS; SMTP uses verified implicit TLS or
+  requires STARTTLS before authentication.
 </Step>
 
   <Step title="Connect">
-    Click **Connect**. Nora validates the field shapes (port range, email format, public-host check) and stores the credentials encrypted. **It does not perform an SMTP handshake** from the control plane — that happens in the agent runtime.
+    Click **Connect**. Nora stores the credentials encrypted. Use **Test** to authenticate to both
+    endpoints from the control plane before assigning the integration to a runtime.
   </Step>
 </Steps>
 
 ## Verify the connection
 
-The **Test** button runs the same structural validation. End-to-end verification happens when your agent sends its first message; failures usually surface as `EAUTH`, `ECONNREFUSED`, or `ETIMEOUT` in the agent logs.
+The **Test** button performs real IMAP and SMTP authentication. TLS certificate and hostname
+verification are required for encrypted connections, matching the runtime behavior. Authentication,
+network, or certificate failures are returned separately so operators can fix the endpoint before
+deploying it.
+
+<Warning>
+  Self-signed or otherwise untrusted mail certificates are rejected. Install the issuing CA in the
+  Nora control-plane and runtime trust stores, or use a certificate issued by a trusted CA; do not
+  disable certificate verification.
+</Warning>
 
 <Note>
-  Nora rejects RFC1918 / loopback SMTP hosts (e.g. `127.0.0.1`, `10.x.x.x`) as a defense-in-depth
-  measure. If you really do want to relay through localhost, the agent's container needs network
-  access to that host — set up an SSH tunnel or VPN at the runtime layer.
+  Nora rejects RFC1918 / loopback IMAP and SMTP hosts (e.g. `127.0.0.1`, `10.x.x.x`) during the
+  control-plane connection test as a defense-in-depth measure. Use a public, DNS-resolvable mail
+  endpoint or an egress proxy rather than exposing an internal mail service directly.
 </Note>
 
 ## MCP server
@@ -53,16 +64,16 @@ No MCP server — SMTP isn't a query API.
 
 ## Environment variables Nora injects
 
-| Variable                | Source                     |
-| ----------------------- | -------------------------- |
+| Variable                | Source                          |
+| ----------------------- | ------------------------------- |
 | `EMAIL_PASSWORD`        | Password field (primary secret) |
-| `EMAIL_USERNAME`        | Username field             |
-| `EMAIL_SMTP_HOST`       | SMTP Host field            |
-| `EMAIL_SMTP_PORT`       | SMTP Port field            |
-| `EMAIL_SMTP_SECURE`     | SMTP secure flag           |
-| `EMAIL_IMAP_HOST`       | IMAP Host field            |
-| `EMAIL_IMAP_PORT`       | IMAP Port field            |
-| `EMAIL_IMAP_SECURE`     | IMAP secure flag           |
-| `EMAIL_FROM_ADDRESS`    | From Address field         |
-| `EMAIL_FROM_NAME`       | From Name field            |
-| `EMAIL_PROVIDER_PRESET` | Provider preset            |
+| `EMAIL_USERNAME`        | Username field                  |
+| `EMAIL_SMTP_HOST`       | SMTP Host field                 |
+| `EMAIL_SMTP_PORT`       | SMTP Port field                 |
+| `EMAIL_SMTP_SECURE`     | SMTP secure flag                |
+| `EMAIL_IMAP_HOST`       | IMAP Host field                 |
+| `EMAIL_IMAP_PORT`       | IMAP Port field                 |
+| `EMAIL_IMAP_SECURE`     | IMAP secure flag                |
+| `EMAIL_FROM_ADDRESS`    | From Address field              |
+| `EMAIL_FROM_NAME`       | From Name field                 |
+| `EMAIL_PROVIDER_PRESET` | Provider preset                 |

@@ -1,0 +1,16 @@
+{
+  "name": "nora",
+  "description": "Inspect Nora agent fleets, health, metrics, events, and cost from GitHub Copilot CLI through a least-privilege, read-only MCP configuration.",
+  "version": "0.1.4",
+  "author": {
+    "name": "Solomon Tsao",
+    "url": "https://github.com/solomon2773"
+  },
+  "homepage": "https://github.com/solomon2773/nora",
+  "repository": "https://github.com/solomon2773/nora",
+  "license": "Apache-2.0",
+  "keywords": ["nora", "mcp", "agent-ops", "monitoring", "self-hosted"],
+  "category": "development",
+  "tags": ["mcp", "observability", "agents", "read-only"],
+  "mcpServers": ".mcp.json"
+}

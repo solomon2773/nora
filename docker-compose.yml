@@ -1,3 +1,17 @@
+x-control-plane-secrets: &control-plane-secrets
+  - source: nora_jwt_secret
+    target: JWT_SECRET
+  - source: nora_encryption_key
+    target: ENCRYPTION_KEY
+  - source: nora_backup_encryption_key
+    target: NORA_BACKUP_ENCRYPTION_KEY
+  - source: nora_agent_hub_hash_secret
+    target: NORA_AGENT_HUB_API_KEY_HASH_SECRET
+  - source: nora_api_key_hash_secret
+    target: NORA_API_KEY_HASH_SECRET
+  - source: nora_db_password
+    target: DB_PASSWORD
+
 services:
   nginx:
     image: nginx:latest
@@ -18,12 +32,24 @@ services:
       - ./frontend-marketing:/app
       - ./tsconfig.base.json:/tsconfig.base.json:ro
     command: sh -c "npm install && npm run dev"
+    # Deliberate allowlist: the marketing/OAuth server receives only values it
+    # consumes, never the control-plane JWT, encryption, database, or provider
+    # credentials carried by the deploy env file.
     environment:
-      - PORT=3000
-      - NODE_ENV=development
-      - PLATFORM_MODE=${PLATFORM_MODE:-selfhosted}
-    env_file:
-      - ${NORA_ENV_FILE:-.env}
+      PORT: "3000"
+      NODE_ENV: development
+      PLATFORM_MODE: ${PLATFORM_MODE:-selfhosted}
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://backend-api:4000}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:8080}
+      NORA_PUBLIC_URL: ${NORA_PUBLIC_URL:-}
+      OAUTH_LOGIN_ENABLED: ${OAUTH_LOGIN_ENABLED:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      NEXT_PUBLIC_ANALYTICS_DOMAIN: ${NEXT_PUBLIC_ANALYTICS_DOMAIN:-}
+      NEXT_PUBLIC_ANALYTICS_SRC: ${NEXT_PUBLIC_ANALYTICS_SRC:-}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
 
   frontend-dashboard:
     build:
@@ -67,6 +93,13 @@ services:
       - nora_upgrade_state:/var/lib/nora-upgrade
       - nora_backups:/var/lib/nora-backups
     command: sh -c "npm install && npm start"
+    # Compatibility bridge for the first update from legacy copied overlays.
+    # Hardened prod/TLS overlays override this back to uid/gid 1000 after they
+    # have migrated named-volume ownership and the Docker socket group.
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
     ports:
       - "127.0.0.1:${BACKEND_API_PORT:-4100}:4000"
     extra_hosts:
@@ -75,8 +108,15 @@ services:
       NORA_ENV_FILE: ${NORA_ENV_FILE:-.env}
       NORA_UPGRADE_COMPOSE_FILES: ${NORA_UPGRADE_COMPOSE_FILES:-}
       NORA_UPGRADE_PUBLIC_HEALTH_URL: ${NORA_UPGRADE_PUBLIC_HEALTH_URL:-}
+      JWT_SECRET_FILE: /run/secrets/JWT_SECRET
+      ENCRYPTION_KEY_FILE: /run/secrets/ENCRYPTION_KEY
+      NORA_BACKUP_ENCRYPTION_KEY_FILE: /run/secrets/NORA_BACKUP_ENCRYPTION_KEY
+      NORA_AGENT_HUB_API_KEY_HASH_SECRET_FILE: /run/secrets/NORA_AGENT_HUB_API_KEY_HASH_SECRET
+      NORA_API_KEY_HASH_SECRET_FILE: /run/secrets/NORA_API_KEY_HASH_SECRET
+      DB_PASSWORD_FILE: /run/secrets/DB_PASSWORD
     env_file:
       - ${NORA_ENV_FILE:-.env}
+    secrets: *control-plane-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -91,7 +131,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      # Legacy installations may need several transactional reconciliation
+      # migrations before the API binds its health endpoint.
+      start_period: 10m
 
   worker-provisioner:
     build:
@@ -105,16 +147,29 @@ services:
       - ./tsconfig.base.json:/tsconfig.base.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
     command: sh -c "npm install --no-audit --no-fund --no-update-notifier --loglevel=error && npm start"
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
     environment:
       DEPLOYMENT_WORKER_CONCURRENCY: ${DEPLOYMENT_WORKER_CONCURRENCY:-6}
+      JWT_SECRET_FILE: /run/secrets/JWT_SECRET
+      ENCRYPTION_KEY_FILE: /run/secrets/ENCRYPTION_KEY
+      NORA_BACKUP_ENCRYPTION_KEY_FILE: /run/secrets/NORA_BACKUP_ENCRYPTION_KEY
+      NORA_AGENT_HUB_API_KEY_HASH_SECRET_FILE: /run/secrets/NORA_AGENT_HUB_API_KEY_HASH_SECRET
+      NORA_API_KEY_HASH_SECRET_FILE: /run/secrets/NORA_API_KEY_HASH_SECRET
+      DB_PASSWORD_FILE: /run/secrets/DB_PASSWORD
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
       - ${NORA_ENV_FILE:-.env}
+    secrets: *control-plane-secrets
     depends_on:
       redis:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      backend-api:
         condition: service_healthy
     healthcheck:
       test:
@@ -140,16 +195,29 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - nora_backups:/var/lib/nora-backups
     command: sh -c "npm install --no-audit --no-fund --no-update-notifier --loglevel=error && npm start"
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
     environment:
       BACKUP_WORKER_CONCURRENCY: ${BACKUP_WORKER_CONCURRENCY:-2}
+      JWT_SECRET_FILE: /run/secrets/JWT_SECRET
+      ENCRYPTION_KEY_FILE: /run/secrets/ENCRYPTION_KEY
+      NORA_BACKUP_ENCRYPTION_KEY_FILE: /run/secrets/NORA_BACKUP_ENCRYPTION_KEY
+      NORA_AGENT_HUB_API_KEY_HASH_SECRET_FILE: /run/secrets/NORA_AGENT_HUB_API_KEY_HASH_SECRET
+      NORA_API_KEY_HASH_SECRET_FILE: /run/secrets/NORA_API_KEY_HASH_SECRET
+      DB_PASSWORD_FILE: /run/secrets/DB_PASSWORD
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
       - ${NORA_ENV_FILE:-.env}
+    secrets: *control-plane-secrets
     depends_on:
       redis:
         condition: service_healthy
       postgres:
+        condition: service_healthy
+      backend-api:
         condition: service_healthy
     healthcheck:
       test:
@@ -174,13 +242,16 @@ services:
       POSTGRES_USER: ${DB_USER:-nora}
       # DB_PASSWORD is required. setup.sh generates a random 48-char hex secret;
       # compose up will fail with a clear error if .env is missing or unset.
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set (run ./setup.sh or edit .env)}
+      POSTGRES_PASSWORD_FILE: /run/secrets/DB_PASSWORD
       POSTGRES_DB: ${DB_NAME:-nora}
+    secrets:
+      - source: nora_db_password
+        target: DB_PASSWORD
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./backend-api/db_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -202,13 +273,17 @@ services:
       PGHOST: postgres
       PGPORT: "5432"
       PGUSER: ${DB_USER:-nora}
-      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set (run ./setup.sh or edit .env)}
+      PGPASSWORD: ""
+      PGPASSWORD_FILE: /run/secrets/DB_PASSWORD
       PGDATABASE: ${DB_NAME:-nora}
       AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     volumes:
       - backups:/backups
+    secrets:
+      - source: nora_db_password
+        target: DB_PASSWORD
     depends_on:
       postgres:
         condition: service_healthy
@@ -221,3 +296,17 @@ volumes:
   nora_backups:
   nora_upgrade_state:
     name: ${NORA_UPGRADE_STATE_VOLUME:-nora_upgrade_state}
+
+secrets:
+  nora_jwt_secret:
+    file: ${NORA_COMPOSE_SECRETS_DIR:-.secrets/compose}/JWT_SECRET
+  nora_encryption_key:
+    file: ${NORA_COMPOSE_SECRETS_DIR:-.secrets/compose}/ENCRYPTION_KEY
+  nora_backup_encryption_key:
+    file: ${NORA_COMPOSE_SECRETS_DIR:-.secrets/compose}/NORA_BACKUP_ENCRYPTION_KEY
+  nora_agent_hub_hash_secret:
+    file: ${NORA_COMPOSE_SECRETS_DIR:-.secrets/compose}/NORA_AGENT_HUB_API_KEY_HASH_SECRET
+  nora_api_key_hash_secret:
+    file: ${NORA_COMPOSE_SECRETS_DIR:-.secrets/compose}/NORA_API_KEY_HASH_SECRET
+  nora_db_password:
+    file: ${NORA_COMPOSE_SECRETS_DIR:-.secrets/compose}/DB_PASSWORD

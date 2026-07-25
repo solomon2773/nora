@@ -4,6 +4,8 @@
  * Every backend must implement: create(agentConfig) -> { containerId, host }
  *                               destroy(containerId, options?) -> void
  *                               status(containerId)  -> { running: bool, uptime, cpu, memory }
+ * Backends whose runtime address can change across lifecycle operations may
+ * return { host, runtimeHost } from start()/restart().
  */
 
 const { buildUnavailableTelemetry } = require("./telemetry");
@@ -11,7 +13,7 @@ const { buildUnavailableTelemetry } = require("./telemetry");
 class ProvisionerBackend {
   /**
    * Provision a new agent container/VM.
-   * @param {Object} config - { id, name, image, vcpu, ram_mb, disk_gb, env }
+   * @param {Object} config - { id, name, image, vcpu, ram_mb, disk_gb, env, onRuntimeIdentity? }
    * @returns {Promise<{ containerId: string, host: string }>}
    */
   async create(config) {
@@ -66,7 +68,7 @@ class ProvisionerBackend {
   /**
    * Start (resume) a stopped agent.
    * @param {string} containerId
-   * @returns {Promise<void>}
+   * @returns {Promise<void|{ host?: string, runtimeHost?: string }>}
    */
   async start(containerId) {
     throw new Error("start() not implemented");
@@ -75,7 +77,7 @@ class ProvisionerBackend {
   /**
    * Restart a running agent.
    * @param {string} containerId
-   * @returns {Promise<void>}
+   * @returns {Promise<void|{ host?: string, runtimeHost?: string }>}
    */
   async restart(containerId) {
     throw new Error("restart() not implemented");

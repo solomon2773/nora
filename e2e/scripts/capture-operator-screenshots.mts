@@ -16,6 +16,23 @@ const K8S_DOCS_SCREENSHOT_DIR =
   path.resolve(__dirname, "../../docs/images/provisioner-backends/k8s/_nora");
 const DOCS_IMAGES_ROOT =
   process.env.NORA_DOCS_IMAGES_ROOT || path.resolve(__dirname, "../../docs/images");
+const MARKETING_PROOF_PATH =
+  process.env.NORA_MARKETING_PROOF_PATH ||
+  path.resolve(__dirname, "../../frontend-marketing/public/operator-dashboard.png");
+const REQUIRED_PROMO_ASSETS = [
+  "proof-operator-dashboard.png",
+  "proof-operator-fleet.png",
+  "proof-operator-deploy-flow.png",
+  "proof-operator-agent-detail.png",
+  "proof-operator-hermes-webui-tab.png",
+  "proof-operator-settings-provider-setup.png",
+  "proof-operator-agent-hub.png",
+  "proof-operator-agent-hub-detail.png",
+  "proof-operator-account-event-log.png",
+  "proof-admin-agent-hub.png",
+  "proof-admin-agent-hub-detail.png",
+];
+const EXTERNALLY_MANAGED_PROMO_ASSETS = ["proof-operator-openclaw-ui-tab.png"];
 const DOCS_DIRS = {
   operator: path.join(DOCS_IMAGES_ROOT, "operator"),
   admin: path.join(DOCS_IMAGES_ROOT, "admin"),
@@ -1834,7 +1851,11 @@ function buildSeedSql({ operatorUser, adminUser, communityUser }) {
   ];
 
   return `
-UPDATE users SET name = ${sqlLiteral(ACCOUNTS.operator.name)}, role = 'user' WHERE id = ${sqlLiteral(operatorId)};
+UPDATE users
+   SET name = ${sqlLiteral(ACCOUNTS.operator.name)},
+       role = 'user',
+       agent_limit_override = 10
+ WHERE id = ${sqlLiteral(operatorId)};
 UPDATE users SET name = ${sqlLiteral(ACCOUNTS.admin.name)}, role = 'admin' WHERE id = ${sqlLiteral(adminId)};
 UPDATE users SET name = ${sqlLiteral(ACCOUNTS.community.name)}, role = 'user' WHERE id = ${sqlLiteral(communityId)};
 
@@ -2404,11 +2425,108 @@ async function newAuthedPage(browser, token) {
 }
 
 async function gotoHeading(page, pathname, headingText) {
-  await page.goto(`${BASE_URL}${pathname}`, { waitUntil: "networkidle" });
+  const response = await page.goto(`${BASE_URL}${pathname}`, { waitUntil: "networkidle" });
+  if (response && !response.ok()) {
+    throw new Error(`Capture route ${pathname} returned HTTP ${response.status()}`);
+  }
   await page
     .getByRole("heading", { name: headingText, exact: true })
     .waitFor({ state: "visible", timeout: 15000 });
   await page.waitForTimeout(700);
+  await assertPageReadyForCapture(page, pathname);
+}
+
+async function assertPageReadyForCapture(page, label) {
+  await page.evaluate(async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+  });
+
+  const frameworkOverlay = page.locator(
+    "nextjs-portal, [data-nextjs-dialog-overlay], [data-next-badge-root]",
+  );
+  for (let index = 0; index < (await frameworkOverlay.count()); index += 1) {
+    if (
+      await frameworkOverlay
+        .nth(index)
+        .isVisible()
+        .catch(() => false)
+    ) {
+      throw new Error(`Framework error overlay is visible while capturing ${label}`);
+    }
+  }
+
+  const bodyText = await page.locator("body").innerText();
+  if (bodyText.trim().length < 120) {
+    throw new Error(`Rendered content is unexpectedly sparse while capturing ${label}`);
+  }
+
+  const errorPatterns = [
+    /application error/i,
+    /internal server error/i,
+    /unhandled runtime error/i,
+    /agent capacity reached/i,
+    /plan limit reached/i,
+    /official (?:openclaw|hermes) dashboard unavailable/i,
+  ];
+  const matchedError = errorPatterns.find((pattern) => pattern.test(bodyText));
+  if (matchedError) {
+    throw new Error(`Error-state text (${matchedError}) is visible while capturing ${label}`);
+  }
+
+  await page.waitForFunction(() =>
+    Array.from(document.images).every((image) => image.complete && image.naturalWidth > 0),
+  );
+}
+
+function readPngDimensions(filePath) {
+  const header = fs.readFileSync(filePath).subarray(0, 24);
+  const signature = header.subarray(0, 8).toString("hex");
+  if (signature !== "89504e470d0a1a0a") {
+    throw new Error(`${filePath} is not a valid PNG`);
+  }
+  return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
+}
+
+function validateRequiredPromoAssets(captureStartedAt) {
+  const failures = [];
+  for (const filename of REQUIRED_PROMO_ASSETS) {
+    const filePath = path.join(SCREENSHOT_DIR, filename);
+    if (!fs.existsSync(filePath)) {
+      failures.push(`${filename}: missing`);
+      continue;
+    }
+
+    const stat = fs.statSync(filePath);
+    if (stat.mtimeMs < captureStartedAt - 1000) {
+      failures.push(`${filename}: stale (not refreshed by this capture run)`);
+    }
+    if (stat.size < 10_000) {
+      failures.push(`${filename}: suspiciously small (${stat.size} bytes)`);
+    }
+
+    try {
+      const { width, height } = readPngDimensions(filePath);
+      if (width < 700 || height < 600) {
+        failures.push(`${filename}: insufficient dimensions (${width}x${height})`);
+      }
+    } catch (error) {
+      failures.push(`${filename}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (failures.length) {
+    throw new Error(`Promo capture validation failed:\n- ${failures.join("\n- ")}`);
+  }
+
+  console.log(
+    `[capture] validated ${REQUIRED_PROMO_ASSETS.length} deterministic promo assets; externally managed: ${EXTERNALLY_MANAGED_PROMO_ASSETS.join(", ")}`,
+  );
+}
+
+function copyMarketingProof() {
+  fs.mkdirSync(path.dirname(MARKETING_PROOF_PATH), { recursive: true });
+  fs.copyFileSync(path.join(SCREENSHOT_DIR, "proof-operator-dashboard.png"), MARKETING_PROOF_PATH);
+  console.log(`Refreshed marketing product proof at ${MARKETING_PROOF_PATH}`);
 }
 
 async function captureHermesReadmeScreenshot(browser, token) {
@@ -2487,6 +2605,7 @@ async function captureHermesReadmeScreenshot(browser, token) {
       timeout: 15000,
     });
     await hermes.page.waitForTimeout(700);
+    await assertPageReadyForCapture(hermes.page, "Hermes WebUI proof");
     const mainContent = hermes.page.locator("main");
     await mainContent.waitFor({ state: "visible", timeout: 15000 });
     const mainBox = await mainContent.boundingBox();
@@ -3157,6 +3276,7 @@ async function captureSupportDocsScreens(page) {
 }
 
 async function captureScreens() {
+  const captureStartedAt = Date.now();
   fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
   const operatorSeed = await ensureAccount(ACCOUNTS.operator);
@@ -3327,6 +3447,8 @@ async function captureScreens() {
   // Mirror README PNGs into docs/images/ + copy the K8s backend-picker shot
   // to its non-K8s docs path. Runs AFTER the browser closes so every PNG it
   // copies from is already written and flushed.
+  validateRequiredPromoAssets(captureStartedAt);
+  copyMarketingProof();
   try {
     mirrorReadmeAssetsToDocs();
     copyK8sShotToConfiguration();

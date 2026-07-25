@@ -1,0 +1,24 @@
+{
+  "name": "nora",
+  "description": "Operate self-hosted OpenClaw and Hermes agent fleets from Gemini CLI.",
+  "version": "1.16.5",
+  "settings": [
+    {
+      "name": "Nora API URL",
+      "description": "Base URL of your Nora backend API, for example https://nora.example.com.",
+      "envVar": "NORA_API_URL"
+    },
+    {
+      "name": "Nora API key",
+      "description": "Workspace API key created in Nora under Workspace settings, API keys.",
+      "envVar": "NORA_API_KEY",
+      "sensitive": true
+    }
+  ],
+  "mcpServers": {
+    "nora": {
+      "command": "npx",
+      "args": ["-y", "@noraai/mcp-server@0.1.4"]
+    }
+  }
+}

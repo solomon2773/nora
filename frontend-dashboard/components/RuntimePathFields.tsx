@@ -44,46 +44,42 @@ export default function RuntimePathFields({
 }: RuntimePathFieldsProps) {
   const activeRuntimeFamily = useMemo(
     () => runtimeFamilyFromConfig(backendConfig, runtimeFamily),
-    [backendConfig, runtimeFamily]
+    [backendConfig, runtimeFamily],
   );
   const visibleRuntimeFamilies = useMemo(
     () => visibleRuntimeFamiliesFromConfig(backendConfig, viewerRole),
-    [backendConfig, viewerRole]
+    [backendConfig, viewerRole],
   );
   const visibleExecutionTargets = useMemo(
     () =>
       visibleExecutionTargetsFromConfig(
         backendConfig,
         viewerRole,
-        activeRuntimeFamily?.id || runtimeFamily
+        activeRuntimeFamily?.id || runtimeFamily,
       ),
-    [backendConfig, viewerRole, activeRuntimeFamily?.id, runtimeFamily]
+    [backendConfig, viewerRole, activeRuntimeFamily?.id, runtimeFamily],
   );
   const activeExecutionTarget = useMemo(
     () =>
       activeExecutionTargetFromConfig(
         backendConfig,
         activeRuntimeFamily?.id || runtimeFamily,
-        executionTarget
+        executionTarget,
       ),
-    [backendConfig, activeRuntimeFamily?.id, runtimeFamily, executionTarget]
+    [backendConfig, activeRuntimeFamily?.id, runtimeFamily, executionTarget],
   );
   const visibleSandboxOptions = useMemo(
     () => visibleSandboxOptionsFromTarget(activeExecutionTarget, viewerRole),
-    [activeExecutionTarget, viewerRole]
+    [activeExecutionTarget, viewerRole],
   );
   const activeSandboxOption = useMemo(
     () => activeSandboxOptionFromTarget(activeExecutionTarget, sandboxProfile),
-    [activeExecutionTarget, sandboxProfile]
+    [activeExecutionTarget, sandboxProfile],
   );
 
   useEffect(() => {
     if (!backendConfig || typeof onRuntimeFamilyChange !== "function") return;
-    const nextRuntimeFamily = pickRuntimeFamilySelection(
-      backendConfig,
-      viewerRole,
-      runtimeFamily
-    );
+    const nextRuntimeFamily = pickRuntimeFamilySelection(backendConfig, viewerRole, runtimeFamily);
     if (nextRuntimeFamily && nextRuntimeFamily !== runtimeFamily) {
       onRuntimeFamilyChange(nextRuntimeFamily);
     }
@@ -95,7 +91,7 @@ export default function RuntimePathFields({
       backendConfig,
       viewerRole,
       executionTarget,
-      activeRuntimeFamily?.id || runtimeFamily
+      activeRuntimeFamily?.id || runtimeFamily,
     );
     if (nextExecutionTarget && nextExecutionTarget !== executionTarget) {
       onExecutionTargetChange(nextExecutionTarget);
@@ -110,26 +106,18 @@ export default function RuntimePathFields({
   ]);
 
   useEffect(() => {
-    if (
-      !activeExecutionTarget ||
-      typeof onSandboxProfileChange !== "function"
-    ) {
+    if (!activeExecutionTarget || typeof onSandboxProfileChange !== "function") {
       return;
     }
     const nextSandboxProfile = pickSandboxProfileSelection(
       activeExecutionTarget,
       viewerRole,
-      sandboxProfile
+      sandboxProfile,
     );
     if (nextSandboxProfile && nextSandboxProfile !== sandboxProfile) {
       onSandboxProfileChange(nextSandboxProfile);
     }
-  }, [
-    activeExecutionTarget,
-    onSandboxProfileChange,
-    sandboxProfile,
-    viewerRole,
-  ]);
+  }, [activeExecutionTarget, onSandboxProfileChange, sandboxProfile, viewerRole]);
 
   if (!backendConfig) {
     return (
@@ -193,11 +181,7 @@ export default function RuntimePathFields({
           className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
         >
           {visibleExecutionTargets.map((target) => (
-            <option
-              key={target.id}
-              value={target.id}
-              disabled={!target.available}
-            >
+            <option key={target.id} value={target.id} disabled={!target.available}>
               {optionLabel(target)}
             </option>
           ))}
@@ -229,11 +213,7 @@ export default function RuntimePathFields({
           className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
         >
           {visibleSandboxOptions.map((profile) => (
-            <option
-              key={profile.id}
-              value={profile.id}
-              disabled={!profile.available}
-            >
+            <option key={profile.id} value={profile.id} disabled={!profile.available}>
               {optionLabel(profile)}
             </option>
           ))}
@@ -248,9 +228,7 @@ export default function RuntimePathFields({
           </p>
         )}
         {activeSandboxOption?.issue && !activeSandboxOption.available ? (
-          <p className="mt-2 text-xs leading-relaxed text-amber-600">
-            {activeSandboxOption.issue}
-          </p>
+          <p className="mt-2 text-xs leading-relaxed text-amber-600">{activeSandboxOption.issue}</p>
         ) : null}
       </div>
     </div>

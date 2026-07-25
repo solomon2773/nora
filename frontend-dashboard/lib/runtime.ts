@@ -267,43 +267,93 @@ function remoteHostTargetLabel(host: any = {}) {
 }
 
 // Clone a generic execution-target template into a concrete per-host entry that
-// the deploy picker can render and select. remote-docker only supports the
-// standard sandbox profile in this phase.
-function buildRemoteHostTarget(template: any = {}, host: any = {}) {
+// the deploy picker can render and select. Remote Docker now supports both the
+// standard OpenClaw path and NemoClaw through a dedicated remote sandbox backend.
+function buildRemoteHostTarget(
+  template: any = {},
+  host: any = {},
+  enabledSandboxProfileIds: string[] | undefined = undefined,
+) {
+  const enabledProfileIds = new Set(
+    Array.isArray(enabledSandboxProfileIds) ? enabledSandboxProfileIds : ["standard"],
+  );
+  const preferredDefaultProfile =
+    [template.defaultSandboxProfile, "standard", ...enabledProfileIds].find((profileId) =>
+      enabledProfileIds.has(profileId),
+    ) || "standard";
+  const runtimeFamily = template.runtimeFamily || "openclaw";
+  const runtimeFamilyLabel = template.runtimeFamilyLabel || formatRuntimeFamilyLabel(runtimeFamily);
+  const targetLabel = host.label || host.executionTargetId;
   const sandboxProfiles = (template.sandboxProfiles || []).map((profile: any) => {
-    const isStandard = profile.id === "standard";
+    // The generic remote-docker catalog entry is intentionally unavailable until
+    // a concrete host exists, so its profile.enabled values cannot be reused.
+    // Preserve the runtime family's operator-configured sandbox allowlist instead.
+    const enabled = enabledProfileIds.has(profile.id);
     return {
       ...profile,
+      deployTarget: "remote-docker",
+      legacyBackendId: "remote-docker",
       executionTargetId: host.executionTargetId,
-      deployTargetLabel: host.label,
-      enabled: isStandard,
-      configured: isStandard,
-      available: isStandard,
-      availableForOnboarding: isStandard,
-      isDefault: isStandard,
-      issue: isStandard ? null : profile.issue || null,
+      deployTargetLabel: targetLabel,
+      enabled,
+      configured: enabled,
+      available: enabled,
+      availableForOnboarding: enabled && profile.onboardingVisible !== false,
+      isDefault: enabled && profile.id === preferredDefaultProfile,
+      issue: enabled
+        ? null
+        : `${profile.label || profile.id} is not enabled for ${runtimeFamilyLabel}.`,
+      selectionId: `${runtimeFamily}:${host.executionTargetId}:${profile.id}`,
+      fullLabel:
+        profile.id === "nemoclaw"
+          ? `${runtimeFamilyLabel} + ${targetLabel} + ${profile.sandboxProfileLabel || profile.label || "NemoClaw"}`
+          : `${runtimeFamilyLabel} + ${targetLabel}`,
       // remote-docker is experimental in this phase regardless of which template
       // was cloned (don't inherit a fallback docker template's "ga").
       maturityTier: "experimental",
       maturityLabel: "Experimental",
     };
   });
+  const enabledSandboxProfiles = sandboxProfiles
+    .filter((profile: any) => profile.enabled)
+    .map((profile: any) => profile.id);
+  const availableSandboxProfiles = sandboxProfiles
+    .filter((profile: any) => profile.available)
+    .map((profile: any) => profile.id);
+  const selectableSandboxProfiles = sandboxProfiles.filter(
+    (profile: any) => profile.enabled && profile.availableForOnboarding && profile.available,
+  );
+  const defaultSelection =
+    sandboxProfiles.find((profile: any) => profile.isDefault) ||
+    sandboxProfiles.find((profile: any) => profile.available) ||
+    sandboxProfiles.find((profile: any) => profile.enabled) ||
+    sandboxProfiles[0] ||
+    null;
+  const available = availableSandboxProfiles.length > 0;
+
   return {
     ...template,
     id: host.executionTargetId,
     executionTargetId: host.executionTargetId,
+    adapter: "remote-docker",
     deployTarget: "remote-docker",
-    label: host.label || host.executionTargetId,
-    shortLabel: host.label || host.executionTargetId,
+    legacyBackendId: "remote-docker",
+    label: targetLabel,
+    shortLabel: targetLabel,
     summary: `Your remote Docker host · ${remoteHostTargetLabel(host)}`,
-    enabled: true,
-    configured: true,
-    available: true,
-    availableForOnboarding: true,
+    enabled: enabledSandboxProfiles.length > 0,
+    configured: enabledSandboxProfiles.length > 0,
+    available,
+    availableForOnboarding: selectableSandboxProfiles.length > 0,
     isDefault: false,
-    issue: null,
-    defaultSandboxProfile: "standard",
+    issue: available ? null : template.issue || null,
+    defaultSandboxProfile: defaultSelection?.id || "standard",
+    enabledSandboxProfiles,
+    availableSandboxProfiles,
+    supportsSandboxSelection: selectableSandboxProfiles.length > 1,
     sandboxProfiles,
+    fullLabel:
+      defaultSelection?.fullLabel || `${runtimeFamilyLabel} + ${targetLabel || "Remote Docker"}`,
     // remote-docker is experimental in this phase — set explicitly so a docker
     // fallback template can't make a remote host report "ga".
     maturityTier: "experimental",
@@ -346,7 +396,9 @@ export function mergeRemoteHostsIntoConfig(
       targets.find((target: any) => target.deployTarget === "remote-docker") ||
       targets.find((target: any) => target.id === "docker");
     if (!template) return family;
-    const hostTargets = hosts.map((host) => buildRemoteHostTarget(template, host));
+    const hostTargets = hosts.map((host) =>
+      buildRemoteHostTarget(template, host, family.enabledSandboxProfiles),
+    );
     const withoutPlaceholder = targets.filter(
       (target: any) => target.deployTarget !== "remote-docker",
     );

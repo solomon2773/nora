@@ -8,5 +8,9 @@ node_modules
 .env
 .git
 *.md
-.github
-infra
+.github/*
+!.github/readme-assets/
+.github/readme-assets/*
+!.github/readme-assets/walkthrough.mp4
+infra/*
+!infra/container-entrypoint.sh

@@ -56,15 +56,30 @@ describe("emailProvider", () => {
   });
 
   it("delegates connection testing to the current IMAP/SMTP verifier with normalized config", async () => {
-    const result = await emailProvider.test({
-      row: {},
-      token: "secret",
-      config: {
-        providerPreset: "gmail",
-        "auth.username": "alice@example.com",
-        "smtp.fromAddress": "alice@example.com",
+    const assertSafeUrl = jest.fn(async (url) => url);
+    const result = await emailProvider.test(
+      {
+        row: {},
+        token: "secret",
+        config: {
+          providerPreset: "gmail",
+          "auth.username": "alice@example.com",
+          "smtp.fromAddress": "alice@example.com",
+        },
       },
-    });
+      { assertSafeUrl },
+    );
+
+    expect(assertSafeUrl).toHaveBeenNthCalledWith(
+      1,
+      "https://imap.gmail.com:993",
+      "Email IMAP endpoint",
+    );
+    expect(assertSafeUrl).toHaveBeenNthCalledWith(
+      2,
+      "https://smtp.gmail.com:465",
+      "Email SMTP endpoint",
+    );
 
     expect(testEmailConnection).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -83,6 +98,29 @@ describe("emailProvider", () => {
       }),
     );
     expect(result.success).toBe(true);
+  });
+
+  it("fails before opening mail sockets when an endpoint is not network-safe", async () => {
+    const assertSafeUrl = jest.fn().mockRejectedValue(new Error("private address"));
+
+    await expect(
+      emailProvider.test(
+        {
+          row: {},
+          token: "secret",
+          config: {
+            providerPreset: "custom",
+            "auth.username": "alice@example.com",
+            "imap.host": "127.0.0.1",
+            "smtp.host": "smtp.example.com",
+            "smtp.fromAddress": "alice@example.com",
+          },
+        },
+        { assertSafeUrl },
+      ),
+    ).rejects.toThrow("private address");
+
+    expect(testEmailConnection).not.toHaveBeenCalled();
   });
 
   it("emits EMAIL_PASSWORD as primary and the current IMAP/SMTP env mapping", () => {

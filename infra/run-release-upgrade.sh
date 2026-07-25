@@ -7,6 +7,12 @@ STATE_FILE="${STATE_DIR}/status.json"
 LOG_FILE="${NORA_UPGRADE_LOG_FILE:-${STATE_DIR}/upgrade.log}"
 WORKSPACE="${NORA_HOST_REPO_DIR:-}"
 UPGRADE_ERROR=""
+DEFAULT_HEALTHCHECK_ATTEMPTS=221
+DEFAULT_HEALTHCHECK_INTERVAL_SECONDS=3
+LEGACY_HEALTHCHECK_ATTEMPTS=40
+LEGACY_HEALTHCHECK_INTERVAL_SECONDS=3
+MAX_HEALTHCHECK_WINDOW_SECONDS=3900
+DEFAULT_HEALTHCHECK_WINDOW_SECONDS=$(((DEFAULT_HEALTHCHECK_ATTEMPTS - 1) * DEFAULT_HEALTHCHECK_INTERVAL_SECONDS))
 
 mkdir -p "$STATE_DIR"
 touch "$LOG_FILE"
@@ -73,6 +79,33 @@ build_compose_args() {
   fi
 }
 
+read_env_setting() {
+  local env_file="$1" name="$2"
+  awk -v name="$name" '
+    $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      value = $0
+      sub(/^[^=]*=/, "", value)
+      sub(/[[:space:]]+#.*$/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if ((substr(value, 1, 1) == "\"" && substr(value, length(value), 1) == "\"") ||
+          (substr(value, 1, 1) == sprintf("%c", 39) && substr(value, length(value), 1) == sprintf("%c", 39))) {
+        value = substr(value, 2, length(value) - 2)
+      }
+      found = value
+    }
+    END { if (found != "") print found }
+  ' "$env_file"
+}
+
+resolve_compose_files_from_env() {
+  local env_file="$1" configured
+  configured="$(read_env_setting "$env_file" NORA_UPGRADE_COMPOSE_FILES)"
+  if [ -z "$configured" ]; then
+    configured="$(read_env_setting "$env_file" COMPOSE_FILE)"
+  fi
+  printf '%s\n' "${configured:-${NORA_UPGRADE_COMPOSE_FILES:-docker-compose.yml}}"
+}
+
 resolve_target_ref() {
   TARGET_REF=""
   local target_version="${NORA_UPGRADE_TARGET_VERSION:-}"
@@ -99,22 +132,76 @@ resolve_target_ref() {
   git rev-parse --verify "${TARGET_REF}^{commit}" >/dev/null
 }
 
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s\n' "$value"
+}
+
+resolve_healthcheck_budget() {
+  local attempts_raw interval_raw attempts interval window invalid="false"
+
+  attempts_raw="$(trim_whitespace "${NORA_UPGRADE_HEALTHCHECK_ATTEMPTS:-$DEFAULT_HEALTHCHECK_ATTEMPTS}")"
+  interval_raw="$(trim_whitespace "${NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS:-$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS}")"
+  if [ "$attempts_raw" = "$LEGACY_HEALTHCHECK_ATTEMPTS" ] &&
+    [ "$interval_raw" = "$LEGACY_HEALTHCHECK_INTERVAL_SECONDS" ]; then
+    attempts_raw="$DEFAULT_HEALTHCHECK_ATTEMPTS"
+    interval_raw="$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS"
+  fi
+
+  if [[ "$attempts_raw" =~ ^[0-9]+$ ]] && [ "${#attempts_raw}" -le 10 ]; then
+    attempts=$((10#$attempts_raw))
+  else
+    invalid="true"
+    attempts=0
+  fi
+  if [[ "$interval_raw" =~ ^[0-9]+$ ]] && [ "${#interval_raw}" -le 10 ]; then
+    interval=$((10#$interval_raw))
+  else
+    invalid="true"
+    interval=0
+  fi
+
+  if [ "$attempts" -lt 1 ] || [ "$attempts" -gt $((MAX_HEALTHCHECK_WINDOW_SECONDS + 1)) ] ||
+    [ "$interval" -lt 1 ] || [ "$interval" -gt "$MAX_HEALTHCHECK_WINDOW_SECONDS" ]; then
+    invalid="true"
+  fi
+
+  window=0
+  if [ "$invalid" = "false" ]; then
+    window=$(((attempts - 1) * interval))
+    if [ "$window" -gt "$MAX_HEALTHCHECK_WINDOW_SECONDS" ]; then
+      invalid="true"
+    fi
+  fi
+
+  if [ "$invalid" = "true" ]; then
+    echo "Invalid NORA_UPGRADE health-check overrides (attempts='${attempts_raw}', interval='${interval_raw}s'); using ${DEFAULT_HEALTHCHECK_ATTEMPTS} attempts every ${DEFAULT_HEALTHCHECK_INTERVAL_SECONDS}s (${DEFAULT_HEALTHCHECK_WINDOW_SECONDS}s from first to final attempt). Values must be positive integers with a first-to-final window no greater than ${MAX_HEALTHCHECK_WINDOW_SECONDS}s." >&2
+    attempts="$DEFAULT_HEALTHCHECK_ATTEMPTS"
+    interval="$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS"
+    window=$(((attempts - 1) * interval))
+  fi
+
+  printf '%s %s %s\n' "$attempts" "$interval" "$window"
+}
+
 wait_for_backend_health() {
-  local attempts="${NORA_UPGRADE_HEALTHCHECK_ATTEMPTS:-40}"
-  local interval="${NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS:-3}"
+  local attempts interval window
   local service="${NORA_UPGRADE_HEALTHCHECK_SERVICE:-backend-api}"
   local public_url="${NORA_UPGRADE_PUBLIC_HEALTH_URL:-}"
+  read -r attempts interval window < <(resolve_healthcheck_budget)
 
-  echo "Waiting for ${service} health..."
+  echo "Waiting for ${service} health: ${attempts} attempts every ${interval}s (${window}s from first to final attempt)."
   for attempt in $(seq 1 "$attempts"); do
     if docker compose "${COMPOSE_ARGS[@]}" exec -T "$service" \
-      node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"; then
+      node -e "require('http').get('http://localhost:4000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))" </dev/null; then
       echo "${service} is healthy."
       break
     fi
 
     if [ "$attempt" -eq "$attempts" ]; then
-      fail_step 30 "${service} did not become healthy after upgrade"
+      fail_step 30 "${service} did not become healthy after ${attempts} attempts every ${interval}s (${window}s first-to-final window)"
       return $?
     fi
 
@@ -122,7 +209,7 @@ wait_for_backend_health() {
   done
 
   if [ -n "$public_url" ]; then
-    echo "Checking public health URL: ${public_url}"
+    echo "Checking public health URL ${public_url}: ${attempts} attempts every ${interval}s (${window}s from first to final attempt)."
     for attempt in $(seq 1 "$attempts"); do
       if curl -fsS "$public_url" >/dev/null; then
         echo "Public health URL is reachable."
@@ -130,7 +217,7 @@ wait_for_backend_health() {
       fi
 
       if [ "$attempt" -eq "$attempts" ]; then
-        fail_step 31 "Public health URL did not become reachable after upgrade"
+        fail_step 31 "Public health URL did not become reachable after ${attempts} attempts every ${interval}s (${window}s first-to-final window)"
         return $?
       fi
 
@@ -151,7 +238,8 @@ run_upgrade() {
   git config --global --add safe.directory "$WORKSPACE"
 
   local env_file="${NORA_ENV_FILE:-.env}"
-  local compose_files="${NORA_UPGRADE_COMPOSE_FILES:-docker-compose.yml}"
+  local compose_files
+  compose_files="$(resolve_compose_files_from_env "$env_file")"
 
   if [ ! -f "$env_file" ]; then
     fail_step 21 "Missing deploy env file: ${env_file}"
@@ -164,8 +252,6 @@ run_upgrade() {
       return $?
     fi
   done
-
-  build_compose_args "$env_file" "$compose_files" || return $?
 
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     echo "Tracked local changes:"
@@ -195,6 +281,14 @@ run_upgrade() {
     git checkout --detach "$TARGET_REF"
   fi
 
+  # Reload the runner from the newly merged checkout exactly once. This keeps
+  # upgrade behavior and compose-layer migration aligned with the target
+  # release even when the initiating backend container still has older code.
+  if [ "${NORA_UPGRADE_REEXECUTED:-0}" != "1" ] && [ -f "$WORKSPACE/infra/run-release-upgrade.sh" ]; then
+    export NORA_UPGRADE_REEXECUTED=1
+    exec bash "$WORKSPACE/infra/run-release-upgrade.sh"
+  fi
+
   local version commit
   version="${TARGET_VERSION_RESOLVED:-${NORA_UPGRADE_TARGET_VERSION:-$(git describe --tags --always)}}"
   commit="$(git rev-parse HEAD)"
@@ -202,9 +296,51 @@ run_upgrade() {
     bash infra/update-release-env.sh "$env_file" "$version" "$commit" "${NORA_UPGRADE_REPO_SLUG:-}"
   fi
 
+  compose_files="$(resolve_compose_files_from_env "$env_file")"
   update_status "building"
-  echo "Rebuilding and restarting Nora services..."
-  docker compose "${COMPOSE_ARGS[@]}" up -d --build
+  if [ -f setup.sh ] && [ "${NORA_UPGRADE_USE_SETUP:-true}" != "false" ]; then
+    echo "Migrating install configuration and rebuilding through setup.sh --update..."
+    bash setup.sh --update
+    compose_files="$(resolve_compose_files_from_env "$env_file")"
+  else
+    if [ ! -f scripts/materialize-compose-secrets.sh ]; then
+      fail_step 25 "Missing scripts/materialize-compose-secrets.sh; cannot prepare read-only Compose secrets"
+      return $?
+    fi
+    bash scripts/materialize-compose-secrets.sh "$env_file"
+    bash infra/render-public-nginx.sh "$env_file" "$compose_files"
+    echo "Rebuilding and restarting Nora services..."
+  fi
+
+  build_compose_args "$env_file" "$compose_files" || return $?
+  if [ ! -f setup.sh ] || [ "${NORA_UPGRADE_USE_SETUP:-true}" = "false" ]; then
+    echo "Rebuilding the pinned standard OpenClaw agent image..."
+    docker build \
+      -f agent-runtime/Dockerfile.openclaw-agent \
+      -t nora-openclaw-agent:local \
+      agent-runtime/
+    local enabled_sandbox_profiles nemoclaw_sandbox_image normalized_sandbox_profiles
+    enabled_sandbox_profiles="$(read_env_setting "$env_file" ENABLED_SANDBOX_PROFILES)"
+    nemoclaw_sandbox_image="$(read_env_setting "$env_file" NEMOCLAW_SANDBOX_IMAGE)"
+    normalized_sandbox_profiles="${enabled_sandbox_profiles//[[:space:]]/}"
+    case ",${normalized_sandbox_profiles}," in
+      *,nemoclaw,*)
+        if [ "$nemoclaw_sandbox_image" = "nora-nemoclaw-agent:local" ]; then
+          echo "Rebuilding the enabled local NemoClaw sandbox image..."
+          docker build \
+            -f agent-runtime/Dockerfile.nemoclaw-agent \
+            -t nora-nemoclaw-agent:local \
+            agent-runtime/
+        fi
+        ;;
+    esac
+    echo "Pre-validating nginx configuration..."
+    docker compose "${COMPOSE_ARGS[@]}" run --rm --no-deps --interactive=false -T nginx nginx -t
+    docker compose "${COMPOSE_ARGS[@]}" up -d --build
+    echo "Recreating nginx so generated configuration mounts are refreshed..."
+    docker compose "${COMPOSE_ARGS[@]}" up -d --force-recreate --no-deps nginx
+    docker compose "${COMPOSE_ARGS[@]}" exec -T nginx nginx -t </dev/null
+  fi
   docker compose "${COMPOSE_ARGS[@]}" ps
 
   update_status "health_checking"

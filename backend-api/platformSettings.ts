@@ -82,6 +82,8 @@ const AGENT_HUB_SHARE_TARGETS = new Set(["internal", "community", "both"]);
 const BACKUP_STORAGE_BACKENDS = new Set(["local", "s3", "r2", "ssh"]);
 const BACKUP_SCHEDULE_FREQUENCIES = new Set(["hourly", "daily", "weekly"]);
 
+// Shared normalization and validation
+
 function parseInteger(value) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
@@ -182,6 +184,8 @@ function parseJsonObject(value, fallback = {}) {
   }
   return typeof value === "object" && !Array.isArray(value) ? value : fallback;
 }
+
+// Backup settings normalization
 
 function normalizeBackupSettings(input = {}, fallback = DEFAULT_BACKUP_SETTINGS) {
   const storageBackend = normalizeBackupStorageBackend(
@@ -385,6 +389,8 @@ function resolveSmtpSettingsPayload(settings) {
   };
 }
 
+// Deployment, locale, and banner normalization
+
 function normalizeDeploymentDefaults(input = {}, fallback = DEFAULT_DEPLOYMENT_DEFAULTS) {
   return {
     vcpu: parseInteger(input.vcpu ?? input.default_vcpu) ?? fallback.vcpu,
@@ -532,6 +538,8 @@ function parseRequiredSystemBanner(input = {}) {
   return next;
 }
 
+// Agent Hub and backup response shaping
+
 function normalizeAgentHubSettings(input = {}, fallback = DEFAULT_AGENT_HUB_SETTINGS) {
   const rawShareTarget = normalizeText(
     input.agent_hub_default_share_target ?? input.defaultShareTarget,
@@ -551,6 +559,13 @@ function normalizeAgentHubSettings(input = {}, fallback = DEFAULT_AGENT_HUB_SETT
   };
 }
 
+/**
+ * Build admin-safe Agent Hub settings with secret source and masking metadata,
+ * preferring an environment key over encrypted database state.
+ *
+ * @param {Object} settings - Normalized stored Agent Hub settings.
+ * @returns {Object} Public settings payload without raw credentials.
+ */
 function resolveAgentHubSettingsPayload(settings) {
   const envApiKey = normalizeText(process.env.NORA_AGENT_HUB_API_KEY);
   let storedApiKeyMasked = "";
@@ -572,6 +587,13 @@ function resolveAgentHubSettingsPayload(settings) {
   };
 }
 
+/**
+ * Build admin-safe backup settings with environment precedence and masked
+ * credential status instead of decrypted operational secrets.
+ *
+ * @param {Object} settings - Normalized stored backup settings.
+ * @returns {Object} Public backup settings payload.
+ */
 function resolveBackupSettingsPayload(settings) {
   const envBackend = normalizeText(process.env.NORA_BACKUP_STORAGE);
   const storageBackend = envBackend
@@ -846,6 +868,8 @@ function parseRequiredAgentHubSettings(input = {}) {
   };
 }
 
+// Platform settings reads
+
 async function getDeploymentDefaults() {
   const result = await db.query(
     `SELECT default_vcpu, default_ram_mb, default_disk_gb
@@ -894,6 +918,12 @@ async function getAgentHubSettings() {
   return resolveAgentHubSettingsPayload(settings);
 }
 
+/**
+ * Resolve the Agent Hub source credential with environment configuration taking
+ * precedence over the encrypted database value.
+ *
+ * @returns {Promise<string>} Decrypted source API key, or an empty string.
+ */
 async function getAgentHubSourceApiKey() {
   const envApiKey = normalizeText(process.env.NORA_AGENT_HUB_API_KEY);
   if (envApiKey) return envApiKey;
@@ -919,8 +949,14 @@ async function getSmtpSettings() {
   return resolveSmtpSettingsPayload(normalizeSmtpSettings(result.rows[0] || DEFAULT_SMTP_SETTINGS));
 }
 
-// Decrypted SMTP config for mailer.ts. Returns null when SMTP is not
-// configured (host or from missing) so callers can short-circuit cheaply.
+// SMTP settings persistence and delivery
+
+/**
+ * Return SMTP delivery configuration for internal mailers, treating an
+ * unreadable encrypted password as empty and missing host/from settings as `null`.
+ *
+ * @returns {Promise<Object|null>} Operational SMTP configuration.
+ */
 async function getSmtpDeliveryConfig() {
   const result = await db.query(
     `SELECT smtp_host, smtp_port, smtp_secure, smtp_username,
@@ -950,6 +986,13 @@ async function getSmtpDeliveryConfig() {
   };
 }
 
+/**
+ * Validate and persist SMTP settings, encrypting a supplied password while
+ * preserving or explicitly clearing the existing credential as requested.
+ *
+ * @param {Object} [settings={}] - Admin SMTP settings and password controls.
+ * @returns {Promise<Object>} Admin-safe persisted settings.
+ */
 async function updateSmtpSettings(settings = {}) {
   const next = parseRequiredSmtpSettings(settings);
   const current = await db.query(
@@ -996,6 +1039,14 @@ async function updateSmtpSettings(settings = {}) {
   return resolveSmtpSettingsPayload(normalizeSmtpSettings(result.rows[0]));
 }
 
+// Backup settings and entitlements
+
+/**
+ * Return admin-safe backup settings with environment precedence and masked
+ * credential status.
+ *
+ * @returns {Promise<Object>} Public backup settings payload.
+ */
 async function getBackupSettings() {
   const result = await db.query(
     `SELECT backup_storage_backend,
@@ -1025,6 +1076,12 @@ async function getBackupSettings() {
   );
 }
 
+/**
+ * Resolve decrypted operational backup configuration for backup workers,
+ * preferring non-empty environment credentials over encrypted database values.
+ *
+ * @returns {Promise<Object>} Internal storage configuration including raw credentials.
+ */
 async function getBackupStorageConfig() {
   const result = await db.query(
     `SELECT backup_storage_backend,
@@ -1115,13 +1172,18 @@ async function getBackupPlanLimits() {
   return normalizeBackupPlanLimits(result.rows[0]?.backup_plan_limits);
 }
 
+/**
+ * Validate and replace plan backup limits in one statement, returning the
+ * statement snapshot's previous value and the persisted next value.
+ *
+ * @param {Object} [input={}] - Plan entitlement settings.
+ * @returns {Promise<Object>} Normalized previous and next plan limits.
+ */
 async function updateBackupPlanLimits(input = {}) {
   const next = parseRequiredBackupPlanLimits(input);
-  // Single statement read-then-write so two concurrent admin PUTs each see
-  // the actual prior state (rather than both reading the same pre-write
-  // snapshot). The CTE evaluates against the pre-UPDATE snapshot per
-  // Postgres semantics, so `previous` reflects what was on disk at the
-  // moment this row's lock was acquired.
+  // The CTE and UPSERT keep each request to one statement. `previous` comes
+  // from that statement's snapshot, so concurrent writers may report the same
+  // pre-write value even though their updates serialize on the singleton row.
   const result = await db.query(
     `WITH prev AS (
        SELECT backup_plan_limits AS old_limits
@@ -1146,6 +1208,13 @@ async function updateBackupPlanLimits(input = {}) {
   };
 }
 
+/**
+ * Validate and persist backup storage settings, encrypting supplied credentials
+ * while preserving or explicitly clearing existing secrets as requested.
+ *
+ * @param {Object} [settings={}] - Admin storage, schedule, and credential settings.
+ * @returns {Promise<Object>} Admin-safe persisted backup settings.
+ */
 async function updateBackupSettings(settings = {}) {
   const next = parseRequiredBackupSettings(settings);
   const current = await db.query(
@@ -1264,6 +1333,15 @@ async function updateBackupSettings(settings = {}) {
   return resolveBackupSettingsPayload(normalizeBackupSettings(result.rows[0] || next));
 }
 
+// General settings persistence
+
+/**
+ * Clamp deployment defaults to platform resource ceilings before persisting them.
+ *
+ * @param {Object} [defaults={}] - Requested vCPU, memory, and disk defaults.
+ * @param {Object} [limits={}] - Maximum platform resource values.
+ * @returns {Promise<Object>} Persisted clamped defaults.
+ */
 async function updateDeploymentDefaults(defaults = {}, limits = {}) {
   const clamped = clampDeploymentDefaults(defaults, limits);
   const result = await db.query(
@@ -1334,6 +1412,13 @@ async function updateSystemBanner(banner = {}) {
   return resolveSystemBannerPayload(result.rows[0] || next);
 }
 
+/**
+ * Validate and persist Agent Hub defaults, encrypting a replacement source key
+ * while preserving or explicitly clearing the existing credential.
+ *
+ * @param {Object} [settings={}] - Sharing defaults, URL, and source-key controls.
+ * @returns {Promise<Object>} Admin-safe persisted Agent Hub settings.
+ */
 async function updateAgentHubSettings(settings = {}) {
   const next = parseRequiredAgentHubSettings(settings);
   const current = await db.query(

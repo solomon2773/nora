@@ -19,22 +19,52 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 These variables must be set before the stack will start. Without them, JWTs cannot be signed, stored credentials cannot be encrypted, backup archives cannot be sealed, and Agent Hub source-catalog API keys cannot be hashed.
 
-| Variable                             | Required | Default | Description                                                                                                                                                                                       |
-| ------------------------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variable                             | Required | Default | Description                                                                                                                                                                                                                                                                                       |
+| ------------------------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `JWT_SECRET`                         | Yes      | —       | Secret used to sign all JWTs. Minimum 32 characters. In production the backend refuses to boot when this is missing, too short, or looks like a placeholder (e.g. an unedited `.env.example` value). In development a generated secret is persisted in the database so sessions survive restarts. |
 | `ENCRYPTION_KEY`                     | Yes      | —       | 32-byte hex key (64 hex characters) for AES-256-GCM encryption of stored provider keys, integration credentials, and other sensitive values. In production the backend refuses to boot when this is missing or invalid unless `NORA_ALLOW_PLAINTEXT_SECRETS=true` is set explicitly.              |
-| `NORA_BACKUP_ENCRYPTION_KEY`         | Yes      | —       | 32-byte hex key for sealing managed backup archives. Required to create or restore backups. Do not rotate casually — archives encrypted with the previous key cannot be decrypted with a new one. |
-| `NORA_AGENT_HUB_API_KEY_HASH_SECRET` | Yes      | —       | HMAC secret for hashing Agent Hub source-catalog API keys at rest. `setup.sh` auto-generates this on first run; rotating it invalidates every issued Agent Hub key.                               |
-| `NORA_ALLOW_PLAINTEXT_SECRETS`       | No       | `false` | Explicit override to boot a production instance without a valid `ENCRYPTION_KEY` (credentials are then stored unencrypted). Only for throwaway/demo environments.                                 |
+| `NORA_BACKUP_ENCRYPTION_KEY`         | Yes      | —       | 32-byte hex key for sealing managed backup archives. Required to create or restore backups. Do not rotate casually — archives encrypted with the previous key cannot be decrypted with a new one.                                                                                                 |
+| `NORA_AGENT_HUB_API_KEY_HASH_SECRET` | Yes      | —       | HMAC secret for hashing Agent Hub source-catalog API keys at rest. `setup.sh` auto-generates this on first run; rotating it invalidates every issued Agent Hub key.                                                                                                                               |
+| `NORA_API_KEY_HASH_SECRET`           | Yes      | —       | Primary HMAC secret for workspace/API token hashes. Setup preserves an existing value; when upgrading an older install it copies the legacy Agent Hub/encryption/JWT fallback so existing tokens remain valid.                                                                                    |
+| `NORA_ALLOW_PLAINTEXT_SECRETS`       | No       | `false` | Explicit override to boot a production instance without a valid `ENCRYPTION_KEY` (credentials are then stored unencrypted). Only for throwaway/demo environments.                                                                                                                                 |
+
+### Secret files
+
+Production Compose and Helm deployments mount core credentials read-only under `/run/secrets`
+instead of exposing them to frontend containers. The production control-plane entrypoint loads files
+whose names are valid environment-variable names. A non-empty direct environment value takes
+precedence; custom orchestrators can use these conventional aliases:
+
+| Variable                                  | Default | Target environment variable          |
+| ----------------------------------------- | ------- | ------------------------------------ |
+| `JWT_SECRET_FILE`                         | —       | `JWT_SECRET`                         |
+| `ENCRYPTION_KEY_FILE`                     | —       | `ENCRYPTION_KEY`                     |
+| `NORA_BACKUP_ENCRYPTION_KEY_FILE`         | —       | `NORA_BACKUP_ENCRYPTION_KEY`         |
+| `NORA_AGENT_HUB_API_KEY_HASH_SECRET_FILE` | —       | `NORA_AGENT_HUB_API_KEY_HASH_SECRET` |
+| `NORA_API_KEY_HASH_SECRET_FILE`           | —       | `NORA_API_KEY_HASH_SECRET`           |
+| `DB_PASSWORD_FILE`                        | —       | `DB_PASSWORD`                        |
+
+The setup scripts keep `.env` owner-only: mode `0600` on macOS/Linux/WSL and a protected,
+non-inherited ACL on Windows. Treat timestamped `.env.backup-*` files with the same sensitivity.
+For Compose, setup also materializes the six core values as individual files under
+`NORA_COMPOSE_SECRETS_DIR` (default `.secrets/compose`). The directory is gitignored and restricted
+to the owner; Compose mounts only the requested files read-only into control-plane containers.
+Operators who bypass setup must run `bash scripts/materialize-compose-secrets.sh <env-file>` before
+Compose startup and after rotating any core value.
+
+| Variable                   | Default            | Description                                                                                                   |
+| -------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `NORA_COMPOSE_SECRETS_DIR` | `.secrets/compose` | Host directory for installer-materialized Compose secret files. Must be a dedicated, non-symlinked directory. |
+| `COMPOSE_PROJECT_NAME`     | `nora`             | Stable Compose namespace used to scope setup, upgrade, and clean-reinstall container/volume operations.       |
 
 ## Bootstrap admin account
 
-These two optional variables seed a first administrator account on the very first boot. They are ignored on subsequent starts once the account exists. Both must be set together — setting only one has no effect.
+These variables seed the first administrator account on the very first boot. They are ignored on subsequent starts once an account exists. Both must be set together. An empty hosted PaaS database requires secure explicit values and refuses to start without them; a self-hosted installation may leave both blank and claim the first administrator through `/signup`. Setting only one is always invalid.
 
-| Variable                 | Required | Default | Description                                                                                         |
-| ------------------------ | -------- | ------- | --------------------------------------------------------------------------------------------------- |
-| `DEFAULT_ADMIN_EMAIL`    | No       | —       | Email address for the bootstrap admin account.                                                      |
-| `DEFAULT_ADMIN_PASSWORD` | No       | —       | Password for the bootstrap admin account. Minimum 12 characters. No insecure defaults are accepted. |
+| Variable                 | Required  | Default | Description                                                                                                                                           |
+| ------------------------ | --------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEFAULT_ADMIN_EMAIL`    | PaaS: Yes | —       | Valid, non-placeholder email address for the bootstrap admin account. Required when hosted PaaS starts with an empty user database.                   |
+| `DEFAULT_ADMIN_PASSWORD` | PaaS: Yes | —       | Password for the bootstrap admin account. Minimum 12 characters; placeholders and default-derived values are rejected before the API listener starts. |
 
 <Warning>
   Do not set a weak or well-known password here. This account has full operator access from the
@@ -45,79 +75,139 @@ These two optional variables seed a first administrator account on the very firs
 
 PostgreSQL connection settings. Defaults match the Docker Compose service name and port.
 
-| Variable      | Required | Default    | Description                                                                                                                                                  |
-| ------------- | -------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `DB_HOST`     | No       | `postgres` | PostgreSQL hostname. Compose users keep the default; external DBs override.                                                                                  |
-| `DB_PORT`     | No       | `5432`     | PostgreSQL port.                                                                                                                                             |
-| `DB_USER`     | No       | `nora`     | Database role used by backend-api and worker-provisioner.                                                                                                    |
-| `DB_PASSWORD` | Yes      | —          | Password for the role above. For compose installs, keep this value aligned with the initialized Postgres volume; setup preserves it during reconfigure mode. |
-| `DB_NAME`     | No       | `nora`     | Database name.                                                                                                                                               |
+| Variable                            | Required | Default           | Description                                                                                                                                                                                                            |
+| ----------------------------------- | -------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                      | No       | —                 | Full PostgreSQL connection URL. Takes precedence over individual fields. URL `ssl=true`/`1` is normalized to verified TLS and `ssl=false`/`0` to disabled; explicit `DB_SSL_MODE`/`DB_SSL` overrides URL TLS controls. |
+| `DB_HOST`                           | No       | `postgres`        | PostgreSQL hostname. Compose users keep the default; external DBs override.                                                                                                                                            |
+| `DB_PORT`                           | No       | `5432`            | PostgreSQL port.                                                                                                                                                                                                       |
+| `DB_USER`                           | No       | `nora`            | Database role used by backend-api and workers.                                                                                                                                                                         |
+| `DB_PASSWORD`                       | Yes      | —                 | Password for the role above. For compose installs, keep this value aligned with the initialized Postgres volume; setup preserves it during reconfigure mode.                                                           |
+| `DB_PASSWORD_FILE`                  | No       | —                 | Path to a file containing `DB_PASSWORD`. Production Compose sets this to `/run/secrets/DB_PASSWORD`; the direct value wins when both are non-empty.                                                                    |
+| `DB_NAME`                           | No       | `nora`            | Database name.                                                                                                                                                                                                         |
+| `DB_SSL_MODE`                       | No       | URL policy or off | TLS policy: `disable`, `require`, `verify-ca`, or `verify-full`. Blank honors `DATABASE_URL` SSL parameters; an explicit value overrides conflicting URL TLS parameters. Verification modes require a CA.              |
+| `DB_SSL_CA`                         | No       | —                 | Inline PEM CA certificate; escaped `\\n` sequences are expanded.                                                                                                                                                       |
+| `DB_SSL_CA_FILE`                    | No       | —                 | Path to a mounted CA certificate.                                                                                                                                                                                      |
+| `DB_SSL_CERT`                       | No       | —                 | Inline client certificate for mutual TLS.                                                                                                                                                                              |
+| `DB_SSL_CERT_FILE`                  | No       | —                 | Path to a mounted client certificate.                                                                                                                                                                                  |
+| `DB_SSL_KEY`                        | No       | —                 | Inline client private key for mutual TLS.                                                                                                                                                                              |
+| `DB_SSL_KEY_FILE`                   | No       | —                 | Path to a mounted client private key.                                                                                                                                                                                  |
+| `DB_POOL_MAX`                       | No       | `20`              | Maximum PostgreSQL pool size per process.                                                                                                                                                                              |
+| `DB_IDLE_TIMEOUT_MS`                | No       | `30000`           | Idle pooled-connection timeout.                                                                                                                                                                                        |
+| `DB_CONNECTION_TIMEOUT_MS`          | No       | `10000`           | Connection acquisition timeout.                                                                                                                                                                                        |
+| `DB_STATEMENT_TIMEOUT_MS`           | No       | `0`               | PostgreSQL statement timeout for normal application queries; `0` leaves it disabled.                                                                                                                                   |
+| `DB_MIGRATION_LOCK_TIMEOUT_MS`      | No       | `60000`           | Maximum startup wait for Nora's migration advisory lock before failing closed. Clamped to 1 second–10 minutes.                                                                                                         |
+| `DB_MIGRATION_STATEMENT_TIMEOUT_MS` | No       | `600000`          | Transaction-local timeout for migration ledger, legacy-repair, and migration statements. Clamped to 1 second–60 minutes.                                                                                               |
 
 ## Redis and queue
 
 Redis backs BullMQ for deployment, ClawHub install, backup, and alert-delivery jobs.
 
-| Variable                            | Required | Default   | Description                                                                                                                                        |
-| ----------------------------------- | -------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `REDIS_HOST`                        | No       | `redis`   | Redis hostname.                                                                                                                                    |
-| `REDIS_PORT`                        | No       | `6379`    | Redis port.                                                                                                                                        |
-| `REDIS_PASSWORD`                    | No       | —         | Optional Redis password. Set when Redis is exposed outside the compose network.                                                                    |
-| `PORT`                              | No       | `4000`    | Backend-api listen port inside the container.                                                                                                      |
-| `BACKEND_API_PORT`                  | No       | `4100`    | Host-only backend API port mapped to container `PORT`. Setup auto-picks another free port when `127.0.0.1:4100` is busy.                           |
-| `DEPLOYMENT_WORKER_CONCURRENCY`     | No       | `6`       | How many deployment jobs the provisioner worker runs in parallel. Higher values reduce queued time but increase image-pull and bootstrap pressure. |
-| `DEPLOYMENT_JOB_TIMEOUT_MS`         | No       | `900000`  | Timeout per deployment job, in milliseconds. Aliased by `PROVISION_TIMEOUT_MS` for legacy deployments.                                             |
-| `CLAWHUB_INSTALL_TIMEOUT_MS`        | No       | `300000`  | Timeout per ClawHub skill install job, in milliseconds.                                                                                            |
-| `BACKUP_WORKER_CONCURRENCY`         | No       | `2`       | Backup worker concurrency.                                                                                                                         |
-| `NORA_BACKUP_JOB_TIMEOUT_MS`        | No       | `1800000` | Backup job hard timeout. The backup worker enforces this via `Promise.race` because BullMQ v5 ignores `defaultJobOptions.timeout`.                 |
-| `NORA_BACKUP_SCHEDULE_POLL_MS`      | No       | `60000`   | How often the backup worker checks for due scheduled backups.                                                                                      |
-| `ALERT_DELIVERY_ATTEMPTS`           | No       | `5`       | Number of retry attempts for an alert webhook delivery before the worker records a terminal failure on the rule. Clamped to `[1, 10]`.             |
-| `ALERT_DELIVERY_WORKER_CONCURRENCY` | No       | `5`       | Concurrency of the alert-deliveries worker.                                                                                                        |
-| `WORKER_HEALTH_PORT`                | No       | `4001`    | Provisioner worker health-check port.                                                                                                              |
-| `BACKUP_WORKER_HEALTH_PORT`         | No       | `4002`    | Backup worker health-check port.                                                                                                                   |
+| Variable                            | Required | Default   | Description                                                                                                                                                                                                   |
+| ----------------------------------- | -------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`                         | No       | —         | Full Redis URL. Takes precedence over `REDIS_HOST` and `REDIS_PORT`.                                                                                                                                          |
+| `REDIS_HOST`                        | No       | `redis`   | Redis hostname.                                                                                                                                                                                               |
+| `REDIS_PORT`                        | No       | `6379`    | Redis port.                                                                                                                                                                                                   |
+| `REDIS_USERNAME`                    | No       | —         | Optional ACL username.                                                                                                                                                                                        |
+| `REDIS_PASSWORD`                    | No       | —         | Optional Redis password. Set when Redis is exposed outside the compose network.                                                                                                                               |
+| `REDIS_DB`                          | No       | `0`       | Redis logical database index.                                                                                                                                                                                 |
+| `REDIS_TLS`                         | No       | `false`   | Enables TLS for the Redis connection.                                                                                                                                                                         |
+| `REDIS_TLS_CA`                      | No       | —         | Inline PEM CA certificate.                                                                                                                                                                                    |
+| `REDIS_TLS_CA_FILE`                 | No       | —         | Path to a mounted Redis CA certificate.                                                                                                                                                                       |
+| `REDIS_TLS_CERT`                    | No       | —         | Inline client certificate for mutual TLS.                                                                                                                                                                     |
+| `REDIS_TLS_CERT_FILE`               | No       | —         | Path to a mounted Redis client certificate.                                                                                                                                                                   |
+| `REDIS_TLS_KEY`                     | No       | —         | Inline client private key for mutual TLS.                                                                                                                                                                     |
+| `REDIS_TLS_KEY_FILE`                | No       | —         | Path to a mounted Redis client private key.                                                                                                                                                                   |
+| `REDIS_TLS_INSECURE_SKIP_VERIFY`    | No       | `false`   | Disables Redis certificate verification. Test-only; never use on an untrusted network.                                                                                                                        |
+| `REDIS_CONNECT_TIMEOUT_MS`          | No       | `10000`   | Redis connection timeout.                                                                                                                                                                                     |
+| `PORT`                              | No       | `4000`    | Backend-api listen port inside the container.                                                                                                                                                                 |
+| `BACKEND_API_PORT`                  | No       | `4100`    | Host-only backend API port mapped to container `PORT`. Setup auto-picks another free port when `127.0.0.1:4100` is busy.                                                                                      |
+| `DEPLOYMENT_WORKER_CONCURRENCY`     | No       | `6`       | How many deployment jobs the provisioner worker runs in parallel. Higher values reduce queued time but increase image-pull and bootstrap pressure.                                                            |
+| `DEPLOYMENT_JOB_TIMEOUT_MS`         | No       | `900000`  | Timeout per deployment job, in milliseconds. Aliased by `PROVISION_TIMEOUT_MS` for legacy deployments.                                                                                                        |
+| `CLAWHUB_INSTALL_TIMEOUT_MS`        | No       | `300000`  | Timeout per ClawHub skill install job, in milliseconds.                                                                                                                                                       |
+| `BACKUP_WORKER_CONCURRENCY`         | No       | `2`       | Backup worker concurrency.                                                                                                                                                                                    |
+| `NORA_BACKUP_JOB_TIMEOUT_MS`        | No       | `1800000` | Backup job hard timeout. The backup worker enforces this via `Promise.race` because BullMQ v5 ignores `defaultJobOptions.timeout`.                                                                            |
+| `NORA_BACKUP_SCHEDULE_POLL_MS`      | No       | `60000`   | How often the backup worker checks for due scheduled backups.                                                                                                                                                 |
+| `AGENT_PROVISION_LOCK_TIMEOUT_MS`   | No       | `30000`   | Maximum wait for the shared per-agent provision lock used by replacement producers and destructive restore. On timeout Nora rejects the transition instead of racing an active worker.                        |
+| `ALERT_DELIVERY_ATTEMPTS`           | No       | `5`       | Number of retry attempts for an alert webhook delivery before the worker records a terminal failure on the rule. Clamped to `[1, 10]`.                                                                        |
+| `ALERT_DELIVERY_WORKER_CONCURRENCY` | No       | `5`       | Concurrency of the alert-deliveries worker.                                                                                                                                                                   |
+| `WORKER_HEALTH_PORT`                | No       | `4001`    | Provisioner worker health-check port.                                                                                                                                                                         |
+| `BACKUP_WORKER_HEALTH_PORT`         | No       | `4002`    | Backup worker health-check port.                                                                                                                                                                              |
 | `CLAWHUB_PRUNE_ORPHANED_SKILLS`     | No       | `false`   | When `true`, the provisioner reconciler uninstalls ClawHub skills present in a runtime container but not tracked in the agents table. Off by default — orphans are surfaced in the UI and removed explicitly. |
 
 ## Access and URL
 
 These variables control which nginx configuration is mounted, the listening port, and the public-facing base URL.
 
-| Variable            | Required | Default                 | Description                                                                                                                                                               |
-| ------------------- | -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `NGINX_CONFIG_FILE` | No       | `nginx.conf`            | Nginx configuration to mount. Use `nginx.conf` for local-only mode and `nginx.public.conf` for public-domain mode.                                                        |
-| `NGINX_HTTP_PORT`   | No       | `8080`                  | Host port mapped to the nginx HTTP listener. Use `8080` locally and `80` when deploying on a public domain. Setup auto-picks another free local port when `8080` is busy. |
-| `NEXTAUTH_URL`      | No       | `http://localhost:8080` | Canonical browser-facing URL of your Nora deployment. Set to your `https://` origin when exposing on a domain.                                                            |
-| `NORA_PUBLIC_URL`   | No       | —                       | Optional explicit public origin used by emails, OAuth callbacks, and audit links when it differs from `NEXTAUTH_URL`.                                                     |
-| `NORA_FORCE_SECURE_COOKIES` | No | —              | When set to `1`, forces the `Secure` flag on session cookies regardless of inbound scheme. Set for always-on-TLS public deployments behind a proxy/CDN that may strip `X-Forwarded-Proto`; leave empty for local HTTP.                              |
+| Variable                    | Required | Default                 | Description                                                                                                                                                                                                            |
+| --------------------------- | -------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NGINX_CONFIG_FILE`         | No       | `nginx.conf`            | Nginx configuration to mount. Use `nginx.conf` for local-only mode and `nginx.public.conf` for public-domain mode.                                                                                                     |
+| `NGINX_HTTP_PORT`           | No       | `8080`                  | Host port mapped to the nginx HTTP listener. Use `8080` locally and `80` when deploying on a public domain. Setup auto-picks another free local port when `8080` is busy.                                              |
+| `NEXTAUTH_URL`              | No       | `http://localhost:8080` | Canonical browser-facing URL of your Nora deployment. Set to your `https://` origin when exposing on a domain.                                                                                                         |
+| `NORA_PUBLIC_URL`           | No       | —                       | Optional explicit public origin used by emails, OAuth callbacks, and audit links when it differs from `NEXTAUTH_URL`.                                                                                                  |
+| `NORA_FORCE_SECURE_COOKIES` | No       | —                       | When set to `1`, forces the `Secure` flag on session cookies regardless of inbound scheme. Set for always-on-TLS public deployments behind a proxy/CDN that may strip `X-Forwarded-Proto`; leave empty for local HTTP. |
+
+## API request rate limits
+
+App-wide per-IP abuse protection sits in front of every route: a generous global budget for all
+traffic plus a tighter budget for state-changing methods (POST/PUT/PATCH/DELETE). Overrides must be
+positive integers; invalid values fall back to the secure defaults below. Raise them only where many
+requests legitimately share one source IP — for example the Playwright E2E suite, which drives the
+whole API from a single localhost address and otherwise self-throttles.
+
+| Variable                       | Required | Default  | Description                                                              |
+| ------------------------------ | -------- | -------- | ------------------------------------------------------------------------ |
+| `GLOBAL_RATE_LIMIT_MAX`        | No       | `1000`   | All requests allowed per IP within the global window.                    |
+| `GLOBAL_RATE_LIMIT_WINDOW_MS`  | No       | `900000` | Global rate-limit window in milliseconds (15 minutes).                   |
+| `MUTATION_RATE_LIMIT_MAX`      | No       | `60`     | State-changing requests (POST/PUT/PATCH/DELETE) allowed per IP/window.   |
+| `MUTATION_RATE_LIMIT_WINDOW_MS`| No       | `60000`  | Mutation rate-limit window in milliseconds (1 minute).                   |
+
+## Login abuse protection
+
+Password and OAuth login share one per-IP rate-limit budget. Overrides must be positive integers;
+invalid values fall back to the secure defaults below.
+
+| Variable                    | Required | Default  | Description                                                       |
+| --------------------------- | -------- | -------- | ----------------------------------------------------------------- |
+| `AUTH_RATE_LIMIT_MAX`       | No       | `20`     | Combined password and OAuth login attempts allowed per IP/window. |
+| `AUTH_RATE_LIMIT_WINDOW_MS` | No       | `900000` | Login rate-limit window in milliseconds (15 minutes).             |
 
 ## OAuth
 
-OAuth login is disabled by default. Set `OAUTH_LOGIN_ENABLED=true` and `NEXT_PUBLIC_OAUTH_LOGIN_ENABLED=true` along with provider credentials to enable it. Provider verification must be completed in the relevant developer consoles before these values take effect.
+OAuth login is disabled by default. Set `OAUTH_LOGIN_ENABLED=true` along with provider credentials to enable it. Provider verification must be completed in the relevant developer consoles before these values take effect.
 
-| Variable                          | Required | Default | Description                                                                        |
-| --------------------------------- | -------- | ------- | ---------------------------------------------------------------------------------- |
-| `OAUTH_LOGIN_ENABLED`             | No       | `false` | Set to `true` to activate OAuth login on the backend.                              |
-| `NEXT_PUBLIC_OAUTH_LOGIN_ENABLED` | No       | `false` | Set to `true` to display OAuth login buttons in the frontends.                     |
-| `GOOGLE_CLIENT_ID`                | No       | —       | OAuth 2.0 client ID from Google Cloud Console.                                     |
-| `GOOGLE_CLIENT_SECRET`            | No       | —       | OAuth 2.0 client secret from Google Cloud Console.                                 |
-| `GITHUB_CLIENT_ID`                | No       | —       | OAuth App client ID from GitHub Developer Settings.                                |
-| `GITHUB_CLIENT_SECRET`            | No       | —       | OAuth App client secret from GitHub Developer Settings.                            |
-| `NEXTAUTH_SECRET`                 | No       | —       | Secret used by NextAuth.js for session encryption. Required when OAuth is enabled. |
+| Variable               | Required | Default | Description                                                                        |
+| ---------------------- | -------- | ------- | ---------------------------------------------------------------------------------- |
+| `OAUTH_LOGIN_ENABLED`  | No       | `false` | Set to `true` to activate OAuth login.                                             |
+| `GOOGLE_CLIENT_ID`     | No       | —       | OAuth 2.0 client ID from Google Cloud Console.                                     |
+| `GOOGLE_CLIENT_SECRET` | No       | —       | OAuth 2.0 client secret from Google Cloud Console.                                 |
+| `GITHUB_CLIENT_ID`     | No       | —       | OAuth App client ID from GitHub Developer Settings.                                |
+| `GITHUB_CLIENT_SECRET` | No       | —       | OAuth App client secret from GitHub Developer Settings.                            |
+| `NEXTAUTH_SECRET`      | No       | —       | Secret used by NextAuth.js for session encryption. Required when OAuth is enabled. |
 
 ## Public signup abuse protection
 
-Signup remains public, but Nora can bound signup spikes with dedicated app-level rate limits and an optional bot challenge.
+Signup remains public, but Nora bounds signup spikes with dedicated app-level rate limits and a runtime bot challenge. Self-hosted operators may explicitly opt out; hosted PaaS signup fails closed until Turnstile or reCAPTCHA is fully configured.
 
-| Variable                                     | Required | Default    | Description                                                                                       |
-| -------------------------------------------- | -------- | ---------- | ------------------------------------------------------------------------------------------------- |
-| `SIGNUP_RATE_LIMIT_BURST_MAX`                | No       | `5`        | Maximum signup attempts per IP within the burst window.                                           |
-| `SIGNUP_RATE_LIMIT_BURST_WINDOW_MS`          | No       | `600000`   | Burst signup window in milliseconds.                                                              |
-| `SIGNUP_RATE_LIMIT_DAILY_MAX`                | No       | `20`       | Maximum signup attempts per IP within the daily window.                                           |
-| `SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS`          | No       | `86400000` | Sustained signup window in milliseconds.                                                          |
-| `SIGNUP_BOT_PROTECTION_PROVIDER`             | No       | `none`     | Backend signup challenge provider. One of `none`, `turnstile`, or `recaptcha`.                    |
-| `NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER` | No       | `none`     | Frontend signup challenge provider. Match the backend provider when challenge protection is used. |
-| `SIGNUP_TURNSTILE_SECRET`                    | No       | —          | Cloudflare Turnstile secret key. Required when the signup provider is `turnstile`.                |
-| `NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY`      | No       | —          | Cloudflare Turnstile public site key rendered by the signup page.                                 |
-| `SIGNUP_RECAPTCHA_SECRET`                    | No       | —          | Google reCAPTCHA secret key. Required when the signup provider is `recaptcha`.                    |
-| `NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY`      | No       | —          | Google reCAPTCHA public site key rendered by the signup page.                                     |
+| Variable                            | Required  | Default    | Description                                                                                                                                              |
+| ----------------------------------- | --------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SIGNUP_RATE_LIMIT_BURST_MAX`       | No        | `5`        | Maximum signup attempts per IP within the burst window.                                                                                                  |
+| `SIGNUP_RATE_LIMIT_BURST_WINDOW_MS` | No        | `600000`   | Burst signup window in milliseconds.                                                                                                                     |
+| `SIGNUP_RATE_LIMIT_DAILY_MAX`       | No        | `20`       | Maximum signup attempts per IP within the daily window.                                                                                                  |
+| `SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS` | No        | `86400000` | Sustained signup window in milliseconds.                                                                                                                 |
+| `SIGNUP_BOT_PROTECTION_PROVIDER`    | PaaS: Yes | `none`     | Runtime challenge provider: `none`, `turnstile`, or `recaptcha`. Hosted PaaS signup fails closed when this is `none`; self-hosted operators may opt out. |
+| `SIGNUP_TURNSTILE_SITE_KEY`         | No        | —          | Cloudflare Turnstile public site key. Required with the Turnstile provider and exposed through bootstrap status.                                         |
+| `SIGNUP_TURNSTILE_SECRET`           | No        | —          | Cloudflare Turnstile verification secret. Required with the Turnstile provider and retained only by the backend.                                         |
+| `SIGNUP_RECAPTCHA_SITE_KEY`         | No        | —          | Google reCAPTCHA public site key. Required with the reCAPTCHA provider and exposed through bootstrap status.                                             |
+| `SIGNUP_RECAPTCHA_SECRET`           | No        | —          | Google reCAPTCHA verification secret. Required with the reCAPTCHA provider and retained only by the backend.                                             |
+
+The signup page reads this configuration at runtime from `GET /api/auth/bootstrap-status`, so published frontend images do not need provider-specific build arguments. Existing `NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER`, `NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY`, and `NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY` values remain accepted as deprecated runtime aliases; setup migrates their values into the canonical names above.
+
+<Warning>
+  The reference production workflow refuses a `PLATFORM_MODE=paas` deployment unless the selected
+  provider has both its public site key and server secret. This preflight runs before release
+  metadata, secret materialization, image builds, or Compose replacement so a release cannot deploy
+  public signup into a known unavailable state.
+</Warning>
 
 ## Release tracking and upgrades
 
@@ -144,11 +234,13 @@ Drives the admin "release available" banner and the one-click upgrade runner. Se
 | `NORA_ENV_FILE`                             | No       | `.env`                                    | Deploy env file passed to Docker Compose during one-click upgrades.                                                                          |
 | `NORA_UPGRADE_COMPOSE_FILES`                | No       | auto-detected                             | Colon-separated compose file list used by the upgrade runner. Leave blank to reuse Docker Compose labels from the running backend container. |
 | `NORA_UPGRADE_PUBLIC_HEALTH_URL`            | No       | —                                         | Optional public health URL checked after the stack rebuilds, for example `https://stage.example.com/api/health`.                             |
-| `NORA_UPGRADE_HEALTHCHECK_ATTEMPTS`         | No       | `40`                                      | Number of backend health attempts before a one-click upgrade is marked failed.                                                               |
-| `NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS` | No       | `3`                                       | Seconds to wait between one-click upgrade health checks.                                                                                     |
+| `NORA_UPGRADE_HEALTHCHECK_ATTEMPTS`         | No       | `221`                                     | Attempts for setup and upgrade probes. At the 3-second default, attempt 221 runs after 660 seconds; maximum window is 3900 seconds.          |
+| `NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS` | No       | `3`                                       | Seconds between those probes. Positive integers only; the combined first-to-final window must be at most 3900 seconds.                       |
 | `NORA_INSTALL_METHOD`                       | No       | `source`                                  | Install method shown in admin UI. One of `source`, `docker_image`, `custom`.                                                                 |
 | `NORA_MANUAL_UPGRADE_COMMAND`               | No       | `./setup.sh --update`                     | Command displayed when auto-upgrade is disabled.                                                                                             |
 | `NORA_MANUAL_UPGRADE_STEPS`                 | No       | —                                         | Optional override for the displayed manual-upgrade steps.                                                                                    |
+
+The former built-in `40` attempts / `3` seconds pair is treated as a legacy default and upgraded to `221` / `3`; other valid custom pairs are preserved.
 
 ## System banner
 
@@ -158,20 +250,20 @@ Drives the admin "release available" banner and the one-click upgrade runner. Se
 
 ## Platform mode
 
-| Variable        | Required | Default      | Description                                                                                                                                                                                                                             |
-| --------------- | -------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PLATFORM_MODE` | No       | `selfhosted` | Operating mode. `selfhosted` uses operator-defined resource limits with no billing. `paas` enables Stripe billing and locks resources to subscription plan tiers. See [Platform modes](/configuration/platform-modes) for full details. |
+| Variable        | Required | Default      | Description                                                                                                                                                                                                                                                                                                             |
+| --------------- | -------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PLATFORM_MODE` | No       | `selfhosted` | Operating mode. `selfhosted` uses operator-defined request limits with no billing. `paas` enables Stripe billing; plan tiers control agent-count and managed-backup entitlements while per-agent compute uses operator-managed platform defaults. See [Platform modes](/configuration/platform-modes) for full details. |
 
 ## Self-hosted resource limits
 
 These variables are only read when `PLATFORM_MODE=selfhosted`. They define the maximum resources any single user can request when deploying an agent.
 
-| Variable      | Required | Default | Description                                                            |
-| ------------- | -------- | ------- | ---------------------------------------------------------------------- |
-| `MAX_VCPU`    | No       | `16`    | Maximum vCPUs a user may allocate to a single agent.                   |
-| `MAX_RAM_MB`  | No       | `32768` | Maximum RAM in megabytes a user may allocate to a single agent.        |
-| `MAX_DISK_GB` | No       | `500`   | Maximum disk space in gigabytes a user may allocate to a single agent. |
-| `MAX_AGENTS`  | No       | `50`    | Maximum number of agents a single user may deploy.                     |
+| Variable      | Required | Default | Description                                                                           |
+| ------------- | -------- | ------- | ------------------------------------------------------------------------------------- |
+| `MAX_VCPU`    | No       | `16`    | Maximum vCPUs a user may allocate to a single agent.                                  |
+| `MAX_RAM_MB`  | No       | `32768` | Maximum RAM in megabytes a user may allocate to a single agent.                       |
+| `MAX_DISK_GB` | No       | `500`   | Maximum requested `disk_gb`; actual storage enforcement depends on the deploy target. |
+| `MAX_AGENTS`  | No       | `50`    | Maximum number of agents a single user may deploy.                                    |
 
 ## Billing / Stripe
 
@@ -189,11 +281,12 @@ These variables are only read when `PLATFORM_MODE=paas`. See [Platform modes](/c
 
 Runtime selection is three-dimensional: **runtime family × deploy target × sandbox profile**. Each enabled-list variable accepts a comma-separated list. The first id in each list is the default for new deployments. See [Provisioner backends](/configuration/provisioner-backends) for details.
 
-| Variable                   | Required | Default    | Description                                                                                                                                                        |
-| -------------------------- | -------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ENABLED_RUNTIME_FAMILIES` | No       | `openclaw` | Runtime families enabled. Supported ids: `openclaw`, `hermes`.                                                                                                     |
-| `ENABLED_BACKENDS`         | No       | `docker`   | Env-configured deploy targets enabled. Use `docker` for supported onboarding. `proxmox` is known but release-blocked. Kubernetes clusters are registered in Admin. |
-| `ENABLED_SANDBOX_PROFILES` | No       | `standard` | Sandbox profiles enabled. Supported ids: `standard`, `nemoclaw`.                                                                                                   |
+| Variable                   | Required | Default     | Description                                                                                                                                                                                          |
+| -------------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ENABLED_RUNTIME_FAMILIES` | No       | `openclaw`  | Runtime families enabled. Supported ids: `openclaw`, `hermes`.                                                                                                                                       |
+| `ENABLED_BACKENDS`         | No       | `docker`    | Env-configured deploy targets enabled. `proxmox` is opt-in and experimental. Kubernetes clusters are registered in Admin.                                                                            |
+| `ENABLED_SANDBOX_PROFILES` | No       | `standard`  | Sandbox profiles enabled. Supported ids: `standard`, `nemoclaw`.                                                                                                                                     |
+| `DOCKER_AGENT_BIND_IP`     | No       | `127.0.0.1` | Host address used for Docker-published agent gateway/runtime ports. Keep loopback unless trusted remote clients must connect; protect any wider bind with a firewall or authenticated reverse proxy. |
 
 ## Kubernetes registry and Compose mount helpers
 
@@ -210,6 +303,15 @@ For more than one cluster, put multiple kubeconfig files under `NORA_KUBECONFIGS
 
 Admin-registered encrypted kubeconfigs require `ENCRYPTION_KEY` because Nora stores pasted kubeconfig content encrypted at rest.
 
+## Docker agent published ports
+
+Docker and remote-Docker agents reserve their published gateway ports in PostgreSQL. The configurable subrange must remain inside `19000-19999`, which is already allowed by the gateway proxy's default SSRF guard. Local Docker deployments skip ports published by running containers and retry a bounded number of bind conflicts, including conflicts caused by non-Docker listeners.
+
+| Variable                      | Required | Default | Description                                                                                    |
+| ----------------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `DOCKER_AGENT_PORT_RANGE_MIN` | No       | `19000` | Lowest published gateway port. Must be between `19000` and `19999`.                            |
+| `DOCKER_AGENT_PORT_RANGE_MAX` | No       | `19999` | Highest published gateway port. Must be between `19000` and `19999` and not below the minimum. |
+
 ## Gateway proxy SSRF guard
 
 Defaults allow OpenClaw's internal gateway port, Docker-published 19000-19999, and Kubernetes NodePort 30000-32767. Override only if you publish gateways on non-default ports or hosts.
@@ -219,51 +321,80 @@ Defaults allow OpenClaw's internal gateway port, Docker-published 19000-19999, a
 | `NORA_GATEWAY_PROXY_ALLOWED_PORTS` | No       | —       | Comma-separated list of additional ports the gateway proxy may target.     |
 | `NORA_GATEWAY_PROXY_ALLOWED_HOSTS` | No       | —       | Comma-separated list of additional hostnames the gateway proxy may target. |
 
+## Remote Docker safety and authorization
+
+Active Remote Docker gateway, log, and terminal streams periodically re-check that the agent owner
+still owns the host or has an `editor`, `admin`, or `owner` workspace grant. Lower values reduce the
+window before those streams close after revocation, at the cost of more authorization queries.
+Remote-host create, edit, Test, SSH-pin reset, delete, share, and unshare operations are serialized
+per host id so concurrent ownership, grant, trust, or credential mutations cannot race across
+backend replicas.
+
+| Variable                               | Required | Default | Description                                                                                                                                          |
+| -------------------------------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `REMOTE_HOST_AUTH_RECHECK_MS`          | No       | `1000`  | Grant recheck interval in milliseconds for active gateway, log, and terminal streams. Minimum 250.                                                   |
+| `REMOTE_HOST_MUTATION_LOCK_TIMEOUT_MS` | No       | `15000` | Maximum wait for another create/edit/Test/pin-reset/delete/share/unshare operation on the same host id. Timeout rejects the competing request (409). |
+
 ## Proxmox
 
-Proxmox is planned but not supported in the current release. These values are retained for adapter development and future validation; setting them does not unblock Proxmox runtime deployment.
+Proxmox is an opt-in experimental LXC target for standard OpenClaw and prepared Hermes images. Keep Docker enabled while validating it, use verified API TLS and pinned SSH host keys, and run the real-host smoke before production use. NemoClaw on Proxmox remains blocked.
 
-| Variable                       | Required | Default                                                    | Description                                                                      |
-| ------------------------------ | -------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `PROXMOX_API_URL`              | No       | —                                                          | Full URL to the Proxmox API, for example `https://proxmox.local:8006/api2/json`. |
-| `PROXMOX_TOKEN_ID`             | No       | —                                                          | Proxmox API token ID in `user@pam!tokenname` format.                             |
-| `PROXMOX_TOKEN_SECRET`         | No       | —                                                          | Secret associated with the Proxmox API token.                                    |
-| `PROXMOX_NODE`                 | No       | `pve`                                                      | Name of the Proxmox node where VMs are created.                                  |
-| `PROXMOX_TEMPLATE`             | No       | `local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst` | Default LXC template used for OpenClaw agents.                                   |
-| `PROXMOX_HERMES_TEMPLATE`      | No       | —                                                          | Override template used when deploying Hermes agents on Proxmox.                  |
-| `PROXMOX_NEMOCLAW_TEMPLATE`    | No       | —                                                          | Override template used when deploying NemoClaw-sandboxed agents on Proxmox.      |
-| `PROXMOX_ROOTFS_STORAGE`       | No       | `local-lvm`                                                | Proxmox storage pool used for the rootfs disk.                                   |
-| `PROXMOX_BRIDGE`               | No       | `vmbr0`                                                    | Network bridge attached to created LXCs/VMs.                                     |
-| `PROXMOX_SSH_HOST`             | No       | —                                                          | SSH host used by Nora to run privileged commands on the Proxmox node.            |
-| `PROXMOX_SSH_USER`             | No       | `root`                                                     | SSH user.                                                                        |
-| `PROXMOX_SSH_PRIVATE_KEY_PATH` | No       | —                                                          | Path to the private key file mounted into backend-api / worker-provisioner.      |
-| `PROXMOX_SSH_PASSWORD`         | No       | —                                                          | Password fallback when key auth is not configured.                               |
+| Variable                                   | Required            | Default                                                    | Description                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------ | ------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PROXMOX_API_URL`                          | With target         | —                                                          | HTTPS Proxmox API origin or URL ending in `/api2/json`.                                                                                                                                                                                                                                                           |
+| `PROXMOX_TOKEN_ID`                         | With target         | —                                                          | API token ID in `user@realm!tokenname` format.                                                                                                                                                                                                                                                                    |
+| `PROXMOX_TOKEN_SECRET`                     | With target         | —                                                          | Secret associated with the API token.                                                                                                                                                                                                                                                                             |
+| `PROXMOX_VERIFY_TLS`                       | No                  | `true`                                                     | Verifies the Proxmox API certificate. `false` is test-only.                                                                                                                                                                                                                                                       |
+| `PROXMOX_CA_CERT` / `PROXMOX_CA_CERT_PATH` | No                  | —                                                          | Inline or mounted private CA certificate.                                                                                                                                                                                                                                                                         |
+| `PROXMOX_ALLOW_INSECURE_HTTP`              | No                  | `false`                                                    | Test-only opt-in for an isolated HTTP fixture.                                                                                                                                                                                                                                                                    |
+| `PROXMOX_NODE`                             | No                  | `pve`                                                      | Proxmox node where LXCs are created.                                                                                                                                                                                                                                                                              |
+| `PROXMOX_TEMPLATE`                         | No                  | `local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst` | LXC template used for OpenClaw agents.                                                                                                                                                                                                                                                                            |
+| `PROXMOX_HERMES_TEMPLATE`                  | For Hermes          | —                                                          | Prepared LXC template containing the Hermes executable and `hermes` user.                                                                                                                                                                                                                                         |
+| `PROXMOX_ROOTFS_STORAGE`                   | No                  | `local-lvm`                                                | Storage pool used for the rootfs.                                                                                                                                                                                                                                                                                 |
+| `PROXMOX_BRIDGE`                           | No                  | `vmbr0`                                                    | DHCP-capable network bridge attached to created LXCs.                                                                                                                                                                                                                                                             |
+| `PROXMOX_SSH_HOST` / `PROXMOX_SSH_USER`    | With target         | — / `root`                                                 | SSH endpoint used to run `pct`.                                                                                                                                                                                                                                                                                   |
+| `PROXMOX_SSH_PORT`                         | No                  | `22`                                                       | SSH port.                                                                                                                                                                                                                                                                                                         |
+| `PROXMOX_SSH_PRIVATE_KEY` / `_PATH`        | One SSH auth method | —                                                          | Inline or mounted SSH private key.                                                                                                                                                                                                                                                                                |
+| `PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE`       | No                  | —                                                          | Passphrase for the configured private key.                                                                                                                                                                                                                                                                        |
+| `PROXMOX_SSH_PASSWORD`                     | One SSH auth method | —                                                          | Password fallback when key auth is not configured.                                                                                                                                                                                                                                                                |
+| `PROXMOX_SSH_HOST_FINGERPRINT`             | With target         | —                                                          | Trusted OpenSSH SHA-256 host-key fingerprint.                                                                                                                                                                                                                                                                     |
+| `PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY`     | No                  | `false`                                                    | Test-only bypass for pinned host verification.                                                                                                                                                                                                                                                                    |
+| `PROXMOX_PCT_COMMAND` / `PROXMOX_SUDO`     | No                  | `pct` / auto                                               | `PROXMOX_PCT_COMMAND` accepts one command name or absolute executable path with no arguments. `PROXMOX_SUDO` accepts only `sudo -n` or an absolute `sudo` path followed by `-n`; other values fail preflight.                                                                                                     |
+| `PROXMOX_OFFLINE_STAGE_COMMAND`            | Non-root SSH only   | —                                                          | One absolute path to the operator-installed strict stopped-LXC staging helper. Missing or unsafe values keep a non-root target unavailable; arguments, traversal, and shell syntax are rejected. See the [helper contract](/configuration/provisioner-backends/proxmox#non-root-offline-staging-helper-contract). |
+| `PROXMOX_NODE_MAJOR`                       | No                  | `24`                                                       | Minimum Node.js major installed in stock OpenClaw templates.                                                                                                                                                                                                                                                      |
+| `PROXMOX_OPENCLAW_PACKAGE`                 | No                  | `openclaw@2026.6.11`                                       | Package spec installed for OpenClaw. Override only after validating Gateway and activation compatibility.                                                                                                                                                                                                         |
+| `PROXMOX_HERMES_BIN`                       | No                  | `/opt/hermes/.venv/bin/hermes`                             | Hermes executable in the prepared template.                                                                                                                                                                                                                                                                       |
+| `PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD` | No                  | `false`                                                    | Binds the Hermes dashboard to `0.0.0.0` instead of `127.0.0.1`. The dashboard now always requires authentication (Hermes basic-auth provider; Nora injects a per-agent credential), so this controls only the bind address — not authentication. Leave false unless the port is separately protected.              |
 
 ## NemoClaw / NVIDIA
 
 Read when `ENABLED_SANDBOX_PROFILES` includes `nemoclaw`.
 
-| Variable                 | Required | Default                             | Description                                                                                                  |
-| ------------------------ | -------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `NVIDIA_API_KEY`         | No       | —                                   | API key from [build.nvidia.com](https://build.nvidia.com) for accessing NVIDIA-hosted Nemotron models.       |
-| `NEMOCLAW_DEFAULT_MODEL` | No       | `nvidia/nemotron-3-super-120b-a12b` | Default Nemotron model used by NemoClaw agents.                                                              |
-| `NEMOCLAW_SANDBOX_IMAGE` | No       | `nora-nemoclaw-agent:local`         | Container image for NemoClaw sandbox runtime. `setup.sh` builds this automatically when NemoClaw is enabled. |
+| Variable                 | Required | Default                                          | Description                                                                                                                                                                                                                        |
+| ------------------------ | -------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NVIDIA_API_KEY`         | No       | —                                                | API key from [build.nvidia.com](https://build.nvidia.com) for accessing NVIDIA-hosted Nemotron models.                                                                                                                             |
+| `NEMOCLAW_DEFAULT_MODEL` | No       | `nvidia/nemotron-3-super-120b-a12b`              | Default Nemotron model used by NemoClaw agents.                                                                                                                                                                                    |
+| `NEMOCLAW_SANDBOX_IMAGE` | No       | `ghcr.io/solomon2773/nora-nemoclaw-agent:latest` | Container image for NemoClaw. Mutable registry tags refresh before Docker/Remote Docker create; normal local setup/deploy rebuilds Nora's exact local tag, while custom refs and remote/Kubernetes preloads remain operator-owned. |
 
 ## OpenClaw runtime
 
 These variables tune the OpenClaw runtime image and gateway. Most operators leave them at their defaults; override when running a forked OpenClaw build or pinning to a specific image.
 
-| Variable                   | Required | Default                  | Description                                                                              |
-| -------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------- |
-| `OPENCLAW_DOCKER_IMAGE`    | No       | OpenClaw default         | Container image used for OpenClaw agents.                                                |
-| `OPENCLAW_STANDARD_IMAGE`  | No       | OpenClaw default         | Image used specifically for the `standard` sandbox profile.                              |
-| `OPENCLAW_GATEWAY_PORT`    | No       | `18789`                  | Internal port the OpenClaw gateway listens on inside the agent container.                |
-| `OPENCLAW_GATEWAY_TOKEN`   | No       | auto-generated per agent | Static gateway token override. Most deployments rely on the per-agent token Nora issues. |
-| `OPENCLAW_DOCKER_PACKAGE`  | No       | OpenClaw default         | Override package name used when building images.                                         |
-| `OPENCLAW_TSX_BIN`         | No       | OpenClaw default         | Path to the `tsx` runner inside the OpenClaw image.                                      |
-| `OPENCLAW_TSX_PACKAGE`     | No       | OpenClaw default         | Override `tsx` package name.                                                             |
-| `OPENCLAW_CLI_PATH`        | No       | OpenClaw default         | Path to the OpenClaw CLI inside the image.                                               |
-| `OPENCLAW_DISABLE_BONJOUR` | No       | `false`                  | Disable Bonjour/mDNS inside OpenClaw containers when not needed.                         |
+| Variable                   | Required | Default                  | Description                                                                                |
+| -------------------------- | -------- | ------------------------ | ------------------------------------------------------------------------------------------ |
+| `OPENCLAW_DOCKER_IMAGE`    | No       | OpenClaw default         | Container image used for OpenClaw agents.                                                  |
+| `OPENCLAW_STANDARD_IMAGE`  | No       | OpenClaw default         | Image used specifically for the `standard` sandbox profile.                                |
+| `OPENCLAW_GATEWAY_PORT`    | No       | `18789`                  | Internal port the OpenClaw gateway listens on inside the agent container.                  |
+| `OPENCLAW_GATEWAY_TOKEN`   | No       | auto-generated per agent | Static gateway token override. Most deployments rely on the per-agent token Nora issues.   |
+| `OPENCLAW_DOCKER_PACKAGE`  | No       | `openclaw@2026.6.11`     | Validated package spec used across Docker, Kubernetes, and as the Proxmox fallback.        |
+| `OPENCLAW_TSX_BIN`         | No       | OpenClaw default         | Path to the `tsx` runner inside the OpenClaw image.                                        |
+| `OPENCLAW_TSX_PACKAGE`     | No       | OpenClaw default         | Override `tsx` package name.                                                               |
+| `OPENCLAW_CLI_PATH`        | No       | OpenClaw default         | Path to the OpenClaw CLI inside the image.                                                 |
+| `OPENCLAW_DISABLE_BONJOUR` | No       | `true`                   | Disable Bonjour/mDNS inside managed containers; set `0` only for deliberate LAN discovery. |
+
+When `OPENCLAW_DOCKER_PACKAGE` is overridden for NemoClaw, `NEMOCLAW_SANDBOX_IMAGE` must reference a
+prebuilt image containing the same exact OpenClaw version. The non-root NemoClaw runtime fails
+closed on a version mismatch instead of replacing the global package inside the sandbox.
 
 ## Hermes runtime
 
@@ -373,10 +504,10 @@ Optional; only relevant when nginx terminates TLS directly inside the stack.
 
 Optional privacy-light analytics for the public marketing site, powered by [Plausible](https://plausible.io). Off by default — self-hosted deployments ship zero tracking unless `NEXT_PUBLIC_ANALYTICS_DOMAIN` is set at build time.
 
-| Variable                       | Required | Default                              | Description                                                                                |
-| ------------------------------ | -------- | ------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `NEXT_PUBLIC_ANALYTICS_DOMAIN` | No       | —                                    | Plausible domain for the public marketing site. Empty (default) ships zero tracking.       |
-| `NEXT_PUBLIC_ANALYTICS_SRC`    | No       | `https://plausible.io/js/script.js`  | Plausible script URL; point at a self-hosted Plausible instance if you run one.             |
+| Variable                       | Required | Default                             | Description                                                                          |
+| ------------------------------ | -------- | ----------------------------------- | ------------------------------------------------------------------------------------ |
+| `NEXT_PUBLIC_ANALYTICS_DOMAIN` | No       | —                                   | Plausible domain for the public marketing site. Empty (default) ships zero tracking. |
+| `NEXT_PUBLIC_ANALYTICS_SRC`    | No       | `https://plausible.io/js/script.js` | Plausible script URL; point at a self-hosted Plausible instance if you run one.      |
 
 ## Cost reporting
 
@@ -399,9 +530,9 @@ Use `input_per_1k` and `output_per_1k` when Nora records prompt/completion token
 
 These variables are read by older platform-settings code paths for backward compatibility. New deployments should use the `NORA_BACKUP_S3_*` family above instead.
 
-| Variable                | Required | Default | Description                         |
-| ----------------------- | -------- | ------- | ----------------------------------- |
-| `AWS_S3_BUCKET`         | No       | —       | Legacy S3 bucket alias for backups. |
-| `AWS_ACCESS_KEY_ID`     | No       | —       | Legacy AWS access key ID.           |
-| `AWS_SECRET_ACCESS_KEY` | No       | —       | Legacy AWS secret access key.       |
+| Variable                | Required | Default | Description                            |
+| ----------------------- | -------- | ------- | -------------------------------------- |
+| `AWS_S3_BUCKET`         | No       | —       | Legacy S3 bucket alias for backups.    |
+| `AWS_ACCESS_KEY_ID`     | No       | —       | Legacy AWS access key ID.              |
+| `AWS_SECRET_ACCESS_KEY` | No       | —       | Legacy AWS secret access key.          |
 | `AWS_SESSION_TOKEN`     | No       | —       | Legacy optional AWS STS session token. |

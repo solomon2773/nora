@@ -4,19 +4,45 @@ import { TriangleAlert } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useI18n } from "../../lib/i18n";
 
+function readLocalStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // The authenticated cookie flow and shell state remain usable when
+    // storage is disabled or quota-limited.
+  }
+}
+
+function removeLocalStorage(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // A blocked legacy-token store is equivalent to having no fallback token.
+  }
+}
+
 export default function Layout({ children }) {
   const { loginPath, t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
   const [systemBanner, setSystemBanner] = useState(null);
+  const [platformMode, setPlatformMode] = useState<string | null>(null);
 
   useEffect(() => {
     // Ask the server whether we're authenticated. The HttpOnly nora_auth
     // cookie (if present) rides along automatically; any legacy localStorage
     // token is sent as a Bearer fallback for sessions predating the cookie
     // migration. If neither works we bounce to login.
-    const legacy = localStorage.getItem("token");
+    const legacy = readLocalStorage("token");
     const headers: Record<string, string> = {};
     if (legacy) headers["Authorization"] = `Bearer ${legacy}`;
     fetch("/api/auth/me", { credentials: "include", headers })
@@ -24,7 +50,7 @@ export default function Layout({ children }) {
         if (res.ok) {
           setAuthChecked(true);
         } else {
-          localStorage.removeItem("token");
+          removeLocalStorage("token");
           window.location.href = loginPath;
         }
       })
@@ -32,7 +58,7 @@ export default function Layout({ children }) {
         window.location.href = loginPath;
       });
     // Restore collapsed state
-    const saved = localStorage.getItem("sidebar-collapsed");
+    const saved = readLocalStorage("sidebar-collapsed");
     if (saved === "true") setSidebarCollapsed(true);
   }, [loginPath]);
 
@@ -44,18 +70,25 @@ export default function Layout({ children }) {
     async function loadSystemBanner() {
       try {
         const response = await fetch("/api/config/platform");
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (active) setPlatformMode(null);
+          return;
+        }
 
         const payload = await response.json().catch(() => ({}));
         if (active) {
           setSystemBanner(payload?.systemBanner || null);
+          setPlatformMode(
+            typeof payload?.mode === "string" ? payload.mode.trim().toLowerCase() : null,
+          );
         }
       } catch {
-        // Leave the operator shell usable if platform chrome metadata is unavailable.
+        // Leave the shell usable while self-hosted-only navigation fails closed.
+        if (active) setPlatformMode(null);
       }
     }
 
-    loadSystemBanner();
+    void loadSystemBanner();
     const intervalId = setInterval(loadSystemBanner, 60000);
 
     return () => {
@@ -67,7 +100,7 @@ export default function Layout({ children }) {
   const toggleCollapsed = () => {
     const next = !sidebarCollapsed;
     setSidebarCollapsed(next);
-    localStorage.setItem("sidebar-collapsed", String(next));
+    writeLocalStorage("sidebar-collapsed", String(next));
   };
   const showSystemBanner = Boolean(
     systemBanner?.active && systemBanner?.title && systemBanner?.message,
@@ -80,18 +113,28 @@ export default function Layout({ children }) {
     <div className="flex h-screen overflow-hidden bg-[#eef4fb] selection:bg-brand-cyan/25">
       {/* Sidebar - Desktop (collapsible) */}
       <div className="hidden lg:flex lg:flex-shrink-0 transition-all duration-300">
-        <Sidebar collapsed={sidebarCollapsed} onToggleCollapse={toggleCollapsed} />
+        <Sidebar
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={toggleCollapsed}
+          platformMode={platformMode}
+        />
       </div>
 
       {/* Sidebar - Mobile/Tablet Overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
-          <div
+          <button
+            type="button"
+            aria-label={t("Close navigation menu")}
             className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm"
             onClick={() => setSidebarOpen(false)}
-          ></div>
+          />
           <div className="relative flex w-64 flex-col bg-brand-ink animate-in slide-in-from-left duration-300">
-            <Sidebar collapsed={false} onClose={() => setSidebarOpen(false)} />
+            <Sidebar
+              collapsed={false}
+              onClose={() => setSidebarOpen(false)}
+              platformMode={platformMode}
+            />
           </div>
         </div>
       )}

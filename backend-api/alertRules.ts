@@ -21,6 +21,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // pathological event payload can't blow up the queue.
 const MAX_QUEUED_METADATA_BYTES = 8 * 1024;
 
+// ── Validation and matching ─────────────────────────────────────
+
 function normalizeName(value) {
   const s = typeof value === "string" ? value.trim() : "";
   if (!s) {
@@ -46,6 +48,13 @@ function normalizePattern(value) {
   return s;
 }
 
+/**
+ * Validate and normalize persisted delivery channels. Webhook URLs receive a
+ * lexical SSRF check here and are resolved again immediately before delivery.
+ *
+ * @param {Array} value - Requested webhook and email channel definitions.
+ * @returns {Array} Normalized channel definitions safe to persist.
+ */
 function normalizeChannels(value) {
   if (!Array.isArray(value) || value.length === 0) {
     const error = new Error("at least one channel is required");
@@ -159,6 +168,8 @@ function serializeRule(row) {
   };
 }
 
+// ── Rule persistence ────────────────────────────────────────────
+
 async function listRules(workspaceId) {
   const result = await db.query(
     `SELECT id, workspace_id, created_by, name, event_pattern, channels, enabled,
@@ -256,9 +267,14 @@ async function recordFiring(ruleId, error) {
     });
 }
 
-// Called by the alert-deliveries worker when a webhook job exhausts its
-// retries. Updates only last_error so an inline email-channel firing's
-// last_fired_at is preserved.
+/**
+ * Record a terminal webhook failure without replacing the firing timestamp set
+ * by sibling channels. Database errors are logged and suppressed.
+ *
+ * @param {string} ruleId - Rule whose queued delivery exhausted retries.
+ * @param {string} error - Terminal delivery error.
+ * @returns {Promise<void>}
+ */
 async function recordDeliveryFailure(ruleId, error) {
   if (!ruleId) return;
   await db
@@ -273,6 +289,8 @@ async function recordDeliveryFailure(ruleId, error) {
       console.error("Failed to record alert delivery failure:", err.message);
     });
 }
+
+// ── Delivery and evaluation ─────────────────────────────────────
 
 function clampMetadataForQueue(metadata) {
   if (!metadata || typeof metadata !== "object") return metadata || {};
@@ -316,11 +334,18 @@ async function deliverEmail(channel, payload) {
   }
 }
 
+/**
+ * Deliver one webhook after checking its current DNS answers and refusing
+ * redirects. The validation does not pin fetch to the checked address, and
+ * transport or non-2xx responses are thrown for BullMQ retry handling.
+ *
+ * @param {Object} channel - Webhook URL and optional headers.
+ * @param {Object} payload - Alert payload.
+ * @returns {Promise<void>}
+ */
 async function deliverWebhook(channel, payload) {
-  // Re-validate the URL at delivery time. Rules persist for the lifetime of
-  // the workspace; an attacker who can edit a rule could swap the hostname,
-  // and DNS-rebinding can flip a previously-safe hostname onto a private IP
-  // between save and delivery. assertSafeUrlAsync covers both.
+  // Re-validate at delivery time because rules persist and DNS answers can
+  // change after the save-time lexical check.
   await assertSafeUrlAsync(channel.url, "webhook url");
 
   const controller = new AbortController();
@@ -347,11 +372,18 @@ async function deliverWebhook(channel, payload) {
   }
 }
 
-// Find rules whose pattern matches the event type and fire them. Designed for
-// fire-and-forget use from monitoring.logEvent — never throws, so a misbehaving
-// channel can't block event recording. Webhook channels are enqueued for
-// retried delivery by the alert-deliveries worker; email channels still
-// dispatch inline (the mailer has its own retry semantics).
+/**
+ * Fire enabled rules matching an event without propagating delivery failures.
+ * Webhooks are queued per channel; email remains inline. A workspace ID in the
+ * metadata restricts matching to that workspace, so workspace-local callers
+ * must include it; absent workspace context leaves all matching rules eligible.
+ *
+ * @param {string} eventType - Event type matched against rule patterns.
+ * @param {string} message - Human-readable alert message.
+ * @param {Object} metadata - Event context, including workspace identity when
+ * scoped.
+ * @returns {Promise<void>}
+ */
 async function evaluateAndDeliver(eventType, message, metadata = {}) {
   if (!eventType) return;
   let rules;
@@ -430,9 +462,13 @@ async function evaluateAndDeliver(eventType, message, metadata = {}) {
   );
 }
 
-// Executes a single queued webhook delivery. Throws on non-2xx so BullMQ
-// schedules the next retry attempt; the worker is responsible for translating
-// a terminal failure into recordDeliveryFailure.
+/**
+ * Execute one queued webhook delivery. Validation and non-2xx failures throw so
+ * BullMQ can retry; the worker records terminal exhaustion separately.
+ *
+ * @param {Object} jobData - Persisted alert delivery job payload.
+ * @returns {Promise<void>}
+ */
 async function runAlertDeliveryJob(jobData) {
   if (!jobData || typeof jobData !== "object") {
     throw new Error("alert delivery job data is missing");

@@ -30,6 +30,7 @@ helm install nora "$REPO_ROOT/infra/helm/nora" \
   --set secrets.encryptionKey="$(openssl rand -hex 32)" \
   --set secrets.backupEncryptionKey="$(openssl rand -hex 32)" \
   --set secrets.apiKeyHashSecret="$(openssl rand -hex 32)" \
+  --set secrets.agentHubApiKeyHashSecret="$(openssl rand -hex 32)" \
   --set secrets.dbPassword="$(openssl rand -hex 24)" \
   --wait --timeout 10m
 

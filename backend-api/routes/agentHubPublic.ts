@@ -7,6 +7,7 @@ const { scanTemplatePayloadForSecrets } = require("../agentHubSafety");
 const {
   extractTemplateDefaultsFromSnapshot,
   extractTemplatePayloadFromSnapshot,
+  stripInternalTemplateMetadata,
   summarizeTemplatePayload,
 } = require("../agentPayloads");
 
@@ -101,6 +102,14 @@ function buildCatalogListing(listing, snapshot = null, templatePayload = null, o
   };
 }
 
+/**
+ * Build authenticated catalog detail, including full template payload only for
+ * the single-listing endpoint that explicitly requests content.
+ *
+ * @param {Object} listing - Published community listing.
+ * @param {Object} [options={}] - Content and source-hub URL options.
+ * @returns {Promise<Object>} Public catalog summary or detail.
+ */
 async function buildCatalogDetail(listing, { includeContent = false, sourceHubUrl = "" } = {}) {
   const snapshot = listing?.snapshot_id ? await snapshots.getSnapshot(listing.snapshot_id) : null;
   const templatePayload = snapshot
@@ -116,6 +125,8 @@ async function buildCatalogDetail(listing, { includeContent = false, sourceHubUr
     template: summarizeTemplatePayload(templatePayload, { includeContent: true }),
   };
 }
+
+// API-key-authenticated catalog and submission routes
 
 router.get("/catalog", requireAgentHubApiKey, async (req, res, next) => {
   try {
@@ -161,7 +172,9 @@ router.post("/submissions", requireAgentHubApiKey, async (req, res, next) => {
   try {
     const payload = req.body || {};
     const listingPayload = payload.listing || payload;
-    const templatePayload = payload.templatePayload || payload.template_payload || {};
+    const templatePayload = stripInternalTemplateMetadata(
+      payload.templatePayload || payload.template_payload || {},
+    );
     const issues = scanTemplatePayloadForSecrets(templatePayload);
     if (issues.length > 0) {
       return res.status(400).json({

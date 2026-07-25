@@ -13,7 +13,9 @@ function log(level, message) {
   console.log(line);
   try {
     fs.appendFileSync(LOG_FILE, line + "\n");
-  } catch { /* ignore write errors */ }
+  } catch {
+    /* ignore write errors */
+  }
 }
 
 // Banner
@@ -33,7 +35,10 @@ const HEARTBEAT_INTERVAL = 60_000; // 1 minute
 setInterval(() => {
   const memUsed = os.totalmem() - os.freemem();
   const memPct = ((memUsed / os.totalmem()) * 100).toFixed(1);
-  log("INFO", `Heartbeat — uptime: ${Math.floor(os.uptime())}s, memory: ${memPct}%, load: ${os.loadavg()[0].toFixed(2)}`);
+  log(
+    "INFO",
+    `Heartbeat — uptime: ${Math.floor(os.uptime())}s, memory: ${memPct}%, load: ${os.loadavg()[0].toFixed(2)}`,
+  );
 }, HEARTBEAT_INTERVAL);
 
 // Graceful shutdown

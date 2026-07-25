@@ -328,6 +328,55 @@ describe("GET /workspaces/cost", () => {
       periodDays: 30,
     });
   });
+
+  it("returns only the exact bound workspace for API keys", async () => {
+    const metrics = require("../metrics");
+    metrics.getWorkspaceCost.mockReset().mockResolvedValueOnce({
+      workspaceId: "ws-A",
+      periodDays: 30,
+      periodStart: "2026-06-01T00:00:00.000Z",
+      periodEnd: "2026-06-30T23:59:59.999Z",
+      totalUsd: 12.5,
+      perAgent: [{ agentId: "agent-A", total_cost: 12.5 }],
+    });
+    metrics.getAccessibleWorkspaceCosts.mockClear();
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "key-cost",
+            workspace_id: "ws-A",
+            created_by: "user-1",
+            key_hash: "hash",
+            key_prefix: "nora_c",
+            scopes: ["workspaces:read"],
+            status: "active",
+            workspace_name: "Workspace A",
+            user_email: "user@example.com",
+            user_role: "user",
+            user_name: "User",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .get("/workspaces/cost?period_days=30")
+      .set("Authorization", "Bearer nora_workspace_cost");
+
+    expect(res.status).toBe(200);
+    expect(metrics.getWorkspaceCost).toHaveBeenCalledWith("ws-A", { periodDays: 30 });
+    expect(metrics.getAccessibleWorkspaceCosts).not.toHaveBeenCalled();
+    expect(res.body.workspaces).toEqual([
+      expect.objectContaining({
+        workspaceId: "ws-A",
+        workspaceName: "Workspace A",
+        totalUsd: 12.5,
+      }),
+    ]);
+    expect(res.body.unassigned).toEqual({ totalUsd: 0, perAgent: [] });
+    expect(res.body.uniqueFleetTotalUsd).toBe(12.5);
+  });
 });
 
 describe("DELETE /workspaces/:id/agents/:agentId", () => {

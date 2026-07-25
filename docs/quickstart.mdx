@@ -1,13 +1,21 @@
-# Get started with Nora: deploy your first agent in 15 minutes
+# Get started with Nora: prove the operator loop on local Docker
 
-> Install Nora, open the dashboard, add an LLM provider key, deploy your first agent runtime, and validate it with chat, logs, and a live terminal.
+> Install Nora with the local Docker target, launch the zero-key demo agent, and validate chat, logs, metrics, and a live terminal before connecting a paid model provider.
 
-This guide takes you from a fresh machine to a running, validated agent runtime. You will install Nora using the one-line installer or Docker Compose, create your operator account, connect an LLM provider, deploy your first agent, and confirm the end-to-end workflow is healthy — all in about 15 minutes.
+This guide takes you from a fresh machine to a running, validated agent runtime. On a Docker/Compose installation, the fastest evaluation uses Nora's built-in deterministic demo provider, so the first proof needs no external API key and creates no model bill. Kubernetes-only installations skip the one-click demo and start with a configured model provider. After the operator loop is clear, you can connect a real provider and deploy OpenClaw or Hermes for a live workload.
+
+<Tip>
+  Evaluating the hosted reference deployment? Start at [Try Nora without an API
+  key](https://nora.solomontsao.com/signup?intent=demo). When that deployment has the local Docker
+  target enabled, the Getting Started page can enable the demo provider and deploy the demo agent in
+  one action.
+</Tip>
 
 <Note>
-  The installer can install Docker, Docker Compose, Git, and OpenSSL for you if they are not already present
-  on your machine. You need macOS 12+, Linux (Ubuntu 20.04+, Debian 11+, or Fedora 38+), or Windows
-  10+ with WSL2, plus admin or sudo access.
+  The installer can install Docker, Docker Compose 2.24.4+, Git, and OpenSSL for you if they are not
+  already present on your machine. Standalone `docker-compose` v1 is unsupported. You need macOS
+  12+, Linux (Ubuntu 20.04+, Debian 11+, or Fedora 38+), or Windows 10+ with WSL2, plus admin or
+  sudo access.
 </Note>
 
 <Steps>
@@ -32,8 +40,11 @@ This guide takes you from a fresh machine to a running, validated agent runtime.
     git clone https://github.com/solomon2773/nora.git
     cd nora
     cp .env.example .env
-    # Edit .env with your secrets, then:
-    docker compose up -d
+    # Edit .env with your secrets. Replace both DEFAULT_ADMIN_* placeholders.
+    # A self-hosted install may blank both to claim the first admin through
+    # /signup; hosted PaaS requires explicit secure values. Then
+    # materialize the read-only Compose secret files and start the stack:
+    ./setup.sh --update
     ```
 
     When the installer or Docker Compose finishes, it prints the base URL it configured. Local mode uses `http://localhost:8080` by default, but the installer automatically offers another free web port such as `8081` if `8080` is already in use.
@@ -58,33 +69,40 @@ This guide takes you from a fresh machine to a running, validated agent runtime.
   </Step>
 
 <Step title="Create an account or log in">
-  Go to the printed `/signup` URL and create your operator account. On a brand-new instance with no
-  users yet, the signup page runs in first-run claim mode — it shows "Claim this Nora server" and the
-  first account you create becomes the platform admin. After you finish, you land on the Getting
-  Started page (`/app/getting-started`).
+  Go to the printed `/signup` URL and create your operator account. On a brand-new self-hosted
+  instance with no users yet, the signup page runs in first-run claim mode — it shows "Claim this
+  Nora server" and the first account you create becomes the platform admin. Hosted PaaS requires a
+  pre-seeded bootstrap administrator instead. After you finish, you land on the Getting Started page
+  (`/app/getting-started`).
 
-  If you set `DEFAULT_ADMIN_EMAIL` and `DEFAULT_ADMIN_PASSWORD` during setup, that account is already
-  created — go to `/login` and use those credentials instead.
+If you set `DEFAULT_ADMIN_EMAIL` and `DEFAULT_ADMIN_PASSWORD` during setup, that account is already
+created — go to `/login` and use those credentials instead.
+
 </Step>
 
-  <Step title="Add an LLM provider key">
-    Open **Settings** in the dashboard. Add an API key for a supported provider such as Anthropic, OpenAI, or Google. Nora encrypts provider keys at rest with AES-256-GCM and stores them centrally so you can sync them to any running agent at any time.
+  <Step title="Choose the first-proof path">
+    When `/api/config/platform` reports `capabilities.localDockerDemo.enabled: true`, click **Launch local Docker demo — no API key** on **Getting Started**. Nora enables its built-in deterministic provider and deploys a demo agent in one action. If the page reports that the local Docker demo is unavailable, add a real provider and deploy to one of the targets enabled by your operator.
 
     <Tip>
-      **No API key yet?** Click **Try the demo agent** on the Getting Started page instead. It enables Nora's built-in demo provider — a deterministic stub model served by your own control plane — and deploys a working agent you can chat with immediately, zero keys and zero cost. Swap in a real provider whenever you're ready.
+      The demo proves Nora's deployment and operator workflow; it does not represent the quality of a production model. Use it to validate chat, logs, metrics, terminal access, and lifecycle controls without model spend.
     </Tip>
+
+    For a live workload, open **Settings** and add an API key for a supported provider such as Anthropic, OpenAI, or Google. Nora encrypts provider keys at rest with AES-256-GCM and stores them centrally so you can sync them to running agents.
 
   </Step>
 
   <Step title="Deploy your first agent">
-    Go to **Deploy** and fill in the deployment form:
+    If you chose the demo path, the Getting Started action performs this step automatically and sends you to the new agent. Continue to **Validate the agent** below.
+
+    If you connected a real provider, go to **Deploy** and fill in the deployment form:
 
     1. Enter an agent name
-    2. Choose a runtime mode
+    2. Choose the runtime family, execution target, and sandbox when the selected target offers one
     3. Set CPU, RAM, and disk resource limits
-    4. Click **Confirm & Deploy Agent**
+    4. For OpenClaw, click **Next: Choose Skills**, review the optional ClawHub skills, then click **Deploy Agent & Open Validation**
+    5. For runtime paths without the skills step, click **Deploy Agent**
 
-    The agent will provision and start within a few seconds.
+    Provisioning time depends on the selected runtime, target, image availability, and host capacity. Follow the live deployment state instead of assuming a fixed startup time.
 
     ![Deploy wizard — agent identity and resource step](/images/guides/deploy/wizard-start.png)
 
@@ -110,6 +128,10 @@ This guide takes you from a fresh machine to a running, validated agent runtime.
   </Step>
 </Steps>
 
+<Card title="Star Nora on GitHub" icon="github" href="https://github.com/solomon2773/nora" arrow>
+  If this guide helped you get your first agent running, a star helps other operators discover Nora.
+</Card>
+
 ## What's next
 
 <CardGroup cols={2}>
@@ -121,11 +143,27 @@ This guide takes you from a fresh machine to a running, validated agent runtime.
   Add more providers, rotate keys, and control which agents have access to each key.
 </Card>
 
+<Card title="Add a Remote Docker host" icon="network-wired" href="/guides/remote-docker">
+  Connect a private Docker server, VPS, or cloud VM and validate the full remote deployment path.
+</Card>
+
 <Card title="Connect integrations" icon="plug" href="/guides/integrations">
   Wire GitHub, Slack, Jira, AWS, and other tools to your running agents.
 </Card>
 
-  <Card title="Monitor operations" icon="chart-line" href="/guides/monitoring">
-    Track agent health, LLM usage, costs, and runtime activity in real time.
+<Card title="Monitor operations" icon="chart-line" href="/guides/monitoring">
+  Track agent health, LLM usage, costs, and runtime activity in real time.
+</Card>
+
+<Card
+  title="Contribute to Nora"
+  icon="code-pull-request"
+  href="https://github.com/solomon2773/nora/blob/master/CONTRIBUTING.md"
+>
+  Find focused contribution areas, development commands, and the expected pull-request handoff.
+</Card>
+
+  <Card title="Join the community" icon="comments" href="https://github.com/solomon2773/nora/discussions">
+    Ask setup questions, share what you deployed, or align on a larger feature before building it.
   </Card>
 </CardGroup>

@@ -112,6 +112,28 @@ describe("monitoring metrics", () => {
     expect(deployQueue.getJobCounts).not.toHaveBeenCalled();
   });
 
+  it("scopes API-key metrics to the exact bound workspace", async () => {
+    db.query
+      .mockResolvedValueOnce({ rows: [{ status: "running", count: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ total: 2 }] });
+
+    const metrics = await monitoring.getMetrics({ userId: "user-1", workspaceId: "ws-A" });
+
+    expect(metrics.totalAgents).toBe(1);
+    expect(metrics.totalDeployments).toBe(2);
+    expect(db.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(/FROM workspace_agents wa[\s\S]*WHERE wa\.workspace_id = \$1/),
+      ["ws-A"],
+    );
+    expect(db.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/INNER JOIN workspace_agents wa[\s\S]*WHERE wa\.workspace_id = \$1/),
+      ["ws-A"],
+    );
+    expect(deployQueue.getJobCounts).not.toHaveBeenCalled();
+  });
+
   it("returns paged audit events with search filters and available types", async () => {
     db.query
       .mockResolvedValueOnce({ rows: [{ total: 14 }] })
@@ -213,6 +235,24 @@ describe("monitoring metrics", () => {
     expect(db.query.mock.calls[0][0]).toContain("metadata #>> '{source,account,userId}' = $1");
     expect(db.query.mock.calls[0][0]).toContain("metadata #>> '{agent,ownerUserId}' = $1");
     expect(db.query.mock.calls[0][0]).toContain("scoped_agents.user_id = $2::uuid");
+  });
+
+  it("scopes API-key events to workspace metadata or assigned agents only", async () => {
+    db.query.mockResolvedValueOnce({ rows: [] });
+
+    await monitoring.getUserRecentEvents("user-1", {
+      workspaceId: "ws-A",
+      agentId: "agent-A",
+      limit: 25,
+    });
+
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toContain("metadata #>> '{workspace,id}' = $1::text");
+    expect(sql).toContain("scoped_workspace_agents.workspace_id = $1::uuid");
+    expect(sql).toContain("metadata #>> '{agent,id}' = $2");
+    expect(params).toEqual(["ws-A", "agent-A", 25]);
+    expect(sql).not.toContain("metadata #>> '{actor,userId}'");
+    expect(sql).not.toContain("scoped_agents.user_id");
   });
 
   it("returns paged user events with available types", async () => {

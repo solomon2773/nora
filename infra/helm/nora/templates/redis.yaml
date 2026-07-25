@@ -15,9 +15,14 @@ spec:
       labels:
         {{- include "nora.selectorLabels" (dict "root" . "component" "redis") | nindent 8 }}
     spec:
+      automountServiceAccountToken: {{ .Values.security.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.redis.podSecurityContext | nindent 8 }}
       containers:
         - name: redis
           image: {{ .Values.redis.image }}
+          securityContext:
+            {{- toYaml .Values.redis.containerSecurityContext | nindent 12 }}
           ports:
             - name: redis
               containerPort: 6379
@@ -33,6 +38,18 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.redis.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: scratch
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: scratch
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service

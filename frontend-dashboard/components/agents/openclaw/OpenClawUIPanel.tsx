@@ -7,7 +7,9 @@ const GATEWAY_BOOT_MESSAGE =
   "Fresh OpenClaw deployments can take a couple of minutes while the official dashboard installs and starts.";
 
 function normalizeEmbedPath(path = "") {
-  return String(path || "").trim().replace(/^\/+/, "");
+  return String(path || "")
+    .trim()
+    .replace(/^\/+/, "");
 }
 
 type OpenClawUIPanelProps = {

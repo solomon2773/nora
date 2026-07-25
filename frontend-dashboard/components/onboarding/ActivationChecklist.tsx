@@ -26,6 +26,7 @@ export default function ActivationChecklist({
   const [loading, setLoading] = useState(true);
   const [providerCount, setProviderCount] = useState(0);
   const [agents, setAgents] = useState([]);
+  const [demoAvailable, setDemoAvailable] = useState(false);
   const [validationVersion, setValidationVersion] = useState(0);
 
   useEffect(() => {
@@ -38,11 +39,18 @@ export default function ActivationChecklist({
       fetchWithAuth("/api/agents")
         .then((r) => (r.ok ? r.json() : []))
         .catch(() => []),
+      fetch("/api/config/platform")
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({})),
     ])
-      .then(([providers, agentData]) => {
+      .then(([providers, agentData, platformConfig]) => {
         if (cancelled) return;
+        const localDockerDemoEnabled = (
+          platformConfig as { capabilities?: { localDockerDemo?: { enabled?: unknown } } }
+        ).capabilities?.localDockerDemo?.enabled;
         setProviderCount(Array.isArray(providers) ? providers.length : 0);
         setAgents(Array.isArray(agentData) ? agentData : []);
+        setDemoAvailable(localDockerDemoEnabled === true);
         setLoading(false);
       })
       .catch(() => {
@@ -95,20 +103,32 @@ export default function ActivationChecklist({
       {
         key: "account",
         title: "Operator account ready",
-        desc: "Your Nora workspace is ready. Next, connect one LLM provider so agents can authenticate cleanly.",
-        href: "/app/settings",
-        cta: "Open Settings",
+        desc: demoAvailable
+          ? "Your Nora workspace is ready. Prove the operator loop with the zero-key local Docker demo or connect a real provider."
+          : "Your Nora workspace is ready. Connect a model provider, then deploy to a target enabled by your operator.",
+        href: demoAvailable ? "/app/getting-started#demo-path" : "/app/settings",
+        cta: "Choose First Proof",
         icon: ShieldCheck,
         status: "complete",
       },
       {
         key: "provider",
-        title: hasProvider ? "LLM provider connected" : "Add an LLM provider key",
+        title: hasProvider
+          ? "LLM provider connected"
+          : demoAvailable
+            ? "Enable the demo or add a provider"
+            : "Add a model provider",
         desc: hasProvider
           ? `${providerCount} provider${providerCount === 1 ? "" : "s"} configured. Nora can sync credentials to your agents.`
-          : "Save one provider key in Settings. That is the fastest path to a successful first deploy.",
-        href: "/app/settings",
-        cta: hasProvider ? "Manage Providers" : "Add Provider",
+          : demoAvailable
+            ? "Use the built-in deterministic demo for a zero-key first proof, or save a provider key in Settings for a live model."
+            : "Save a provider key in Settings before deploying to one of this installation's enabled targets.",
+        href: hasProvider || !demoAvailable ? "/app/settings" : "/app/getting-started#demo-path",
+        cta: hasProvider
+          ? "Manage Providers"
+          : demoAvailable
+            ? "Choose Demo or Provider"
+            : "Add Provider",
         icon: KeyRound,
         status: hasProvider ? "complete" : "current",
       },
@@ -143,7 +163,7 @@ export default function ActivationChecklist({
         status: hasValidatedRuntime ? "complete" : hasAgent ? "current" : "upcoming",
       },
     ];
-  }, [providerCount, agents, validationVersion]);
+  }, [providerCount, agents, demoAvailable, validationVersion]);
 
   const completed = steps.filter((step) => step.status === "complete").length;
   const progress = Math.round((completed / steps.length) * 100);
@@ -164,7 +184,7 @@ export default function ActivationChecklist({
       {showHeader && (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
           <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-blue-600 mb-2">
+            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-brand-ink/65 mb-2">
               First-run activation
             </p>
             <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
@@ -176,15 +196,15 @@ export default function ActivationChecklist({
             </p>
           </div>
 
-          <div className="min-w-[150px] rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-700">
+          <div className="min-w-[150px] rounded-2xl border border-brand-cyan/40 bg-brand-cyan/15 px-4 py-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-ink/70">
               Progress
             </p>
             <div className="flex items-end justify-between mt-2">
-              <span className="text-2xl font-black text-blue-700">
+              <span className="text-2xl font-black text-brand-ink">
                 {completed}/{steps.length}
               </span>
-              <span className="text-sm font-bold text-blue-600">{progress}%</span>
+              <span className="text-sm font-bold text-brand-ink/70">{progress}%</span>
             </div>
           </div>
         </div>
@@ -196,17 +216,17 @@ export default function ActivationChecklist({
         </div>
       ) : (
         <>
-          <div className="mb-5 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mb-5 rounded-2xl border border-brand-cyan/40 bg-brand-cyan/15 px-4 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-700">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-brand-ink/70">
                 Recommended next step
               </p>
-              <p className="text-sm text-blue-900 font-bold mt-1">{nextStep.title}</p>
-              <p className="text-sm text-blue-700/80 mt-1">{nextStep.desc}</p>
+              <p className="text-sm text-brand-ink font-bold mt-1">{nextStep.title}</p>
+              <p className="text-sm text-brand-ink/70 mt-1">{nextStep.desc}</p>
             </div>
             <a
               href={nextStep.href}
-              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all shrink-0"
+              className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-black bg-brand-cyan text-brand-ink hover:brightness-95 transition-all shrink-0"
             >
               {nextStep.cta}
               <ArrowRight size={15} />
@@ -226,7 +246,7 @@ export default function ActivationChecklist({
                     isComplete
                       ? "border-emerald-200 bg-emerald-50/70"
                       : isCurrent
-                        ? "border-blue-200 bg-blue-50/70"
+                        ? "border-brand-cyan/50 bg-brand-cyan/10"
                         : "border-slate-200 bg-slate-50",
                   )}
                 >
@@ -237,7 +257,7 @@ export default function ActivationChecklist({
                         isComplete
                           ? "bg-emerald-100 text-emerald-700 border-emerald-200"
                           : isCurrent
-                            ? "bg-blue-100 text-blue-700 border-blue-200"
+                            ? "bg-brand-cyan/25 text-brand-ink border-brand-cyan/40"
                             : "bg-white text-slate-400 border-slate-200",
                       )}
                     >
@@ -255,7 +275,7 @@ export default function ActivationChecklist({
                             isComplete
                               ? "text-emerald-700 bg-emerald-100 border-emerald-200"
                               : isCurrent
-                                ? "text-blue-700 bg-blue-100 border-blue-200"
+                                ? "text-brand-ink bg-brand-cyan/25 border-brand-cyan/40"
                                 : "text-slate-500 bg-white border-slate-200",
                           )}
                         >
@@ -282,7 +302,7 @@ export default function ActivationChecklist({
                         isComplete
                           ? "bg-white border border-slate-200 text-slate-700 hover:bg-slate-50"
                           : isCurrent
-                            ? "bg-blue-600 text-white hover:bg-blue-700"
+                            ? "bg-brand-cyan text-brand-ink hover:brightness-95"
                             : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50",
                       )}
                     >

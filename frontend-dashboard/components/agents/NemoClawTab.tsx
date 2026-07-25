@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
 import {
-  ShieldCheck, Globe, Brain, RefreshCw, Loader2, Plus, Trash2,
-  CheckCircle2, XCircle, Clock, AlertTriangle, Shield, Wifi,
+  ShieldCheck,
+  Globe,
+  Brain,
+  RefreshCw,
+  Loader2,
+  Plus,
+  Trash2,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  AlertTriangle,
+  Shield,
+  Wifi,
 } from "lucide-react";
 import { fetchWithAuth } from "../../lib/api";
 
@@ -43,9 +54,12 @@ function ApprovalRow({ approval, onDecide }) {
       <div className="flex items-center gap-3 min-w-0">
         <AlertTriangle size={14} className="text-yellow-500 shrink-0" />
         <div className="min-w-0">
-          <p className="text-sm font-bold text-slate-800 truncate">{approval.endpoint || "Unknown endpoint"}</p>
+          <p className="text-sm font-bold text-slate-800 truncate">
+            {approval.endpoint || "Unknown endpoint"}
+          </p>
           <p className="text-[10px] text-slate-400">
-            Requested {approval.requestedAt ? new Date(approval.requestedAt).toLocaleString() : "recently"}
+            Requested{" "}
+            {approval.requestedAt ? new Date(approval.requestedAt).toLocaleString() : "recently"}
           </p>
         </div>
       </div>
@@ -80,7 +94,10 @@ export default function NemoClawTab({ agentId, agentStatus }) {
   const [newName, setNewName] = useState("");
 
   const fetchAll = useCallback(async () => {
-    if (agentStatus !== "running") { setLoading(false); return; }
+    if (agentStatus !== "running") {
+      setLoading(false);
+      return;
+    }
     try {
       const [sRes, pRes, aRes] = await Promise.all([
         fetchWithAuth(`/api/agents/${agentId}/nemoclaw/status`),
@@ -99,7 +116,9 @@ export default function NemoClawTab({ agentId, agentStatus }) {
     setLoading(false);
   }, [agentId, agentStatus]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
 
   // Poll approvals while running
   useEffect(() => {
@@ -107,8 +126,13 @@ export default function NemoClawTab({ agentId, agentStatus }) {
     const iv = setInterval(async () => {
       try {
         const r = await fetchWithAuth(`/api/agents/${agentId}/nemoclaw/approvals`);
-        if (r.ok) { const d = await r.json(); setApprovals(d.approvals || []); }
-      } catch { /* ignore */ }
+        if (r.ok) {
+          const d = await r.json();
+          setApprovals(d.approvals || []);
+        }
+      } catch {
+        /* ignore */
+      }
     }, 10000);
     return () => clearInterval(iv);
   }, [agentId, agentStatus]);
@@ -169,7 +193,8 @@ export default function NemoClawTab({ agentId, agentStatus }) {
       <div className="bg-slate-50 border border-slate-200 rounded-2xl p-12 flex flex-col items-center justify-center gap-3">
         <ShieldCheck size={32} className="text-slate-300" />
         <p className="text-sm text-slate-500 font-medium">
-          NemoClaw controls available when agent is <span className="text-green-500 font-bold">running</span>
+          NemoClaw controls available when agent is{" "}
+          <span className="text-green-500 font-bold">running</span>
         </p>
       </div>
     );
@@ -194,15 +219,34 @@ export default function NemoClawTab({ agentId, agentStatus }) {
           <div>
             <p className="text-sm font-bold text-slate-800">NemoClaw Secure Sandbox</p>
             <div className="flex items-center gap-3 mt-0.5 text-[10px] text-slate-500 font-medium">
-              {status?.model && <span className="flex items-center gap-1"><Brain size={10} /> {status.model.replace("nvidia/", "")}</span>}
-              {status?.inferenceConfigured && <span className="flex items-center gap-1 text-green-600"><Wifi size={10} /> Inference connected</span>}
-              {status?.policyActive && <span className="flex items-center gap-1 text-green-600"><Shield size={10} /> Policy active</span>}
-              {status?.uptime != null && <span className="flex items-center gap-1"><Clock size={10} /> {Math.floor(status.uptime / 60)}m uptime</span>}
+              {status?.model && (
+                <span className="flex items-center gap-1">
+                  <Brain size={10} /> {status.model.replace("nvidia/", "")}
+                </span>
+              )}
+              {status?.inferenceConfigured && (
+                <span className="flex items-center gap-1 text-green-600">
+                  <Wifi size={10} /> Inference connected
+                </span>
+              )}
+              {status?.policyActive && (
+                <span className="flex items-center gap-1 text-green-600">
+                  <Shield size={10} /> Policy active
+                </span>
+              )}
+              {status?.uptime != null && (
+                <span className="flex items-center gap-1">
+                  <Clock size={10} /> {Math.floor(status.uptime / 60)}m uptime
+                </span>
+              )}
             </div>
           </div>
         </div>
         <button
-          onClick={() => { setLoading(true); fetchAll(); }}
+          onClick={() => {
+            setLoading(true);
+            fetchAll();
+          }}
           className="text-green-600 hover:text-green-800 transition-colors"
         >
           <RefreshCw size={16} />
@@ -241,13 +285,17 @@ export default function NemoClawTab({ agentId, agentStatus }) {
             ))}
           </div>
         ) : (
-          <p className="text-xs text-slate-400 italic">No network policy rules. All egress is blocked by default.</p>
+          <p className="text-xs text-slate-400 italic">
+            No network policy rules. All egress is blocked by default.
+          </p>
         )}
 
         {/* Add rule */}
         <div className="flex items-end gap-2 pt-2 border-t border-slate-100">
           <div className="flex-1">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Rule Name</label>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+              Rule Name
+            </label>
             <input
               className="w-full mt-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium outline-none focus:ring-1 focus:ring-green-500/30"
               placeholder="e.g. my_api"
@@ -256,7 +304,9 @@ export default function NemoClawTab({ agentId, agentStatus }) {
             />
           </div>
           <div className="flex-[2]">
-            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Endpoint</label>
+            <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+              Endpoint
+            </label>
             <input
               className="w-full mt-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium outline-none focus:ring-1 focus:ring-green-500/30"
               placeholder="e.g. api.example.com:443"
@@ -277,15 +327,41 @@ export default function NemoClawTab({ agentId, agentStatus }) {
       {/* Security Summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Capabilities", value: "Dropped", icon: ShieldCheck, color: "text-green-600", bg: "bg-green-50 border-green-100" },
-          { label: "Network", value: "Deny-default", icon: Shield, color: "text-green-600", bg: "bg-green-50 border-green-100" },
-          { label: "Filesystem", value: "Restricted", icon: ShieldCheck, color: "text-green-600", bg: "bg-green-50 border-green-100" },
-          { label: "Bridge", value: "Disabled", icon: Shield, color: "text-green-600", bg: "bg-green-50 border-green-100" },
+          {
+            label: "Capabilities",
+            value: "Dropped",
+            icon: ShieldCheck,
+            color: "text-green-600",
+            bg: "bg-green-50 border-green-100",
+          },
+          {
+            label: "Network",
+            value: "Deny-default",
+            icon: Shield,
+            color: "text-green-600",
+            bg: "bg-green-50 border-green-100",
+          },
+          {
+            label: "Filesystem",
+            value: "Restricted",
+            icon: ShieldCheck,
+            color: "text-green-600",
+            bg: "bg-green-50 border-green-100",
+          },
+          {
+            label: "Bridge",
+            value: "Disabled",
+            icon: Shield,
+            color: "text-green-600",
+            bg: "bg-green-50 border-green-100",
+          },
         ].map((item) => (
           <div key={item.label} className={`${item.bg} border rounded-2xl p-4`}>
             <div className="flex items-center gap-1.5 mb-1">
               <item.icon size={12} className={item.color} />
-              <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">{item.label}</span>
+              <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">
+                {item.label}
+              </span>
             </div>
             <p className="text-sm font-bold text-slate-900">{item.value}</p>
           </div>

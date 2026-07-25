@@ -70,11 +70,15 @@ class RemoteHermesBackend extends HermesBackend {
     const bindings = {};
     const runtimePort = Number(config?.gatewayHostPort);
     if (Number.isInteger(runtimePort) && runtimePort >= 1 && runtimePort <= 65535) {
-      bindings[`${HERMES_RUNTIME_PORT}/tcp`] = [{ HostPort: String(runtimePort) }];
+      bindings[`${HERMES_RUNTIME_PORT}/tcp`] = [
+        { HostIp: "0.0.0.0", HostPort: String(runtimePort) },
+      ];
     }
     const dashboardPort = Number(config?.dashboardHostPort);
     if (Number.isInteger(dashboardPort) && dashboardPort >= 1 && dashboardPort <= 65535) {
-      bindings[`${HERMES_DASHBOARD_PORT}/tcp`] = [{ HostPort: String(dashboardPort) }];
+      bindings[`${HERMES_DASHBOARD_PORT}/tcp`] = [
+        { HostIp: "0.0.0.0", HostPort: String(dashboardPort) },
+      ];
     }
     return Object.keys(bindings).length ? bindings : undefined;
   }

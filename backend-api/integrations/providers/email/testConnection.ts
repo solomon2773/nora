@@ -1,4 +1,3 @@
-import net from "net";
 import tls from "tls";
 import nodemailer from "nodemailer";
 
@@ -17,7 +16,7 @@ function boolValue(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-function classifyMailError(error: unknown, protocol: "imap" | "smtp"): string {
+export function classifyMailError(error: unknown, protocol: "imap" | "smtp"): string {
   const message = String((error as any)?.message || error || "").toLowerCase();
   if (
     message.includes("invalid credentials") ||
@@ -26,7 +25,13 @@ function classifyMailError(error: unknown, protocol: "imap" | "smtp"): string {
   ) {
     return "invalid_mail_credentials";
   }
-  if (message.includes("tls") || message.includes("ssl")) {
+  if (
+    message.includes("tls") ||
+    message.includes("ssl") ||
+    message.includes("certificate") ||
+    message.includes("self-signed") ||
+    message.includes("unable to verify")
+  ) {
     return "tls_mismatch";
   }
   if (message.includes("disabled")) {
@@ -39,6 +44,12 @@ function escapeImapString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/**
+ * Authenticate directly to IMAP with a 10-second socket-inactivity timeout and explicit LOGIN.
+ *
+ * @param {Object} config - Canonical Email configuration.
+ * @returns {Promise<Object>} Successful IMAP endpoint summary.
+ */
 async function connectImap(config: EmailConfig): Promise<{ ok: true; message: string }> {
   const imap = config.imap || {};
   const auth = config.auth || {};
@@ -50,14 +61,20 @@ async function connectImap(config: EmailConfig): Promise<{ ok: true; message: st
 
   if (!host || !username) throw new Error("IMAP host and username are required");
   if (!password) throw new Error("IMAP password is required");
+  if (!secure) {
+    throw new Error("IMAP TLS is required; enable TLS and use a TLS-capable endpoint");
+  }
 
   await new Promise<void>((resolve, reject) => {
     let completed = false;
     let buffer = "";
     let commandSent = false;
-    const socket = secure
-      ? tls.connect({ host, port, servername: host })
-      : net.connect({ host, port });
+    const socket = tls.connect({
+      host,
+      port,
+      servername: host,
+      rejectUnauthorized: true,
+    });
 
     const finish = (err?: Error) => {
       if (completed) return;
@@ -100,7 +117,13 @@ async function connectImap(config: EmailConfig): Promise<{ ok: true; message: st
   return { ok: true, message: `IMAP authenticated to ${host}:${port}` };
 }
 
-async function verifySmtp(config: EmailConfig): Promise<{ ok: true; message: string }> {
+/**
+ * Build SMTP transport options that require TLS and validate the server certificate.
+ *
+ * @param {Object} config - Canonical Email configuration.
+ * @returns {Object} Nodemailer transport options with plaintext credentials.
+ */
+export function buildSmtpTransportOptions(config: EmailConfig) {
   const smtp = config.smtp || {};
   const auth = config.auth || {};
   const host = stringValue(smtp.host);
@@ -112,17 +135,38 @@ async function verifySmtp(config: EmailConfig): Promise<{ ok: true; message: str
   if (!host || !user) throw new Error("SMTP host and username are required");
   if (!password) throw new Error("SMTP password is required");
 
-  const transport = nodemailer.createTransport({
+  return {
     host,
     port,
     secure,
+    requireTLS: !secure,
     auth: { user, pass: password },
-    tls: { rejectUnauthorized: false },
-  });
-  await transport.verify();
-  return { ok: true, message: `SMTP verified for ${host}:${port}` };
+    tls: {
+      rejectUnauthorized: true,
+      servername: host,
+    },
+  };
 }
 
+/**
+ * Verify SMTP authentication through Nodemailer with certificate validation enabled.
+ *
+ * @param {Object} config - Canonical Email configuration.
+ * @returns {Promise<Object>} Successful SMTP endpoint summary.
+ */
+async function verifySmtp(config: EmailConfig): Promise<{ ok: true; message: string }> {
+  const options = buildSmtpTransportOptions(config);
+  const transport = nodemailer.createTransport(options);
+  await transport.verify();
+  return { ok: true, message: `SMTP verified for ${options.host}:${options.port}` };
+}
+
+/**
+ * Probe IMAP and SMTP independently and return both results even when either side fails.
+ *
+ * @param {Object} config - Canonical Email configuration with plaintext credentials.
+ * @returns {Promise<Object>} Combined connectivity status and protocol-specific details.
+ */
 export async function testEmailConnection(config: EmailConfig) {
   let imap: any;
   let smtp: any;

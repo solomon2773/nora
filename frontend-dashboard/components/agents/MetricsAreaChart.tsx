@@ -24,12 +24,10 @@ function resolveDomain(data, keys, explicitDomain) {
   const dataMin = Math.min(...values);
   const dataMax = Math.max(...values);
 
-  let min = Array.isArray(explicitDomain) && explicitDomain[0] !== "auto"
-    ? explicitDomain[0]
-    : dataMin;
-  let max = Array.isArray(explicitDomain) && explicitDomain[1] !== "auto"
-    ? explicitDomain[1]
-    : dataMax;
+  let min =
+    Array.isArray(explicitDomain) && explicitDomain[0] !== "auto" ? explicitDomain[0] : dataMin;
+  let max =
+    Array.isArray(explicitDomain) && explicitDomain[1] !== "auto" ? explicitDomain[1] : dataMax;
 
   if (min === max) {
     if (max === 0) {
@@ -57,11 +55,7 @@ export default function MetricsAreaChart({
 }) {
   const gradientId = buildGradientId(dataKey);
   const secondGradientId = secondDataKey ? buildGradientId(secondDataKey) : null;
-  const yDomain = resolveDomain(
-    data,
-    secondDataKey ? [dataKey, secondDataKey] : [dataKey],
-    domain
-  );
+  const yDomain = resolveDomain(data, secondDataKey ? [dataKey, secondDataKey] : [dataKey], domain);
 
   return (
     <ResponsiveContainer width="100%" height="100%">

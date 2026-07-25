@@ -118,7 +118,10 @@ jest.mock("../metrics", () => ({
   recordApiMetric: jest.fn(),
 }));
 
+const apiKeys = require("../apiKeys");
+const mockVerifyApiKey = jest.spyOn(apiKeys, "verifyApiKey");
 const app = require("../server");
+const { __test: authRouteTestHelpers } = require("../routes/auth");
 
 function jsonResponse(body, ok = true, status = ok ? 200 : 400) {
   return {
@@ -136,6 +139,19 @@ function signupRequest(ip = null) {
     .set("X-Forwarded-For", ip || `203.0.113.${signupIpCounter}`);
 }
 
+function mockValidNoraApiKey() {
+  mockVerifyApiKey.mockResolvedValueOnce({
+    user: {
+      id: "api-key-user",
+      email: "api-key-user@example.com",
+      role: "user",
+      name: "API Key User",
+    },
+    key: { id: "key-1", scopes: ["agents:read"] },
+    workspace: { id: "workspace-1", name: "Test Workspace" },
+  });
+}
+
 beforeEach(() => {
   mockDb.query.mockReset();
   mockDb.connect.mockReset();
@@ -144,11 +160,92 @@ beforeEach(() => {
     release: jest.fn(),
   });
   process.env.OAUTH_LOGIN_ENABLED = "false";
+  process.env.PLATFORM_MODE = "selfhosted";
   process.env.GOOGLE_CLIENT_ID = "google-client-id";
   delete process.env.SIGNUP_BOT_PROTECTION_PROVIDER;
+  delete process.env.NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER;
   delete process.env.SIGNUP_TURNSTILE_SECRET;
+  delete process.env.SIGNUP_TURNSTILE_SITE_KEY;
+  delete process.env.NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY;
   delete process.env.SIGNUP_RECAPTCHA_SECRET;
+  delete process.env.SIGNUP_RECAPTCHA_SITE_KEY;
+  delete process.env.NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY;
   global.fetch = jest.fn();
+  mockVerifyApiKey.mockReset();
+});
+
+afterAll(() => {
+  mockVerifyApiKey.mockRestore();
+});
+
+describe("auth rate limit configuration", () => {
+  const originalWindowMs = process.env.AUTH_RATE_LIMIT_WINDOW_MS;
+  const originalMax = process.env.AUTH_RATE_LIMIT_MAX;
+
+  beforeEach(() => {
+    delete process.env.AUTH_RATE_LIMIT_WINDOW_MS;
+    delete process.env.AUTH_RATE_LIMIT_MAX;
+  });
+
+  afterAll(() => {
+    if (originalWindowMs === undefined) delete process.env.AUTH_RATE_LIMIT_WINDOW_MS;
+    else process.env.AUTH_RATE_LIMIT_WINDOW_MS = originalWindowMs;
+    if (originalMax === undefined) delete process.env.AUTH_RATE_LIMIT_MAX;
+    else process.env.AUTH_RATE_LIMIT_MAX = originalMax;
+  });
+
+  it("uses secure defaults when overrides are unset", () => {
+    expect(authRouteTestHelpers.getAuthRateLimitConfig()).toEqual({
+      windowMs: 15 * 60 * 1000,
+      max: 20,
+    });
+  });
+
+  it("accepts positive integer overrides", () => {
+    process.env.AUTH_RATE_LIMIT_WINDOW_MS = " 60000 ";
+    process.env.AUTH_RATE_LIMIT_MAX = "250";
+
+    expect(authRouteTestHelpers.getAuthRateLimitConfig()).toEqual({
+      windowMs: 60000,
+      max: 250,
+    });
+  });
+
+  it.each(["0", "-1", "1.5", "20requests", "9007199254740992"])(
+    "falls back when an override is not a positive safe integer: %s",
+    (invalidValue) => {
+      process.env.AUTH_RATE_LIMIT_WINDOW_MS = invalidValue;
+      process.env.AUTH_RATE_LIMIT_MAX = invalidValue;
+
+      expect(authRouteTestHelpers.getAuthRateLimitConfig()).toEqual({
+        windowMs: 15 * 60 * 1000,
+        max: 20,
+      });
+    },
+  );
+});
+
+describe("bootstrap admin startup gate", () => {
+  it("refuses an empty hosted PaaS database without explicit bootstrap credentials", async () => {
+    const originalEmail = process.env.DEFAULT_ADMIN_EMAIL;
+    const originalPassword = process.env.DEFAULT_ADMIN_PASSWORD;
+    try {
+      process.env.PLATFORM_MODE = "paas";
+      process.env.DEFAULT_ADMIN_EMAIL = "";
+      process.env.DEFAULT_ADMIN_PASSWORD = "";
+      mockDb.query.mockResolvedValueOnce({ rows: [] });
+
+      await expect(app.__test.seedBootstrapAdminAccount()).rejects.toMatchObject({
+        code: "PAAS_BOOTSTRAP_ADMIN_REQUIRED",
+      });
+      expect(mockDb.query).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalEmail === undefined) delete process.env.DEFAULT_ADMIN_EMAIL;
+      else process.env.DEFAULT_ADMIN_EMAIL = originalEmail;
+      if (originalPassword === undefined) delete process.env.DEFAULT_ADMIN_PASSWORD;
+      else process.env.DEFAULT_ADMIN_PASSWORD = originalPassword;
+    }
+  });
 });
 
 describe("POST /auth/signup", () => {
@@ -192,6 +289,38 @@ describe("POST /auth/signup", () => {
     expect(res.body).toHaveProperty("id", "uuid-1");
     expect(res.body).toHaveProperty("email", "new@example.com");
     expect(res.body).toHaveProperty("role", "admin");
+  });
+
+  it("refuses public first-admin claim in hosted PaaS mode", async () => {
+    process.env.PLATFORM_MODE = "paas";
+    process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "turnstile";
+    process.env.SIGNUP_TURNSTILE_SITE_KEY = "turnstile-site-key";
+    process.env.SIGNUP_TURNSTILE_SECRET = "turnstile-secret";
+    global.fetch.mockResolvedValueOnce(jsonResponse({ success: true }));
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: false }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await signupRequest().send({
+      email: "outside@example.com",
+      password: "validpassword123",
+      botProtectionToken: "verified-token",
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        code: "PAAS_BOOTSTRAP_ADMIN_REQUIRED",
+        error: expect.stringMatching(/bootstrap administrator/i),
+      }),
+    );
+    expect(mockDb.query).not.toHaveBeenCalledWith(
+      expect.stringMatching(/INSERT INTO users/i),
+      expect.anything(),
+    );
   });
 
   it("creates additional registered users as regular users", async () => {
@@ -270,6 +399,7 @@ describe("POST /auth/signup", () => {
   it("rejects signup when Turnstile is configured and the token is missing", async () => {
     process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "turnstile";
     process.env.SIGNUP_TURNSTILE_SECRET = "turnstile-secret";
+    process.env.SIGNUP_TURNSTILE_SITE_KEY = "turnstile-site-key";
 
     const res = await signupRequest().send({
       email: "turnstile@example.com",
@@ -285,6 +415,7 @@ describe("POST /auth/signup", () => {
   it("allows signup when Turnstile verification succeeds", async () => {
     process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "turnstile";
     process.env.SIGNUP_TURNSTILE_SECRET = "turnstile-secret";
+    process.env.SIGNUP_TURNSTILE_SITE_KEY = "turnstile-site-key";
     global.fetch.mockResolvedValueOnce(jsonResponse({ success: true }));
     mockDb.query
       .mockResolvedValueOnce({ rows: [] })
@@ -315,6 +446,7 @@ describe("POST /auth/signup", () => {
   it("rejects signup when reCAPTCHA verification fails", async () => {
     process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "recaptcha";
     process.env.SIGNUP_RECAPTCHA_SECRET = "recaptcha-secret";
+    process.env.SIGNUP_RECAPTCHA_SITE_KEY = "recaptcha-site-key";
     global.fetch.mockResolvedValueOnce(jsonResponse({ success: false }));
 
     const res = await signupRequest().send({
@@ -331,6 +463,7 @@ describe("POST /auth/signup", () => {
   it("rejects signup when bot verification cannot be reached", async () => {
     process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "recaptcha";
     process.env.SIGNUP_RECAPTCHA_SECRET = "recaptcha-secret";
+    process.env.SIGNUP_RECAPTCHA_SITE_KEY = "recaptcha-site-key";
     global.fetch.mockRejectedValueOnce(new Error("network unavailable"));
 
     const res = await signupRequest().send({
@@ -347,6 +480,7 @@ describe("POST /auth/signup", () => {
   it("allows signup when reCAPTCHA verification succeeds", async () => {
     process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "recaptcha";
     process.env.SIGNUP_RECAPTCHA_SECRET = "recaptcha-secret";
+    process.env.SIGNUP_RECAPTCHA_SITE_KEY = "recaptcha-site-key";
     global.fetch.mockResolvedValueOnce(jsonResponse({ success: true }));
     mockDb.query
       .mockResolvedValueOnce({ rows: [] })
@@ -372,6 +506,24 @@ describe("POST /auth/signup", () => {
     const verifyBody = global.fetch.mock.calls[0][1].body;
     expect(verifyBody.get("secret")).toBe("recaptcha-secret");
     expect(verifyBody.get("response")).toBe("recaptcha-token");
+  });
+
+  it("fails closed when bot protection is enabled without a public site key", async () => {
+    process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "turnstile";
+    process.env.SIGNUP_TURNSTILE_SECRET = "turnstile-secret";
+    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await signupRequest().send({
+      email: "turnstile-misconfigured@example.com",
+      password: "validpassword123",
+      botProtectionToken: "unverifiable-token",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/could not create account/i);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockDb.query).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
   });
 });
 
@@ -430,6 +582,173 @@ describe("POST /auth/login", () => {
   });
 });
 
+describe("POST /auth/session-upgrade", () => {
+  it("sets an HttpOnly cookie for a valid HS256 bearer JWT", async () => {
+    const token = jwt.sign({ id: "user-1", email: "user@example.com", role: "user" }, JWT_SECRET, {
+      algorithm: "HS256",
+      expiresIn: "1h",
+    });
+
+    const res = await request(app)
+      .post("/auth/session-upgrade")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
+    const setCookie = res.headers["set-cookie"] || [];
+    const authCookie = setCookie.find((cookie) => cookie.startsWith("nora_auth="));
+    expect(authCookie).toBeDefined();
+    expect(authCookie).toMatch(/HttpOnly/i);
+    expect(authCookie).toMatch(/SameSite=Lax/i);
+    expect(decodeURIComponent(authCookie.match(/nora_auth=([^;]+)/)?.[1])).toBe(token);
+  });
+
+  it("rejects correctly signed JWTs that do not match the historical session contract", async () => {
+    const tokens = [
+      jwt.sign({ id: "user-1", arbitrary: true }, JWT_SECRET, {
+        algorithm: "HS256",
+        expiresIn: "1h",
+      }),
+      jwt.sign({ id: "user-1", agentId: "agent-1", scope: "gateway-embed" }, JWT_SECRET, {
+        algorithm: "HS256",
+        expiresIn: "15m",
+      }),
+      jwt.sign({ id: "user-1", role: "user" }, JWT_SECRET, {
+        algorithm: "HS256",
+        expiresIn: "1h",
+      }),
+      jwt.sign({ id: "user-1", email: "user@example.com", role: "owner" }, JWT_SECRET, {
+        algorithm: "HS256",
+        expiresIn: "1h",
+      }),
+      jwt.sign(
+        { id: "user-1", email: "user@example.com", role: "user", unexpected: true },
+        JWT_SECRET,
+        { algorithm: "HS256", expiresIn: "1h" },
+      ),
+      jwt.sign({ id: "user-1", email: "user@example.com", role: "user" }, JWT_SECRET, {
+        algorithm: "HS256",
+        noTimestamp: true,
+      }),
+    ];
+
+    for (const token of tokens) {
+      const res = await request(app)
+        .post("/auth/session-upgrade")
+        .set("Authorization", `Bearer ${token}`);
+
+      expect(res.status).toBe(401);
+      expect(res.headers["set-cookie"]).toBeUndefined();
+    }
+  });
+
+  it("rejects a forged bearer JWT even when a valid auth cookie is present", async () => {
+    const cookieToken = jwt.sign(
+      { id: "user-1", email: "user@example.com", role: "user" },
+      JWT_SECRET,
+      { algorithm: "HS256", expiresIn: "1h" },
+    );
+    const forgedBearer = jwt.sign(
+      { id: "attacker", email: "attacker@example.com", role: "admin" },
+      "wrong-secret",
+      { algorithm: "HS256", expiresIn: "1h" },
+    );
+
+    const res = await request(app)
+      .post("/auth/session-upgrade")
+      .set("Cookie", `nora_auth=${cookieToken}`)
+      .set("Authorization", `Bearer ${forgedBearer}`);
+
+    expect(res.status).toBe(401);
+    expect(res.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("rejects a Nora API key even when a valid auth cookie is present", async () => {
+    const cookieToken = jwt.sign(
+      { id: "user-1", email: "user@example.com", role: "user" },
+      JWT_SECRET,
+      { algorithm: "HS256", expiresIn: "1h" },
+    );
+
+    const res = await request(app)
+      .post("/auth/session-upgrade")
+      .set("Cookie", `nora_auth=${cookieToken}`)
+      .set("Authorization", "Bearer nora_test_api_key");
+
+    expect(res.status).toBe(401);
+    expect(res.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("rejects expired bearer JWTs without setting a cookie", async () => {
+    const expiredToken = jwt.sign(
+      { id: "user-1", email: "user@example.com", role: "user" },
+      JWT_SECRET,
+      { algorithm: "HS256", expiresIn: -1 },
+    );
+
+    const res = await request(app)
+      .post("/auth/session-upgrade")
+      .set("Authorization", `Bearer ${expiredToken}`);
+
+    expect(res.status).toBe(401);
+    expect(res.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("rejects JWTs signed with a non-HS256 algorithm", async () => {
+    const token = jwt.sign({ id: "user-1", email: "user@example.com", role: "user" }, JWT_SECRET, {
+      algorithm: "HS384",
+      expiresIn: "1h",
+    });
+
+    const res = await request(app)
+      .post("/auth/session-upgrade")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(401);
+    expect(res.headers["set-cookie"]).toBeUndefined();
+  });
+
+  it("rejects signed JWTs without a non-empty string user id", async () => {
+    const tokens = [
+      jwt.sign("not-a-session", JWT_SECRET, { algorithm: "HS256" }),
+      jwt.sign({ email: "user@example.com", role: "user" }, JWT_SECRET, {
+        algorithm: "HS256",
+        expiresIn: "1h",
+      }),
+      jwt.sign({ id: "   ", email: "user@example.com", role: "user" }, JWT_SECRET, {
+        algorithm: "HS256",
+        expiresIn: "1h",
+      }),
+    ];
+
+    for (const token of tokens) {
+      const res = await request(app)
+        .post("/auth/session-upgrade")
+        .set("Authorization", `Bearer ${token}`);
+
+      expect(res.status).toBe(401);
+      expect(res.headers["set-cookie"]).toBeUndefined();
+    }
+  });
+
+  it("rejects missing and malformed bearer headers without setting a cookie", async () => {
+    const token = jwt.sign({ id: "user-1", email: "user@example.com", role: "user" }, JWT_SECRET, {
+      algorithm: "HS256",
+      expiresIn: "1h",
+    });
+    const headers = [null, `Basic ${token}`, "Bearer", `Bearer ${token} trailing`];
+
+    for (const authorization of headers) {
+      let pendingRequest = request(app).post("/auth/session-upgrade");
+      if (authorization) pendingRequest = pendingRequest.set("Authorization", authorization);
+      const res = await pendingRequest;
+
+      expect(res.status).toBe(400);
+      expect(res.headers["set-cookie"]).toBeUndefined();
+    }
+  });
+});
+
 describe("Cookie-based authentication", () => {
   it("authenticates protected routes via the nora_auth cookie", async () => {
     const token = jwt.sign({ id: "user-1", role: "user" }, JWT_SECRET, { expiresIn: "1h" });
@@ -472,6 +791,56 @@ describe("Cookie-based authentication", () => {
 });
 
 describe("Protected auth routes", () => {
+  it("rejects API-key authentication on profile mutation before any DB access", async () => {
+    mockValidNoraApiKey();
+
+    const res = await request(app)
+      .patch("/auth/profile")
+      .set("Authorization", "Bearer nora_valid_profile_key")
+      .send({ name: "Changed Name" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "session_required" });
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when hosted PaaS signup has no challenge provider", async () => {
+    process.env.PLATFORM_MODE = "paas";
+    process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "none";
+
+    const res = await signupRequest().send({
+      email: "hosted-without-challenge@example.com",
+      password: "testpassword123",
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Could not create account");
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects API-key authentication on password mutation before any DB access", async () => {
+    mockValidNoraApiKey();
+
+    const res = await request(app)
+      .patch("/auth/password")
+      .set("Authorization", "Bearer nora_valid_password_key")
+      .send({ currentPassword: "currentpassword123", newPassword: "newpassword123" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "session_required" });
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects API-key authentication on the current-user endpoint before any DB access", async () => {
+    mockValidNoraApiKey();
+
+    const res = await request(app).get("/auth/me").set("Authorization", "Bearer nora_valid_me_key");
+
+    expect(res.status).toBe(403);
+    expect(res.body).toMatchObject({ code: "session_required" });
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
   it("rejects password changes that do not meet the signup password policy", async () => {
     const token = jwt.sign({ id: "user-1", role: "user" }, JWT_SECRET, { expiresIn: "1h" });
 
@@ -920,24 +1289,128 @@ describe("OAuth hardening", () => {
 });
 
 describe("GET /auth/bootstrap-status", () => {
+  const disabledSignupBotProtection = {
+    enabled: false,
+    provider: "none",
+    siteKey: null,
+    configured: true,
+    configurationError: null,
+  };
+
   it("reports needsFirstAdmin=true when no users exist", async () => {
     mockDb.query.mockResolvedValueOnce({ rows: [] });
     const res = await request(app).get("/auth/bootstrap-status");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ needsFirstAdmin: true });
+    expect(res.body).toEqual({
+      needsFirstAdmin: true,
+      oauthLoginEnabled: false,
+      platformMode: "selfhosted",
+      signupBotProtection: disabledSignupBotProtection,
+    });
   });
 
   it("reports needsFirstAdmin=false once a user is registered", async () => {
     mockDb.query.mockResolvedValueOnce({ rows: [{ "?column?": 1 }] });
     const res = await request(app).get("/auth/bootstrap-status");
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ needsFirstAdmin: false });
+    expect(res.body).toEqual({
+      needsFirstAdmin: false,
+      oauthLoginEnabled: false,
+      platformMode: "selfhosted",
+      signupBotProtection: disabledSignupBotProtection,
+    });
   });
 
-  it("is publicly reachable without a token and leaks only the boolean", async () => {
-    mockDb.query.mockResolvedValueOnce({ rows: [{ "?column?": 1 }] });
+  it("never advertises public first-admin claim for an empty hosted PaaS database", async () => {
+    process.env.PLATFORM_MODE = "paas";
+    mockDb.query.mockResolvedValueOnce({ rows: [] });
+
     const res = await request(app).get("/auth/bootstrap-status");
+
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body)).toEqual(["needsFirstAdmin"]);
+    expect(res.body.needsFirstAdmin).toBe(false);
+    expect(res.body.platformMode).toBe("paas");
+  });
+
+  it("reports runtime OAuth and hosted platform configuration", async () => {
+    process.env.OAUTH_LOGIN_ENABLED = "true";
+    process.env.PLATFORM_MODE = "PAAS";
+    mockDb.query.mockResolvedValueOnce({ rows: [{ "?column?": 1 }] });
+
+    const res = await request(app).get("/auth/bootstrap-status");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      needsFirstAdmin: false,
+      oauthLoginEnabled: true,
+      platformMode: "paas",
+      signupBotProtection: {
+        enabled: true,
+        provider: null,
+        siteKey: null,
+        configured: false,
+        configurationError: expect.stringMatching(/required.*no challenge provider/i),
+      },
+    });
+  });
+
+  it("returns only safe public Turnstile configuration without secret material", async () => {
+    process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "turnstile";
+    process.env.SIGNUP_TURNSTILE_SITE_KEY = "turnstile-site-key";
+    process.env.SIGNUP_TURNSTILE_SECRET = "turnstile-secret";
+    mockDb.query.mockResolvedValueOnce({ rows: [{ "?column?": 1 }] });
+
+    const res = await request(app).get("/auth/bootstrap-status");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      needsFirstAdmin: false,
+      oauthLoginEnabled: false,
+      platformMode: "selfhosted",
+      signupBotProtection: {
+        enabled: true,
+        provider: "turnstile",
+        siteKey: "turnstile-site-key",
+        configured: true,
+        configurationError: null,
+      },
+    });
+    expect(JSON.stringify(res.body)).not.toContain("turnstile-secret");
+  });
+
+  it("accepts the legacy public site-key alias at runtime", async () => {
+    process.env.NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER = "recaptcha";
+    process.env.NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY = "legacy-recaptcha-site-key";
+    process.env.SIGNUP_RECAPTCHA_SECRET = "recaptcha-secret";
+    mockDb.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/auth/bootstrap-status");
+
+    expect(res.status).toBe(200);
+    expect(res.body.signupBotProtection).toEqual({
+      enabled: true,
+      provider: "recaptcha",
+      siteKey: "legacy-recaptcha-site-key",
+      configured: true,
+      configurationError: null,
+    });
+    expect(JSON.stringify(res.body)).not.toContain("recaptcha-secret");
+  });
+
+  it("reports a fail-closed public configuration error when the site key is missing", async () => {
+    process.env.SIGNUP_BOT_PROTECTION_PROVIDER = "turnstile";
+    process.env.SIGNUP_TURNSTILE_SECRET = "turnstile-secret";
+    mockDb.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/auth/bootstrap-status");
+
+    expect(res.status).toBe(200);
+    expect(res.body.signupBotProtection).toEqual({
+      enabled: true,
+      provider: "turnstile",
+      siteKey: null,
+      configured: false,
+      configurationError: expect.stringMatching(/public site key is missing/i),
+    });
   });
 });

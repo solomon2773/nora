@@ -1,3 +1,10 @@
+{{- $marketingOAuthEnvNames := list
+      "OAUTH_LOGIN_ENABLED"
+      "GOOGLE_CLIENT_ID"
+      "GOOGLE_CLIENT_SECRET"
+      "GITHUB_CLIENT_ID"
+      "GITHUB_CLIENT_SECRET"
+}}
 {{- $frontends := list
       (dict "name" "frontend-marketing" "image" "nora-frontend-marketing" "values" .Values.frontendMarketing "probePath" "/")
       (dict "name" "frontend-dashboard" "image" "nora-frontend-dashboard" "values" .Values.frontendDashboard "probePath" "/app")
@@ -20,11 +27,17 @@ spec:
       labels:
         {{- include "nora.selectorLabels" (dict "root" $ "component" $frontend.name) | nindent 8 }}
     spec:
+      automountServiceAccountToken: {{ $.Values.security.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml $.Values.security.podSecurityContext | nindent 8 }}
+      {{- include "nora.preferredPodAntiAffinity" (dict "root" $ "component" $frontend.name) | nindent 6 }}
       {{- include "nora.imagePullSecrets" $ | nindent 6 }}
       containers:
         - name: {{ $frontend.name }}
           image: {{ include "nora.image" (dict "root" $ "name" $frontend.image) }}
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.security.containerSecurityContext | nindent 12 }}
           ports:
             - name: http
               containerPort: 3000
@@ -36,8 +49,27 @@ spec:
             {{- if eq $frontend.name "frontend-marketing" }}
             - name: PLATFORM_MODE
               value: {{ $.Values.platformMode | quote }}
+            {{- if not $frontend.values.oauthExistingSecret }}
+            {{- range $envName := $marketingOAuthEnvNames }}
+            {{- if hasKey $.Values.commonEnv $envName }}
+            - name: {{ $envName }}
+              value: {{ index $.Values.commonEnv $envName | quote }}
             {{- end }}
-            {{- include "nora.extraEnv" (dict "root" $ "extra" $.Values.commonEnv) | nindent 12 }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- include "nora.extraEnv" (dict "root" $ "extra" $.Values.frontendEnv) | nindent 12 }}
+            {{- include "nora.extraEnv" (dict "root" $ "extra" $frontend.values.env) | nindent 12 }}
+            {{- if and (eq $frontend.name "frontend-marketing") $frontend.values.oauthExistingSecret }}
+            {{- range $envName := $marketingOAuthEnvNames }}
+            - name: {{ $envName }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $frontend.values.oauthExistingSecret | quote }}
+                  key: {{ $envName | quote }}
+                  optional: true
+            {{- end }}
+            {{- end }}
           readinessProbe:
             httpGet:
               path: {{ $frontend.probePath }}
@@ -52,6 +84,19 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml $frontend.values.resources | nindent 12 }}
+          volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: scratch
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Mi
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 128Mi
 ---
 apiVersion: v1
 kind: Service

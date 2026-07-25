@@ -25,6 +25,15 @@ TLS_COMPOSE_OVERRIDE_TEMPLATE="infra/docker-compose.public-tls.yml"
 PUBLIC_NGINX_CONF="nginx.public.conf"
 COMPOSE_OVERRIDE_FILE="docker-compose.override.yml"
 SETUP_MODE=""
+DEFAULT_HEALTHCHECK_ATTEMPTS=221
+DEFAULT_HEALTHCHECK_INTERVAL_SECONDS=3
+LEGACY_HEALTHCHECK_ATTEMPTS=40
+LEGACY_HEALTHCHECK_INTERVAL_SECONDS=3
+MAX_HEALTHCHECK_WINDOW_SECONDS=3900
+DEFAULT_HEALTHCHECK_WINDOW_SECONDS=$(((DEFAULT_HEALTHCHECK_ATTEMPTS - 1) * DEFAULT_HEALTHCHECK_INTERVAL_SECONDS))
+MIN_COMPOSE_VERSION="2.24.4"
+DEFAULT_COMPOSE_SECRETS_DIR=".secrets/compose"
+DEFAULT_COMPOSE_PROJECT_NAME="nora"
 
 # ── Color helpers ────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -39,6 +48,34 @@ ok()    { printf "${GREEN}[ok]${NC}    %s\n" "$1"; }
 warn()  { printf "${YELLOW}[warn]${NC}  %s\n" "$1"; }
 error() { printf "${RED}[error]${NC} %s\n" "$1"; }
 header(){ printf "\n${BOLD}${CYAN}── %s ──${NC}\n\n" "$1"; }
+
+bootstrap_admin_email_is_valid() {
+  local value="$1" lowered
+  [[ "$value" =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]] || return 1
+  case "$value" in
+    *'<'*|*'>'*|*'{{'*) return 1 ;;
+  esac
+  lowered="$(printf '%s' "$value" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  case "$lowered" in
+    your_*|replace_with*|replace-with*|placeholder*) return 1 ;;
+  esac
+  return 0
+}
+
+bootstrap_admin_password_is_forbidden() {
+  local value="$1" lowered comparable
+  lowered="$(printf '%s' "$value" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  case "$lowered" in
+    your_*|example*|sample*|placeholder*|changeme*|replace-me*|test-*|demo-*|*'<'*|*'{{'*)
+      return 0
+      ;;
+  esac
+  comparable="$(printf '%s' "$lowered" | LC_ALL=C tr -cd 'a-z0-9')"
+  case "$comparable" in
+    admin123*|administrator*|password*|changeme*|letmein*|welcome1*|qwerty123*) return 0 ;;
+  esac
+  return 1
+}
 
 usage() {
   cat <<'EOF'
@@ -100,6 +137,122 @@ write_compose_override() {
   cp "$template" "$COMPOSE_OVERRIDE_FILE"
 }
 
+secure_env_file_permissions() {
+  local env_path="$1" mode
+  [ -f "$env_path" ] || return 0
+
+  if ! chmod 600 "$env_path"; then
+    error "Could not restrict $env_path to owner read/write access."
+    return 1
+  fi
+  mode="$(stat -c '%a' "$env_path" 2>/dev/null || stat -f '%Lp' "$env_path" 2>/dev/null || true)"
+  if [ "$mode" != "600" ]; then
+    error "Refusing to continue because $env_path permissions are $mode instead of 600."
+    return 1
+  fi
+}
+
+compose_version_is_supported() {
+  local raw="${1#v}" major minor patch
+  raw="${raw%%[-+]*}"
+  IFS=. read -r major minor patch <<EOF
+$raw
+EOF
+  major="${major:-0}"
+  minor="${minor:-0}"
+  patch="${patch:-0}"
+  [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]] || return 1
+  [ "$major" -gt 2 ] ||
+    { [ "$major" -eq 2 ] && { [ "$minor" -gt 24 ] || { [ "$minor" -eq 24 ] && [ "$patch" -ge 4 ]; }; }; }
+}
+
+set_env_value() {
+  local env_path="$1" name="$2" value="$3" tmp_file
+  tmp_file="$(mktemp "${env_path}.tmp.XXXXXX")"
+  awk -v name="$name" -v value="$value" '
+    BEGIN { wrote = 0 }
+    $0 ~ "^[[:space:]]*" name "[[:space:]]*=" {
+      if (!wrote) {
+        print name "=" value
+        wrote = 1
+      }
+      next
+    }
+    { print }
+    END {
+      if (!wrote) print name "=" value
+    }
+  ' "$env_path" > "$tmp_file"
+  mv "$tmp_file" "$env_path"
+  secure_env_file_permissions "$env_path"
+}
+
+resolve_docker_gid() {
+  if [ -e /var/run/docker.sock ]; then
+    stat -c '%g' /var/run/docker.sock 2>/dev/null ||
+      stat -f '%g' /var/run/docker.sock 2>/dev/null ||
+      printf '0\n'
+  else
+    printf '0\n'
+  fi
+}
+
+normalize_generated_compose_override() {
+  local source_file="$1"
+  sed -E \
+    -e '/NORA_KUBECONFIGS_DIR.*\/kubeconfigs:ro/d' \
+    -e '/NORA_HOST_REPO_DIR.*\/nora-host-repo:ro/d' \
+    -e '/^[[:space:]]*NODE_PATH:[[:space:]]*\/app\/node_modules[[:space:]]*$/d' \
+    "$source_file"
+}
+
+compose_override_matches_generated_history() {
+  local override_file="$1" template_file="$2"
+  local normalized_override raw_candidate normalized_candidate commit
+
+  normalized_override="$(mktemp)"
+  raw_candidate="$(mktemp)"
+  normalized_candidate="$(mktemp)"
+  normalize_generated_compose_override "$override_file" > "$normalized_override"
+
+  if [ -f "$template_file" ]; then
+    normalize_generated_compose_override "$template_file" > "$normalized_candidate"
+    if cmp -s "$normalized_override" "$normalized_candidate"; then
+      rm -f "$normalized_override" "$raw_candidate" "$normalized_candidate"
+      return 0
+    fi
+  fi
+
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    while IFS= read -r commit; do
+      [ -n "$commit" ] || continue
+      if git show "${commit}:${template_file}" > "$raw_candidate" 2>/dev/null; then
+        normalize_generated_compose_override "$raw_candidate" > "$normalized_candidate"
+        if cmp -s "$normalized_override" "$normalized_candidate"; then
+          rm -f "$normalized_override" "$raw_candidate" "$normalized_candidate"
+          return 0
+        fi
+      fi
+    done < <(git log --format=%H --all -- "$template_file" 2>/dev/null || true)
+  fi
+
+  rm -f "$normalized_override" "$raw_candidate" "$normalized_candidate"
+  return 1
+}
+
+backup_legacy_compose_override() {
+  local timestamp candidate suffix
+  timestamp="$(date -u +%Y%m%d-%H%M%SZ)"
+  candidate="${COMPOSE_OVERRIDE_FILE}.legacy-${timestamp}"
+  suffix=1
+  while [ -e "$candidate" ]; do
+    candidate="${COMPOSE_OVERRIDE_FILE}.legacy-${timestamp}.${suffix}"
+    suffix=$((suffix + 1))
+  done
+  cp "$COMPOSE_OVERRIDE_FILE" "$candidate"
+  printf '%s\n' "$candidate"
+}
+
 clear_public_access_artifacts() {
   rm -f "$PUBLIC_NGINX_CONF" "$COMPOSE_OVERRIDE_FILE"
 }
@@ -125,7 +278,9 @@ backup_existing_env_file() {
     suffix=$((suffix + 1))
   done
 
+  secure_env_file_permissions "$env_path"
   cp "$env_path" "$candidate"
+  secure_env_file_permissions "$candidate"
   printf "%s\n" "$candidate"
 }
 
@@ -187,21 +342,22 @@ resolve_current_release_commit() {
 }
 
 resolve_current_release_version() {
-  local exact_tag latest_tag
+  local candidate_tag exact_tag product_version_pattern
 
   if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     return 0
   fi
 
-  exact_tag="$(git describe --tags --exact-match 2>/dev/null || true)"
+  product_version_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+  exact_tag=""
+  while IFS= read -r candidate_tag; do
+    if [[ "$candidate_tag" =~ $product_version_pattern ]]; then
+      exact_tag="$(printf '%s\n%s\n' "$exact_tag" "$candidate_tag" | sed '/^$/d' | sort -V | tail -n 1)"
+    fi
+  done < <(git tag --points-at HEAD 2>/dev/null || true)
+
   if [ -n "$exact_tag" ]; then
     printf "%s\n" "$exact_tag"
-    return 0
-  fi
-
-  latest_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-  if [ -n "$latest_tag" ] && git merge-base --is-ancestor "$latest_tag" HEAD >/dev/null 2>&1; then
-    printf "%s\n" "$latest_tag"
   fi
 }
 
@@ -226,6 +382,7 @@ stamp_release_tracking_env() {
   fi
 
   bash infra/update-release-env.sh "$env_path" "$current_version" "$current_commit" "$NORA_GITHUB_REPO_SLUG"
+  secure_env_file_permissions "$env_path"
   ok "Release tracking stamped: ${current_version:-source checkout} @ ${current_commit:0:12}"
 }
 
@@ -255,6 +412,7 @@ ensure_agent_hub_hash_secret_env() {
   if [ ! -f "$env_path" ]; then
     return 0
   fi
+  secure_env_file_permissions "$env_path"
 
   if env_has_agent_hub_hash_secret "$env_path"; then
     info "NORA_AGENT_HUB_API_KEY_HASH_SECRET already set; preserving existing value."
@@ -281,7 +439,29 @@ ensure_agent_hub_hash_secret_env() {
     }
   ' "$env_path" > "$tmp_file"
   mv "$tmp_file" "$env_path"
+  secure_env_file_permissions "$env_path"
   ok "NORA_AGENT_HUB_API_KEY_HASH_SECRET generated (64-char hex)"
+}
+
+ensure_api_key_hash_secret_env() {
+  local env_path="$1" existing fallback
+  [ -f "$env_path" ] || return 0
+  secure_env_file_permissions "$env_path"
+
+  existing="$(read_env_value "$env_path" "NORA_API_KEY_HASH_SECRET" "")"
+  if [ -n "$existing" ]; then
+    info "NORA_API_KEY_HASH_SECRET already set; preserving existing value."
+    return 0
+  fi
+
+  # Match lib/apiTokens.ts's legacy fallback order so adding the primary name
+  # does not invalidate tokens already hashed by an existing installation.
+  fallback="$(read_env_value "$env_path" "NORA_AGENT_HUB_API_KEY_HASH_SECRET" "")"
+  [ -n "$fallback" ] || fallback="$(read_env_value "$env_path" "ENCRYPTION_KEY" "")"
+  [ -n "$fallback" ] || fallback="$(read_env_value "$env_path" "JWT_SECRET" "")"
+  [ -n "$fallback" ] || fallback="$(openssl rand -hex 32)"
+  set_env_value "$env_path" "NORA_API_KEY_HASH_SECRET" "$fallback"
+  ok "NORA_API_KEY_HASH_SECRET populated from the existing token-hash fallback"
 }
 
 env_has_backup_encryption_key() {
@@ -310,6 +490,7 @@ ensure_backup_encryption_key_env() {
   if [ ! -f "$env_path" ]; then
     return 0
   fi
+  secure_env_file_permissions "$env_path"
 
   if env_has_backup_encryption_key "$env_path"; then
     info "NORA_BACKUP_ENCRYPTION_KEY already set; preserving existing value."
@@ -344,24 +525,47 @@ ensure_backup_encryption_key_env() {
     }
   ' "$env_path" > "$tmp_file"
   mv "$tmp_file" "$env_path"
+  secure_env_file_permissions "$env_path"
   ok "NORA_BACKUP_ENCRYPTION_KEY generated (64-char hex)"
 }
 
+materialize_compose_secret_files() {
+  local env_path="$1" secrets_dir
+  secrets_dir="$(read_env_value "$env_path" "NORA_COMPOSE_SECRETS_DIR" "$DEFAULT_COMPOSE_SECRETS_DIR")"
+  if [ ! -f "scripts/materialize-compose-secrets.sh" ]; then
+    error "Missing scripts/materialize-compose-secrets.sh; cannot prepare read-only Compose secrets."
+    return 1
+  fi
+  NORA_MATERIALIZE_QUIET=true bash scripts/materialize-compose-secrets.sh "$env_path"
+  set_env_value "$env_path" "NORA_COMPOSE_SECRETS_DIR" "$secrets_dir"
+  ok "Compose secret files refreshed under $secrets_dir (owner-only directory)"
+}
+
+resolve_compose_project_name() {
+  local env_path="${1:-$ENV_FILE}" project_name
+  project_name="$(read_env_value "$env_path" "COMPOSE_PROJECT_NAME" "$DEFAULT_COMPOSE_PROJECT_NAME")"
+  if [[ ! "$project_name" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+    error "Invalid COMPOSE_PROJECT_NAME '$project_name'; use lowercase letters, digits, hyphens, or underscores."
+    return 1
+  fi
+  printf '%s\n' "$project_name"
+}
+
 remove_local_agent_containers() {
-  local containers
+  local project_name="$1" compose_network="${1}_default" containers
   containers="$(
     {
-      docker ps -a --filter "label=openclaw.agent.id" -q 2>/dev/null || true
-      docker ps -a --filter "label=nora.agent.id" -q 2>/dev/null || true
+      docker ps -a --filter "label=openclaw.agent.id" --filter "network=$compose_network" -q 2>/dev/null || true
+      docker ps -a --filter "label=nora.agent.id" --filter "network=$compose_network" -q 2>/dev/null || true
     } | sort -u
   )"
 
   if [ -z "$containers" ]; then
-    info "No local Nora agent containers found."
+    info "No local Nora agent containers found on $compose_network."
     return 0
   fi
 
-  info "Removing local Nora agent containers..."
+  info "Removing local Nora agent containers attached to $compose_network..."
   while IFS= read -r container_id; do
     [ -z "$container_id" ] && continue
     docker rm -f "$container_id" >/dev/null 2>&1 || true
@@ -372,11 +576,13 @@ EOF
 }
 
 clean_reinstall_state() {
+  local project_name
+  project_name="$(resolve_compose_project_name "$ENV_FILE")"
   warn "Clean reinstall selected: local compose containers and volumes will be removed."
-  info "External Kubernetes, planned Proxmox, NemoClaw, and VM resources will not be touched."
-  docker compose down -v --remove-orphans 2>/dev/null || true
-  remove_local_agent_containers
-  ok "Local Nora compose state cleaned"
+  info "External Kubernetes, Proxmox, NemoClaw, and other VM resources will not be touched."
+  remove_local_agent_containers "$project_name"
+  docker compose -p "$project_name" down -v --remove-orphans 2>/dev/null || true
+  ok "Local Nora compose state cleaned for project $project_name"
 }
 
 start_compose_stack() {
@@ -384,9 +590,50 @@ start_compose_stack() {
   info "Starting Nora (docker compose up -d --build)..."
   info "Preserving Docker volumes and provisioned agent instances."
   echo ""
+  info "Pre-validating nginx configuration..."
+  docker compose run --rm --no-deps --interactive=false -T nginx nginx -t
   docker compose up -d --build
+  info "Recreating nginx so generated configuration mounts are refreshed..."
+  docker compose up -d --force-recreate --no-deps nginx
+  docker compose exec -T nginx nginx -t </dev/null
+  ok "Nginx configuration activated"
+  verify_compose_runtime_permissions
   echo ""
   ok "Nora is running!"
+}
+
+run_compose_node_probe() {
+  local service="$1" description="$2" script="$3" attempts="$4" interval="$5" window="$6"
+  local attempt
+  info "Waiting for ${service} probe: ${attempts} attempts every ${interval}s (${window}s from first to final attempt)."
+  for attempt in $(seq 1 "$attempts"); do
+    if docker compose exec -T "$service" node -e "$script" </dev/null >/dev/null 2>&1; then
+      ok "$description"
+      return 0
+    fi
+    if [ "$attempt" -lt "$attempts" ]; then
+      sleep "$interval"
+    fi
+  done
+
+  docker compose exec -T "$service" node -e "$script" </dev/null || true
+  error "$description failed after ${attempts} attempts every ${interval}s (${window}s first-to-final window). Inspect: docker compose logs --tail=100 $service"
+  return 1
+}
+
+verify_compose_runtime_permissions() {
+  local docker_probe backend_volume_probe backup_volume_probe attempts interval window
+  info "Verifying runtime permissions and upgrade mounts..."
+
+  read -r attempts interval window < <(resolve_healthcheck_budget)
+
+  docker_probe='const http=require("http");const request=http.request({socketPath:"/var/run/docker.sock",path:"/_ping",method:"GET"},response=>{let body="";response.setEncoding("utf8");response.on("data",chunk=>body+=chunk);response.on("end",()=>process.exit(response.statusCode===200&&body.trim()==="OK"?0:1));});request.setTimeout(5000,()=>request.destroy(new Error("Docker socket timeout")));request.on("error",error=>{console.error(error.message);process.exit(1);});request.end();'
+  backend_volume_probe='const fs=require("fs");fs.accessSync("/nora-host-repo/infra/run-release-upgrade.sh",fs.constants.R_OK);const path=`/var/lib/nora-upgrade/.nora-write-probe-${process.pid}`;try{fs.writeFileSync(path,"ok",{mode:0o600});fs.unlinkSync(path);}finally{try{fs.unlinkSync(path);}catch{}}'
+  backup_volume_probe='const fs=require("fs");const path=`/var/lib/nora-backups/.nora-write-probe-${process.pid}`;try{fs.writeFileSync(path,"ok",{mode:0o600});fs.unlinkSync(path);}finally{try{fs.unlinkSync(path);}catch{}}'
+
+  run_compose_node_probe "worker-provisioner" "Provisioner Docker socket access verified" "$docker_probe" "$attempts" "$interval" "$window"
+  run_compose_node_probe "backend-api" "Upgrade checkout and state volume verified" "$backend_volume_probe" "$attempts" "$interval" "$window"
+  run_compose_node_probe "worker-backup" "Backup volume write access verified" "$backup_volume_probe" "$attempts" "$interval" "$window"
 }
 
 read_env_value() {
@@ -406,15 +653,260 @@ read_env_value() {
   value="${line#*=}"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
-  if [ "${#value}" -ge 2 ]; then
-    first="${value:0:1}"
-    last="${value: -1}"
-    if { [ "$first" = '"' ] && [ "$last" = '"' ]; } || { [ "$first" = "'" ] && [ "$last" = "'" ]; }; then
-      value="${value:1:${#value}-2}"
+  value="$(decode_compose_env_literal "$value")"
+
+  printf "%s\n" "$value"
+}
+
+compose_env_literal() {
+  local value="$1" escaped
+  case "$value" in
+    *$'\n'* | *$'\r'*)
+      error "Compose environment values cannot contain newlines."
+      return 1
+      ;;
+  esac
+
+  if [ -n "$value" ] && { [ "${value: -1}" = "\\" ] || [[ "$value" == *"\\'"* ]]; }; then
+    escaped="${value//\\/\\\\}"
+    escaped="${escaped//\"/\\\"}"
+    escaped="${escaped//\$/\$\$}"
+    printf '"%s"\n' "$escaped"
+    return 0
+  fi
+
+  escaped="${value//\'/\\\'}"
+  printf "'%s'\n" "$escaped"
+}
+
+decode_compose_env_literal() {
+  local value="$1" first last body output="" current next i=0 length quote_mode
+  if [ "${#value}" -lt 2 ]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  first="${value:0:1}"
+  last="${value: -1}"
+  if [ "$first" = '"' ] && [ "$last" = '"' ]; then
+    quote_mode="double"
+  elif [ "$first" = "'" ] && [ "$last" = "'" ]; then
+    quote_mode="single"
+  else
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  body="${value:1:${#value}-2}"
+  length="${#body}"
+  while [ "$i" -lt "$length" ]; do
+    current="${body:$i:1}"
+    if [ "$quote_mode" = "single" ] && [ "$current" = "\\" ] && [ $((i + 1)) -lt "$length" ]; then
+      next="${body:$((i + 1)):1}"
+      if [ "$next" = "'" ]; then
+        output="${output}${next}"
+        i=$((i + 2))
+        continue
+      fi
+    fi
+    if [ "$quote_mode" = "double" ] && [ $((i + 1)) -lt "$length" ]; then
+      next="${body:$((i + 1)):1}"
+      if [ "$current" = "\\" ] && { [ "$next" = "\\" ] || [ "$next" = '"' ]; }; then
+        output="${output}${next}"
+        i=$((i + 2))
+        continue
+      fi
+      if [ "$current" = '$' ] && [ "$next" = '$' ]; then
+        output="${output}${current}"
+        i=$((i + 2))
+        continue
+      fi
+    fi
+    output="${output}${current}"
+    i=$((i + 1))
+  done
+  printf '%s\n' "$output"
+}
+
+read_env_value_with_alias() {
+  local env_path="$1" name="$2" alias_name="$3" default_value="$4" value
+  value="$(read_env_value "$env_path" "$name" "")"
+  if [ -z "$value" ] && [ -n "$alias_name" ]; then
+    value="$(read_env_value "$env_path" "$alias_name" "")"
+  fi
+  printf '%s\n' "${value:-$default_value}"
+}
+
+nemoclaw_image_ref_is_mutable() {
+  local reference="$1" last_component tag
+  reference="${reference#"${reference%%[![:space:]]*}"}"
+  reference="${reference%"${reference##*[![:space:]]}"}"
+  [ -n "$reference" ] || return 1
+  [[ "$reference" == *"@"* ]] && return 1
+  last_component="${reference##*/}"
+  [[ "$last_component" != *":"* ]] && return 0
+  tag="${last_component##*:}"
+  case "$tag" in
+    [Ll][Aa][Tt][Ee][Ss][Tt]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+csv_value_is_enabled() {
+  local csv="$1" expected="$2" item
+  local -a items=()
+  IFS=',' read -r -a items <<< "$csv"
+  for item in "${items[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [ "$item" = "$expected" ] && return 0
+  done
+  return 1
+}
+
+ensure_nemoclaw_sandbox_image() {
+  local image="$1" image_present="false"
+  image="${image#"${image%%[![:space:]]*}"}"
+  image="${image%"${image##*[![:space:]]}"}"
+  if [ -z "$image" ]; then
+    error "NEMOCLAW_SANDBOX_IMAGE must not be empty"
+    return 1
+  fi
+
+  if [ "$image" = "nora-nemoclaw-agent:local" ]; then
+    echo ""
+    info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
+    echo ""
+    if ! docker build \
+      -f agent-runtime/Dockerfile.nemoclaw-agent \
+      -t nora-nemoclaw-agent:local \
+      agent-runtime/; then
+      error "Failed to build nora-nemoclaw-agent:local"
+      return 1
+    fi
+    ok "NemoClaw sandbox image ready"
+    return 0
+  fi
+
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    image_present="true"
+  fi
+  if [ "$image_present" = "true" ] && ! nemoclaw_image_ref_is_mutable "$image"; then
+    info "Using existing immutable NemoClaw sandbox image"
+    ok "NemoClaw sandbox image ready"
+    return 0
+  fi
+
+  if [ "$image_present" = "true" ]; then
+    info "Refreshing mutable NemoClaw sandbox image..."
+  else
+    info "Pulling missing NemoClaw sandbox image..."
+  fi
+  if ! docker pull "$image"; then
+    error "Failed to pull configured NemoClaw sandbox image"
+    return 1
+  fi
+  ok "NemoClaw sandbox image ready"
+}
+
+ensure_signup_protection_env() {
+  local env_path="$1"
+  local burst_max burst_window daily_max daily_window provider turnstile_site_key
+  local turnstile_secret recaptcha_site_key recaptcha_secret
+
+  burst_max="$(read_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_MAX" "5")"
+  burst_window="$(read_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" "600000")"
+  daily_max="$(read_env_value "$env_path" "SIGNUP_RATE_LIMIT_DAILY_MAX" "20")"
+  daily_window="$(read_env_value "$env_path" "SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS" "86400000")"
+  provider="$(read_env_value_with_alias "$env_path" "SIGNUP_BOT_PROTECTION_PROVIDER" "NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER" "none")"
+  turnstile_site_key="$(read_env_value_with_alias "$env_path" "SIGNUP_TURNSTILE_SITE_KEY" "NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY" "")"
+  turnstile_secret="$(read_env_value "$env_path" "SIGNUP_TURNSTILE_SECRET" "")"
+  recaptcha_site_key="$(read_env_value_with_alias "$env_path" "SIGNUP_RECAPTCHA_SITE_KEY" "NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY" "")"
+  recaptcha_secret="$(read_env_value "$env_path" "SIGNUP_RECAPTCHA_SECRET" "")"
+
+  set_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_MAX" "$burst_max"
+  set_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" "$burst_window"
+  set_env_value "$env_path" "SIGNUP_RATE_LIMIT_DAILY_MAX" "$daily_max"
+  set_env_value "$env_path" "SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS" "$daily_window"
+  set_env_value "$env_path" "SIGNUP_BOT_PROTECTION_PROVIDER" "$provider"
+  set_env_value "$env_path" "SIGNUP_TURNSTILE_SITE_KEY" "$turnstile_site_key"
+  set_env_value "$env_path" "SIGNUP_TURNSTILE_SECRET" "$turnstile_secret"
+  set_env_value "$env_path" "SIGNUP_RECAPTCHA_SITE_KEY" "$recaptcha_site_key"
+  set_env_value "$env_path" "SIGNUP_RECAPTCHA_SECRET" "$recaptcha_secret"
+}
+
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s\n' "$value"
+}
+
+resolve_healthcheck_budget() {
+  local attempts_raw interval_raw attempts interval window invalid="false"
+
+  attempts_raw="${NORA_UPGRADE_HEALTHCHECK_ATTEMPTS:-}"
+  interval_raw="${NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS:-}"
+  if [ -z "$attempts_raw" ]; then
+    attempts_raw="$(read_env_value "$ENV_FILE" "NORA_UPGRADE_HEALTHCHECK_ATTEMPTS" "$DEFAULT_HEALTHCHECK_ATTEMPTS")"
+  fi
+  if [ -z "$interval_raw" ]; then
+    interval_raw="$(read_env_value "$ENV_FILE" "NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS" "$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS")"
+  fi
+  attempts_raw="$(trim_whitespace "$attempts_raw")"
+  interval_raw="$(trim_whitespace "$interval_raw")"
+  if [ "$attempts_raw" = "$LEGACY_HEALTHCHECK_ATTEMPTS" ] &&
+    [ "$interval_raw" = "$LEGACY_HEALTHCHECK_INTERVAL_SECONDS" ]; then
+    attempts_raw="$DEFAULT_HEALTHCHECK_ATTEMPTS"
+    interval_raw="$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS"
+  fi
+
+  if [[ "$attempts_raw" =~ ^[0-9]+$ ]] && [ "${#attempts_raw}" -le 10 ]; then
+    attempts=$((10#$attempts_raw))
+  else
+    invalid="true"
+    attempts=0
+  fi
+  if [[ "$interval_raw" =~ ^[0-9]+$ ]] && [ "${#interval_raw}" -le 10 ]; then
+    interval=$((10#$interval_raw))
+  else
+    invalid="true"
+    interval=0
+  fi
+
+  if [ "$attempts" -lt 1 ] || [ "$attempts" -gt $((MAX_HEALTHCHECK_WINDOW_SECONDS + 1)) ] ||
+    [ "$interval" -lt 1 ] || [ "$interval" -gt "$MAX_HEALTHCHECK_WINDOW_SECONDS" ]; then
+    invalid="true"
+  fi
+
+  window=0
+  if [ "$invalid" = "false" ]; then
+    window=$(((attempts - 1) * interval))
+    if [ "$window" -gt "$MAX_HEALTHCHECK_WINDOW_SECONDS" ]; then
+      invalid="true"
     fi
   fi
 
-  printf "%s\n" "$value"
+  if [ "$invalid" = "true" ]; then
+    warn "Invalid NORA_UPGRADE health-check overrides (attempts='${attempts_raw}', interval='${interval_raw}s'); using ${DEFAULT_HEALTHCHECK_ATTEMPTS} attempts every ${DEFAULT_HEALTHCHECK_INTERVAL_SECONDS}s (${DEFAULT_HEALTHCHECK_WINDOW_SECONDS}s from first to final attempt). Values must be positive integers with a first-to-final window no greater than ${MAX_HEALTHCHECK_WINDOW_SECONDS}s." >&2
+    attempts="$DEFAULT_HEALTHCHECK_ATTEMPTS"
+    interval="$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS"
+    window=$(((attempts - 1) * interval))
+  fi
+
+  printf '%s %s %s\n' "$attempts" "$interval" "$window"
+}
+
+migrate_legacy_healthcheck_defaults() {
+  local env_path="$1" attempts interval
+  attempts="$(trim_whitespace "$(read_env_value "$env_path" "NORA_UPGRADE_HEALTHCHECK_ATTEMPTS" "")")"
+  interval="$(trim_whitespace "$(read_env_value "$env_path" "NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS" "")")"
+  if [ "$attempts" = "$LEGACY_HEALTHCHECK_ATTEMPTS" ] &&
+    [ "$interval" = "$LEGACY_HEALTHCHECK_INTERVAL_SECONDS" ]; then
+    set_env_value "$env_path" "NORA_UPGRADE_HEALTHCHECK_ATTEMPTS" "$DEFAULT_HEALTHCHECK_ATTEMPTS"
+    set_env_value "$env_path" "NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS" "$DEFAULT_HEALTHCHECK_INTERVAL_SECONDS"
+    ok "Migrated legacy health-check budget from ${LEGACY_HEALTHCHECK_ATTEMPTS}x${LEGACY_HEALTHCHECK_INTERVAL_SECONDS}s to ${DEFAULT_HEALTHCHECK_ATTEMPTS}x${DEFAULT_HEALTHCHECK_INTERVAL_SECONDS}s (${DEFAULT_HEALTHCHECK_WINDOW_SECONDS}s first-to-final window)"
+  fi
 }
 
 to_port_number() {
@@ -846,13 +1338,23 @@ if ! docker info &>/dev/null 2>&1; then
 fi
 ok "Docker found: $(docker --version | head -1)"
 
-# Verify Compose
+# Verify the Compose plugin version required by the !override merge tags used
+# in Nora's generated hardened overlays.
 if docker compose version &>/dev/null; then
-  ok "Docker Compose found: $(docker compose version --short 2>/dev/null || echo 'v2+')"
-elif command -v docker-compose &>/dev/null; then
-  warn "Found docker-compose (v1). Docker Compose v2+ is recommended."
+  compose_version="$(docker compose version --short 2>/dev/null || true)"
+  if ! compose_version_is_supported "$compose_version"; then
+    error "Docker Compose ${compose_version:-unknown} is too old; Nora requires ${MIN_COMPOSE_VERSION} or newer."
+    error "Upgrade Docker Desktop or the Docker Compose plugin, then re-run setup."
+    exit 1
+  fi
+  ok "Docker Compose found: $compose_version (minimum $MIN_COMPOSE_VERSION)"
 else
-  error "Docker Compose is required but was not installed. Re-run setup."
+  if command -v docker-compose &>/dev/null; then
+    error "docker-compose v1 is unsupported; Nora requires the 'docker compose' plugin ${MIN_COMPOSE_VERSION} or newer."
+  else
+    error "Docker Compose ${MIN_COMPOSE_VERSION}+ is required but was not installed."
+  fi
+  error "Upgrade Docker Desktop or install the current Docker Compose plugin, then re-run setup."
   exit 1
 fi
 
@@ -907,19 +1409,70 @@ if [ "$SETUP_MODE" = "update" ]; then
   fi
 
   header "Updating Nora"
+  secure_env_file_permissions "$ENV_FILE"
   info "Code update mode keeps $ENV_FILE, Postgres/backup volumes, and provisioned instances."
-  # A leftover public-mode docker-compose.override.yml is auto-loaded by
-  # `docker compose` and would pin a LOCAL stack to prod/TLS wiring (443 + cert
-  # mounts). If .env selects the local nginx.conf, retire the stale override.
-  if [ "$(read_env_value "$ENV_FILE" "NGINX_CONFIG_FILE" "nginx.conf")" = "nginx.conf" ] && [ -f "$COMPOSE_OVERRIDE_FILE" ]; then
-    mv "$COMPOSE_OVERRIDE_FILE" "${COMPOSE_OVERRIDE_FILE}.disabled-$(date -u +%Y%m%d-%H%M%SZ)"
-    warn "Disabled a stale ${COMPOSE_OVERRIDE_FILE} (it did not match local mode in $ENV_FILE)."
+  # Every install mode uses a hardened application overlay. Preserve whether
+  # nginx terminates TLS locally, then refresh the matching current template so
+  # older installs receive non-root/read-only defaults and volume migration.
+  update_overlay_template="$PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE"
+  if [ "$(read_env_value "$ENV_FILE" "NGINX_CONFIG_FILE" "nginx.conf")" != "nginx.conf" ] &&
+    { { [ -f "$COMPOSE_OVERRIDE_FILE" ] && grep -Eq '/etc/letsencrypt|443:443' "$COMPOSE_OVERRIDE_FILE"; } ||
+      { [ -f "$PUBLIC_NGINX_CONF" ] && grep -Eq 'listen[[:space:]]+443' "$PUBLIC_NGINX_CONF"; }; }; then
+    update_overlay_template="$TLS_COMPOSE_OVERRIDE_TEMPLATE"
+  fi
+  update_overlay_had_kubeconfigs="false"
+  if [ -f "$COMPOSE_OVERRIDE_FILE" ] &&
+    grep -q 'NORA_KUBECONFIGS_DIR.*\/kubeconfigs:ro' "$COMPOSE_OVERRIDE_FILE"; then
+    update_overlay_had_kubeconfigs="true"
   fi
   update_source_checkout
+  update_overlay_custom="false"
+  update_overlay_generated="false"
+  if [ -f "$COMPOSE_OVERRIDE_FILE" ]; then
+    if compose_override_matches_generated_history "$COMPOSE_OVERRIDE_FILE" "$update_overlay_template"; then
+      update_overlay_generated="true"
+    else
+      update_overlay_custom="true"
+    fi
+  fi
+
+  if [ "$update_overlay_generated" = "true" ]; then
+    if ! cmp -s "$COMPOSE_OVERRIDE_FILE" "$update_overlay_template"; then
+      legacy_override_backup="$(backup_legacy_compose_override)"
+      info "Backed up the generated legacy override to $legacy_override_backup."
+    fi
+    write_compose_override "$update_overlay_template"
+    compose_file_value="docker-compose.yml:${COMPOSE_OVERRIDE_FILE}"
+    if [ "$update_overlay_had_kubeconfigs" = "true" ]; then
+      compose_file_value="${compose_file_value}:docker-compose.kubernetes.yml"
+      info "Migrated Kubernetes kubeconfig mounts into docker-compose.kubernetes.yml."
+    fi
+  elif [ "$update_overlay_custom" = "true" ]; then
+    compose_file_value="docker-compose.yml:${update_overlay_template}:${COMPOSE_OVERRIDE_FILE}"
+    info "Preserving customized $COMPOSE_OVERRIDE_FILE as the final compose layer."
+  else
+    write_compose_override "$update_overlay_template"
+    compose_file_value="docker-compose.yml:${COMPOSE_OVERRIDE_FILE}"
+  fi
+  set_env_value "$ENV_FILE" "COMPOSE_PATH_SEPARATOR" ":"
+  set_env_value "$ENV_FILE" "COMPOSE_FILE" "$compose_file_value"
+  set_env_value "$ENV_FILE" "COMPOSE_PROJECT_NAME" "$(resolve_compose_project_name "$ENV_FILE")"
+  set_env_value "$ENV_FILE" "NORA_UPGRADE_COMPOSE_FILES" "$compose_file_value"
+  migrate_legacy_healthcheck_defaults "$ENV_FILE"
+  ensure_signup_protection_env "$ENV_FILE"
+  export COMPOSE_PATH_SEPARATOR=":"
+  export COMPOSE_FILE="$compose_file_value"
+  set_env_value "$ENV_FILE" "DOCKER_GID" "$(resolve_docker_gid)"
+  if [ -z "$(read_env_value "$ENV_FILE" "DOCKER_AGENT_BIND_IP" "")" ]; then
+    set_env_value "$ENV_FILE" "DOCKER_AGENT_BIND_IP" "127.0.0.1"
+  fi
   refresh_release_tags
   ensure_agent_hub_hash_secret_env "$ENV_FILE"
+  ensure_api_key_hash_secret_env "$ENV_FILE"
   ensure_backup_encryption_key_env "$ENV_FILE"
+  materialize_compose_secret_files "$ENV_FILE"
   stamp_release_tracking_env "$ENV_FILE"
+  bash infra/render-public-nginx.sh "$ENV_FILE" "$compose_file_value"
   assert_nora_host_ports_available "$ENV_FILE"
   start_compose_stack
   echo ""
@@ -930,11 +1483,13 @@ fi
 if [ "$SETUP_MODE" = "clean-reinstall" ]; then
   header "Clean Reinstall"
   if [ -f "$ENV_FILE" ]; then
+    secure_env_file_permissions "$ENV_FILE"
     ENV_BACKUP_FILE="$(backup_existing_env_file "$ENV_FILE")"
     ok "Existing $ENV_FILE backed up to $ENV_BACKUP_FILE"
   fi
   clean_reinstall_state
 elif [ -f "$ENV_FILE" ]; then
+  secure_env_file_permissions "$ENV_FILE"
   echo ""
   warn ".env already exists."
   printf "  Overwrite configuration while preserving data volumes and instances? [y/N] "
@@ -963,6 +1518,14 @@ NORA_BACKUP_ENCRYPTION_KEY="$(read_env_value "$ENV_FILE" "NORA_BACKUP_ENCRYPTION
 [[ "$NORA_BACKUP_ENCRYPTION_KEY" =~ ^[0-9a-fA-F]{64}$ ]] || NORA_BACKUP_ENCRYPTION_KEY=$(openssl rand -hex 32)
 NORA_AGENT_HUB_API_KEY_HASH_SECRET="$(read_env_value "$ENV_FILE" "NORA_AGENT_HUB_API_KEY_HASH_SECRET" "")"
 [[ "$NORA_AGENT_HUB_API_KEY_HASH_SECRET" =~ ^[0-9a-fA-F]{64}$ ]] || NORA_AGENT_HUB_API_KEY_HASH_SECRET=$(openssl rand -hex 32)
+NORA_API_KEY_HASH_SECRET="$(read_env_value "$ENV_FILE" "NORA_API_KEY_HASH_SECRET" "")"
+if [ -z "$NORA_API_KEY_HASH_SECRET" ]; then
+  if [ -f "$ENV_FILE" ]; then
+    NORA_API_KEY_HASH_SECRET="$NORA_AGENT_HUB_API_KEY_HASH_SECRET"
+  else
+    NORA_API_KEY_HASH_SECRET="$(openssl rand -hex 32)"
+  fi
+fi
 DB_USER="nora"
 DB_NAME="nora"
 DB_PASSWORD="$(read_env_value "$ENV_FILE" "DB_PASSWORD" "")"
@@ -972,6 +1535,7 @@ ok "JWT_SECRET            (64-char hex)"
 ok "ENCRYPTION_KEY        (64-char hex — AES-256-GCM)"
 ok "BACKUP_ENCRYPTION_KEY (64-char hex — managed backup archives)"
 ok "AGENT_HUB_HASH        (64-char hex)"
+ok "API_KEY_HASH          (preserved primary/fallback secret)"
 ok "DB_PASSWORD           (48-char hex)"
 
 # ── Platform mode ────────────────────────────────────────────
@@ -1013,19 +1577,42 @@ header "Deploy Backends"
 DOCKER_BACKEND_ENABLED="true"
 HERMES_RUNTIME_ENABLED="false"
 NEMOCLAW_SANDBOX_ENABLED="false"
-PROXMOX_API_URL=""
-PROXMOX_TOKEN_ID=""
-PROXMOX_TOKEN_SECRET=""
-PROXMOX_NODE="pve"
-PROXMOX_TEMPLATE="local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
-PROXMOX_HERMES_TEMPLATE=""
-PROXMOX_NEMOCLAW_TEMPLATE=""
-PROXMOX_ROOTFS_STORAGE="local-lvm"
-PROXMOX_BRIDGE="vmbr0"
-PROXMOX_SSH_HOST=""
-PROXMOX_SSH_USER="root"
-PROXMOX_SSH_PRIVATE_KEY_PATH=""
-PROXMOX_SSH_PASSWORD=""
+PROXMOX_BACKEND_ENABLED="false"
+case ",$(read_env_value "$ENV_FILE" "ENABLED_BACKENDS" "")," in
+  *,proxmox,*) PROXMOX_BACKEND_ENABLED="true" ;;
+esac
+PROXMOX_API_URL="$(read_env_value "$ENV_FILE" "PROXMOX_API_URL" "")"
+PROXMOX_TOKEN_ID="$(read_env_value "$ENV_FILE" "PROXMOX_TOKEN_ID" "")"
+PROXMOX_TOKEN_SECRET="$(read_env_value "$ENV_FILE" "PROXMOX_TOKEN_SECRET" "")"
+PROXMOX_VERIFY_TLS="$(read_env_value "$ENV_FILE" "PROXMOX_VERIFY_TLS" "true")"
+PROXMOX_CA_CERT="$(read_env_value "$ENV_FILE" "PROXMOX_CA_CERT" "")"
+PROXMOX_CA_CERT_PATH="$(read_env_value "$ENV_FILE" "PROXMOX_CA_CERT_PATH" "")"
+PROXMOX_ALLOW_INSECURE_HTTP="$(read_env_value "$ENV_FILE" "PROXMOX_ALLOW_INSECURE_HTTP" "false")"
+PROXMOX_NODE="$(read_env_value "$ENV_FILE" "PROXMOX_NODE" "pve")"
+PROXMOX_TEMPLATE="$(read_env_value "$ENV_FILE" "PROXMOX_TEMPLATE" "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst")"
+PROXMOX_HERMES_TEMPLATE="$(read_env_value "$ENV_FILE" "PROXMOX_HERMES_TEMPLATE" "")"
+PROXMOX_ROOTFS_STORAGE="$(read_env_value "$ENV_FILE" "PROXMOX_ROOTFS_STORAGE" "local-lvm")"
+PROXMOX_BRIDGE="$(read_env_value "$ENV_FILE" "PROXMOX_BRIDGE" "vmbr0")"
+PROXMOX_SSH_HOST="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_HOST" "")"
+PROXMOX_SSH_USER="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_USER" "root")"
+PROXMOX_SSH_PORT="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_PORT" "22")"
+PROXMOX_SSH_PRIVATE_KEY="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_PRIVATE_KEY" "")"
+PROXMOX_SSH_PRIVATE_KEY_PATH="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_PRIVATE_KEY_PATH" "")"
+PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE" "")"
+PROXMOX_SSH_PASSWORD="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_PASSWORD" "")"
+PROXMOX_SSH_HOST_FINGERPRINT="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_HOST_FINGERPRINT" "")"
+PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY="$(read_env_value "$ENV_FILE" "PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY" "false")"
+PROXMOX_PCT_COMMAND="$(read_env_value "$ENV_FILE" "PROXMOX_PCT_COMMAND" "pct")"
+PROXMOX_SUDO="$(read_env_value "$ENV_FILE" "PROXMOX_SUDO" "")"
+PROXMOX_OFFLINE_STAGE_COMMAND="$(read_env_value "$ENV_FILE" "PROXMOX_OFFLINE_STAGE_COMMAND" "")"
+PROXMOX_NODE_MAJOR="$(read_env_value "$ENV_FILE" "PROXMOX_NODE_MAJOR" "24")"
+PROXMOX_OPENCLAW_PACKAGE="$(read_env_value "$ENV_FILE" "PROXMOX_OPENCLAW_PACKAGE" "openclaw@2026.6.11")"
+if [ "$PROXMOX_OPENCLAW_PACKAGE" = "openclaw@latest" ]; then
+  warn "Migrating legacy PROXMOX_OPENCLAW_PACKAGE=openclaw@latest to Nora's validated pin."
+  PROXMOX_OPENCLAW_PACKAGE="openclaw@2026.6.11"
+fi
+PROXMOX_HERMES_BIN="$(read_env_value "$ENV_FILE" "PROXMOX_HERMES_BIN" "/opt/hermes/.venv/bin/hermes")"
+PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD="$(read_env_value "$ENV_FILE" "PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD" "false")"
 NVIDIA_API_KEY=""
 
 printf "  Enable Docker backend for local socket provisioning? [Y/n] "
@@ -1038,7 +1625,20 @@ else
 fi
 
 info "Kubernetes clusters are registered after setup in Admin -> Kubernetes."
-info "Proxmox is planned but release-blocked in this Nora release; setup will not enable it."
+if [ "$PROXMOX_BACKEND_ENABLED" = "true" ]; then
+  printf "  Keep experimental Proxmox LXC target enabled? [Y/n] "
+else
+  printf "  Enable experimental Proxmox LXC target? [y/N] "
+fi
+read -r proxmox_backend_answer < /dev/tty
+if { [ "$PROXMOX_BACKEND_ENABLED" = "true" ] && [[ ! "$proxmox_backend_answer" =~ ^[Nn]$ ]]; } ||
+  { [ "$PROXMOX_BACKEND_ENABLED" != "true" ] && [[ "$proxmox_backend_answer" =~ ^[Yy]$ ]]; }; then
+  PROXMOX_BACKEND_ENABLED="true"
+  warn "Proxmox is experimental. Configure HTTPS API TLS, pinned SSH host verification, and run e2e/scripts/run-proxmox-smoke.sh before production use."
+else
+  PROXMOX_BACKEND_ENABLED="false"
+  info "Proxmox target disabled"
+fi
 
 printf "  Enable Hermes runtime family? [y/N] "
 read -r hermes_runtime_answer < /dev/tty
@@ -1067,6 +1667,7 @@ fi
 
 enabled_backends=()
 [ "$DOCKER_BACKEND_ENABLED" = "true" ] && enabled_backends+=("docker")
+[ "$PROXMOX_BACKEND_ENABLED" = "true" ] && enabled_backends+=("proxmox")
 
 if [ ${#enabled_backends[@]} -eq 0 ]; then
   warn "No deploy backends selected — enabling Docker so Nora can deploy agents."
@@ -1155,6 +1756,7 @@ case "$access_answer" in
     ;;
   *)
     clear_public_access_artifacts
+    write_compose_override "$PUBLIC_PROD_COMPOSE_OVERRIDE_TEMPLATE"
     NGINX_HTTP_PORT="$(resolve_available_host_port "8080" "Local web gateway" "nginx" "80")"
     NEXTAUTH_URL="http://localhost:${NGINX_HTTP_PORT}"
     CORS_ORIGINS="${NEXTAUTH_URL}"
@@ -1171,12 +1773,16 @@ if [ "$BACKEND_API_PORT" != "4100" ]; then
   warn "Port 4100 was busy — Nora backend API will run at 127.0.0.1:${BACKEND_API_PORT}."
 fi
 
-# ── Bootstrap Admin Account (Optional) ───────────────────────
+# ── Bootstrap Admin Account ──────────────────────────────────
 
-header "Bootstrap Admin Account (Optional)"
-
-printf "  Leave both fields blank to skip bootstrap admin creation.\n"
-printf "  If set, the password must be at least 12 characters.\n\n"
+if [ "$PLATFORM_MODE" = "paas" ]; then
+  header "Bootstrap Admin Account (Required for PaaS)"
+  printf "  Hosted PaaS requires an explicit bootstrap administrator.\n"
+else
+  header "Bootstrap Admin Account (Optional)"
+  printf "  Leave both fields blank to claim the first admin after boot.\n"
+fi
+printf "  If set, use a valid email and a non-default password of at least 12 characters.\n\n"
 
 while true; do
   printf "  Admin email [leave blank to skip]: "
@@ -1187,9 +1793,13 @@ while true; do
   printf "\n"
 
   if [ -z "$admin_email_input" ] && [ -z "$admin_pass_input" ]; then
+    if [ "$PLATFORM_MODE" = "paas" ]; then
+      warn "Hosted PaaS cannot expose first-account admin claim. Configure the bootstrap administrator."
+      continue
+    fi
     DEFAULT_ADMIN_EMAIL=""
     DEFAULT_ADMIN_PASSWORD=""
-    info "Skipping bootstrap admin seed — create your operator account after first boot."
+    info "Skipping bootstrap admin seed — claim your self-hosted operator account after first boot."
     break
   fi
 
@@ -1198,8 +1808,18 @@ while true; do
     continue
   fi
 
+  if ! bootstrap_admin_email_is_valid "$admin_email_input"; then
+    warn "Bootstrap admin email must be a valid non-placeholder address."
+    continue
+  fi
+
   if [ ${#admin_pass_input} -lt 12 ]; then
     warn "Bootstrap admin password must be at least 12 characters."
+    continue
+  fi
+
+  if bootstrap_admin_password_is_forbidden "$admin_pass_input"; then
+    warn "Bootstrap admin password cannot be a shipped placeholder or derived from a common default."
     continue
   fi
 
@@ -1254,10 +1874,8 @@ if [ -z "$GOOGLE_CLIENT_ID" ] && [ -z "$GITHUB_CLIENT_ID" ]; then
 fi
 
 OAUTH_LOGIN_ENABLED="false"
-NEXT_PUBLIC_OAUTH_LOGIN_ENABLED="false"
 if [ -n "$GOOGLE_CLIENT_ID" ] || [ -n "$GITHUB_CLIENT_ID" ]; then
   OAUTH_LOGIN_ENABLED="true"
-  NEXT_PUBLIC_OAUTH_LOGIN_ENABLED="true"
 fi
 
 # ── Write .env ───────────────────────────────────────────────
@@ -1268,6 +1886,53 @@ info "Writing $ENV_FILE..."
 
 NORA_CURRENT_VERSION="$(resolve_current_release_version)"
 NORA_CURRENT_COMMIT="$(resolve_current_release_commit)"
+DOCKER_GID="$(resolve_docker_gid)"
+COMPOSE_PROJECT_NAME="$(resolve_compose_project_name "$ENV_FILE")"
+DOCKER_AGENT_BIND_IP="$(read_env_value "$ENV_FILE" "DOCKER_AGENT_BIND_IP" "127.0.0.1")"
+OPENCLAW_DOCKER_PACKAGE="$(read_env_value "$ENV_FILE" "OPENCLAW_DOCKER_PACKAGE" "openclaw@2026.6.11")"
+if [ "$OPENCLAW_DOCKER_PACKAGE" = "openclaw@latest" ]; then
+  warn "Migrating legacy OPENCLAW_DOCKER_PACKAGE=openclaw@latest to Nora's validated pin."
+  OPENCLAW_DOCKER_PACKAGE="openclaw@2026.6.11"
+fi
+NEMOCLAW_SANDBOX_IMAGE="$(read_env_value "$ENV_FILE" "NEMOCLAW_SANDBOX_IMAGE" "ghcr.io/solomon2773/nora-nemoclaw-agent:latest")"
+DATABASE_URL="$(read_env_value "$ENV_FILE" "DATABASE_URL" "")"
+DB_SSL_MODE="$(read_env_value "$ENV_FILE" "DB_SSL_MODE" "")"
+DB_SSL_CA="$(read_env_value "$ENV_FILE" "DB_SSL_CA" "")"
+DB_SSL_CA_FILE="$(read_env_value "$ENV_FILE" "DB_SSL_CA_FILE" "")"
+DB_SSL_CERT="$(read_env_value "$ENV_FILE" "DB_SSL_CERT" "")"
+DB_SSL_CERT_FILE="$(read_env_value "$ENV_FILE" "DB_SSL_CERT_FILE" "")"
+DB_SSL_KEY="$(read_env_value "$ENV_FILE" "DB_SSL_KEY" "")"
+DB_SSL_KEY_FILE="$(read_env_value "$ENV_FILE" "DB_SSL_KEY_FILE" "")"
+DB_POOL_MAX="$(read_env_value "$ENV_FILE" "DB_POOL_MAX" "20")"
+DB_IDLE_TIMEOUT_MS="$(read_env_value "$ENV_FILE" "DB_IDLE_TIMEOUT_MS" "30000")"
+DB_CONNECTION_TIMEOUT_MS="$(read_env_value "$ENV_FILE" "DB_CONNECTION_TIMEOUT_MS" "10000")"
+DB_STATEMENT_TIMEOUT_MS="$(read_env_value "$ENV_FILE" "DB_STATEMENT_TIMEOUT_MS" "0")"
+DB_MIGRATION_LOCK_TIMEOUT_MS="$(read_env_value "$ENV_FILE" "DB_MIGRATION_LOCK_TIMEOUT_MS" "60000")"
+DB_MIGRATION_STATEMENT_TIMEOUT_MS="$(read_env_value "$ENV_FILE" "DB_MIGRATION_STATEMENT_TIMEOUT_MS" "600000")"
+REDIS_URL="$(read_env_value "$ENV_FILE" "REDIS_URL" "")"
+REDIS_USERNAME="$(read_env_value "$ENV_FILE" "REDIS_USERNAME" "")"
+REDIS_PASSWORD="$(read_env_value "$ENV_FILE" "REDIS_PASSWORD" "")"
+REDIS_DB="$(read_env_value "$ENV_FILE" "REDIS_DB" "")"
+REDIS_TLS="$(read_env_value "$ENV_FILE" "REDIS_TLS" "false")"
+REDIS_TLS_CA="$(read_env_value "$ENV_FILE" "REDIS_TLS_CA" "")"
+REDIS_TLS_CA_FILE="$(read_env_value "$ENV_FILE" "REDIS_TLS_CA_FILE" "")"
+REDIS_TLS_CERT="$(read_env_value "$ENV_FILE" "REDIS_TLS_CERT" "")"
+REDIS_TLS_CERT_FILE="$(read_env_value "$ENV_FILE" "REDIS_TLS_CERT_FILE" "")"
+REDIS_TLS_KEY="$(read_env_value "$ENV_FILE" "REDIS_TLS_KEY" "")"
+REDIS_TLS_KEY_FILE="$(read_env_value "$ENV_FILE" "REDIS_TLS_KEY_FILE" "")"
+REDIS_TLS_INSECURE_SKIP_VERIFY="$(read_env_value "$ENV_FILE" "REDIS_TLS_INSECURE_SKIP_VERIFY" "false")"
+REDIS_CONNECT_TIMEOUT_MS="$(read_env_value "$ENV_FILE" "REDIS_CONNECT_TIMEOUT_MS" "10000")"
+SIGNUP_RATE_LIMIT_BURST_MAX="$(read_env_value "$ENV_FILE" "SIGNUP_RATE_LIMIT_BURST_MAX" "5")"
+SIGNUP_RATE_LIMIT_BURST_WINDOW_MS="$(read_env_value "$ENV_FILE" "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" "600000")"
+SIGNUP_RATE_LIMIT_DAILY_MAX="$(read_env_value "$ENV_FILE" "SIGNUP_RATE_LIMIT_DAILY_MAX" "20")"
+SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS="$(read_env_value "$ENV_FILE" "SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS" "86400000")"
+SIGNUP_BOT_PROTECTION_PROVIDER="$(read_env_value_with_alias "$ENV_FILE" "SIGNUP_BOT_PROTECTION_PROVIDER" "NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER" "none")"
+SIGNUP_TURNSTILE_SITE_KEY="$(read_env_value_with_alias "$ENV_FILE" "SIGNUP_TURNSTILE_SITE_KEY" "NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY" "")"
+SIGNUP_TURNSTILE_SECRET="$(read_env_value "$ENV_FILE" "SIGNUP_TURNSTILE_SECRET" "")"
+SIGNUP_RECAPTCHA_SITE_KEY="$(read_env_value_with_alias "$ENV_FILE" "SIGNUP_RECAPTCHA_SITE_KEY" "NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY" "")"
+SIGNUP_RECAPTCHA_SECRET="$(read_env_value "$ENV_FILE" "SIGNUP_RECAPTCHA_SECRET" "")"
+DEFAULT_ADMIN_EMAIL_ENV="$(compose_env_literal "$DEFAULT_ADMIN_EMAIL")"
+DEFAULT_ADMIN_PASSWORD_ENV="$(compose_env_literal "$DEFAULT_ADMIN_PASSWORD")"
 if [ -n "$NORA_CURRENT_COMMIT" ]; then
   ok "Release tracking: ${NORA_CURRENT_VERSION:-source checkout} @ ${NORA_CURRENT_COMMIT:0:12}"
 else
@@ -1286,10 +1951,11 @@ JWT_SECRET=${JWT_SECRET}
 ENCRYPTION_KEY=${ENCRYPTION_KEY}
 NORA_BACKUP_ENCRYPTION_KEY=${NORA_BACKUP_ENCRYPTION_KEY}
 NORA_AGENT_HUB_API_KEY_HASH_SECRET=${NORA_AGENT_HUB_API_KEY_HASH_SECRET}
+NORA_API_KEY_HASH_SECRET=${NORA_API_KEY_HASH_SECRET}
 
 # ── Bootstrap Admin Account (optional; seeded only when both are set securely) ──
-DEFAULT_ADMIN_EMAIL=${DEFAULT_ADMIN_EMAIL}
-DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
+DEFAULT_ADMIN_EMAIL=${DEFAULT_ADMIN_EMAIL_ENV}
+DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD_ENV}
 
 # ── Database (defaults work with Docker Compose) ─────────────
 DB_HOST=postgres
@@ -1297,12 +1963,41 @@ DB_USER=${DB_USER}
 DB_PASSWORD=${DB_PASSWORD}
 DB_NAME=${DB_NAME}
 DB_PORT=5432
+DATABASE_URL=${DATABASE_URL}
+DB_SSL_MODE=${DB_SSL_MODE}
+DB_SSL_CA=${DB_SSL_CA}
+DB_SSL_CA_FILE=${DB_SSL_CA_FILE}
+DB_SSL_CERT=${DB_SSL_CERT}
+DB_SSL_CERT_FILE=${DB_SSL_CERT_FILE}
+DB_SSL_KEY=${DB_SSL_KEY}
+DB_SSL_KEY_FILE=${DB_SSL_KEY_FILE}
+DB_POOL_MAX=${DB_POOL_MAX}
+DB_IDLE_TIMEOUT_MS=${DB_IDLE_TIMEOUT_MS}
+DB_CONNECTION_TIMEOUT_MS=${DB_CONNECTION_TIMEOUT_MS}
+DB_STATEMENT_TIMEOUT_MS=${DB_STATEMENT_TIMEOUT_MS}
+DB_MIGRATION_LOCK_TIMEOUT_MS=${DB_MIGRATION_LOCK_TIMEOUT_MS}
+DB_MIGRATION_STATEMENT_TIMEOUT_MS=${DB_MIGRATION_STATEMENT_TIMEOUT_MS}
 
 # ── Redis (defaults work with Docker Compose) ────────────────
 REDIS_HOST=redis
 REDIS_PORT=6379
+REDIS_URL=${REDIS_URL}
+REDIS_USERNAME=${REDIS_USERNAME}
+REDIS_PASSWORD=${REDIS_PASSWORD}
+REDIS_DB=${REDIS_DB}
+REDIS_TLS=${REDIS_TLS}
+REDIS_TLS_CA=${REDIS_TLS_CA}
+REDIS_TLS_CA_FILE=${REDIS_TLS_CA_FILE}
+REDIS_TLS_CERT=${REDIS_TLS_CERT}
+REDIS_TLS_CERT_FILE=${REDIS_TLS_CERT_FILE}
+REDIS_TLS_KEY=${REDIS_TLS_KEY}
+REDIS_TLS_KEY_FILE=${REDIS_TLS_KEY_FILE}
+REDIS_TLS_INSECURE_SKIP_VERIFY=${REDIS_TLS_INSECURE_SKIP_VERIFY}
+REDIS_CONNECT_TIMEOUT_MS=${REDIS_CONNECT_TIMEOUT_MS}
 PORT=4000
 BACKEND_API_PORT=${BACKEND_API_PORT}
+DOCKER_GID=${DOCKER_GID}
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
 
 # ── Access / URL ─────────────────────────────────────────────
 NGINX_CONFIG_FILE=${NGINX_CONFIG_FILE}
@@ -1314,12 +2009,22 @@ NORA_FORCE_SECURE_COOKIES=${NORA_FORCE_SECURE_COOKIES}
 
 # ── OAuth ────────────────────────────────────────────────────
 OAUTH_LOGIN_ENABLED=${OAUTH_LOGIN_ENABLED}
-NEXT_PUBLIC_OAUTH_LOGIN_ENABLED=${NEXT_PUBLIC_OAUTH_LOGIN_ENABLED}
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
 GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
 GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
 NEXTAUTH_URL=${NEXTAUTH_URL}
+
+# ── Public Signup Abuse Protection ──────────────────────────
+SIGNUP_RATE_LIMIT_BURST_MAX=${SIGNUP_RATE_LIMIT_BURST_MAX}
+SIGNUP_RATE_LIMIT_BURST_WINDOW_MS=${SIGNUP_RATE_LIMIT_BURST_WINDOW_MS}
+SIGNUP_RATE_LIMIT_DAILY_MAX=${SIGNUP_RATE_LIMIT_DAILY_MAX}
+SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS=${SIGNUP_RATE_LIMIT_DAILY_WINDOW_MS}
+SIGNUP_BOT_PROTECTION_PROVIDER=${SIGNUP_BOT_PROTECTION_PROVIDER}
+SIGNUP_TURNSTILE_SITE_KEY=${SIGNUP_TURNSTILE_SITE_KEY}
+SIGNUP_TURNSTILE_SECRET=${SIGNUP_TURNSTILE_SECRET}
+SIGNUP_RECAPTCHA_SITE_KEY=${SIGNUP_RECAPTCHA_SITE_KEY}
+SIGNUP_RECAPTCHA_SECRET=${SIGNUP_RECAPTCHA_SECRET}
 
 # ── Platform Mode ────────────────────────────────────────────
 PLATFORM_MODE=${PLATFORM_MODE}
@@ -1389,9 +2094,15 @@ NORA_UPGRADE_REF=master
 NORA_UPGRADE_RUNNER_IMAGE=docker:29-cli
 NORA_UPGRADE_STATE_VOLUME=nora_upgrade_state
 NORA_ENV_FILE=.env
-NORA_UPGRADE_COMPOSE_FILES=
+NORA_COMPOSE_SECRETS_DIR=${DEFAULT_COMPOSE_SECRETS_DIR}
+COMPOSE_PATH_SEPARATOR=:
+COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml
+NORA_UPGRADE_COMPOSE_FILES=docker-compose.yml:docker-compose.override.yml
 NORA_UPGRADE_PUBLIC_HEALTH_URL=
-NORA_UPGRADE_HEALTHCHECK_ATTEMPTS=40
+# Shared by setup post-start probes and one-click upgrade health checks.
+# 221 attempts, 3s apart = 660s from the first to final attempt. Overrides
+# must be positive integers with a first-to-final window no greater than 3900s.
+NORA_UPGRADE_HEALTHCHECK_ATTEMPTS=221
 NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS=3
 NORA_INSTALL_METHOD=source
 NORA_MANUAL_UPGRADE_COMMAND=./setup.sh --update
@@ -1401,30 +2112,45 @@ NORA_MANUAL_UPGRADE_STEPS=
 ENABLED_RUNTIME_FAMILIES=${ENABLED_RUNTIME_FAMILIES}
 ENABLED_BACKENDS=${ENABLED_BACKENDS}
 ENABLED_SANDBOX_PROFILES=${ENABLED_SANDBOX_PROFILES}
+DOCKER_AGENT_BIND_IP=${DOCKER_AGENT_BIND_IP}
+OPENCLAW_DOCKER_PACKAGE=${OPENCLAW_DOCKER_PACKAGE}
 
-# ── Proxmox (planned; release-blocked in current Nora releases) ─────────
-# These values are retained for adapter development and future validation.
-# Setting them does not make Proxmox a supported deploy target yet.
+# ── Proxmox LXC (experimental; secure configuration required) ──────────
 PROXMOX_API_URL=${PROXMOX_API_URL}
 PROXMOX_TOKEN_ID=${PROXMOX_TOKEN_ID}
 PROXMOX_TOKEN_SECRET=${PROXMOX_TOKEN_SECRET}
+PROXMOX_VERIFY_TLS=${PROXMOX_VERIFY_TLS}
+PROXMOX_CA_CERT=${PROXMOX_CA_CERT}
+PROXMOX_CA_CERT_PATH=${PROXMOX_CA_CERT_PATH}
+PROXMOX_ALLOW_INSECURE_HTTP=${PROXMOX_ALLOW_INSECURE_HTTP}
 PROXMOX_NODE=${PROXMOX_NODE}
 PROXMOX_TEMPLATE=${PROXMOX_TEMPLATE}
 PROXMOX_HERMES_TEMPLATE=${PROXMOX_HERMES_TEMPLATE}
-PROXMOX_NEMOCLAW_TEMPLATE=${PROXMOX_NEMOCLAW_TEMPLATE}
 PROXMOX_ROOTFS_STORAGE=${PROXMOX_ROOTFS_STORAGE}
 PROXMOX_BRIDGE=${PROXMOX_BRIDGE}
 PROXMOX_SSH_HOST=${PROXMOX_SSH_HOST}
 PROXMOX_SSH_USER=${PROXMOX_SSH_USER}
+PROXMOX_SSH_PORT=${PROXMOX_SSH_PORT}
+PROXMOX_SSH_PRIVATE_KEY=${PROXMOX_SSH_PRIVATE_KEY}
 PROXMOX_SSH_PRIVATE_KEY_PATH=${PROXMOX_SSH_PRIVATE_KEY_PATH}
+PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE=${PROXMOX_SSH_PRIVATE_KEY_PASSPHRASE}
 PROXMOX_SSH_PASSWORD=${PROXMOX_SSH_PASSWORD}
+PROXMOX_SSH_HOST_FINGERPRINT=${PROXMOX_SSH_HOST_FINGERPRINT}
+PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY=${PROXMOX_SSH_INSECURE_ACCEPT_HOST_KEY}
+PROXMOX_PCT_COMMAND=${PROXMOX_PCT_COMMAND}
+PROXMOX_SUDO=${PROXMOX_SUDO}
+PROXMOX_OFFLINE_STAGE_COMMAND=${PROXMOX_OFFLINE_STAGE_COMMAND}
+PROXMOX_NODE_MAJOR=${PROXMOX_NODE_MAJOR}
+PROXMOX_OPENCLAW_PACKAGE=${PROXMOX_OPENCLAW_PACKAGE}
+PROXMOX_HERMES_BIN=${PROXMOX_HERMES_BIN}
+PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD=${PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD}
 
 # ── NemoClaw / NVIDIA (when ENABLED_SANDBOX_PROFILES includes nemoclaw) ──
 NVIDIA_API_KEY=${NVIDIA_API_KEY}
 NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
-# For K3s/Kubernetes targets, use a registry image your nodes can pull
-# or preload nora-nemoclaw-agent:local onto the target nodes.
-NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local
+# Defaults to the Nora-published GHCR image. For offline hosts or private
+# clusters, build/preload nora-nemoclaw-agent:local and override this value.
+NEMOCLAW_SANDBOX_IMAGE=${NEMOCLAW_SANDBOX_IMAGE}
 
 # ── Security ─────────────────────────────────────────────────
 CORS_ORIGINS=${CORS_ORIGINS}
@@ -1440,7 +2166,11 @@ KEY_STORAGE=database
 # AWS_SECRET_ACCESS_KEY=
 EOF
 
+secure_env_file_permissions "$ENV_FILE"
+materialize_compose_secret_files "$ENV_FILE"
 ok ".env created successfully"
+export COMPOSE_PATH_SEPARATOR=":"
+export COMPOSE_FILE="docker-compose.yml:docker-compose.override.yml"
 
 # ── Summary ──────────────────────────────────────────────────
 
@@ -1524,20 +2254,11 @@ docker build \
   agent-runtime/
 ok "OpenClaw agent image ready"
 
-# Only build the NemoClaw variant when the operator actually enables the
-# sandbox profile — pulling the 2.4GB OpenShell base on every install is wasteful.
-case ",${ENABLED_SANDBOX_PROFILES:-}," in
-  *,nemoclaw,*)
-    echo ""
-    info "Building nora-nemoclaw-agent:local (OpenShell sandbox + tsx)..."
-    echo ""
-    docker build \
-      -f agent-runtime/Dockerfile.nemoclaw-agent \
-      -t nora-nemoclaw-agent:local \
-      agent-runtime/
-    ok "NemoClaw sandbox image ready"
-    ;;
-esac
+# Build Nora's exact local NemoClaw tag. Other refs follow provisioner policy:
+# refresh mutable refs, reuse present immutable refs, and pull any missing ref.
+if csv_value_is_enabled "${ENABLED_SANDBOX_PROFILES:-}" "nemoclaw"; then
+  ensure_nemoclaw_sandbox_image "$NEMOCLAW_SANDBOX_IMAGE"
+fi
 
 start_compose_stack
 
@@ -1564,7 +2285,7 @@ echo "    docker compose down                 # stop everything"
 echo ""
 info "Useful links:"
 echo "    Quick start:        https://github.com/solomon2773/nora#quick-start"
-echo "    GitHub repo:        https://github.com/solomon2773/nora"
+echo "    Star Nora:          https://github.com/solomon2773/nora"
 echo "    Public site:        https://nora.solomontsao.com"
 echo "    Log in:             https://nora.solomontsao.com/login"
 echo "    Create account:     https://nora.solomontsao.com/signup"

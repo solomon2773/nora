@@ -52,24 +52,33 @@ nora doctor --fresh              # force a recompute (bypass any cached report)
 
 nora mcp                         # run the Nora MCP server on stdio for Claude Code/Desktop/Cursor
 nora mcp --allow-destructive     # enable the MCP server's destructive tools
+nora --version                   # print the installed CLI version
 ```
 
 ## Scopes
 
 The token must carry the matching scope for the operation:
 
-| Operation | Required scope |
-|---|---|
-| `agents list/get` | `agents:read` |
-| `agents start/stop/restart/redeploy/rollback` | `agents:write` |
-| `workspaces list/show/use` | `workspaces:read` |
-| `monitoring *` | `monitoring:read` |
+| Operation                                     | Required scope    |
+| --------------------------------------------- | ----------------- |
+| `agents list/get`                             | `agents:read`     |
+| `agents start/stop/restart/redeploy/rollback` | `agents:write`    |
+| `workspaces list/show/use`                    | `workspaces:read` |
+| `monitoring *`                                | `monitoring:read` |
 
 `nora doctor` needs an API key whose issuing user is a platform admin — it calls `GET /api/admin/doctor` behind `requireAdmin`, and on HTTP 403 it prints an admin-key error and exits 1.
 
 `nora mcp` forwards the host/token from `nora login` (`~/.nora/config.json`) to the `@noraai/mcp-server` child as `NORA_API_URL` / `NORA_API_KEY`; `--allow-destructive` sets `NORA_MCP_ALLOW_DESTRUCTIVE=true`, so the MCP server's own scope/tool requirements apply.
 
 Issuing API keys, mutating workspace membership, and other privileged flows require session authentication and are not available through the CLI.
+
+## Contributing
+
+From the repository root, run `npm run contributor:setup -- --scope cli` once, then `npm run contributor:check -- cli` before opening a pull request. CLI changes should keep command help, token-scope documentation, and mocked Node tests aligned with the public REST API.
+
+## Support Nora
+
+If Nora is useful to you, consider starring the [GitHub repository](https://github.com/solomon2773/nora). It helps other operators discover the project.
 
 ## License
 

@@ -15,6 +15,13 @@ function configuredNodeNames() {
     .filter(Boolean);
 }
 
+/**
+ * Select the least-loaded configured node, excluding errored and deleted agents
+ * from load. Falls back to the requested backend and keeps first-candidate ties.
+ *
+ * @param {Object} options - Backend or explicit fallback node label.
+ * @returns {Promise<Object>} Selected node name and its current agent count.
+ */
 async function selectNode(options = {}) {
   const fallbackName = String(options.fallback || options.backend || "docker").trim() || "docker";
   const nodeNames = configuredNodeNames();
@@ -22,7 +29,7 @@ async function selectNode(options = {}) {
 
   // Query current agent distribution across nodes
   const result = await db.query(
-    "SELECT node, COUNT(*)::int AS agent_count FROM agents WHERE status NOT IN ('error', 'deleted') GROUP BY node"
+    "SELECT node, COUNT(*)::int AS agent_count FROM agents WHERE status NOT IN ('error', 'deleted') GROUP BY node",
   );
   const counts = {};
   result.rows.forEach((r) => {

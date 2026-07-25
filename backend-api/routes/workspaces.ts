@@ -37,9 +37,31 @@ router.use("/:id/alert-rules", alertRulesRouter);
 
 router.get("/cost", async (req, res) => {
   try {
-    res.json(
-      await metrics.getAccessibleWorkspaceCosts(req.user.id, metrics.parseCostQuery(req.query)),
-    );
+    const costOptions = metrics.parseCostQuery(req.query);
+    const boundWorkspaceId = apiKeyWorkspaceId(req);
+    if (req.apiKey) {
+      if (!boundWorkspaceId) {
+        return res
+          .status(403)
+          .json({ error: "API key has no workspace binding", code: "wrong_workspace" });
+      }
+      const cost = await metrics.getWorkspaceCost(boundWorkspaceId, costOptions);
+      const workspace = {
+        workspaceName: req.apiKeyWorkspace?.name || null,
+        role: null,
+        ...cost,
+      };
+      return res.json({
+        periodDays: cost.periodDays,
+        periodStart: cost.periodStart,
+        periodEnd: cost.periodEnd,
+        workspaceTotalUsd: cost.totalUsd,
+        uniqueFleetTotalUsd: cost.totalUsd,
+        workspaces: [workspace],
+        unassigned: { totalUsd: 0, perAgent: [] },
+      });
+    }
+    res.json(await metrics.getAccessibleWorkspaceCosts(req.user.id, costOptions));
   } catch (e) {
     res.status(e.statusCode || 500).json({ error: e.message });
   }
@@ -236,6 +258,14 @@ function stripTrailingSlash(value) {
   return value.slice(0, end);
 }
 
+/**
+ * Build an invitation acceptance URL from the configured public base or a
+ * length-capped request Origin, falling back to a relative path when both are absent.
+ *
+ * @param {Object} req - Invitation request.
+ * @param {string} rawToken - Raw invitation token.
+ * @returns {string} Absolute or relative invitation acceptance URL.
+ */
 function buildAcceptUrl(req, rawToken) {
   // Prefer NEXTAUTH_URL (the canonical public URL). Fall back to the request
   // origin so local dev still produces a usable link without env config. Cap
@@ -247,6 +277,14 @@ function buildAcceptUrl(req, rawToken) {
   return `${base}/app/invitations/accept?token=${encodeURIComponent(rawToken)}`;
 }
 
+/**
+ * Attempt invitation delivery when SMTP is configured, returning delivery
+ * status without invalidating the already-created invitation on mail failure.
+ *
+ * @param {Object} req - Authenticated invitation request.
+ * @param {Object} invitation - Persisted invitation containing its one-time token.
+ * @returns {Promise<Object>} Delivery status and optional message id or error.
+ */
 async function maybeSendInvitationEmail(req, invitation) {
   if (!invitation || !invitation.token) return { sent: false, error: "no_token" };
   let configured = false;

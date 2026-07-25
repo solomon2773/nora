@@ -5,16 +5,18 @@ const integrations = require("./integrations");
 const channels = require("./channels");
 const { runtimeUrlForAgent } = require("../agent-runtime/lib/agentEndpoints");
 const { runtimeAuthHeaders } = require("./runtimeAuth");
+const remoteHosts = require("./remoteHosts");
 const { NORA_INTEGRATIONS_CONTEXT_FILE } = require("../agent-runtime/lib/runtimeBootstrap");
 const { NORA_INTEGRATIONS_SKILL_FILE } = require("../agent-runtime/lib/integrationTools");
 const {
-  isKnownBackend,
   normalizeBackendName,
   normalizeExecutionTargetId,
 } = require("../agent-runtime/lib/backendCatalog");
-const { buildAgentRuntimeFields } = require("./agentRuntimeFields");
+const { buildAgentRuntimeFields, parseSandboxProfile } = require("./agentRuntimeFields");
 
 const CLONE_MODES = new Set(["files_only", "files_plus_memory", "full_clone"]);
+const LEGACY_BACKEND_TYPE_ALIASES = new Set(["hermes", "nemoclaw"]);
+const INTERNAL_TEMPLATE_METADATA_KEYS = new Set(["activation"]);
 
 const OPENCLAW_CORE_FILE_SPECS = Object.freeze([
   { path: "AGENTS.md", label: "Agents", required: true },
@@ -37,9 +39,23 @@ const OPENCLAW_CORE_FILE_ALIASES = Object.freeze({
 
 const OPENCLAW_WORKSPACE_ROOT = "/root/.openclaw/workspace";
 const OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT = "/root/.openclaw/agents/main/agent";
+const REMOTE_HOST_AUTH_RECHECK_MS = Math.max(
+  250,
+  Number.parseInt(process.env.REMOTE_HOST_AUTH_RECHECK_MS || "1000", 10) || 1000,
+);
+
+// Payload encoding and normalization
 
 function encodeContentBase64(value) {
   return Buffer.from(String(value || ""), "utf8").toString("base64");
+}
+
+function decodeContentBase64(value) {
+  try {
+    return Buffer.from(String(value || ""), "base64").toString("utf8");
+  } catch {
+    return "";
+  }
 }
 
 function decodeMaybeString(value) {
@@ -114,6 +130,13 @@ function normalizeWiringBlueprint(wiring = {}) {
   };
 }
 
+/**
+ * Normalize arbitrary stored or user-supplied template payload data into Nora's
+ * canonical template payload shape.
+ *
+ * @param {Object} [rawPayload={}] - Template payload candidate from the DB, runtime export, or request body.
+ * @returns {Object} Normalized payload with stable `files`, `memoryFiles`, `wiring`, and `metadata` fields.
+ */
 function normalizeTemplatePayload(rawPayload = {}) {
   const payload = decodeMaybeString(rawPayload);
   return {
@@ -125,13 +148,23 @@ function normalizeTemplatePayload(rawPayload = {}) {
   };
 }
 
-function decodeContentBase64(value) {
-  try {
-    return Buffer.from(String(value || ""), "base64").toString("utf8");
-  } catch {
-    return "";
+// Metadata that identifies a control-plane-owned agent must never cross a
+// duplicate, migration, backup, or Agent Hub boundary. Otherwise a copied
+// payload could be mistaken for the original durable control-plane record.
+function stripInternalTemplateMetadata(rawPayload = {}) {
+  const payload = normalizeTemplatePayload(rawPayload);
+  const metadata = { ...payload.metadata };
+  for (const key of INTERNAL_TEMPLATE_METADATA_KEYS) {
+    delete metadata[key];
   }
+  return { ...payload, metadata };
 }
+
+function createEmptyTemplatePayload(metadata = {}) {
+  return normalizeTemplatePayload({ metadata });
+}
+
+// Core template files
 
 function buildCoreFileDefaultContent(filePath, context = {}) {
   const name = String(context.name || "OpenClaw Agent").trim() || "OpenClaw Agent";
@@ -219,6 +252,14 @@ Track durable facts, preferences, operating constraints, and open loops here.`.t
   }
 }
 
+/**
+ * Ensure a template payload contains Nora's required core OpenClaw files,
+ * backfilling missing entries from aliases or generated defaults.
+ *
+ * @param {Object} [rawPayload={}] - Template payload to validate and repair.
+ * @param {Object} [context={}] - Template metadata used when generating default file content.
+ * @returns {Object} Normalized payload that includes the required core files.
+ */
 function ensureCoreTemplateFiles(rawPayload = {}, context = {}) {
   const payload = normalizeTemplatePayload(rawPayload);
   const fileByPath = new Map(payload.files.map((entry) => [entry.path, entry]));
@@ -261,6 +302,16 @@ function ensureCoreTemplateFiles(rawPayload = {}, context = {}) {
   });
 }
 
+// Payload summaries, edits, and clone modes
+
+/**
+ * Build a UI-friendly summary of a template payload, including core-file
+ * presence, previews, and file counts.
+ *
+ * @param {Object} [rawPayload={}] - Template payload to summarize.
+ * @param {Object} [options={}] - Summary options such as whether to include full decoded content.
+ * @returns {Object} Summary object describing the payload and its files.
+ */
 function summarizeTemplatePayload(rawPayload = {}, options = {}) {
   const includeContent = options.includeContent === true;
   const payload = ensureCoreTemplateFiles(rawPayload, options.context || {});
@@ -349,12 +400,16 @@ function applyTemplateFileEdits(rawPayload = {}, nextFiles = null, context = {})
   );
 }
 
-function createEmptyTemplatePayload(metadata = {}) {
-  return normalizeTemplatePayload({ metadata });
-}
-
+/**
+ * Trim a template payload down to the data allowed for the requested clone mode.
+ *
+ * @param {Object} rawPayload - Template payload being prepared for cloning or export.
+ * @param {string} [cloneMode="files_only"] - `files_only` keeps files,
+ *   `files_plus_memory` adds memory, and `full_clone` also includes wiring.
+ * @returns {Object} Payload filtered to the files, memory, and wiring allowed by that mode.
+ */
 function cloneTemplatePayloadForMode(rawPayload, cloneMode = "files_only") {
-  const payload = normalizeTemplatePayload(rawPayload);
+  const payload = stripInternalTemplateMetadata(rawPayload);
   const normalizedMode = CLONE_MODES.has(cloneMode) ? cloneMode : "files_only";
 
   return {
@@ -363,6 +418,8 @@ function cloneTemplatePayloadForMode(rawPayload, cloneMode = "files_only") {
     wiring: normalizedMode === "full_clone" ? payload.wiring : { channels: [], integrations: [] },
   };
 }
+
+// Agent and container naming
 
 function stripAsciiControlCharacters(value) {
   return Array.from(value)
@@ -413,6 +470,14 @@ function buildContainerName(name, runtimeSelection = {}) {
   return `${prefix}-${slug || "agent"}-${suffix}`;
 }
 
+/**
+ * Pick the container/deployment name Nora should persist for a new or updated
+ * agent, preserving explicit names while regenerating stale auto-names when the
+ * runtime family changes.
+ *
+ * @param {Object} [options={}] - Requested, current, and runtime-derived naming inputs.
+ * @returns {string} Container name Nora should save for the agent.
+ */
 function resolveContainerName({
   requestedName,
   currentName,
@@ -440,34 +505,163 @@ function resolveContainerName({
 
 function serializeAgent(agent) {
   if (!agent) return agent;
-  const { template_payload, gateway_token, ...rest } = agent;
+  const { template_payload, gateway_token, network_policy_status, ...rest } = agent;
   return {
     ...rest,
+    networkPolicyStatus:
+      network_policy_status == null ? null : decodeMaybeString(network_policy_status),
     ...buildAgentRuntimeFields(rest),
   };
 }
 
-async function fetchTemplateExportViaRuntime(agent, includeMemory) {
+// Runtime template export
+
+function isCaptureAuthorizationError(error) {
+  const code = String(error?.code || "");
+  return (
+    code === "REMOTE_HOST_ACCESS_REVOKED" ||
+    code === "REMOTE_HOST_RETEST_REQUIRED" ||
+    code.endsWith("AUTH_CHECK_FAILED")
+  );
+}
+
+function captureAbortReason(signal, fallbackError = null) {
+  if (!signal?.aborted) return null;
+  if (signal.reason instanceof Error) return signal.reason;
+  if (fallbackError instanceof Error) return fallbackError;
+  const error = new Error("Agent template export was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfCaptureAborted(signal) {
+  const error = captureAbortReason(signal);
+  if (error) throw error;
+}
+
+function rethrowCaptureAuthorizationOrAbort(error, signal) {
+  const abortReason = captureAbortReason(signal, error);
+  if (abortReason) throw abortReason;
+  if (isCaptureAuthorizationError(error)) throw error;
+}
+
+async function withRemoteHostCaptureAuthorization(
+  agent,
+  { signal, authorizationRecheckMs = REMOTE_HOST_AUTH_RECHECK_MS } = {},
+  capture,
+) {
+  throwIfCaptureAborted(signal);
+  if (!remoteHosts.isRemoteDockerAgent(agent)) return capture(signal);
+
+  const controller = new AbortController();
+  let authorizationTimer = null;
+  let authorizationInFlight = null;
+  let authorizationError = null;
+  let captureSettled = false;
+
+  const abortFromParent = () => {
+    if (!controller.signal.aborted) controller.abort(signal.reason);
+  };
+  if (signal) {
+    if (signal.aborted) abortFromParent();
+    else {
+      signal.addEventListener("abort", abortFromParent, { once: true });
+      if (signal.aborted) abortFromParent();
+    }
+  }
+
+  const checkAuthorization = () => {
+    if (captureSettled || authorizationInFlight || authorizationError || signal?.aborted) {
+      return authorizationInFlight;
+    }
+    authorizationInFlight = Promise.resolve()
+      .then(() => remoteHosts.assertRemoteHostAgentUse(agent, { includeProfile: false }))
+      .catch((error) => {
+        if (signal?.aborted) return;
+        authorizationError = remoteHosts.toPublicRemoteHostAuthorizationError(error);
+        if (!controller.signal.aborted) controller.abort(authorizationError);
+      })
+      .finally(() => {
+        authorizationInFlight = null;
+      });
+    return authorizationInFlight;
+  };
+
+  try {
+    await checkAuthorization();
+    if (authorizationError) throw authorizationError;
+    throwIfCaptureAborted(controller.signal);
+
+    authorizationTimer = setInterval(
+      () => {
+        void checkAuthorization();
+      },
+      Math.max(1, authorizationRecheckMs),
+    );
+    authorizationTimer.unref?.();
+
+    let captured;
+    try {
+      captured = await capture(controller.signal);
+    } catch (error) {
+      if (signal?.aborted) throw captureAbortReason(signal, error);
+      if (authorizationError) throw authorizationError;
+      rethrowCaptureAuthorizationOrAbort(error, controller.signal);
+      throw error;
+    }
+
+    // Do not accept a capture that raced a failed grant check. Stop scheduling
+    // new work, drain the current check, and require one final positive grant.
+    captureSettled = true;
+    clearInterval(authorizationTimer);
+    authorizationTimer = null;
+    const pendingAuthorization = authorizationInFlight;
+    if (pendingAuthorization) await pendingAuthorization;
+    if (signal?.aborted) throw captureAbortReason(signal);
+    if (authorizationError) throw authorizationError;
+    try {
+      await remoteHosts.assertRemoteHostAgentUse(agent, { includeProfile: false });
+    } catch (error) {
+      throw remoteHosts.toPublicRemoteHostAuthorizationError(error);
+    }
+    throwIfCaptureAborted(signal);
+    return captured;
+  } finally {
+    captureSettled = true;
+    if (authorizationTimer) clearInterval(authorizationTimer);
+    signal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+async function fetchTemplateExportViaRuntime(agent, includeMemory, { signal } = {}) {
+  throwIfCaptureAborted(signal);
   const runtimeUrl = runtimeUrlForAgent(agent, "/template/export");
   if (!runtimeUrl) {
     throw new Error("runtime endpoint unavailable");
   }
 
+  const headers = { "Content-Type": "application/json", ...(await runtimeAuthHeaders(agent)) };
+  throwIfCaptureAborted(signal);
   const response = await fetch(runtimeUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(await runtimeAuthHeaders(agent)) },
+    headers,
     body: JSON.stringify({ includeMemory }),
+    signal,
   });
+  throwIfCaptureAborted(signal);
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     throw new Error(body || `runtime export returned ${response.status}`);
   }
 
-  return normalizeTemplatePayload(await response.json());
+  const payload = await response.json();
+  throwIfCaptureAborted(signal);
+  return normalizeTemplatePayload(payload);
 }
 
-async function fetchTemplateExportViaExec(agent, includeMemory) {
+async function fetchTemplateExportViaExec(agent, includeMemory, { signal } = {}) {
+  throwIfCaptureAborted(signal);
   const runtimeUrl = runtimeUrlForAgent(agent, "/exec");
   if (!runtimeUrl) {
     throw new Error("runtime exec unavailable");
@@ -559,14 +753,18 @@ process.stdout.write(JSON.stringify(result));
 `.trim();
 
   const command = `node -e ${JSON.stringify(exportScript)} ${includeMemory ? "1" : "0"}`;
+  const headers = { "Content-Type": "application/json", ...(await runtimeAuthHeaders(agent)) };
+  throwIfCaptureAborted(signal);
   const response = await fetch(runtimeUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(await runtimeAuthHeaders(agent)) },
+    headers,
     body: JSON.stringify({
       command,
       timeout: 120000,
     }),
+    signal,
   });
+  throwIfCaptureAborted(signal);
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
@@ -574,6 +772,7 @@ process.stdout.write(JSON.stringify(result));
   }
 
   const execResult = await response.json();
+  throwIfCaptureAborted(signal);
   if (execResult.exitCode !== 0) {
     throw new Error(execResult.stderr || execResult.stdout || "template export failed");
   }
@@ -581,21 +780,38 @@ process.stdout.write(JSON.stringify(result));
   return normalizeTemplatePayload(execResult.stdout || "{}");
 }
 
-async function exportTemplatePayloadFromAgent(agent, cloneMode = "files_only") {
+/**
+ * Export a template payload from a live agent runtime, falling back to the
+ * stored payload for ordinary runtime failures while propagating authorization
+ * and cancellation failures.
+ *
+ * @param {Object} agent - Agent row whose template content should be exported.
+ * @param {string} [cloneMode="files_only"] - `files_only` keeps files,
+ *   `files_plus_memory` adds memory, and `full_clone` also includes wiring.
+ * @param {Object} [options={}] - Optional capture abort signal.
+ * @returns {Promise<Object>} Exported payload normalized to the requested clone mode.
+ */
+async function exportTemplatePayloadFromAgent(agent, cloneMode = "files_only", { signal } = {}) {
   const includeMemory = cloneMode !== "files_only";
 
   try {
     return cloneTemplatePayloadForMode(
-      await fetchTemplateExportViaRuntime(agent, includeMemory),
+      await fetchTemplateExportViaRuntime(agent, includeMemory, { signal }),
       cloneMode,
     );
   } catch (primaryError) {
+    // Remote-host revocation and fail-closed authorization errors must never
+    // degrade into either a second live request or the stored-template
+    // fallback. The shared capture wrapper keeps an authorization watcher
+    // active while this request is in flight and aborts it with the public error.
+    rethrowCaptureAuthorizationOrAbort(primaryError, signal);
     try {
       return cloneTemplatePayloadForMode(
-        await fetchTemplateExportViaExec(agent, includeMemory),
+        await fetchTemplateExportViaExec(agent, includeMemory, { signal }),
         cloneMode,
       );
     } catch (fallbackError) {
+      rethrowCaptureAuthorizationOrAbort(fallbackError, signal);
       // Fall back to the payload stored on the agent record. This keeps
       // duplicate/install flows working for stopped agents, blank agents, and
       // template-instantiated agents even when runtime export is unavailable.
@@ -604,6 +820,15 @@ async function exportTemplatePayloadFromAgent(agent, cloneMode = "files_only") {
   }
 }
 
+// Template wiring
+
+/**
+ * Read the integrations and channels that should travel with a full template
+ * clone of an agent.
+ *
+ * @param {string} agentId - Agent whose cloneable wiring should be loaded.
+ * @returns {Promise<Object>} Wiring blueprint containing cloneable integrations and channels.
+ */
 async function buildAgentWiringBlueprint(agentId) {
   const [integrationRows, channelRows] = await Promise.all([
     db.query(
@@ -622,8 +847,20 @@ async function buildAgentWiringBlueprint(agentId) {
   };
 }
 
-async function buildTemplatePayloadFromAgent(agent, cloneMode = "files_only") {
-  const basePayload = await exportTemplatePayloadFromAgent(agent, cloneMode);
+/**
+ * Build the reusable template payload Nora should expose for an agent,
+ * optionally attaching runtime memory and cloneable wiring.
+ *
+ * @param {Object} agent - Agent row to export as a reusable template.
+ * @param {string} [cloneMode="files_only"] - `files_only` keeps files,
+ *   `files_plus_memory` adds memory, and `full_clone` also includes wiring.
+ * @param {Object} [options={}] - Capture authorization and abort options.
+ * @returns {Promise<Object>} Normalized template payload ready for duplication or publishing.
+ */
+async function buildTemplatePayloadFromAgent(agent, cloneMode = "files_only", options = {}) {
+  const basePayload = await withRemoteHostCaptureAuthorization(agent, options, (signal) =>
+    exportTemplatePayloadFromAgent(agent, cloneMode, { signal }),
+  );
   const nextPayload = cloneTemplatePayloadForMode(basePayload, cloneMode);
 
   if (cloneMode === "full_clone") {
@@ -639,6 +876,13 @@ async function buildTemplatePayloadFromAgent(agent, cloneMode = "files_only") {
   });
 }
 
+/**
+ * Persist the wiring portion of a template payload onto a newly created agent.
+ *
+ * @param {string} agentId - Agent receiving the cloned integrations and channels.
+ * @param {Object} [rawPayload={}] - Template payload whose wiring section should be materialized.
+ * @returns {Promise<void>} Resolves after the cloneable integrations and channels are inserted.
+ */
 async function materializeTemplateWiring(agentId, rawPayload = {}) {
   const payload = normalizeTemplatePayload(rawPayload);
   const wiring = normalizeWiringBlueprint(payload.wiring);
@@ -672,10 +916,20 @@ async function materializeTemplateWiring(agentId, rawPayload = {}) {
   }
 }
 
+// Stored template snapshots
+
+/**
+ * Extract a normalized template payload from a saved template snapshot, filling
+ * in required core files and source metadata.
+ *
+ * @param {Object} snapshot - Stored starter/community template snapshot.
+ * @param {Object} [options={}] - Extraction options such as whether to force bootstrap inclusion.
+ * @returns {Object} Template payload ready for previewing or instantiating.
+ */
 function extractTemplatePayloadFromSnapshot(snapshot, options = {}) {
   const config = decodeMaybeString(snapshot?.config);
   const builtIn = config?.builtIn === true || snapshot?.built_in === true;
-  return ensureCoreTemplateFiles(config.templatePayload || {}, {
+  return ensureCoreTemplateFiles(stripInternalTemplateMetadata(config.templatePayload || {}), {
     name: snapshot?.name || "OpenClaw Agent",
     description: snapshot?.description || "",
     templateKey: snapshot?.template_key || config?.templateKey || null,
@@ -687,21 +941,37 @@ function extractTemplatePayloadFromSnapshot(snapshot, options = {}) {
   });
 }
 
+/**
+ * Read the default runtime/deployment settings embedded in a template snapshot.
+ *
+ * @param {Object} snapshot - Stored template snapshot whose defaults should be parsed.
+ * @returns {Object} Normalized backend, sizing, and image defaults for new agents.
+ */
 function extractTemplateDefaultsFromSnapshot(snapshot) {
   const config = decodeMaybeString(snapshot?.config);
   const defaults = config.defaults && typeof config.defaults === "object" ? config.defaults : {};
-  const requestedBackend = defaults.deploy_target || defaults.deployTarget || defaults.backend;
-  const backend = isKnownBackend(requestedBackend) ? normalizeBackendName(requestedBackend) : null;
+  const canonicalBackend = defaults.deploy_target ?? defaults.deployTarget;
+  const legacyBackend = defaults.backend;
+  const hasCanonicalBackend = String(canonicalBackend ?? "").trim() !== "";
+  const hasLegacyBackend = String(legacyBackend ?? "").trim() !== "";
+  const normalizedLegacyBackend = String(legacyBackend ?? "")
+    .trim()
+    .toLowerCase();
+  const requestedBackend = hasCanonicalBackend ? canonicalBackend : legacyBackend;
+  const backend = hasCanonicalBackend
+    ? normalizeBackendName(canonicalBackend)
+    : hasLegacyBackend && !LEGACY_BACKEND_TYPE_ALIASES.has(normalizedLegacyBackend)
+      ? normalizeBackendName(legacyBackend)
+      : null;
+  const requestedExecutionTargetId = defaults.execution_target_id ?? defaults.executionTargetId;
+  const normalizedExecutionTargetId = normalizeExecutionTargetId(requestedExecutionTargetId);
+  if (String(requestedExecutionTargetId ?? "").trim() !== "" && !normalizedExecutionTargetId) {
+    normalizeBackendName(requestedExecutionTargetId);
+  }
   const executionTargetId =
-    normalizeExecutionTargetId(defaults.execution_target_id || defaults.executionTargetId) ||
-    normalizeExecutionTargetId(requestedBackend) ||
-    backend;
-  const sandbox =
-    String(defaults.sandbox_profile || defaults.sandboxProfile || defaults.sandbox || "")
-      .trim()
-      .toLowerCase() === "nemoclaw"
-      ? "nemoclaw"
-      : "standard";
+    normalizedExecutionTargetId || normalizeExecutionTargetId(requestedBackend) || backend;
+  const requestedSandbox = defaults.sandbox_profile ?? defaults.sandboxProfile ?? defaults.sandbox;
+  const sandbox = parseSandboxProfile(requestedSandbox) || "standard";
 
   return {
     backend,
@@ -735,5 +1005,6 @@ module.exports = {
   resolveContainerName,
   sanitizeAgentName,
   serializeAgent,
+  stripInternalTemplateMetadata,
   summarizeTemplatePayload,
 };

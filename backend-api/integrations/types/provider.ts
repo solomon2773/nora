@@ -24,6 +24,14 @@ export interface EnvMapping {
 export interface RefreshOutcome {
   row: IntegrationRow;
   refreshed: boolean;
+  /**
+   * Set when the provider DEFINITIVELY rejected the refresh (revoked/expired
+   * grant, missing refresh material) as opposed to a transient network
+   * failure. The service flips the integration to needs_reconnect so the
+   * operator learns about it instead of the agent silently 401ing.
+   */
+  failed?: boolean;
+  error?: string;
 }
 
 export type ProviderAuthType =

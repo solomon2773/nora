@@ -2,7 +2,6 @@
 const path = require("path");
 const { promisify } = require("util");
 const { gzip, gunzip } = require("zlib");
-const { execFile } = require("child_process");
 
 const tar = require("tar-stream");
 const Docker = require("dockerode");
@@ -11,10 +10,12 @@ const db = require("./db");
 const llmProviders = require("./llmProviders");
 const integrations = require("./integrations");
 const channels = require("./channels");
+const containerManager = require("./containerManager");
 const {
   buildTemplatePayloadFromAgent,
   ensureCoreTemplateFiles,
   normalizeTemplatePayload,
+  stripInternalTemplateMetadata,
 } = require("./agentPayloads");
 const {
   getAgentSecretEnvVars,
@@ -35,22 +36,87 @@ const {
   HERMES_CHANNEL_DEFINITIONS,
   HERMES_CHANNEL_TYPES,
   buildHermesPythonCommand,
-  getPersistedHermesState,
   replacePersistedHermesState,
   snapshotToPersistedHermesState,
 } = require("./hermesUi");
 
 const gzipAsync = promisify(gzip);
 const gunzipAsync = promisify(gunzip);
-const execFileAsync = promisify(execFile);
 
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
 
 const MIGRATION_BUNDLE_FORMAT = "nora-migration-bundle/v1";
-const MAX_REMOTE_BUFFER_BYTES = 200 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
-const { shellSingleQuote } = require("../agent-runtime/lib/containerCommand");
+function captureAbortReason(signal, fallbackError = null) {
+  if (!signal?.aborted) return null;
+  if (signal.reason instanceof Error) return signal.reason;
+  if (fallbackError instanceof Error) return fallbackError;
+  const error = new Error("Agent migration capture was aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfCaptureAborted(signal) {
+  const error = captureAbortReason(signal);
+  if (error) throw error;
+}
+
+function isCaptureAuthorizationError(error) {
+  const code = String(error?.code || "");
+  return (
+    code === "REMOTE_HOST_ACCESS_REVOKED" ||
+    code === "REMOTE_HOST_RETEST_REQUIRED" ||
+    code.endsWith("AUTH_CHECK_FAILED")
+  );
+}
+
+function rethrowCaptureAbortOrAuthorization(error, signal) {
+  const abortReason = captureAbortReason(signal, error);
+  if (abortReason) throw abortReason;
+  if (isCaptureAuthorizationError(error)) throw error;
+}
+
+function raceWithCaptureAbort(promise, signal, onLateValue = null) {
+  if (!signal) return Promise.resolve(promise);
+  throwIfCaptureAborted(signal);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      reject(captureAbortReason(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+
+    Promise.resolve(promise).then(
+      (value) => {
+        if (settled) {
+          if (signal.aborted && typeof onLateValue === "function") onLateValue(value);
+          return;
+        }
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) {
+          if (typeof onLateValue === "function") onLateValue(value);
+          reject(captureAbortReason(signal));
+          return;
+        }
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(captureAbortReason(signal, error) || error);
+      },
+    );
+  });
+}
+
+// Manifest storage and presentation
 
 function decodeStoredManifest(rawValue = "") {
   const decrypted = decrypt(String(rawValue || ""));
@@ -118,6 +184,12 @@ function summarizeManifest(manifest = {}) {
   };
 }
 
+/**
+ * Build a migration preview that omits managed credential values from API responses.
+ *
+ * @param {Object} [manifest={}] - Normalized migration manifest.
+ * @returns {Object} Counts, resource identifiers, source metadata, and Hermes model settings.
+ */
 function buildDraftPreview(manifest = {}) {
   const templatePayload = normalizeTemplatePayload(manifest.templatePayload || {});
   const warnings = normalizeManifestWarnings(manifest.warnings);
@@ -167,6 +239,14 @@ function buildDraftPreview(manifest = {}) {
   };
 }
 
+// Bundle parsing and compatibility
+
+/**
+ * Package a migration manifest as Nora's gzipped tar bundle format.
+ *
+ * @param {Object} [manifest={}] - Manifest to store as `manifest.json`.
+ * @returns {Promise<Buffer>} Compressed migration bundle.
+ */
 async function packMigrationBundle(manifest = {}) {
   const bundle = tar.pack();
   const archiveChunks = [];
@@ -223,6 +303,49 @@ async function unpackMigrationBundle(buffer) {
   return JSON.parse(manifestText);
 }
 
+function normalizeHermesSeedFileEntry(entry, index = 0) {
+  const rawPath = String(entry?.path || "");
+  const portablePath = rawPath.replace(/\\/g, "/");
+  const pathSegments = portablePath.split("/");
+  const unsafe =
+    !rawPath.trim() ||
+    rawPath.includes("\0") ||
+    path.posix.isAbsolute(portablePath) ||
+    path.win32.isAbsolute(rawPath) ||
+    pathSegments.some((segment) => segment === "..");
+  if (unsafe) {
+    const error = new Error(`Hermes seed file ${index + 1} has an unsafe path`);
+    error.code = "UNSAFE_HERMES_SEED_PATH";
+    throw error;
+  }
+
+  const normalizedPath = path.posix.normalize(portablePath).replace(/^\.\/+/, "");
+  if (!normalizedPath || normalizedPath === ".") {
+    const error = new Error(`Hermes seed file ${index + 1} has an empty path`);
+    error.code = "UNSAFE_HERMES_SEED_PATH";
+    throw error;
+  }
+
+  const requestedMode = Number.isInteger(entry?.mode) ? entry.mode : 0o644;
+  return {
+    path: normalizedPath,
+    contentBase64: String(entry?.contentBase64 || ""),
+    // Preserve normal rwx permissions while stripping setuid, setgid, sticky,
+    // and file-type bits from untrusted migration manifests.
+    mode: requestedMode & 0o777,
+  };
+}
+
+function normalizeHermesSeedFiles(files = []) {
+  return (Array.isArray(files) ? files : []).map(normalizeHermesSeedFileEntry);
+}
+
+/**
+ * Canonicalize uploaded, live, or agent-derived state into the current manifest shape.
+ *
+ * @param {Object} [rawManifest={}] - Manifest-like input from a supported source.
+ * @returns {Object} Versioned manifest with normalized runtime and managed state.
+ */
 function normalizeMigrationManifest(rawManifest = {}) {
   const runtimeFamily =
     String(rawManifest.runtimeFamily || rawManifest.runtime_family || "")
@@ -230,7 +353,7 @@ function normalizeMigrationManifest(rawManifest = {}) {
       .toLowerCase() || "openclaw";
   const templatePayload =
     runtimeFamily === "openclaw"
-      ? ensureCoreTemplateFiles(rawManifest.templatePayload || {}, {
+      ? ensureCoreTemplateFiles(stripInternalTemplateMetadata(rawManifest.templatePayload || {}), {
           name: rawManifest.name || "Imported OpenClaw Agent",
           sourceType: "community",
         })
@@ -249,7 +372,7 @@ function normalizeMigrationManifest(rawManifest = {}) {
       typeof rawManifest.hermesSeed === "object"
         ? {
             version: 1,
-            files: Array.isArray(rawManifest.hermesSeed.files) ? rawManifest.hermesSeed.files : [],
+            files: normalizeHermesSeedFiles(rawManifest.hermesSeed.files),
             modelConfig:
               rawManifest.hermesSeed.modelConfig &&
               typeof rawManifest.hermesSeed.modelConfig === "object"
@@ -309,6 +432,15 @@ function legacyTemplateToManifest(payload = {}, filename = "") {
   });
 }
 
+/**
+ * Parse a current-format JSON manifest, legacy template JSON, or gzipped
+ * migration bundle within the configured size limit.
+ *
+ * @param {Buffer} buffer - Raw upload body.
+ * @param {string} [filename=""] - Filename used to recognize legacy template packages.
+ * @param {Object} [options={}] - Parsing limits; set `maxBytes` to `null` for trusted archives.
+ * @returns {Promise<Object>} Normalized migration manifest.
+ */
 async function parseUploadedMigrationBuffer(buffer, filename = "", options = {}) {
   if (!Buffer.isBuffer(buffer)) {
     throw new Error("Upload body is empty");
@@ -343,6 +475,15 @@ async function parseUploadedMigrationBuffer(buffer, filename = "", options = {})
   return normalizeMigrationManifest(parsed);
 }
 
+// Live-source collection
+
+/**
+ * Decode regular files from a tar archive while rejecting paths that escape its base.
+ *
+ * @param {Buffer} buffer - Tar archive bytes.
+ * @param {Object} [options={}] - Optional archive root name to strip.
+ * @returns {Promise<Object[]>} Sorted files with Base64 content and modes.
+ */
 async function readTarBufferFiles(buffer, { stripBaseName = "" } = {}) {
   const extract = tar.extract();
   const files = [];
@@ -410,173 +551,245 @@ async function readTarBufferFiles(buffer, { stripBaseName = "" } = {}) {
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-async function collectStream(stream) {
+async function collectStream(stream, { signal } = {}) {
+  throwIfCaptureAborted(signal);
   const chunks = [];
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let ended = false;
+    const cleanup = () => {
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const settle = (error, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const onAbort = () => {
+      try {
+        stream.destroy();
+      } catch {
+        // Best-effort transport teardown; the authorization error still wins.
+      }
+      settle(captureAbortReason(signal));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     stream.on("data", (chunk) => chunks.push(chunk));
-    stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", reject);
+    stream.on("end", () => {
+      ended = true;
+      settle(null, Buffer.concat(chunks));
+    });
+    stream.on("close", () => {
+      if (signal?.aborted) {
+        settle(captureAbortReason(signal));
+      } else if (!ended) {
+        const error = new Error("Docker archive stream closed before end");
+        error.code = "DOCKER_ARCHIVE_STREAM_TRUNCATED";
+        settle(error);
+      }
+    });
+    stream.on("error", (error) => settle(captureAbortReason(signal, error) || error));
+    if (signal?.aborted) onAbort();
   });
 }
 
-async function getDockerArchiveBuffer(container, absolutePath) {
+function isDockerArchivePathMissingError(error) {
+  const statusCode = Number(error?.statusCode || error?.status);
+  if (statusCode !== 404) return false;
+  const detail = [error?.message, error?.reason, error?.json?.message].filter(Boolean).join(" ");
+  return /could not find the file .* in container|no such file or directory/i.test(detail);
+}
+
+async function getDockerArchiveBuffer(container, absolutePath, { signal } = {}) {
   try {
-    const stream = await container.getArchive({ path: absolutePath });
-    if (!stream) return Buffer.alloc(0);
-    return collectStream(stream);
-  } catch {
-    return Buffer.alloc(0);
+    throwIfCaptureAborted(signal);
+    const stream = await raceWithCaptureAbort(
+      container.getArchive({ path: absolutePath }),
+      signal,
+      (lateStream) => lateStream?.destroy?.(),
+    );
+    if (!stream) {
+      const error = new Error("Docker archive request returned no stream");
+      error.code = "DOCKER_ARCHIVE_STREAM_MISSING";
+      throw error;
+    }
+    return await collectStream(stream, { signal });
+  } catch (error) {
+    rethrowCaptureAbortOrAuthorization(error, signal);
+    if (isDockerArchivePathMissingError(error)) return Buffer.alloc(0);
+    throw error;
   }
 }
 
-async function getDockerArchiveFiles(container, absolutePath) {
-  const buffer = await getDockerArchiveBuffer(container, absolutePath);
+async function getDockerArchiveFiles(container, absolutePath, { signal } = {}) {
+  const buffer = await getDockerArchiveBuffer(container, absolutePath, { signal });
   if (!buffer.length) return [];
+  throwIfCaptureAborted(signal);
   return readTarBufferFiles(buffer, {
     stripBaseName: path.posix.basename(absolutePath),
   });
 }
 
-async function execDockerText(container, command, { timeout = 30000 } = {}) {
-  const execInstance = await container.exec({
-    Cmd: ["/bin/sh", "-lc", command],
-    AttachStdout: true,
-    AttachStderr: true,
-    AttachStdin: false,
-    Tty: true,
-  });
+function createDockerExecCompletionError(message, cause = null) {
+  const error = new Error(message);
+  error.code = "DOCKER_EXEC_COMPLETION_UNCONFIRMED";
+  if (cause) error.cause = cause;
+  return error;
+}
 
-  const stream = await execInstance.start({ hijack: true, stdin: false, Tty: true });
+function isIgnorableDirectDockerStopError(error) {
+  const statusCode = Number(error?.statusCode || error?.status);
+  return (
+    statusCode === 304 ||
+    statusCode === 404 ||
+    /already stopped|not running|no such container/i.test(String(error?.message || ""))
+  );
+}
+
+async function stopDirectDockerContainerSafely(container) {
+  try {
+    await container.stop({ t: 10 });
+  } catch (error) {
+    if (!isIgnorableDirectDockerStopError(error)) throw error;
+  }
+}
+
+async function stopManagedAgentAfterUnconfirmedDockerExec(agent) {
+  try {
+    await containerManager.stop(agent);
+  } catch (error) {
+    if (!containerManager.isIgnorableStopError?.(error)) throw error;
+  }
+
+  if (agent?.id) {
+    await db.query("UPDATE agents SET status = 'stopped' WHERE id = $1", [agent.id]);
+    agent.status = "stopped";
+  }
+}
+
+async function execDockerText(
+  container,
+  command,
+  { timeout = 30000, signal, onUnconfirmedTermination = null } = {},
+) {
+  throwIfCaptureAborted(signal);
+  let cleanupPromise = null;
+  const ensureFailSafeCleanup = (cause) => {
+    if (!cleanupPromise) {
+      cleanupPromise = Promise.resolve()
+        .then(() => onUnconfirmedTermination?.(cause))
+        .catch((cleanupError) => {
+          cause.cleanupError = cleanupError;
+        });
+    }
+    return cleanupPromise;
+  };
+  const execInstance = await raceWithCaptureAbort(
+    container.exec({
+      Cmd: ["/bin/sh", "-lc", command],
+      AttachStdout: true,
+      AttachStderr: true,
+      AttachStdin: false,
+      Tty: true,
+    }),
+    signal,
+  );
+
+  let stream;
+  try {
+    stream = await raceWithCaptureAbort(
+      execInstance.start({ hijack: true, stdin: false, Tty: true }),
+      signal,
+      (lateStream) => lateStream?.destroy?.(),
+    );
+  } catch (error) {
+    await ensureFailSafeCleanup(error);
+    throw error;
+  }
   const output = await new Promise((resolve, reject) => {
     const chunks = [];
     let settled = false;
-    const timer = setTimeout(() => {
+    let ended = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const settle = (error, value) => {
       if (settled) return;
       settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const rejectUnconfirmed = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       try {
         stream.destroy();
       } catch {
-        // Ignore teardown failures.
+        // Fail-safe cleanup below remains authoritative.
       }
-      reject(new Error(`Docker exec timed out after ${timeout}ms`));
+      void ensureFailSafeCleanup(error).then(() => reject(error));
+    };
+    const onAbort = () => {
+      rejectUnconfirmed(captureAbortReason(signal));
+    };
+    const timer = setTimeout(() => {
+      rejectUnconfirmed(
+        createDockerExecCompletionError(`Docker exec timed out after ${timeout}ms`),
+      );
     }, timeout);
+    signal?.addEventListener("abort", onAbort, { once: true });
 
     const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString("utf8"));
+      ended = true;
+      if (signal?.aborted) {
+        rejectUnconfirmed(captureAbortReason(signal));
+        return;
+      }
+      settle(null, Buffer.concat(chunks).toString("utf8"));
     };
 
     stream.on("data", (chunk) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
     });
     stream.on("end", finish);
-    stream.on("close", finish);
-    stream.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
+    stream.on("close", () => {
+      if (!ended) {
+        rejectUnconfirmed(createDockerExecCompletionError("Docker exec stream closed before end"));
+      }
     });
+    stream.on("error", (error) => {
+      rejectUnconfirmed(
+        captureAbortReason(signal, error) ||
+          createDockerExecCompletionError("Docker exec stream failed", error),
+      );
+    });
+    if (signal?.aborted) onAbort();
   });
 
-  const inspect = await execInstance.inspect();
-  if ((inspect?.ExitCode || 0) !== 0) {
+  let inspect;
+  try {
+    throwIfCaptureAborted(signal);
+    inspect = await raceWithCaptureAbort(execInstance.inspect(), signal);
+  } catch (error) {
+    await ensureFailSafeCleanup(error);
+    throw error;
+  }
+  if (inspect?.Running !== false || !Number.isInteger(inspect?.ExitCode)) {
+    const error = createDockerExecCompletionError(
+      `Docker exec completion could not be confirmed (running=${String(inspect?.Running)}, exitCode=${String(inspect?.ExitCode)})`,
+    );
+    await ensureFailSafeCleanup(error);
+    throw error;
+  }
+  if (inspect.ExitCode !== 0) {
     throw new Error(output.trim() || `Docker exec exited with code ${inspect.ExitCode}`);
   }
   return output;
-}
-
-function sshTarget(source = {}) {
-  const username = String(source.username || "").trim();
-  const host = String(source.host || "").trim();
-  if (!username || !host) {
-    throw new Error("SSH source requires host and username");
-  }
-  return `${username}@${host}`;
-}
-
-async function execSsh(source = {}, command, { timeout = 120000, binary = false } = {}) {
-  const args = [
-    "-o",
-    "StrictHostKeyChecking=no",
-    "-o",
-    "UserKnownHostsFile=/dev/null",
-    "-o",
-    "BatchMode=yes",
-  ];
-
-  if (source.port) {
-    args.push("-p", String(source.port));
-  }
-
-  let keyPath = "";
-  let keyDir = "";
-  if (source.privateKey) {
-    const fs = require("fs");
-    const os = require("os");
-    const crypto = require("crypto");
-    // Use mkdtempSync so the parent directory is created with 0o700 by the
-    // OS (the kernel sets the permission, not us). Then put a randomly-named
-    // file inside it. This closes two risks the old `Math.random()` path had:
-    //   1) predictable filename in a shared tmpdir let a local attacker
-    //      pre-create a symlink at that path and capture the key on write.
-    //   2) limited entropy from Math.random() (~52 bits) made guessing the
-    //      pending name feasible in a race window.
-    keyDir = fs.mkdtempSync(path.join(os.tmpdir(), "nora-ssh-"));
-    keyPath = path.join(keyDir, `${crypto.randomBytes(16).toString("hex")}.pem`);
-    fs.writeFileSync(keyPath, String(source.privateKey), { mode: 0o600 });
-    args.push("-i", keyPath);
-  }
-
-  args.push(sshTarget(source), command);
-
-  try {
-    const result = await execFileAsync("ssh", args, {
-      timeout,
-      encoding: binary ? "buffer" : "utf8",
-      maxBuffer: MAX_REMOTE_BUFFER_BYTES,
-    });
-    return result.stdout;
-  } finally {
-    if (keyPath) {
-      try {
-        require("fs").unlinkSync(keyPath);
-      } catch {
-        // Best-effort cleanup only.
-      }
-    }
-    if (keyDir) {
-      try {
-        require("fs").rmdirSync(keyDir);
-      } catch {
-        // Best-effort cleanup only.
-      }
-    }
-  }
-}
-
-async function getSshArchiveFiles(source = {}, absolutePath) {
-  const command = `sh -lc ${JSON.stringify(
-    `if [ -d ${shellSingleQuote(absolutePath)} ]; then tar -C ${shellSingleQuote(
-      absolutePath,
-    )} -cf - .; fi`,
-  )}`;
-  const buffer = await execSsh(source, command, {
-    timeout: 120000,
-    binary: true,
-  }).catch(() => Buffer.alloc(0));
-
-  if (!Buffer.isBuffer(buffer) || buffer.length === 0) return [];
-  return readTarBufferFiles(buffer);
-}
-
-async function readSshText(source = {}, absolutePath) {
-  const command = `sh -lc ${JSON.stringify(
-    `if [ -f ${shellSingleQuote(absolutePath)} ]; then cat ${shellSingleQuote(absolutePath)}; fi`,
-  )}`;
-  return execSsh(source, command, { timeout: 30000, binary: false }).catch(() => "");
 }
 
 function buildHermesSnapshotCommand() {
@@ -649,19 +862,27 @@ print(json.dumps({
   return buildHermesPythonCommand(script);
 }
 
-async function readHermesSnapshotFromDocker(container) {
-  const output = await execDockerText(container, buildHermesSnapshotCommand(), {
-    timeout: 30000,
-  });
-  return JSON.parse(String(output || "{}").trim() || "{}");
+function parseHermesSnapshotOutput(output) {
+  const normalizedOutput = String(output || "").trim();
+  if (!normalizedOutput) {
+    const error = new Error("Hermes snapshot command returned empty output");
+    error.code = "HERMES_SNAPSHOT_EMPTY";
+    throw error;
+  }
+  return JSON.parse(normalizedOutput);
 }
 
-async function readHermesSnapshotFromSsh(source = {}) {
-  const output = await execSsh(source, buildHermesSnapshotCommand(), {
+async function readHermesSnapshotFromDocker(
+  container,
+  { signal, onUnconfirmedTermination = null } = {},
+) {
+  const output = await execDockerText(container, buildHermesSnapshotCommand(), {
     timeout: 30000,
-    binary: false,
+    signal,
+    onUnconfirmedTermination,
   });
-  return JSON.parse(String(output || "{}").trim() || "{}");
+  throwIfCaptureAborted(signal);
+  return parseHermesSnapshotOutput(output);
 }
 
 function manifestFromOpenClawSource({
@@ -706,26 +927,76 @@ function manifestFromOpenClawSource({
   });
 }
 
-function llmProvidersFromAuthProfiles(rawContent = "") {
-  try {
-    const parsed = JSON.parse(String(rawContent || "{}"));
-    return Object.entries(parsed)
-      .map(([provider, config]) => {
-        const apiKey = String(config?.apiKey || "").trim();
-        if (!apiKey) return null;
-        return {
-          provider,
-          apiKey,
-          config:
-            typeof config?.endpoint === "string" && config.endpoint.trim()
-              ? { endpoint: config.endpoint.trim() }
-              : {},
-        };
-      })
-      .filter(Boolean);
-  } catch {
-    return [];
+function createInvalidAuthProfilesError(message, cause = null) {
+  const error = new Error(`Invalid source auth-profiles.json: ${message}`);
+  error.code = "MIGRATION_AUTH_PROFILES_INVALID";
+  error.statusCode = 400;
+  if (cause) error.cause = cause;
+  return error;
+}
+
+function isObjectRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function migrationProviderFromAuthProfile(profileId, config, { modern = false } = {}) {
+  if (!isObjectRecord(config)) {
+    throw createInvalidAuthProfilesError(`profile "${profileId}" must be an object`);
   }
+
+  const profileType = String(config.type || "").trim();
+  if (modern && profileType && profileType !== "api_key") return null;
+
+  const provider = String(config.provider || (modern ? profileId.split(":")[0] : profileId)).trim();
+  const apiKey = String(config.key || config.apiKey || "").trim();
+  if (!provider) {
+    throw createInvalidAuthProfilesError(`profile "${profileId}" is missing its provider`);
+  }
+  if (!apiKey) {
+    throw createInvalidAuthProfilesError(`API-key profile "${profileId}" is missing its key`);
+  }
+
+  const endpoint = String(config.endpoint || "").trim();
+  const apiVersion = String(config.api_version || config.apiVersion || "").trim();
+  return {
+    provider,
+    apiKey,
+    config: {
+      ...(endpoint ? { endpoint } : {}),
+      ...(apiVersion ? { api_version: apiVersion } : {}),
+    },
+  };
+}
+
+function llmProvidersFromAuthProfiles(rawContent = "") {
+  const content = String(rawContent || "").trim();
+  if (!content) return [];
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (cause) {
+    throw createInvalidAuthProfilesError("file is not valid JSON", cause);
+  }
+
+  if (!isObjectRecord(parsed)) {
+    throw createInvalidAuthProfilesError("top-level value must be an object");
+  }
+
+  if (Object.prototype.hasOwnProperty.call(parsed, "profiles")) {
+    if (!isObjectRecord(parsed.profiles)) {
+      throw createInvalidAuthProfilesError('"profiles" must be an object');
+    }
+    return Object.entries(parsed.profiles)
+      .map(([profileId, config]) =>
+        migrationProviderFromAuthProfile(profileId, config, { modern: true }),
+      )
+      .filter(Boolean);
+  }
+
+  return Object.entries(parsed).map(([provider, config]) =>
+    migrationProviderFromAuthProfile(provider, config),
+  );
 }
 
 function llmProvidersFromHermesSnapshot(snapshot = {}) {
@@ -797,85 +1068,79 @@ function manifestFromHermesSource({ name, workspaceFiles = [], snapshot = {}, so
   });
 }
 
+async function resolveHermesDockerContainer(
+  agent,
+  backendResolver = containerManager.backendFor,
+  { signal } = {},
+) {
+  const backend = await raceWithCaptureAbort(backendResolver(agent), signal);
+  if (!backend?.docker || typeof backend.docker.getContainer !== "function") {
+    const err = new Error(
+      `Hermes migration capture is not supported by the ${agent?.deploy_target || agent?.backend_type || "selected"} backend`,
+    );
+    err.statusCode = 409;
+    err.code = "MIGRATION_CAPTURE_UNSUPPORTED";
+    throw err;
+  }
+  return backend.docker.getContainer(agent.container_id);
+}
+
+function requireDockerLiveMigrationTransport(input = {}) {
+  const transport = String(input.transport || "")
+    .trim()
+    .toLowerCase();
+  if (transport !== "docker") {
+    const error = new Error("Live migration inspection requires the local Docker transport");
+    error.code = "LIVE_MIGRATION_DOCKER_ONLY";
+    error.statusCode = 400;
+    throw error;
+  }
+  return transport;
+}
+
+function requireDockerLiveMigrationContainer(input = {}) {
+  const containerRef = String(input.container_id || input.container || "").trim();
+  if (!containerRef) {
+    const error = new Error("Docker live migration requires a container id or name");
+    error.code = "MIGRATION_DOCKER_SOURCE_REQUIRED";
+    error.statusCode = 400;
+    throw error;
+  }
+  return containerRef;
+}
+
+/**
+ * Inspect a local Docker source and convert its runtime files and managed credentials to a
+ * manifest.
+ *
+ * @param {Object} [input={}] - Runtime family and local Docker source details.
+ * @returns {Promise<Object>} Normalized secret-bearing migration manifest.
+ */
 async function buildLiveMigrationManifest(input = {}) {
   const runtimeFamily =
     String(input.runtime_family || input.runtimeFamily || "")
       .trim()
       .toLowerCase() || "openclaw";
-  const transport = String(input.transport || "")
-    .trim()
-    .toLowerCase();
-
-  if (!["docker", "ssh"].includes(transport)) {
-    throw new Error("Unsupported live migration transport");
-  }
+  const transport = requireDockerLiveMigrationTransport(input);
+  const containerRef = requireDockerLiveMigrationContainer(input);
+  const container = docker.getContainer(containerRef);
 
   if (runtimeFamily === "openclaw") {
-    if (transport === "docker") {
-      const containerRef = String(input.container_id || input.container || "").trim();
-      if (!containerRef) throw new Error("Docker live migration requires a container id or name");
-      const container = docker.getContainer(containerRef);
-      const [agentFiles, workspaceFiles, sessionFiles, authProfilesBuffer] = await Promise.all([
-        getDockerArchiveFiles(container, OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT),
-        getDockerArchiveFiles(container, OPENCLAW_WORKSPACE_ROOT),
-        getDockerArchiveFiles(container, "/root/.openclaw/agents/main/sessions"),
-        getDockerArchiveBuffer(
-          container,
-          `${OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`,
-        ),
-      ]);
+    const [agentFiles, workspaceFiles, sessionFiles, authProfilesBuffer] = await Promise.all([
+      getDockerArchiveFiles(container, OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT),
+      getDockerArchiveFiles(container, OPENCLAW_WORKSPACE_ROOT),
+      getDockerArchiveFiles(container, "/root/.openclaw/agents/main/sessions"),
+      getDockerArchiveBuffer(
+        container,
+        `${OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`,
+      ),
+    ]);
 
-      const authFiles = authProfilesBuffer.length
-        ? await readTarBufferFiles(authProfilesBuffer)
-        : [];
-      const authProfileEntry = authFiles.find((entry) => entry.path === "auth-profiles.json");
-
-      return manifestFromOpenClawSource({
-        name: String(input.name || "").trim() || `Imported OpenClaw ${containerRef.slice(0, 12)}`,
-        files: [...agentFiles, ...workspaceFiles].filter(
-          (entry) =>
-            entry.path !== "auth-profiles.json" &&
-            entry.path !== "NORA_INTEGRATIONS.md" &&
-            entry.path !== NORA_INTEGRATIONS_CONTEXT_FILE &&
-            entry.path !== NORA_INTEGRATIONS_SKILL_FILE &&
-            !entry.path.startsWith("integrations/"),
-        ),
-        memoryFiles: sessionFiles.map((entry) => ({
-          ...entry,
-          path: `agents/main/sessions/${entry.path}`,
-        })),
-        llmProviderEntries: llmProvidersFromAuthProfiles(
-          authProfileEntry
-            ? Buffer.from(authProfileEntry.contentBase64, "base64").toString("utf8")
-            : "",
-        ),
-        source: {
-          kind: "docker",
-          transport,
-          label: containerRef,
-        },
-      });
-    }
-
-    const workspaceFiles = await getSshArchiveFiles(
-      input,
-      input.workspace_root || OPENCLAW_WORKSPACE_ROOT,
-    );
-    const agentFiles = await getSshArchiveFiles(
-      input,
-      input.agent_root || OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT,
-    );
-    const sessionFiles = await getSshArchiveFiles(
-      input,
-      input.session_root || "/root/.openclaw/agents/main/sessions",
-    );
-    const authProfilesText = await readSshText(
-      input,
-      `${input.agent_root || OPENCLAW_LEGACY_AGENT_TEMPLATE_ROOT}/auth-profiles.json`,
-    );
+    const authFiles = authProfilesBuffer.length ? await readTarBufferFiles(authProfilesBuffer) : [];
+    const authProfileEntry = authFiles.find((entry) => entry.path === "auth-profiles.json");
 
     return manifestFromOpenClawSource({
-      name: String(input.name || "").trim() || `Imported OpenClaw ${input.host || "source"}`,
+      name: String(input.name || "").trim() || `Imported OpenClaw ${containerRef.slice(0, 12)}`,
       files: [...agentFiles, ...workspaceFiles].filter(
         (entry) =>
           entry.path !== "auth-profiles.json" &&
@@ -888,28 +1153,11 @@ async function buildLiveMigrationManifest(input = {}) {
         ...entry,
         path: `agents/main/sessions/${entry.path}`,
       })),
-      llmProviderEntries: llmProvidersFromAuthProfiles(authProfilesText),
-      source: {
-        kind: "ssh",
-        transport,
-        label: `${input.username || "root"}@${input.host || "source"}`,
-      },
-    });
-  }
-
-  if (transport === "docker") {
-    const containerRef = String(input.container_id || input.container || "").trim();
-    if (!containerRef) throw new Error("Docker live migration requires a container id or name");
-    const container = docker.getContainer(containerRef);
-    const [workspaceFiles, snapshot] = await Promise.all([
-      getDockerArchiveFiles(container, input.workspace_root || "/opt/data/workspace"),
-      readHermesSnapshotFromDocker(container),
-    ]);
-
-    return manifestFromHermesSource({
-      name: String(input.name || "").trim() || `Imported Hermes ${containerRef.slice(0, 12)}`,
-      workspaceFiles,
-      snapshot,
+      llmProviderEntries: llmProvidersFromAuthProfiles(
+        authProfileEntry
+          ? Buffer.from(authProfileEntry.contentBase64, "base64").toString("utf8")
+          : "",
+      ),
       source: {
         kind: "docker",
         transport,
@@ -919,21 +1167,25 @@ async function buildLiveMigrationManifest(input = {}) {
   }
 
   const [workspaceFiles, snapshot] = await Promise.all([
-    getSshArchiveFiles(input, input.workspace_root || "/opt/data/workspace"),
-    readHermesSnapshotFromSsh(input),
+    getDockerArchiveFiles(container, input.workspace_root || "/opt/data/workspace"),
+    readHermesSnapshotFromDocker(container, {
+      onUnconfirmedTermination: () => stopDirectDockerContainerSafely(container),
+    }),
   ]);
 
   return manifestFromHermesSource({
-    name: String(input.name || "").trim() || `Imported Hermes ${input.host || "source"}`,
+    name: String(input.name || "").trim() || `Imported Hermes ${containerRef.slice(0, 12)}`,
     workspaceFiles,
     snapshot,
     source: {
-      kind: "ssh",
+      kind: "docker",
       transport,
-      label: `${input.username || "root"}@${input.host || "source"}`,
+      label: containerRef,
     },
   });
 }
+
+// Nora agent export and draft persistence
 
 async function listUserRawLlmProviders(userId) {
   const result = await db.query(
@@ -988,7 +1240,15 @@ async function listAgentChannelSecrets(agentId) {
   }));
 }
 
-async function buildMigrationManifestFromAgent(agent, { userId }) {
+/**
+ * Capture an agent's portable runtime state, including decrypted managed credentials.
+ *
+ * @param {Object} agent - Agent row to export.
+ * @param {Object} [options={}] - Export owner and optional cancellation signal.
+ * @returns {Promise<Object>} Normalized secret-bearing migration manifest.
+ */
+async function buildMigrationManifestFromAgent(agent, { userId, signal } = {}) {
+  throwIfCaptureAborted(signal);
   const runtimeFamily =
     String(agent?.runtime_family || "")
       .trim()
@@ -997,12 +1257,13 @@ async function buildMigrationManifestFromAgent(agent, { userId }) {
   if (runtimeFamily === "openclaw") {
     const [templatePayload, providerEntries, integrationEntries, channelEntries, overrideMap] =
       await Promise.all([
-        buildTemplatePayloadFromAgent(agent, "files_plus_memory"),
+        buildTemplatePayloadFromAgent(agent, "files_plus_memory", { signal }),
         listUserRawLlmProviders(userId),
         listAgentIntegrationSecrets(agent.id),
         listAgentChannelSecrets(agent.id),
         getAgentSecretEnvVars(agent.id),
       ]);
+    throwIfCaptureAborted(signal);
 
     return normalizeMigrationManifest({
       name: agent.name || "OpenClaw Agent",
@@ -1038,17 +1299,21 @@ async function buildMigrationManifestFromAgent(agent, { userId }) {
     err.code = "NO_CONTAINER";
     throw err;
   }
-  const container = docker.getContainer(agent.container_id);
-  const [workspaceFiles, providerEntries, overrideMap, liveSnapshot, persistedState] =
-    await Promise.all([
-      getDockerArchiveFiles(container, "/opt/data/workspace"),
-      listUserRawLlmProviders(userId),
-      getAgentSecretEnvVars(agent.id),
-      readHermesSnapshotFromDocker(container).catch(() => null),
-      getPersistedHermesState(agent.id),
-    ]);
+  const container = await resolveHermesDockerContainer(agent, containerManager.backendFor, {
+    signal,
+  });
+  const [workspaceFiles, providerEntries, overrideMap, liveSnapshot] = await Promise.all([
+    getDockerArchiveFiles(container, "/opt/data/workspace", { signal }),
+    listUserRawLlmProviders(userId),
+    getAgentSecretEnvVars(agent.id),
+    readHermesSnapshotFromDocker(container, {
+      signal,
+      onUnconfirmedTermination: () => stopManagedAgentAfterUnconfirmedDockerExec(agent),
+    }),
+  ]);
+  throwIfCaptureAborted(signal);
 
-  const state = liveSnapshot ? snapshotToPersistedHermesState(liveSnapshot) : persistedState;
+  const state = snapshotToPersistedHermesState(liveSnapshot);
 
   return normalizeMigrationManifest({
     name: agent.name || "Hermes Agent",
@@ -1073,10 +1338,16 @@ async function buildMigrationManifestFromAgent(agent, { userId }) {
         value,
       })),
     },
-    warnings: liveSnapshot ? hermesChannelsFromSnapshot(liveSnapshot).warnings : [],
+    warnings: hermesChannelsFromSnapshot(liveSnapshot).warnings,
   });
 }
 
+/**
+ * Encrypt and persist a user-owned migration draft that expires after 24 hours.
+ *
+ * @param {Object} input - Owner, manifest, and source metadata.
+ * @returns {Promise<Object>} Stored draft with its normalized manifest and safe preview.
+ */
 async function createMigrationDraft({
   userId,
   manifest,
@@ -1125,6 +1396,62 @@ async function createMigrationDraft({
   };
 }
 
+async function persistMigrationManifestForAgent({
+  userId,
+  agentId,
+  manifest,
+  sourceKind = "backup",
+  sourceTransport = "managed-backup",
+} = {}) {
+  if (!userId || !agentId) {
+    throw new Error("userId and agentId are required to persist an agent migration manifest");
+  }
+
+  const normalizedManifest = normalizeMigrationManifest(manifest);
+  const result = await db.query(
+    `INSERT INTO agent_migrations(
+       user_id,
+       deployed_agent_id,
+       name,
+       runtime_family,
+       source_kind,
+       source_transport,
+       status,
+       summary,
+       warnings,
+       encrypted_manifest,
+       expires_at
+     )
+     VALUES($1, $2, $3, $4, $5, $6, 'ready', $7, $8, $9, NULL)
+     RETURNING id, user_id, deployed_agent_id, name, runtime_family, source_kind,
+               source_transport, status, summary, warnings, created_at, expires_at`,
+    [
+      userId,
+      agentId,
+      normalizedManifest.name,
+      normalizedManifest.runtimeFamily,
+      sourceKind,
+      sourceTransport || null,
+      JSON.stringify(summarizeManifest(normalizedManifest)),
+      JSON.stringify(normalizeManifestWarnings(normalizedManifest.warnings)),
+      encodeStoredManifest(normalizedManifest),
+    ],
+  );
+
+  return {
+    ...result.rows[0],
+    manifest: normalizedManifest,
+  };
+}
+
+/**
+ * Load and decrypt a migration draft only when it belongs to the requested user.
+ *
+ * @param {string} draftId - Draft identifier.
+ * @param {string} userId - Expected owner identifier.
+ * @returns {Promise<Object|null>} Draft, or `null` when absent or its plaintext is invalid JSON.
+ * @throws {Error} Authenticated decryption failure for corrupted or mismatched-key data.
+ */
 async function getOwnedMigrationDraft(draftId, userId) {
   const result = await db.query(
     `SELECT id, user_id, name, runtime_family, source_kind, source_transport, status,
@@ -1149,12 +1476,19 @@ async function getOwnedMigrationDraft(draftId, userId) {
   };
 }
 
+/**
+ * Load the latest migration manifest attached to a deployed agent for provisioning.
+ *
+ * @param {string} agentId - Deployed agent identifier.
+ * @returns {Promise<Object|null>} Decrypted manifest when one is attached and valid JSON.
+ * @throws {Error} Authenticated decryption failure for corrupted or mismatched-key data.
+ */
 async function getMigrationManifestForAgent(agentId) {
   const result = await db.query(
     `SELECT encrypted_manifest
        FROM agent_migrations
       WHERE deployed_agent_id = $1
-      ORDER BY created_at DESC
+      ORDER BY created_at DESC, id DESC
       LIMIT 1`,
     [agentId],
   );
@@ -1170,6 +1504,13 @@ async function deleteOwnedMigrationDraft(draftId, userId) {
   return Boolean(result.rows[0]);
 }
 
+/**
+ * Attach a draft to its deployed agent and remove its automatic expiration.
+ *
+ * @param {string} draftId - Migration draft identifier.
+ * @param {string} agentId - Deployed agent identifier.
+ * @returns {Promise<void>}
+ */
 async function attachDraftToAgent(draftId, agentId) {
   await db.query(
     `UPDATE agent_migrations
@@ -1179,6 +1520,8 @@ async function attachDraftToAgent(draftId, agentId) {
     [draftId, agentId],
   );
 }
+
+// Imported state materialization and Hermes seeding
 
 async function seedImportedLlmProviders(userId, providerEntries = []) {
   if (!Array.isArray(providerEntries) || providerEntries.length === 0) return;
@@ -1206,6 +1549,17 @@ async function seedImportedLlmProviders(userId, providerEntries = []) {
   }
 }
 
+/**
+ * Apply imported providers, integrations, channels, overrides, and Hermes state to an agent.
+ *
+ * Existing LLM providers are preserved. Writes are not transactional, so a later failure may
+ * leave earlier managed resources materialized.
+ *
+ * @param {string} userId - Owner receiving any missing LLM providers.
+ * @param {string} agentId - Agent receiving imported managed state.
+ * @param {Object} [manifest={}] - Normalized migration manifest.
+ * @returns {Promise<void>}
+ */
 async function materializeManagedMigrationState(userId, agentId, manifest = {}) {
   const managed = manifest.managed || {};
   await seedImportedLlmProviders(userId, managed.llmProviders || []);
@@ -1256,19 +1610,23 @@ async function materializeManagedMigrationState(userId, agentId, manifest = {}) 
 }
 
 function buildHermesSeedArchiveEntries(manifest = {}) {
-  return (manifest?.hermesSeed?.files || [])
+  return normalizeHermesSeedFiles(manifest?.hermesSeed?.files || [])
     .map((entry) => {
-      const relativePath = String(entry?.path || "").replace(/^\/+/, "");
-      if (!relativePath) return null;
       return {
-        name: path.posix.join("opt/data/workspace", relativePath),
+        name: path.posix.join("opt/data/workspace", entry.path),
         content: Buffer.from(String(entry.contentBase64 || ""), "base64"),
-        mode: Number.isInteger(entry.mode) ? entry.mode : 0o644,
+        mode: entry.mode,
       };
     })
     .filter(Boolean);
 }
 
+/**
+ * Build a container-rooted tar archive for imported Hermes workspace files.
+ *
+ * @param {Object} [manifest={}] - Manifest containing Hermes seed files.
+ * @returns {Promise<Buffer|null>} Tar archive, or `null` when there are no files.
+ */
 async function buildHermesSeedArchive(manifest = {}) {
   const entries = buildHermesSeedArchiveEntries(manifest);
   if (entries.length === 0) return null;
@@ -1316,5 +1674,14 @@ module.exports = {
   normalizeMigrationManifest,
   packMigrationBundle,
   parseUploadedMigrationBuffer,
+  persistMigrationManifestForAgent,
+  resolveHermesDockerContainer,
   summarizeManifest,
+  __test: Object.freeze({
+    execDockerText,
+    getDockerArchiveFiles,
+    llmProvidersFromAuthProfiles,
+    parseHermesSnapshotOutput,
+    readHermesSnapshotFromDocker,
+  }),
 };

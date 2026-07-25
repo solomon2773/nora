@@ -17,8 +17,19 @@ RETENTION_DAYS="${RETENTION_DAYS:-14}"
 PGHOST="${PGHOST:-postgres}"
 PGPORT="${PGPORT:-5432}"
 PGUSER="${PGUSER:-nora}"
-PGPASSWORD="${PGPASSWORD:-nora}"
 PGDATABASE="${PGDATABASE:-nora}"
+
+if [[ -z "${PGPASSWORD:-}" && -n "${PGPASSWORD_FILE:-}" ]]; then
+  if [[ ! -r "$PGPASSWORD_FILE" ]]; then
+    echo "Configured PGPASSWORD_FILE is not readable: $PGPASSWORD_FILE" >&2
+    exit 1
+  fi
+  PGPASSWORD="$(<"$PGPASSWORD_FILE")"
+fi
+if [[ -z "${PGPASSWORD:-}" ]]; then
+  echo "PGPASSWORD or a readable PGPASSWORD_FILE is required" >&2
+  exit 1
+fi
 
 export PGPASSWORD
 

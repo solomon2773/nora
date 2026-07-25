@@ -3,7 +3,7 @@ const OPENCLAW_GATEWAY_PORT = 18789;
 const HERMES_DASHBOARD_PORT = 9119;
 
 function joinHttpUrl(host, port, path = "/") {
-  const normalizedPath = !path ? "" : (path.startsWith("/") ? path : `/${path}`);
+  const normalizedPath = !path ? "" : path.startsWith("/") ? path : `/${path}`;
   return `http://${host}:${port}${normalizedPath}`;
 }
 

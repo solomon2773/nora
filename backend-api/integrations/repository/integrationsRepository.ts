@@ -54,6 +54,7 @@ export interface IntegrationsRepository {
     encryptedToken: string;
     encryptedConfigJson: string;
   }): Promise<void>;
+  updateStatus(input: { id: string; status: string }): Promise<void>;
   updateCronJobId(input: { id: string; agentId: string; cronJobId: string | null }): Promise<void>;
   findActiveEmailIntegrations(agentId: string): Promise<IntegrationRow[]>;
   findActiveIntegrationByCronJobId(input: {
@@ -62,6 +63,14 @@ export interface IntegrationsRepository {
   }): Promise<IntegrationRow | null>;
 }
 
+/**
+ * Create the SQL-only integration repository used beneath encryption and provider services.
+ *
+ * Callers must pass already-encrypted credential values; returned rows remain untransformed.
+ *
+ * @param {Object} db - Database client exposing `query`.
+ * @returns {Object} Raw integration persistence operations.
+ */
 export function createIntegrationsRepository(db: DbLike): IntegrationsRepository {
   return {
     async upsertCatalogItem(item) {
@@ -178,6 +187,10 @@ export function createIntegrationsRepository(db: DbLike): IntegrationsRepository
         encryptedConfigJson,
         id,
       ]);
+    },
+
+    async updateStatus({ id, status }) {
+      await db.query("UPDATE integrations SET status = $1 WHERE id = $2", [status, id]);
     },
 
     async updateIntegration({ id, agentId, encryptedToken, encryptedConfigJson }) {

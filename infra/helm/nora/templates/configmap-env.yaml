@@ -1,3 +1,38 @@
+{{- $enabledBackends := list -}}
+{{- range $backend := splitList "," (lower .Values.enabledBackends) -}}
+{{- $normalizedBackend := trim $backend -}}
+{{- if $normalizedBackend -}}
+{{- $enabledBackends = append $enabledBackends $normalizedBackend -}}
+{{- end -}}
+{{- end -}}
+{{- $reservedControlPlaneEnv := list
+      "NODE_ENV"
+      "PLATFORM_MODE"
+      "ENABLED_BACKENDS"
+      "ENABLED_RUNTIME_FAMILIES"
+      "ENABLED_SANDBOX_PROFILES"
+      "NEXTAUTH_URL"
+      "CORS_ORIGINS"
+      "DB_HOST"
+      "DB_PORT"
+      "DB_USER"
+      "DB_NAME"
+      "REDIS_HOST"
+      "REDIS_PORT" -}}
+{{- range $envName := $reservedControlPlaneEnv -}}
+{{- if hasKey $.Values.backendEnv $envName -}}
+{{- fail (printf "backendEnv.%s is reserved; configure the corresponding typed chart value instead" $envName) -}}
+{{- end -}}
+{{- if hasKey $.Values.commonEnv $envName -}}
+{{- fail (printf "commonEnv.%s is reserved; configure the corresponding typed chart value instead" $envName) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (has "k8s" $enabledBackends) -}}
+{{- fail "enabledBackends must include k8s for the Helm deployment; in-cluster Nora has no local Docker socket" -}}
+{{- end -}}
+{{- if has "docker" $enabledBackends -}}
+{{- fail "enabledBackends must not include docker for the Helm deployment; no Docker socket is mounted in-cluster" -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

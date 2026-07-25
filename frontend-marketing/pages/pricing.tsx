@@ -1,4 +1,3 @@
-import Head from "next/head";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -13,6 +12,7 @@ import {
   Zap,
 } from "lucide-react";
 import LanguageSwitcher from "../components/LanguageSwitcher";
+import SeoHead from "../components/SeoHead";
 
 const OSS_REPO_URL = "https://github.com/solomon2773/nora";
 const QUICKSTART_URL = `${OSS_REPO_URL}#quick-start`;
@@ -100,13 +100,11 @@ const ENTRY_LINKS = [
 export default function Pricing() {
   return (
     <>
-      <Head>
-        <title>Open Source, License, and PaaS Mode | Nora</title>
-        <meta
-          name="description"
-          content="Nora is fully open source under Apache 2.0. Self-host it, use it commercially, or run Nora in PaaS mode for your own business."
-        />
-      </Head>
+      <SeoHead
+        title="Open Source, License, and PaaS Mode | Nora"
+        description="Nora is Apache-2.0 software. Self-host it, use it commercially, or operate it in PaaS mode as your own internal or hosted agent platform."
+        path="/pricing"
+      />
 
       <div className="site-shell min-h-screen px-4 pb-10 pt-4 text-brand-ink sm:px-6">
         <header className="mx-auto flex max-w-7xl items-center justify-between rounded-2xl border border-brand-cyan/25 bg-white/90 px-4 py-3 shadow-xl shadow-brand-ink/10 backdrop-blur-xl sm:px-5">

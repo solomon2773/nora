@@ -2,6 +2,49 @@
 const RemoteHermesBackend = require("../../workers/provisioner/backends/remote-hermes");
 const HermesBackend = require("../../workers/provisioner/backends/hermes");
 const { HERMES_RUNTIME_PORT, HERMES_DASHBOARD_PORT } = require("../../agent-runtime/lib/contracts");
+const {
+  HERMES_EMPTY_STATE_SENTINEL,
+  HERMES_MANAGED_ENV_ENV,
+  HERMES_MODEL_CONFIG_ENV,
+  buildHermesRuntimeBootstrapEnv,
+  buildHermesRuntimeConfigBootstrapCommand,
+} = require("../../agent-runtime/lib/hermesRuntimeBootstrap");
+
+function hermesCreateHarness() {
+  const captured = [];
+  const container = {
+    id: "created-hermes-id",
+    start: jest.fn().mockResolvedValue(undefined),
+    remove: jest.fn().mockResolvedValue(undefined),
+    inspect: jest.fn().mockResolvedValue({
+      NetworkSettings: { IPAddress: "172.18.0.11", Networks: {} },
+    }),
+  };
+  const docker = {
+    getContainer: jest.fn(() => ({
+      inspect: jest
+        .fn()
+        .mockRejectedValue(Object.assign(new Error("not found"), { statusCode: 404 })),
+    })),
+    createContainer: jest.fn(async (options) => {
+      captured.push(options);
+      return container;
+    }),
+    getNetwork: jest.fn(() => ({ connect: jest.fn().mockResolvedValue(undefined) })),
+  };
+  return { captured, container, docker };
+}
+
+function immutableEnv(options = {}) {
+  return Object.fromEntries(
+    (options.Env || []).map((entry) => {
+      const separator = String(entry).indexOf("=");
+      return separator < 0
+        ? [String(entry), ""]
+        : [String(entry).slice(0, separator), String(entry).slice(separator + 1)];
+    }),
+  );
+}
 
 function hermesProfile(overrides = {}) {
   return {
@@ -13,6 +56,7 @@ function hermesProfile(overrides = {}) {
     sshUser: "operator",
     sshAuthMode: "key",
     sshPrivateKey: "PRIVATE-KEY-PEM",
+    sshHostKey: Buffer.from("GOOD-KEY").toString("base64"),
     gatewayHost: "laptop.tail-scale.ts.net",
     ...overrides,
   };
@@ -31,6 +75,12 @@ describe("RemoteHermesBackend construction", () => {
     );
     expect(() => new RemoteHermesBackend(hermesProfile({ sshPrivateKey: null }))).toThrow(
       /missing its SSH private key/i,
+    );
+  });
+
+  it("rejects a profile without a pinned SSH host key", () => {
+    expect(() => new RemoteHermesBackend(hermesProfile({ sshHostKey: null }))).toThrow(
+      expect.objectContaining({ code: "REMOTE_HOST_PIN_REQUIRED", statusCode: 409 }),
     );
   });
 
@@ -55,22 +105,22 @@ describe("RemoteHermesBackend port publishing", () => {
       dashboardHostPort: 19044,
     });
     expect(bindings).toEqual({
-      [`${HERMES_RUNTIME_PORT}/tcp`]: [{ HostPort: "19500" }],
-      [`${HERMES_DASHBOARD_PORT}/tcp`]: [{ HostPort: "19044" }],
+      [`${HERMES_RUNTIME_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19500" }],
+      [`${HERMES_DASHBOARD_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19044" }],
     });
   });
 
   it("publishes only the runtime port when no dashboard port is allocated", () => {
     const backend = new RemoteHermesBackend(hermesProfile());
     expect(backend._hermesPortBindings({ gatewayHostPort: 19500 })).toEqual({
-      [`${HERMES_RUNTIME_PORT}/tcp`]: [{ HostPort: "19500" }],
+      [`${HERMES_RUNTIME_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19500" }],
     });
   });
 
   it("publishes only the dashboard port when no runtime port is allocated", () => {
     const backend = new RemoteHermesBackend(hermesProfile());
     expect(backend._hermesPortBindings({ dashboardHostPort: 19044 })).toEqual({
-      [`${HERMES_DASHBOARD_PORT}/tcp`]: [{ HostPort: "19044" }],
+      [`${HERMES_DASHBOARD_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19044" }],
     });
   });
 
@@ -80,9 +130,36 @@ describe("RemoteHermesBackend port publishing", () => {
     expect(backend._hermesPortBindings({ gatewayHostPort: 0 })).toBeUndefined();
   });
 
-  it("leaves local Hermes unpublished (base hook returns undefined)", () => {
-    // The base HermesBackend must not publish any host ports — local Hermes is
-    // reached via the container IP on the shared compose network.
+  it("base HermesBackend publishes runtime + dashboard on the configured host IP", () => {
+    // Local Hermes now publishes to the DOCKER_AGENT_BIND_IP interface (default
+    // loopback) so external desktop clients can reach the runtime API.
+    const bindings = HermesBackend.prototype._hermesPortBindings.call(
+      { _publishedPortHostIp: () => "127.0.0.1" },
+      { gatewayHostPort: 19500, dashboardHostPort: 19044 },
+    );
+    expect(bindings).toEqual({
+      "8642/tcp": [{ HostIp: "127.0.0.1", HostPort: "19500" }],
+      "9119/tcp": [{ HostIp: "127.0.0.1", HostPort: "19044" }],
+    });
+  });
+
+  it("base HermesBackend honors a routable DOCKER_AGENT_BIND_IP", () => {
+    const bindings = HermesBackend.prototype._hermesPortBindings.call(
+      { _publishedPortHostIp: () => "100.71.115.105" },
+      { gatewayHostPort: 19500 },
+    );
+    expect(bindings).toEqual({
+      "8642/tcp": [{ HostIp: "100.71.115.105", HostPort: "19500" }],
+    });
+  });
+
+  it("base HermesBackend publishes nothing when no host port is allocated", () => {
+    expect(
+      HermesBackend.prototype._hermesPortBindings.call(
+        { _publishedPortHostIp: () => "127.0.0.1" },
+        {},
+      ),
+    ).toBeUndefined();
     expect(HermesBackend.prototype._hermesPortBindings()).toBeUndefined();
   });
 });
@@ -141,5 +218,123 @@ describe("RemoteHermesBackend.create", () => {
     const backend = new RemoteHermesBackend(hermesProfile({ gatewayHost: "" }));
     const result = await backend.create({ id: "x", gatewayHostPort: 19500 });
     expect(result.runtimeHost).toBe("100.64.0.5");
+  });
+
+  it("keeps provider and integration credentials out of immutable Remote Hermes Config.Env", async () => {
+    const backend = new RemoteHermesBackend(hermesProfile());
+    const harness = hermesCreateHarness();
+    backend.docker = harness.docker;
+    backend._ensureImage = jest.fn().mockResolvedValue(undefined);
+    backend._findComposeNetwork = jest.fn().mockResolvedValue(null);
+    backend.updateEnv = jest.fn().mockResolvedValue(undefined);
+    const staged = {
+      OPENAI_API_KEY: "hermes-provider-secret-sentinel",
+      SLACK_TOKEN: "hermes-integration-secret-sentinel",
+    };
+
+    await backend.create({
+      id: "hermes-secret-test",
+      name: "Hermes secret test",
+      gatewayHostPort: 19500,
+      dashboardHostPort: 19044,
+      env: staged,
+    });
+
+    const configEnv = immutableEnv(harness.captured[0]);
+    expect(configEnv).not.toHaveProperty("OPENAI_API_KEY");
+    expect(configEnv).not.toHaveProperty("SLACK_TOKEN");
+    expect(Object.values(configEnv)).not.toContain(staged.OPENAI_API_KEY);
+    expect(Object.values(configEnv)).not.toContain(staged.SLACK_TOKEN);
+    expect(backend.updateEnv).toHaveBeenCalledWith(
+      "created-hermes-id",
+      expect.objectContaining(staged),
+      expect.objectContaining({ replaceManagedState: true, runtimeFamily: "hermes" }),
+    );
+    expect(backend.updateEnv.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.container.start.mock.invocationCallOrder[0],
+    );
+  });
+});
+
+describe("Hermes exact bootstrap replacement", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("emits explicit sentinels that clear persisted managed env and model state", () => {
+    expect(buildHermesRuntimeBootstrapEnv({ envVars: {}, modelConfig: null })).toEqual({
+      [HERMES_MANAGED_ENV_ENV]: HERMES_EMPTY_STATE_SENTINEL,
+      [HERMES_MODEL_CONFIG_ENV]: HERMES_EMPTY_STATE_SENTINEL,
+    });
+  });
+
+  it("preserves model state for channel-only updates with modelConfig undefined", () => {
+    const encoded = buildHermesRuntimeBootstrapEnv({
+      envVars: { DISCORD_BOT_TOKEN: "channel-token" },
+      modelConfig: undefined,
+    });
+    expect(encoded[HERMES_MODEL_CONFIG_ENV]).toBeUndefined();
+    expect(Buffer.from(encoded[HERMES_MANAGED_ENV_ENV], "base64").toString("utf8")).toContain(
+      'DISCORD_BOT_TOKEN="channel-token"',
+    );
+  });
+
+  it("does not replace managed env during a model-only update", () => {
+    const encoded = buildHermesRuntimeBootstrapEnv({
+      modelConfig: { defaultModel: "openai/gpt-5.5", provider: "openai" },
+    });
+    expect(encoded[HERMES_MANAGED_ENV_ENV]).toBeUndefined();
+    expect(
+      JSON.parse(Buffer.from(encoded[HERMES_MODEL_CONFIG_ENV], "base64").toString("utf8")),
+    ).toEqual({ defaultModel: "openai/gpt-5.5", provider: "openai" });
+  });
+
+  it("makes the bootstrap clear sentinels actionable instead of treating them as absent", () => {
+    const command = buildHermesRuntimeConfigBootstrapCommand();
+    expect(command).toContain(`\${${HERMES_MANAGED_ENV_ENV}+x}`);
+    expect(command).toContain(`\${${HERMES_MODEL_CONFIG_ENV}+x}`);
+    expect(command).toContain(HERMES_EMPTY_STATE_SENTINEL);
+    expect(command).toContain('config.pop("model", None)');
+  });
+
+  it("installs a durable login prelude for existing Hermes containers", async () => {
+    const backend = Object.create(HermesBackend.prototype);
+    const container = {};
+    backend.docker = { getContainer: jest.fn(() => container) };
+    backend._readManagedEnvState = jest.fn().mockResolvedValue({
+      version: 1,
+      managedNames: [],
+      values: {},
+    });
+    backend._readContainerFile = jest
+      .fn()
+      .mockResolvedValue("hermes:x:10000:10000:Hermes:/opt/data:/bin/bash\n");
+    const putFiles = jest.spyOn(backend, "_putBootstrapFiles").mockResolvedValue(undefined);
+    const log = jest.spyOn(console, "log").mockImplementation(() => {});
+
+    await backend.updateEnv(
+      "existing-hermes",
+      {
+        OPENAI_API_KEY: "rotated-hermes-secret",
+        [HERMES_MANAGED_ENV_ENV]: HERMES_EMPTY_STATE_SENTINEL,
+        [HERMES_MODEL_CONFIG_ENV]: HERMES_EMPTY_STATE_SENTINEL,
+      },
+      {
+        runtimeFamily: "hermes",
+        managedEnvNames: ["OPENAI_API_KEY", HERMES_MANAGED_ENV_ENV, HERMES_MODEL_CONFIG_ENV],
+      },
+    );
+
+    const files = putFiles.mock.calls[0][1];
+    const stateFile = files.find((file) => file.name === "opt/nora-managed-env/state.json");
+    const applyFile = files.find((file) => file.name === "opt/nora-managed-env/apply.sh");
+    const profileFile = files.find((file) => file.name === "etc/profile.d/nora-managed-env.sh");
+    expect(stateFile.mode).toBe(0o600);
+    expect(stateFile).toMatchObject({ uid: 10000, gid: 10000 });
+    expect(JSON.parse(stateFile.content).values.OPENAI_API_KEY).toBe("rotated-hermes-secret");
+    expect(applyFile.mode).toBe(0o700);
+    expect(applyFile).toMatchObject({ uid: 10000, gid: 10000 });
+    expect(applyFile.content).not.toContain("rotated-hermes-secret");
+    expect(profileFile.mode).toBe(0o644);
+    expect(profileFile.content).toContain("/opt/nora-managed-env/apply.sh");
+    expect(log.mock.calls.flat().join(" ")).not.toContain("rotated-hermes-secret");
   });
 });

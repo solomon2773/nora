@@ -11,6 +11,7 @@ Start here if you want to self-host Nora and bring it online on your own infrast
 - [`infra/setup-tls.sh`](infra/setup-tls.sh)
 
 Best fit:
+
 - you want the cleanest trust path
 - you are comfortable operating Docker / Compose
 - you want to bring account creation, provider setup, and first agent deployment online yourself
@@ -23,6 +24,7 @@ Use GitHub Issues when something appears broken in the product or docs.
 - [Create a new issue](https://github.com/solomon2773/nora/issues/new)
 
 Best fit:
+
 - reproducible bugs
 - documentation errors
 - install failures with concrete logs or steps to reproduce
@@ -36,6 +38,7 @@ Use the default public browser entry when you want to see the reference deployme
 - [Create account](https://nora.solomontsao.com/signup)
 
 Best fit:
+
 - you want the default public browser entry
 - you want to check the login or signup flow
 - you want a quick public reference deployment before self-hosting
@@ -47,6 +50,7 @@ Use GitHub Discussions for setup questions, design discussion, product direction
 - [GitHub Discussions](https://github.com/solomon2773/nora/discussions)
 
 Best fit:
+
 - setup guidance
 - onboarding questions
 - deployment review
@@ -61,6 +65,7 @@ Use the public OSS and licensing page when you need the short version of what Ap
 - [README Quick Start](README.md#quick-start)
 
 Best fit:
+
 - you want to confirm commercial usage rights
 - you want to run Nora as your own hosted product or internal platform
 - you need the difference between `selfhosted` and `paas`
@@ -71,6 +76,7 @@ Best fit:
 Use the private reporting path in [SECURITY.md](SECURITY.md) if you believe you found a vulnerability.
 
 Best fit:
+
 - security bugs with real impact
 - unsafe defaults or exposure paths
 - credential handling issues
@@ -88,12 +94,27 @@ To reduce back-and-forth, include:
 - the step that failed or slowed you down
 - relevant logs or screenshots
 
+## Response expectations
+
+New external Issues, ready-for-review pull requests, and Discussions receive an automated
+acknowledgement so the thread is visibly in Nora's response queue. Draft pull requests enter the queue
+and start their clock only when marked ready. A scheduled audit posts a maintainer reminder after
+twelve days without a human response and escalates after the fourteen-day target is exceeded.
+
+Maintainers aim to acknowledge complete bug reports, pull requests, and Discussions within fourteen
+days. This is a best-effort target, not a support SLA. The automated comment is a queue receipt, not
+a human review. If a thread still has no human response after fourteen days, add one polite follow-up
+to that thread rather than opening a duplicate.
+
+Reports missing reproduction steps, version details, or sanitized logs may take longer to diagnose. Security reports follow the private process in [SECURITY.md](SECURITY.md) and should never be chased in a public issue.
+
 ## Security note
 
 Do **not** post secrets, API keys, `.env` files, or private credentials in Issues or Discussions.
 If the problem may be a vulnerability, use [SECURITY.md](SECURITY.md) instead of a public thread.
 
 If you are unsure where to start:
+
 - choose [README Quick Start](README.md#quick-start) if you want to self-host
 - choose [signup](https://nora.solomontsao.com/signup) or [login](https://nora.solomontsao.com/login) if you want the default public browser entry
 - choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want implementation discussion or setup guidance

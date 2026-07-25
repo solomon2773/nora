@@ -21,7 +21,9 @@ describe("ensureFirstRegisteredUserIsAdmin", () => {
 
     await expect(ensureFirstRegisteredUserIsAdmin()).resolves.toEqual(promotedUser);
     expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining("WHERE NOT EXISTS"));
-    expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining("ORDER BY created_at ASC, id ASC"));
+    expect(mockDb.query).toHaveBeenCalledWith(
+      expect.stringContaining("ORDER BY created_at ASC, id ASC"),
+    );
   });
 
   it("returns null when an admin already exists or there are no users", async () => {

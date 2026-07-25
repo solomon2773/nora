@@ -1,0 +1,52 @@
+---
+title: Scheduled agent runs
+description: Run a prompt or a lifecycle action on an agent on a recurring cron schedule — control-plane-native, audited, and budget-aware.
+---
+
+# Scheduled agent runs
+
+Nora can run an agent on a recurring **cron** schedule from the control plane — no human in the loop. Use it for daily summaries, hourly health/triage prompts, nightly reports, or scheduled lifecycle maintenance. Every run is recorded in the agent's events, and prompt runs flow through the same token/cost accounting (and budget auto-pause) as interactive chat.
+
+Schedules live on the **Schedules** tab of an agent, or via the API.
+
+## What you can schedule
+
+Each schedule has a **cron expression** (5-field, standard), a **timezone**, and an **action**:
+
+| Action | What it does |
+| --- | --- |
+| `prompt` | Sends a prompt to the agent (OpenClaw via the gateway, Hermes via its runtime API). Requires prompt text. |
+| `restart` / `stop` / `start` | Lifecycle control of the agent's runtime. |
+| `redeploy` | Re-provisions the agent. |
+
+<Note>
+A guardrail enforces a **minimum interval** between fires (`NORA_SCHEDULE_MIN_INTERVAL_SECONDS`, default 60s) so a too-frequent cron can't thrash an agent or run away with its budget. Hermes also has its own runtime-native cron (`/api/jobs`); control-plane schedules are independent of it.
+</Note>
+
+## How it runs
+
+A backend sweep (every ~30s) atomically claims any schedules whose next fire is due (replica-safe), computes the next fire, and enqueues each run. The provisioner worker executes the action and records an `agent.schedule.run` event — so runs show up in monitoring, can trigger alert rules, and (for prompts) appear in cost/OpenTelemetry telemetry.
+
+## API
+
+```bash
+# List schedules for an agent
+curl -H "Authorization: Bearer $NORA_TOKEN" \
+  https://your-nora.example.com/api/agents/$AGENT_ID/schedules
+
+# Create a daily 9am summary prompt (UTC)
+curl -X POST -H "Authorization: Bearer $NORA_TOKEN" -H "Content-Type: application/json" \
+  https://your-nora.example.com/api/agents/$AGENT_ID/schedules \
+  -d '{"name":"Daily summary","cron":"0 9 * * *","timezone":"UTC","action_type":"prompt","prompt":"Summarize today's open issues."}'
+
+# Pause / resume
+curl -X PUT  .../api/agents/$AGENT_ID/schedules/$SCHEDULE_ID -d '{"enabled":false}'
+
+# Delete
+curl -X DELETE .../api/agents/$AGENT_ID/schedules/$SCHEDULE_ID
+
+# Recent runs
+curl .../api/agents/$AGENT_ID/schedules/$SCHEDULE_ID/runs
+```
+
+`GET`/run-listing need the `agents:read` scope; create/update/delete need `agents:write`. See the [API reference](/api/overview).

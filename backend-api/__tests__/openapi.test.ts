@@ -10,6 +10,8 @@ jest.mock("../db", () => ({ query: jest.fn(), connect: jest.fn() }));
 jest.mock("../redisQueue", () => ({
   deployQueue: { getJobCounts: jest.fn() },
   addDeploymentJob: jest.fn(),
+  addBackupJob: jest.fn(),
+  addKubernetesPolicyReconcileJob: jest.fn(),
   getDLQJobs: jest.fn(),
   retryDLQJob: jest.fn(),
 }));
@@ -32,8 +34,10 @@ jest.mock("../gatewayProxy", () => ({ rpcCall: jest.fn() }));
 const { listRouterPaths } = require("../openapi/routerPaths");
 const { buildOpenApiDocument } = require("../openapi");
 
-// Tier-1 routers and their mount prefixes (must match server.ts).
-const TIER1 = [
+// Fully documented routers and their mount prefixes (must match server.ts).
+// Nested workspace routers are listed independently because Express does not
+// retain a portable mount-path string on child router layers.
+const COMPLETE_ROUTERS = [
   { name: "agents", router: () => require("../routes/agents"), mount: "/agents" },
   { name: "monitoring", router: () => require("../routes/monitoring"), mount: "" },
   {
@@ -42,6 +46,43 @@ const TIER1 = [
     mount: "/llm-providers",
   },
   { name: "auth", router: () => require("../routes/auth"), mount: "/auth" },
+  { name: "workspaces", router: () => require("../routes/workspaces"), mount: "/workspaces" },
+  {
+    name: "workspaceApiKeys",
+    router: () => require("../routes/apiKeys"),
+    mount: "/workspaces/:id/api-keys",
+  },
+  {
+    name: "workspaceAlertRules",
+    router: () => require("../routes/alertRules"),
+    mount: "/workspaces/:id/alert-rules",
+  },
+  {
+    name: "workspaceCost",
+    router: () => require("../routes/workspaceCost"),
+    mount: "/workspaces/:id",
+  },
+  { name: "integrations", router: () => require("../routes/integrations"), mount: "" },
+  { name: "channels", router: () => require("../routes/channels"), mount: "/agents" },
+  { name: "backups", router: () => require("../routes/backups"), mount: "/agents" },
+  { name: "agentHub", router: () => require("../routes/agentHub"), mount: "/agent-hub" },
+  {
+    name: "agentHubPublic",
+    router: () => require("../routes/agentHubPublic"),
+    mount: "/agent-hub",
+  },
+  {
+    name: "remoteHosts",
+    router: () => require("../routes/remoteHosts"),
+    mount: "/remote-hosts",
+  },
+];
+
+// Admin has many browser-only implementation routes. Doctor is the one stable
+// public automation contract documented today; stale checking still verifies
+// it exists without claiming complete admin coverage.
+const PARTIAL_ROUTERS = [
+  { name: "admin", router: () => require("../routes/admin"), mount: "/admin" },
 ];
 
 function specOperationKeys(doc) {
@@ -61,12 +102,14 @@ describe("OpenAPI document", () => {
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.info.title).toMatch(/Nora/);
     expect(doc.servers[0].url).toBe("/api");
-    expect(Object.keys(doc.paths).length).toBeGreaterThan(20);
+    expect(Object.keys(doc.paths).length).toBeGreaterThan(100);
     expect(doc.components.securitySchemes.bearerAuth.scheme).toBe("bearer");
+    expect(doc.components.securitySchemes.agentHubApiKey.name).toBe("X-Agent-Hub-Api-Key");
   });
 
-  it("gives every operation a tag and a summary", () => {
+  it("gives every operation a tag, summary, and unique operationId", () => {
     const knownTags = new Set(doc.tags.map((t) => t.name));
+    const operationIds = new Set();
     for (const [path, ops] of Object.entries(doc.paths)) {
       for (const [method, op] of Object.entries(ops)) {
         expect(`${method.toUpperCase()} ${path}: ${op.summary || "MISSING SUMMARY"}`).not.toMatch(
@@ -76,29 +119,83 @@ describe("OpenAPI document", () => {
         for (const tag of op.tags) {
           expect(knownTags.has(tag) ? tag : `unknown tag "${tag}" on ${path}`).toBe(tag);
         }
+        expect(op.operationId).toMatch(/^[a-z][A-Za-z0-9]+$/);
+        expect(
+          operationIds.has(op.operationId) ? `duplicate operationId ${op.operationId}` : null,
+        ).toBeNull();
+        operationIds.add(op.operationId);
       }
     }
   });
 
-  describe("drift against tier-1 routers", () => {
+  describe("drift against registered routers", () => {
     const specKeys = specOperationKeys(doc);
 
-    for (const tier of TIER1) {
-      it(`covers every route in routes/${tier.name}`, () => {
-        const served = listRouterPaths(tier.router(), tier.mount);
+    for (const entry of COMPLETE_ROUTERS) {
+      it(`covers every route in routes/${entry.name}`, () => {
+        const served = listRouterPaths(entry.router(), entry.mount);
         const missing = served.filter((key) => !specKeys.has(key));
         expect(missing).toEqual([]);
       });
     }
 
-    it("documents no stale routes for tier-1 prefixes", () => {
-      const served = new Set(TIER1.flatMap((t) => listRouterPaths(t.router(), t.mount)));
-      const tierPrefixes = ["/agents", "/monitoring", "/llm-providers", "/auth"];
-      const stale = [...specKeys].filter((key) => {
-        const path = key.split(" ")[1];
-        return tierPrefixes.some((p) => path.startsWith(p)) && !served.has(key);
-      });
+    it("documents no operation missing from the registered router inventory", () => {
+      const inventory = [...COMPLETE_ROUTERS, ...PARTIAL_ROUTERS];
+      const served = new Set(
+        inventory.flatMap((entry) => listRouterPaths(entry.router(), entry.mount)),
+      );
+      const stale = [...specKeys].filter((key) => !served.has(key));
       expect(stale).toEqual([]);
     });
+  });
+
+  it("marks sensitive cross-boundary surfaces as session-only", () => {
+    expect(doc.paths["/agent-hub/install"].post["x-session-required"]).toBe(true);
+    expect(doc.paths["/agents/{id}/backups"].get["x-session-required"]).toBe(true);
+    expect(doc.paths["/llm-providers"].post["x-session-required"]).toBe(true);
+    expect(doc.paths["/llm-providers/{id}"].put["x-session-required"]).toBe(true);
+    expect(doc.paths["/llm-providers/{id}"].delete["x-session-required"]).toBe(true);
+    expect(doc.paths["/llm-providers/sync"].post["x-session-required"]).toBe(true);
+    expect(doc.paths["/remote-hosts"].get["x-session-required"]).toBe(true);
+  });
+
+  it("uses the dedicated installation-key scheme for hosted Agent Hub exchange", () => {
+    expect(doc.paths["/agent-hub/catalog"].get.security).toEqual([{ agentHubApiKey: [] }]);
+    expect(doc.paths["/agent-hub/submissions"].post.security).toEqual([{ agentHubApiKey: [] }]);
+  });
+
+  it("documents runtime auth bootstrap fields and the optional signup challenge token", () => {
+    const bootstrapSchema =
+      doc.paths["/auth/bootstrap-status"].get.responses[200].content["application/json"].schema;
+    expect(bootstrapSchema.required).toEqual(
+      expect.arrayContaining([
+        "needsFirstAdmin",
+        "oauthLoginEnabled",
+        "platformMode",
+        "signupBotProtection",
+      ]),
+    );
+    expect(bootstrapSchema.properties.platformMode.enum).toEqual(["selfhosted", "paas"]);
+
+    const signupSchema =
+      doc.paths["/auth/signup"].post.requestBody.content["application/json"].schema;
+    expect(signupSchema.required).toEqual(["email", "password"]);
+    expect(signupSchema.properties.botProtectionToken).toEqual(
+      expect.objectContaining({ type: "string" }),
+    );
+  });
+
+  it("documents the strong external-runtime gateway token contract", () => {
+    const adoptSchema =
+      doc.paths["/agents/adopt"].post.requestBody.content["application/json"].schema;
+    expect(adoptSchema.required).toEqual(
+      expect.arrayContaining(["runtime_family", "gateway_token"]),
+    );
+    expect(adoptSchema.properties.gateway_token).toEqual(
+      expect.objectContaining({ type: "string", minLength: 32, maxLength: 4096 }),
+    );
+    expect(doc.paths["/agents/adopt"].post.responses[400].description).toMatch(
+      /weak gateway token/i,
+    );
   });
 });

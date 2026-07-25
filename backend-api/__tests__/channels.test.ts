@@ -1,7 +1,7 @@
 // @ts-nocheck
 const mockDb = { query: jest.fn() };
 const mockEncrypt = jest.fn((value) => `enc(${value})`);
-const mockDecrypt = jest.fn((value) => value.startsWith("enc(") ? value.slice(4, -1) : value);
+const mockDecrypt = jest.fn((value) => (value.startsWith("enc(") ? value.slice(4, -1) : value));
 const mockEnsureEncryptionConfigured = jest.fn();
 
 jest.mock("../db", () => mockDb);
@@ -26,14 +26,16 @@ describe("channel secret redaction", () => {
 
   it("redacts password and secret-like fields when creating a channel", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "ch-1",
-        agent_id: "agent-1",
-        type: "telegram",
-        name: "Ops Telegram",
-        config: { bot_token: "123:secret", chat_id: "42" },
-        enabled: true,
-      }],
+      rows: [
+        {
+          id: "ch-1",
+          agent_id: "agent-1",
+          type: "telegram",
+          name: "Ops Telegram",
+          config: { bot_token: "123:secret", chat_id: "42" },
+          enabled: true,
+        },
+      ],
     });
 
     const result = await channels.createChannel("agent-1", "telegram", "Ops Telegram", {
@@ -49,18 +51,20 @@ describe("channel secret redaction", () => {
 
   it("redacts webhook and token fields when listing channels", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "ch-2",
-        agent_id: "agent-1",
-        type: "whatsapp",
-        name: "Ops WhatsApp",
-        config: {
-          phone_number_id: "pn_123",
-          access_token: "wa-secret",
-          verify_token: "verify-me",
+      rows: [
+        {
+          id: "ch-2",
+          agent_id: "agent-1",
+          type: "whatsapp",
+          name: "Ops WhatsApp",
+          config: {
+            phone_number_id: "pn_123",
+            access_token: "wa-secret",
+            verify_token: "verify-me",
+          },
+          enabled: true,
         },
-        enabled: true,
-      }],
+      ],
     });
 
     const result = await channels.listChannels("agent-1");
@@ -76,32 +80,36 @@ describe("channel secret redaction", () => {
   it("redacts webhook URLs and password fields when updating a channel", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "ch-3",
-          agent_id: "agent-1",
-          type: "slack",
-          name: "Ops Slack",
-          config: {
-            webhook_url: "enc(https://hooks.slack.test/secret)",
-            bot_token: "enc(xoxb-secret)",
-            channel: "#ops",
+        rows: [
+          {
+            id: "ch-3",
+            agent_id: "agent-1",
+            type: "slack",
+            name: "Ops Slack",
+            config: {
+              webhook_url: "enc(https://hooks.slack.test/secret)",
+              bot_token: "enc(xoxb-secret)",
+              channel: "#ops",
+            },
+            enabled: true,
           },
-          enabled: true,
-        }],
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "ch-3",
-          agent_id: "agent-1",
-          type: "slack",
-          name: "Ops Slack",
-          config: {
-            webhook_url: "enc(https://hooks.slack.test/secret)",
-            bot_token: "enc(xoxb-secret)",
-            channel: "#ops",
+        rows: [
+          {
+            id: "ch-3",
+            agent_id: "agent-1",
+            type: "slack",
+            name: "Ops Slack",
+            config: {
+              webhook_url: "enc(https://hooks.slack.test/secret)",
+              bot_token: "enc(xoxb-secret)",
+              channel: "#ops",
+            },
+            enabled: true,
           },
-          enabled: true,
-        }],
+        ],
       });
 
     const result = await channels.updateChannel("ch-3", "agent-1", {
@@ -122,30 +130,34 @@ describe("channel secret redaction", () => {
   it("preserves existing secret values when the update payload keeps them redacted", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "ch-4",
-          agent_id: "agent-1",
-          type: "telegram",
-          name: "Ops Telegram",
-          config: {
-            bot_token: "enc(123:secret)",
-            chat_id: "42",
+        rows: [
+          {
+            id: "ch-4",
+            agent_id: "agent-1",
+            type: "telegram",
+            name: "Ops Telegram",
+            config: {
+              bot_token: "enc(123:secret)",
+              chat_id: "42",
+            },
+            enabled: true,
           },
-          enabled: true,
-        }],
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "ch-4",
-          agent_id: "agent-1",
-          type: "telegram",
-          name: "Ops Telegram",
-          config: {
-            bot_token: "enc(123:secret)",
-            chat_id: "99",
+        rows: [
+          {
+            id: "ch-4",
+            agent_id: "agent-1",
+            type: "telegram",
+            name: "Ops Telegram",
+            config: {
+              bot_token: "enc(123:secret)",
+              chat_id: "99",
+            },
+            enabled: true,
           },
-          enabled: true,
-        }],
+        ],
       });
 
     const result = await channels.updateChannel("ch-4", "agent-1", {

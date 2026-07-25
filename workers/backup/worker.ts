@@ -2,6 +2,7 @@
 const http = require("http");
 const { Worker } = require("bullmq");
 const IORedis = require("ioredis");
+const { createRedisClient } = require("../../backend-api/lib/connectionConfig");
 
 const {
   processDueSchedules,
@@ -11,10 +12,7 @@ const {
 const { BACKUP_JOB_TIMEOUT_MS } = require("../../backend-api/redisQueue");
 const { runWithCancellableTimeout } = require("../../backend-api/promiseTimeout");
 
-const connection = new IORedis({
-  host: process.env.REDIS_HOST || "redis",
-  port: parseInt(process.env.REDIS_PORT || "6379", 10),
-  ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
+const connection = createRedisClient(IORedis, process.env, {
   maxRetriesPerRequest: null,
 });
 

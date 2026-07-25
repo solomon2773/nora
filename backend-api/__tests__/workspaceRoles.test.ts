@@ -11,6 +11,7 @@ const mockDb = { query: jest.fn() };
 jest.mock("../db", () => mockDb);
 
 const {
+  findAgentForRequest,
   findAccessibleAgent,
   findAccessibleAgentForActor,
   rankRole,
@@ -128,6 +129,43 @@ describe("findAccessibleAgent", () => {
     expect(await findAccessibleAgent(null, "user-1")).toBeNull();
     expect(await findAccessibleAgent("a1", null)).toBeNull();
     expect(mockDb.query).not.toHaveBeenCalled();
+  });
+});
+
+describe("findAgentForRequest", () => {
+  it("preserves direct-owner loading for session requests", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{ id: "a1", user_id: "user-1", name: "Owned" }],
+    });
+
+    const agent = await findAgentForRequest({ user: { id: "user-1" } }, "a1");
+
+    expect(agent).toMatchObject({ id: "a1", user_id: "user-1" });
+    expect(mockDb.query).toHaveBeenCalledWith(
+      "SELECT * FROM agents WHERE id = $1 AND user_id = $2",
+      ["a1", "user-1"],
+    );
+  });
+
+  it("loads a teammate-owned agent through the API key's exact workspace assignment", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{ id: "a1", user_id: "teammate-1", name: "Shared" }],
+    });
+
+    const agent = await findAgentForRequest(
+      {
+        user: { id: "key-issuer" },
+        apiKey: { workspaceId: "ws-A" },
+        apiKeyWorkspace: { id: "ws-A" },
+      },
+      "a1",
+    );
+
+    expect(agent).toMatchObject({ id: "a1", user_id: "teammate-1" });
+    expect(mockDb.query).toHaveBeenCalledWith(
+      expect.stringMatching(/FROM workspace_agents wa[\s\S]*WHERE wa\.workspace_id = \$1/),
+      ["ws-A", "a1"],
+    );
   });
 });
 

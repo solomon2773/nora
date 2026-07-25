@@ -142,4 +142,19 @@ describe("getFleetAttention (gather)", () => {
     const res = await fleetStatus.getFleetAttention({ userId: "u1", dbClient, now: NOW });
     expect(res.agents[0].reasons.map((r) => r.code)).toContain("budget_warning");
   });
+
+  it("scopes API-key fleet status to the exact bound workspace", async () => {
+    const dbClient = fakeDb([]);
+
+    await fleetStatus.getFleetAttention({
+      userId: "u1",
+      workspaceId: "ws-A",
+      dbClient,
+      now: NOW,
+    });
+
+    expect(dbClient.query.mock.calls[0][0]).toContain("scoped_workspace_agents.workspace_id = $1");
+    expect(dbClient.query.mock.calls[0][0]).not.toContain("a.user_id = $1");
+    expect(dbClient.query.mock.calls[0][1]).toEqual(["ws-A"]);
+  });
 });

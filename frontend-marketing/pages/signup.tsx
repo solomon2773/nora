@@ -1,20 +1,19 @@
-import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import Script from "next/script";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, CheckCircle2, Loader2, Lock, Mail, Server, Shield, Zap } from "lucide-react";
 import LanguageSwitcher from "../components/LanguageSwitcher";
+import SeoHead from "../components/SeoHead";
+import { fetchAuthBootstrapStatus, type AuthBootstrapStatus } from "../lib/authBootstrap";
 import { normalizeLocale, useI18n } from "../lib/i18n";
 import { trackEvent } from "../lib/analytics";
 
-const OAUTH_LOGIN_ENABLED = process.env.NEXT_PUBLIC_OAUTH_LOGIN_ENABLED === "true";
-const IS_SELF_HOSTED = process.env.NEXT_PUBLIC_PLATFORM_MODE === "selfhosted";
-const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY || "";
-const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY || "";
 const OSS_REPO_URL = "https://github.com/solomon2773/nora";
 const QUICKSTART_URL = `${OSS_REPO_URL}#quick-start`;
 
-type BotProtectionProvider = "none" | "turnstile" | "recaptcha";
+const SIGNUP_CONFIG_LOAD_ERROR =
+  "Could not load signup verification configuration. Refresh the page or contact the administrator.";
 
 declare global {
   interface Window {
@@ -29,33 +28,6 @@ declare global {
   }
 }
 
-function normalizeBotProtectionProvider(value?: string): BotProtectionProvider | "" {
-  const provider = String(value || "")
-    .trim()
-    .toLowerCase();
-  if (!provider) return "";
-  if (provider === "none" || provider === "turnstile" || provider === "recaptcha") {
-    return provider;
-  }
-  return "";
-}
-
-function resolveBotProtectionProvider(): BotProtectionProvider {
-  const explicitProvider = normalizeBotProtectionProvider(
-    process.env.NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER,
-  );
-  if (explicitProvider === "none") return "none";
-  if (explicitProvider === "turnstile" && TURNSTILE_SITE_KEY) return "turnstile";
-  if (explicitProvider === "recaptcha" && RECAPTCHA_SITE_KEY) return "recaptcha";
-  if (!explicitProvider && TURNSTILE_SITE_KEY && !RECAPTCHA_SITE_KEY) return "turnstile";
-  if (!explicitProvider && RECAPTCHA_SITE_KEY && !TURNSTILE_SITE_KEY) return "recaptcha";
-  return "none";
-}
-
-const SIGNUP_BOT_PROTECTION_PROVIDER = resolveBotProtectionProvider();
-const SIGNUP_BOT_PROTECTION_SITE_KEY =
-  SIGNUP_BOT_PROTECTION_PROVIDER === "turnstile" ? TURNSTILE_SITE_KEY : RECAPTCHA_SITE_KEY;
-
 const NEXT_STEPS = [
   "Create the first operator account for this Nora instance.",
   "Add an LLM provider key and confirm workspace access.",
@@ -63,7 +35,15 @@ const NEXT_STEPS = [
   "Validate readiness with chat, logs, metrics, terminal access, and alerts.",
 ];
 
+const DEMO_NEXT_STEPS = [
+  "Create an operator account for this Nora instance.",
+  "Enable the built-in deterministic demo provider — no API key or usage cost.",
+  "Deploy the demo agent from Getting Started with one click.",
+  "Validate chat, logs, metrics, and terminal access from the operator dashboard.",
+];
+
 export default function Signup() {
+  const router = useRouter();
   const { localizePath, t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -71,23 +51,54 @@ export default function Signup() {
   const [oauthLoading, setOauthLoading] = useState("");
   const [error, setError] = useState("");
   const [botProtectionToken, setBotProtectionToken] = useState("");
-  // First-run claim mode: true while this instance has zero users, so the
-  // first signup is framed as claiming the server (it becomes platform admin).
-  const [needsFirstAdmin, setNeedsFirstAdmin] = useState(false);
+  const [bootstrapStatus, setBootstrapStatus] = useState<AuthBootstrapStatus | null>(null);
+  const [bootstrapError, setBootstrapError] = useState("");
+  const [challengeLoadError, setChallengeLoadError] = useState("");
   const botProtectionRef = useRef<HTMLDivElement | null>(null);
   const botProtectionWidgetId = useRef<string | number | null>(null);
-  const botProtectionEnabled = SIGNUP_BOT_PROTECTION_PROVIDER !== "none";
+  const needsFirstAdmin = bootstrapStatus?.needsFirstAdmin === true;
+  const oauthLoginEnabled = bootstrapStatus?.oauthLoginEnabled === true;
+  const platformMode = bootstrapStatus?.platformMode || null;
+  const botProtection = bootstrapStatus?.signupBotProtection || null;
+  const botProtectionProvider = botProtection?.provider || null;
+  const botProtectionSiteKey = botProtection?.siteKey || "";
+  const botProtectionEnabled = botProtection?.enabled === true;
+  const botProtectionReady =
+    botProtectionEnabled &&
+    botProtection?.configured === true &&
+    (botProtectionProvider === "turnstile" || botProtectionProvider === "recaptcha") &&
+    Boolean(botProtectionSiteKey);
+  const botProtectionConfigurationError =
+    bootstrapError ||
+    (botProtectionEnabled && !botProtectionReady
+      ? botProtection?.configurationError ||
+        "Signup verification is enabled, but its runtime configuration is incomplete. Contact the administrator."
+      : "") ||
+    challengeLoadError;
+  const bootstrapLoading = bootstrapStatus == null && !bootstrapError;
+  const signupBlocked =
+    bootstrapLoading ||
+    Boolean(botProtectionConfigurationError) ||
+    (botProtectionEnabled && !botProtectionToken);
+  const isDemoIntent = router.query.intent === "demo";
+  const nextSteps = isDemoIntent ? DEMO_NEXT_STEPS : NEXT_STEPS;
 
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/auth/bootstrap-status")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!cancelled && d?.needsFirstAdmin === true) setNeedsFirstAdmin(true);
-      })
-      .catch(() => {});
+    const controller = new AbortController();
+    async function loadBootstrapStatus() {
+      try {
+        const status = await fetchAuthBootstrapStatus(controller.signal);
+        setBootstrapStatus(status);
+        setBootstrapError("");
+      } catch (bootstrapStatusError) {
+        if (controller.signal.aborted) return;
+        console.error(bootstrapStatusError);
+        setBootstrapError(SIGNUP_CONFIG_LOAD_ERROR);
+      }
+    }
+    void loadBootstrapStatus();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, []);
 
@@ -95,45 +106,47 @@ export default function Signup() {
     setBotProtectionToken("");
     const widgetId = botProtectionWidgetId.current;
     try {
-      if (SIGNUP_BOT_PROTECTION_PROVIDER === "turnstile" && typeof widgetId === "string") {
+      if (botProtectionProvider === "turnstile" && typeof widgetId === "string") {
         window.turnstile?.reset(widgetId);
       }
-      if (SIGNUP_BOT_PROTECTION_PROVIDER === "recaptcha" && typeof widgetId === "number") {
+      if (botProtectionProvider === "recaptcha" && typeof widgetId === "number") {
         window.grecaptcha?.reset(widgetId);
       }
     } catch {
       // Challenge reset is best-effort; a fresh page load will render a new token.
     }
-  }, []);
+  }, [botProtectionProvider]);
 
   const renderBotProtectionWidget = useCallback(() => {
-    if (
-      !botProtectionEnabled ||
-      !botProtectionRef.current ||
-      botProtectionWidgetId.current != null
-    ) {
+    if (!botProtectionReady || !botProtectionRef.current || botProtectionWidgetId.current != null) {
       return;
     }
 
-    if (SIGNUP_BOT_PROTECTION_PROVIDER === "turnstile" && window.turnstile) {
+    if (botProtectionProvider === "turnstile" && window.turnstile) {
       botProtectionWidgetId.current = window.turnstile.render(botProtectionRef.current, {
-        sitekey: SIGNUP_BOT_PROTECTION_SITE_KEY,
+        sitekey: botProtectionSiteKey,
         theme: "light",
-        callback: (token: string) => setBotProtectionToken(token),
+        callback: (token: string) => {
+          setChallengeLoadError("");
+          setBotProtectionToken(token);
+        },
         "expired-callback": () => setBotProtectionToken(""),
         "error-callback": () => setBotProtectionToken(""),
       });
     }
 
-    if (SIGNUP_BOT_PROTECTION_PROVIDER === "recaptcha" && window.grecaptcha) {
+    if (botProtectionProvider === "recaptcha" && window.grecaptcha) {
       botProtectionWidgetId.current = window.grecaptcha.render(botProtectionRef.current, {
-        sitekey: SIGNUP_BOT_PROTECTION_SITE_KEY,
-        callback: (token: string) => setBotProtectionToken(token),
+        sitekey: botProtectionSiteKey,
+        callback: (token: string) => {
+          setChallengeLoadError("");
+          setBotProtectionToken(token);
+        },
         "expired-callback": () => setBotProtectionToken(""),
         "error-callback": () => setBotProtectionToken(""),
       });
     }
-  }, [botProtectionEnabled]);
+  }, [botProtectionProvider, botProtectionReady, botProtectionSiteKey]);
 
   useEffect(() => {
     renderBotProtectionWidget();
@@ -143,6 +156,12 @@ export default function Signup() {
     event.preventDefault();
     setLoading(true);
     setError("");
+
+    if (bootstrapLoading || botProtectionConfigurationError) {
+      setError(botProtectionConfigurationError || SIGNUP_CONFIG_LOAD_ERROR);
+      setLoading(false);
+      return;
+    }
 
     if (botProtectionEnabled && !botProtectionToken) {
       setError(t("Complete the verification challenge and try again."));
@@ -206,31 +225,46 @@ export default function Signup() {
   }
 
   function handleOAuth(provider) {
+    if (!oauthLoginEnabled) return;
     setOauthLoading(provider);
     window.location.assign(localizePath(`/auth/oauth/${provider}`));
   }
 
   return (
     <>
-      <Head>
-        <title>Create Account | Nora</title>
-        <meta
-          name="description"
-          content="Create a Nora operator account for deploying OpenClaw and Hermes runtimes. Nora is fully open source, self-hostable, and commercially usable under Apache 2.0."
-        />
-      </Head>
-      {SIGNUP_BOT_PROTECTION_PROVIDER === "turnstile" && (
+      <SeoHead
+        title={isDemoIntent ? "Try Nora Without an API Key | Nora" : "Create Account | Nora"}
+        description={
+          isDemoIntent
+            ? "Create a Nora operator account, then deploy the built-in zero-key demo agent and validate the control plane without API usage costs."
+            : "Create a Nora operator account for deploying OpenClaw and Hermes runtimes on a self-hosted, Apache-2.0 control plane."
+        }
+        path="/signup"
+      />
+      {botProtectionReady && botProtectionProvider === "turnstile" && (
         <Script
+          id="signup-turnstile-script"
           src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
           strategy="afterInteractive"
-          onLoad={renderBotProtectionWidget}
+          onReady={renderBotProtectionWidget}
+          onError={() =>
+            setChallengeLoadError(
+              "Could not load the signup verification challenge. Refresh the page or contact the administrator.",
+            )
+          }
         />
       )}
-      {SIGNUP_BOT_PROTECTION_PROVIDER === "recaptcha" && (
+      {botProtectionReady && botProtectionProvider === "recaptcha" && (
         <Script
+          id="signup-recaptcha-script"
           src="https://www.google.com/recaptcha/api.js?render=explicit"
           strategy="afterInteractive"
-          onLoad={renderBotProtectionWidget}
+          onReady={renderBotProtectionWidget}
+          onError={() =>
+            setChallengeLoadError(
+              "Could not load the signup verification challenge. Refresh the page or contact the administrator.",
+            )
+          }
         />
       )}
 
@@ -272,9 +306,11 @@ export default function Signup() {
               Open-source operator signup
             </div>
             <h1 className="max-w-xl text-4xl font-black leading-tight text-white sm:text-5xl">
-              {needsFirstAdmin
-                ? "Claim this Nora server."
-                : "Create the operator account for this Nora instance."}
+              {isDemoIntent
+                ? "Try Nora without an API key."
+                : needsFirstAdmin
+                  ? "Claim this Nora server."
+                  : "Create the operator account for this Nora instance."}
             </h1>
             {needsFirstAdmin && (
               <p className="mt-3 max-w-xl text-sm font-bold uppercase tracking-[0.2em] text-[#f2d7a1]">
@@ -282,9 +318,9 @@ export default function Signup() {
               </p>
             )}
             <p className="mt-5 max-w-xl text-base leading-8 text-slate-300">
-              Use this account to enter the Nora dashboard, add provider keys, create workspaces,
-              and deploy OpenClaw or Hermes runtimes on infrastructure you control. The source stays
-              public, and the deployment path stays self-hostable.
+              {isDemoIntent
+                ? "Create an account, then use Getting Started to enable Nora's built-in deterministic demo provider and deploy a working agent with zero external keys and zero model cost."
+                : "Use this account to enter the Nora dashboard, add provider keys, create workspaces, and deploy OpenClaw or Hermes runtimes on infrastructure you control. The source stays public, and the deployment path stays self-hostable."}
             </p>
 
             <div className="mt-8 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
@@ -292,7 +328,7 @@ export default function Signup() {
                 After account creation
               </div>
               <div className="mt-4 space-y-4">
-                {NEXT_STEPS.map((item, index) => (
+                {nextSteps.map((item, index) => (
                   <div
                     key={item}
                     className="flex items-start gap-3 text-sm leading-7 text-slate-300"
@@ -343,9 +379,11 @@ export default function Signup() {
                 Instance note
               </div>
               <p className="mt-3 text-sm leading-7 text-slate-300">
-                {IS_SELF_HOSTED
+                {platformMode === "selfhosted"
                   ? "This account belongs to this self-hosted Nora instance. On a brand-new Nora instance, the first created account becomes the admin account. If a bootstrap operator was already created during setup, use that instead of creating a duplicate."
-                  : "This account belongs to this hosted Nora instance. If you already created one earlier, use the login page instead."}
+                  : platformMode === "paas"
+                    ? "This account belongs to this hosted Nora instance. If you already created one earlier, use the login page instead."
+                    : "Account registration is configured by the operator of this Nora instance."}
               </p>
             </div>
           </section>
@@ -356,14 +394,19 @@ export default function Signup() {
               Easy account creation
             </div>
             <h2 className="text-3xl font-black leading-tight text-slate-950">
-              {needsFirstAdmin ? "Claim this server" : "Create operator account"}
+              {isDemoIntent
+                ? "Start the zero-key demo"
+                : needsFirstAdmin
+                  ? "Claim this server"
+                  : "Create operator account"}
             </h2>
             <p className="mt-3 text-sm leading-7 text-slate-700">
-              Use this account to enter the Nora operator surface for OpenClaw and Hermes
-              deployments on this instance. OAuth appears here only when it is enabled.
+              {isDemoIntent
+                ? "After signup, Nora sends you directly to Getting Started, where the demo provider and demo agent are one click away."
+                : "Use this account to enter the Nora operator surface for OpenClaw and Hermes deployments on this instance. OAuth appears here only when it is enabled."}
             </p>
 
-            {OAUTH_LOGIN_ENABLED && (
+            {oauthLoginEnabled && (
               <div className="mt-6 flex flex-col gap-3">
                 <button
                   type="button"
@@ -417,7 +460,7 @@ export default function Signup() {
             <div className="my-6 flex items-center gap-4">
               <div className="h-px flex-1 bg-black/10" />
               <div className="text-[0.65rem] font-black uppercase tracking-[0.28em] text-slate-500">
-                {OAUTH_LOGIN_ENABLED ? "or use email" : "email signup"}
+                {oauthLoginEnabled ? "or use email" : "email signup"}
               </div>
               <div className="h-px flex-1 bg-black/10" />
             </div>
@@ -465,21 +508,54 @@ export default function Signup() {
                 </div>
               </label>
 
-              {botProtectionEnabled && (
-                <div className="flex min-h-[96px] items-center justify-center rounded-[24px] border border-black/10 bg-white/60 px-4 py-4">
-                  <div ref={botProtectionRef} />
+              {bootstrapLoading && (
+                <div
+                  aria-live="polite"
+                  className="flex min-h-[72px] items-center justify-center gap-2 rounded-[24px] border border-black/10 bg-white/60 px-4 py-4 text-sm font-semibold text-slate-600"
+                >
+                  <Loader2 size={17} className="animate-spin" />
+                  Loading signup verification configuration...
+                </div>
+              )}
+
+              {botProtectionReady && (
+                <div className="rounded-[24px] border border-black/10 bg-white/60 px-4 py-4">
+                  <div
+                    data-testid="signup-bot-protection"
+                    className="flex min-h-[64px] items-center justify-center"
+                  >
+                    <div ref={botProtectionRef} />
+                  </div>
+                  {!botProtectionToken && (
+                    <p className="mt-2 text-center text-xs font-semibold text-slate-600">
+                      Complete the verification challenge to enable account creation.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {botProtectionConfigurationError && (
+                <div
+                  role="alert"
+                  data-testid="signup-protection-configuration-error"
+                  className="rounded-[22px] border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-700"
+                >
+                  {botProtectionConfigurationError}
                 </div>
               )}
 
               {error && (
-                <div className="rounded-[22px] border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-700">
+                <div
+                  role="alert"
+                  className="rounded-[22px] border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-700"
+                >
                   {error}
                 </div>
               )}
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || signupBlocked}
                 className="mt-2 inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-4 text-sm font-black text-white transition-transform hover:-translate-y-0.5 disabled:opacity-60"
               >
                 {loading ? (

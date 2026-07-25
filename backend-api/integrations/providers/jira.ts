@@ -11,7 +11,7 @@ import type {
 
 export const jiraProvider: Provider = {
   id: "jira",
-  authType: "basic",
+  authType: "api_key",
 
   async test(ctx: DecryptedIntegration, deps: ProviderDeps): Promise<ConnectivityResult> {
     try {

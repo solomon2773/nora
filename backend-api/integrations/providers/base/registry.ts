@@ -18,6 +18,12 @@ export type FallbackFactory = (providerId: string) => Provider;
 // legacy name during the migration. Prefer FallbackFactory in new code.
 export type LegacyFactory = FallbackFactory;
 
+/**
+ * Create a provider registry where explicit strategies override a lazy fallback factory.
+ *
+ * @param {Function} fallbackFactory - Builds an adapter for unregistered provider IDs.
+ * @returns {Object} Mutable provider registry.
+ */
 export function createProviderRegistry(fallbackFactory: FallbackFactory): ProviderRegistry {
   const registered = new Map<string, Provider>();
 

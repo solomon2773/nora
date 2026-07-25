@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Download, Terminal, Trash2, WifiOff } from "lucide-react";
 
-export default function LogViewer({
-  agentId,
-  historyRef,
-  maxLines = 1500,
-  className = "",
-}) {
+export default function LogViewer({ agentId, historyRef, maxLines = 1500, className = "" }) {
   const [logs, setLogs] = useState(() => historyRef?.current || []);
   const [connected, setConnected] = useState(false);
   const endRef = useRef(null);
@@ -133,9 +128,7 @@ export default function LogViewer({
       </div>
 
       <div className="h-[420px] overflow-y-auto p-4 font-mono text-xs leading-relaxed">
-        {logs.length === 0 ? (
-          <p className="italic text-slate-600">Waiting for logs...</p>
-        ) : null}
+        {logs.length === 0 ? <p className="italic text-slate-600">Waiting for logs...</p> : null}
 
         <div className="space-y-1.5">
           {logs.map((entry, index) => (
@@ -144,9 +137,7 @@ export default function LogViewer({
               className="flex gap-2 rounded-lg px-2 py-1 hover:bg-white/[0.03]"
             >
               <span className="shrink-0 text-slate-600">
-                {entry.timestamp
-                  ? new Date(entry.timestamp).toLocaleTimeString()
-                  : "--:--:--"}
+                {entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : "--:--:--"}
               </span>
               {entry.level ? (
                 <span
@@ -160,8 +151,8 @@ export default function LogViewer({
                   entry.type === "system"
                     ? "text-cyan-300"
                     : entry.type === "error"
-                    ? "text-red-300"
-                    : "text-slate-200"
+                      ? "text-red-300"
+                      : "text-slate-200"
                 }
               >
                 {entry.message}

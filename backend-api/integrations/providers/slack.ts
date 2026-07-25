@@ -10,7 +10,7 @@ import type {
 
 export const slackProvider: Provider = {
   id: "slack",
-  authType: "api_key",
+  authType: "oauth2",
 
   async test(ctx: DecryptedIntegration, deps: ProviderDeps): Promise<ConnectivityResult> {
     try {
@@ -21,8 +21,9 @@ export const slackProvider: Provider = {
           "Content-Type": "application/json",
         },
       });
+      if (!res.ok) throw new Error(`Slack API returned ${res.status}`);
       const data: any = await res.json();
-      if (!data.ok) throw new Error(`Slack: ${data.error}`);
+      if (!data.ok) throw new Error(`Slack: ${data.error || "authentication failed"}`);
       return { success: true, message: `Connected to ${data.team}` };
     } catch (e: any) {
       return { success: false, error: e?.message ?? String(e) };

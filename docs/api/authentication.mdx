@@ -4,20 +4,29 @@
 
 Every protected Nora API endpoint requires an authenticated identity — either a **session JWT** (covered on this page) or a **workspace API key** with scopes (see the [API overview](/api/overview#authentication) for the key-and-scope model). You obtain a JWT by signing up and then logging in; it is valid for **7 days**, sent as a Bearer token in the `Authorization` header of every subsequent request, and also accepted as an HttpOnly session cookie. This page covers all authentication endpoints and shows you exactly what each one returns.
 
+<Warning>
+  An explicit `Authorization`, `X-Api-Key`, or `X-Nora-Api-Key` credential takes precedence over the
+  ambient `nora_auth` cookie. Do not send conflicting explicit credentials: Nora rejects them with
+  `400 conflicting_auth` before either token is verified.
+</Warning>
+
 <Note>
   Login and OAuth auth endpoints are rate-limited to **20 requests per 15-minute window** per IP.
-  Public signup has stricter burst and daily rate limits, plus optional Turnstile or reCAPTCHA
-  verification when configured.
+  Public signup has stricter burst and daily rate limits, plus Turnstile or reCAPTCHA verification
+  when configured. Hosted PaaS mode requires one of those providers and fails closed when neither is
+  configured; self-hosted mode may explicitly use `none`.
 </Note>
 
 ## Bootstrap status
 
-Check whether the server still needs its first admin. This drives the "claim
-this server" first-run flow: until the first user registers (that first account
-becomes the platform admin), `needsFirstAdmin` is `true`; afterward it is
-`false`. The endpoint deliberately exposes only the boolean — a user count or
-emails would aid account enumeration. See the
-[security overview](/concepts/security) for the broader claim flow.
+Check whether a self-hosted server still needs its first admin. This drives the "claim this server"
+first-run flow: until the first user registers (that first account becomes the platform admin),
+`needsFirstAdmin` is `true`; afterward it is `false`. Hosted PaaS requires an explicit bootstrap
+administrator before startup and never reports public first-admin claim. The response also contains runtime OAuth visibility, normalized platform
+mode, and signup-challenge metadata so published frontend images can render the
+correct auth surface without build-time replacement. Verification secrets are never
+returned. A user count or emails would aid account enumeration. See the [security
+overview](/concepts/security) for the broader claim flow.
 
 ```
 GET /auth/bootstrap-status
@@ -28,7 +37,22 @@ Public — no authentication required.
 ### Response
 
 <ResponseField name="needsFirstAdmin" type="boolean">
-  `true` until the first user registers, `false` afterward.
+  `true` only while an empty self-hosted installation permits first-account admin claim. Hosted PaaS
+  always reports `false`.
+</ResponseField>
+
+<ResponseField name="oauthLoginEnabled" type="boolean">
+  Whether the running backend accepts OAuth login. Login and signup hide OAuth controls unless this
+  value is `true`.
+</ResponseField>
+
+<ResponseField name="platformMode" type="string">
+  Normalized deployment mode: `selfhosted` or `paas`.
+</ResponseField>
+
+<ResponseField name="signupBotProtection" type="object">
+  Safe public runtime configuration: `enabled`, `provider`, public `siteKey`, `configured`, and a
+  user-safe `configurationError`. Secret verification keys remain backend-only.
 </ResponseField>
 
 ```bash
@@ -36,16 +60,28 @@ curl http://localhost:8080/api/auth/bootstrap-status
 ```
 
 ```json theme={null}
-{ "needsFirstAdmin": true }
+{
+  "needsFirstAdmin": true,
+  "oauthLoginEnabled": false,
+  "platformMode": "selfhosted",
+  "signupBotProtection": {
+    "enabled": true,
+    "provider": "turnstile",
+    "siteKey": "0x4AAAA...",
+    "configured": true,
+    "configurationError": null
+  }
+}
 ```
 
 ---
 
 ## Sign up
 
-Create a new user account. The **first** registered user becomes the platform
-admin (the first-admin claim flow — see [bootstrap status](#bootstrap-status)
-and the [security overview](/concepts/security)).
+Create a new user account. On an empty self-hosted installation, the **first** registered user
+becomes the platform admin (the first-admin claim flow — see [bootstrap status](#bootstrap-status)
+and the [security overview](/concepts/security)). Hosted PaaS must seed its administrator before
+startup, so public signup there always creates a regular user.
 
 ```
 POST /auth/signup
@@ -332,10 +368,10 @@ POST /auth/oauth-login
 ```
 
 <Note>
-  This endpoint is **disabled by default**. Unless `OAUTH_LOGIN_ENABLED=true`, it
-  returns `403` with `OAuth login is disabled until server-side provider
-  verification is implemented`. Like login, it is rate-limited to **20 requests
-  per 15-minute window** per IP.
+  This endpoint is **disabled by default**. Unless `OAUTH_LOGIN_ENABLED=true`, it returns `403`.
+  Google or GitHub credentials must also be configured in the marketing OAuth bridge. Provider
+  tokens are verified server-side before Nora issues a session. Like password login, this endpoint
+  is rate-limited to **20 requests per 15-minute window** per IP.
 </Note>
 
 ### Request body

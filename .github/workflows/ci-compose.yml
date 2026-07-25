@@ -7,6 +7,7 @@ on:
       - ".github/workflows/ci-compose.yml"
       - ".github/workflows/deploy-production.yml"
       - ".github/workflows/release-docker.yml"
+      - ".github/workflows/release-helm.yml"
       - ".github/workflows/scripts/require-workflow-success.mjs"
       - "docker-compose.yml"
       - "docker-compose.e2e.yml"
@@ -17,9 +18,11 @@ on:
       - "frontend-marketing/**"
       - "backend-api/**"
       - "agent-runtime/**"
+      - "workers/backup/**"
       - "workers/provisioner/**"
       - "mcp-server/**"
       - "e2e/**"
+      - "infra/helm/nora/**"
   push:
     branches:
       - master
@@ -51,6 +54,44 @@ jobs:
         working-directory: workers/provisioner
       - run: npm test
 
+  backend-postgres-migration-tests:
+    name: backend-api PostgreSQL migration gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: nora_migration_test
+          POSTGRES_USER: nora
+          POSTGRES_PASSWORD: nora-test-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U nora -d nora_migration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: backend-api
+    env:
+      TEST_POSTGRES_URL: postgres://nora:nora-test-password@127.0.0.1:5432/nora_migration_test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            backend-api/package-lock.json
+            workers/provisioner/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: workers/provisioner
+      - run: npm test -- migrationPostgres.test.ts --runInBand
+
   agent-runtime-unit-tests:
     name: agent-runtime unit tests
     runs-on: ubuntu-latest
@@ -68,6 +109,60 @@ jobs:
           cache-dependency-path: agent-runtime/package-lock.json
       - run: npm ci
       - run: npm test
+
+  frontend-dashboard-unit-tests:
+    name: frontend-dashboard unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend-dashboard
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend-dashboard/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  worker-provisioner-unit-tests:
+    name: worker-provisioner unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/provisioner
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/provisioner/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  worker-backup-validation:
+    name: worker-backup typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workers/backup
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: workers/backup/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
 
   mcp-server-unit-tests:
     name: mcp-server unit tests
@@ -109,6 +204,9 @@ jobs:
           - name: worker-provisioner
             dockerfile: workers/provisioner/Dockerfile.prod
             image: nora-worker-provisioner:ci
+          - name: worker-backup
+            dockerfile: workers/backup/Dockerfile.prod
+            image: nora-worker-backup:ci
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -121,6 +219,9 @@ jobs:
     needs:
       - backend-unit-tests
       - agent-runtime-unit-tests
+      - frontend-dashboard-unit-tests
+      - worker-provisioner-unit-tests
+      - worker-backup-validation
     timeout-minutes: 30
     env:
       BASE_URL: http://127.0.0.1:18080

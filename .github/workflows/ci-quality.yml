@@ -5,24 +5,38 @@ on:
   pull_request:
     paths: &quality_paths
       - ".github/workflows/ci-quality.yml"
+      - ".github/workflows/community-response.yml"
       - ".github/workflows/deploy-production.yml"
       - ".github/workflows/release-docker.yml"
+      - ".github/workflows/release-helm.yml"
+      - ".github/workflows/release-mcp-registry.yml"
+      - ".github/workflows/release-npm.yml"
       - ".github/workflows/scripts/**"
       - ".prettierignore"
       - ".prettierrc.json"
+      - "CHANGELOG.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "NOTICE"
+      - "README.md"
       - "eslint.config.mjs"
       - "package.json"
       - "package-lock.json"
+      - "scripts/**"
+      - "docs/docs.json"
+      - "docs/guides/integrations/**"
       - "tsconfig.base.json"
       - "admin-dashboard/**"
       - "frontend-dashboard/**"
       - "frontend-marketing/**"
       - "backend-api/**"
       - "agent-runtime/**"
+      - "workers/backup/**"
       - "workers/provisioner/**"
       - "e2e/**"
       - "mcp-server/**"
       - "cli/**"
+      - "infra/helm/nora/**"
   push:
     branches:
       - master
@@ -43,9 +57,11 @@ jobs:
           - frontend-dashboard
           - frontend-marketing
           - backend-api
+          - workers/backup
           - workers/provisioner
           - mcp-server
           - cli
+          - scripts
         check:
           - eslint
           - prettier
@@ -128,6 +144,7 @@ jobs:
           - frontend-marketing
           - backend-api
           - agent-runtime
+          - workers/backup
           - workers/provisioner
           - e2e
           - mcp-server
@@ -144,3 +161,85 @@ jobs:
         working-directory: ${{ matrix.package }}
       - run: npm run typecheck
         working-directory: ${{ matrix.package }}
+
+  extension-contracts:
+    name: Extension scaffold contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run test:scaffolds
+      - run: npm run validate:extensions
+
+  community-response-contracts:
+    name: Community response contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: node --test .github/workflows/scripts/community-response.test.mjs
+
+  repository-metadata-contracts:
+    name: Repository metadata contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - run: npm run test:repository-metadata
+
+  release-target-contracts:
+    name: Release target contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: node --test .github/workflows/scripts/verify-release-target.test.mjs
+      - run: >-
+          npx prettier --check
+          .github/workflows/release-npm.yml
+          .github/workflows/release-mcp-registry.yml
+          .github/workflows/scripts/verify-release-target.mjs
+          .github/workflows/scripts/verify-release-target.test.mjs
+
+  codeql-alert-gate-contracts:
+    name: CodeQL alert gate contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: node --test .github/workflows/scripts/check-codeql-alerts.test.mjs
+      - run: >-
+          npx prettier --check
+          .github/workflows/ci-codeql.yml
+          .github/workflows/ci-quality.yml
+          .github/workflows/scripts/check-codeql-alerts.mjs
+          .github/workflows/scripts/check-codeql-alerts.test.mjs

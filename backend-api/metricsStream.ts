@@ -4,9 +4,17 @@ const jwt = require("jsonwebtoken");
 const { buildAgentStatsResponse } = require("./agentTelemetry");
 const { extractSessionTokenFromUpgrade } = require("./authCookie");
 const { findAccessibleAgentForActor } = require("./middleware/ownership");
+const { assertRemoteHostAgentUse, isRemoteHostAccessRevokedError } = require("./remoteHosts");
 
 const STREAM_INTERVAL_MS = 5000;
 
+/**
+ * Attach a viewer-authorized metrics WebSocket endpoint that rechecks access
+ * and publishes a current agent snapshot every five seconds.
+ *
+ * @param {Object} server - HTTP server receiving the upgrade handler.
+ * @returns {Object} Attached WebSocket server.
+ */
 function attachMetricsStream(server) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -40,48 +48,137 @@ function attachMetricsStream(server) {
 
   wss.on("connection", async (ws, { agentId, user }) => {
     let closed = false;
+    let snapshotInterval = null;
+    let authorizationInterval = null;
+    let snapshotInFlight = false;
+    let authorizationCheckPromise = null;
 
-    const sendSnapshot = async () => {
-      const agent = await findAccessibleAgentForActor(agentId, user, "viewer");
+    const teardown = () => {
+      if (closed) return;
+      closed = true;
+      if (snapshotInterval) {
+        clearInterval(snapshotInterval);
+        snapshotInterval = null;
+      }
+      if (authorizationInterval) {
+        clearInterval(authorizationInterval);
+        authorizationInterval = null;
+      }
+    };
 
-      if (!agent) {
-        if (ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
-        }
-        ws.close();
-        return;
+    ws.on("close", teardown);
+    ws.on("error", teardown);
+
+    const authorizationFailure = (message, code, cause) => {
+      const error = new Error(message);
+      if (code) error.code = code;
+      if (cause) error.cause = cause;
+      error.authorizationCheckFailed = true;
+      return error;
+    };
+
+    const findAuthorizedAgent = async () => {
+      let agent;
+      try {
+        agent = await findAccessibleAgentForActor(agentId, user, "viewer");
+      } catch (error) {
+        throw authorizationFailure(
+          "Unable to verify agent access",
+          "AGENT_ACCESS_CHECK_FAILED",
+          error,
+        );
       }
 
+      if (!agent) {
+        throw authorizationFailure("Agent not found");
+      }
+
+      try {
+        await assertRemoteHostAgentUse(agent, { includeProfile: false });
+      } catch (error) {
+        if (isRemoteHostAccessRevokedError(error)) {
+          error.authorizationCheckFailed = true;
+          throw error;
+        }
+        throw authorizationFailure(
+          "Unable to verify Remote Docker host access",
+          "REMOTE_HOST_AUTH_CHECK_FAILED",
+          error,
+        );
+      }
+
+      return agent;
+    };
+
+    const sendSnapshot = async (agent) => {
       const payload = await buildAgentStatsResponse(agent);
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: "snapshot", payload }));
       }
     };
 
-    try {
-      await sendSnapshot();
-    } catch (error) {
+    const handleSnapshotError = (error) => {
       if (ws.readyState === 1) {
-        ws.send(JSON.stringify({ type: "error", message: error.message }));
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: error.message,
+            ...(error?.code ? { code: error.code } : {}),
+          }),
+        );
       }
-    }
-
-    const interval = setInterval(() => {
-      sendSnapshot().catch((error) => {
-        if (ws.readyState === 1) {
-          ws.send(JSON.stringify({ type: "error", message: error.message }));
-        }
-      });
-    }, STREAM_INTERVAL_MS);
-
-    const teardown = () => {
-      if (closed) return;
-      closed = true;
-      clearInterval(interval);
+      if (error?.authorizationCheckFailed || isRemoteHostAccessRevokedError(error)) ws.close();
     };
 
-    ws.on("close", teardown);
-    ws.on("error", teardown);
+    const runAuthorizationCheck = () => {
+      if (closed) return Promise.resolve(null);
+      if (authorizationCheckPromise) return authorizationCheckPromise;
+      authorizationCheckPromise = (async () => {
+        try {
+          const agent = await findAuthorizedAgent();
+          return closed ? null : agent;
+        } catch (error) {
+          handleSnapshotError(error);
+          return null;
+        } finally {
+          authorizationCheckPromise = null;
+        }
+      })();
+      return authorizationCheckPromise;
+    };
+
+    const runSnapshot = async (authorizedAgent = null) => {
+      if (closed || snapshotInFlight) return;
+      snapshotInFlight = true;
+      try {
+        const agent = authorizedAgent || (await runAuthorizationCheck());
+        if (!agent || closed) return;
+        await sendSnapshot(agent);
+      } catch (error) {
+        handleSnapshotError(error);
+      } finally {
+        snapshotInFlight = false;
+      }
+    };
+
+    const initialAgent = await runAuthorizationCheck();
+    if (!initialAgent || closed || ws.readyState !== 1) return;
+
+    // Keep authorization independent from telemetry collection. A remote
+    // Docker stats call can hang indefinitely; revocation must still close the
+    // socket while that first (or any later) snapshot is unresolved.
+    authorizationInterval = setInterval(() => {
+      void runAuthorizationCheck();
+    }, STREAM_INTERVAL_MS);
+    authorizationInterval.unref?.();
+
+    await runSnapshot(initialAgent);
+    if (closed || ws.readyState !== 1) return;
+
+    snapshotInterval = setInterval(() => {
+      void runSnapshot();
+    }, STREAM_INTERVAL_MS);
+    snapshotInterval.unref?.();
   });
 
   return wss;

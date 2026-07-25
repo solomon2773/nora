@@ -17,21 +17,22 @@
     "lucide-react": "^1.8.0",
     "next": "^16.2.6",
     "png-to-ico": "^3.0.1",
-    "postcss": "8.5.12",
+    "postcss": "^8.5.23",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.3",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2"
   },
   "overrides": {
-    "postcss": "8.5.12"
+    "postcss": "^8.5.23",
+    "sharp": "$sharp"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.0",
     "typescript": "^6.0.3"
   }
 }

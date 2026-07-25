@@ -7,6 +7,8 @@ const {
   normalizeRuntimeFamilyName,
   normalizeSandboxProfileName,
 } = require("./backendCatalog");
+const { getNemoClawSandboxImage } = require("./nemoclawDefaults");
+const { DEFAULT_OPENCLAW_PACKAGE_SPEC } = require("./openclawDefaults");
 
 function getProvisionerBackendName() {
   return getDefaultDeployTarget(process.env, {
@@ -20,7 +22,7 @@ function getStandardDockerAgentImage() {
 }
 
 function getStandardDockerPackageSpec() {
-  return process.env.OPENCLAW_DOCKER_PACKAGE || "openclaw@latest";
+  return process.env.OPENCLAW_DOCKER_PACKAGE || DEFAULT_OPENCLAW_PACKAGE_SPEC;
 }
 
 function getHermesDockerAgentImage() {
@@ -28,10 +30,7 @@ function getHermesDockerAgentImage() {
 }
 
 function getNemoClawAgentImage() {
-  return (
-    process.env.NEMOCLAW_SANDBOX_IMAGE ||
-    "ghcr.io/nvidia/openshell-community/sandboxes/openclaw"
-  );
+  return getNemoClawSandboxImage(process.env);
 }
 
 function getDefaultAgentImage({
@@ -45,13 +44,13 @@ function getDefaultAgentImage({
   backend,
 } = {}) {
   const resolvedRuntimeFamily = normalizeRuntimeFamilyName(
-    runtime_family ?? runtimeFamily ?? getDefaultRuntimeFamily(process.env)
+    runtime_family ?? runtimeFamily ?? getDefaultRuntimeFamily(process.env),
   );
   const resolvedSandboxProfile = normalizeSandboxProfileName(
     sandbox_profile ??
       sandboxProfile ??
       sandbox ??
-      getDefaultSandboxProfile(process.env, { runtimeFamily: resolvedRuntimeFamily })
+      getDefaultSandboxProfile(process.env, { runtimeFamily: resolvedRuntimeFamily }),
   );
   const resolvedDeployTarget = normalizeDeployTargetName(
     deploy_target ??
@@ -60,7 +59,7 @@ function getDefaultAgentImage({
       getDefaultDeployTarget(process.env, {
         runtimeFamily: resolvedRuntimeFamily,
         sandbox: resolvedSandboxProfile,
-      })
+      }),
   );
 
   if (resolvedRuntimeFamily === "hermes") {
@@ -70,9 +69,7 @@ function getDefaultAgentImage({
   }
 
   if (resolvedSandboxProfile === "nemoclaw") {
-    return resolvedDeployTarget === "proxmox"
-      ? process.env.PROXMOX_NEMOCLAW_TEMPLATE || getNemoClawAgentImage()
-      : getNemoClawAgentImage();
+    return getNemoClawAgentImage();
   }
 
   if (resolvedDeployTarget === "docker") {
@@ -80,7 +77,9 @@ function getDefaultAgentImage({
   }
 
   if (resolvedDeployTarget === "proxmox") {
-    return process.env.PROXMOX_TEMPLATE || "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst";
+    return (
+      process.env.PROXMOX_TEMPLATE || "local:vztmpl/ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
+    );
   }
 
   return process.env.OPENCLAW_STANDARD_IMAGE || "node:24-slim";

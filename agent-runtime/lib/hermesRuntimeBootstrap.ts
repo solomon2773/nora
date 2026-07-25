@@ -2,6 +2,7 @@
 
 const HERMES_MODEL_CONFIG_ENV = "NORA_HERMES_MODEL_CONFIG_B64";
 const HERMES_MANAGED_ENV_ENV = "NORA_HERMES_MANAGED_ENV_B64";
+const HERMES_EMPTY_STATE_SENTINEL = "__NORA_EMPTY_STATE_V1__";
 
 function normalizeEnvValueMap(envVars = {}) {
   return Object.fromEntries(
@@ -38,14 +39,21 @@ function buildHermesManagedEnvBlock(envVars = {}) {
     .join("\n");
 }
 
-function buildHermesRuntimeBootstrapEnv({ envVars = {}, modelConfig = null } = {}) {
+function buildHermesRuntimeBootstrapEnv(options = {}) {
   const out = {};
-  const managedEnvBlock = buildHermesManagedEnvBlock(envVars);
-  if (managedEnvBlock) {
-    out[HERMES_MANAGED_ENV_ENV] = encodeBase64(managedEnvBlock);
+  if (Object.prototype.hasOwnProperty.call(options || {}, "envVars")) {
+    const managedEnvBlock = buildHermesManagedEnvBlock(options?.envVars || {});
+    out[HERMES_MANAGED_ENV_ENV] = managedEnvBlock
+      ? encodeBase64(managedEnvBlock)
+      : HERMES_EMPTY_STATE_SENTINEL;
   }
-  if (hasMeaningfulHermesModelConfig(modelConfig)) {
-    out[HERMES_MODEL_CONFIG_ENV] = encodeBase64(JSON.stringify(modelConfig || {}));
+  if (
+    Object.prototype.hasOwnProperty.call(options || {}, "modelConfig") &&
+    options?.modelConfig !== undefined
+  ) {
+    out[HERMES_MODEL_CONFIG_ENV] = hasMeaningfulHermesModelConfig(options.modelConfig)
+      ? encodeBase64(JSON.stringify(options.modelConfig || {}))
+      : HERMES_EMPTY_STATE_SENTINEL;
   }
   return out;
 }
@@ -54,7 +62,7 @@ function buildHermesRuntimeConfigBootstrapCommand() {
   return [
     'HERMES_DATA_DIR="${HERMES_HOME:-/opt/data}"',
     'mkdir -p "$HERMES_DATA_DIR"',
-    `if [ -n "\${${HERMES_MANAGED_ENV_ENV}:-}" ]; then`,
+    `if [ "\${${HERMES_MANAGED_ENV_ENV}+x}" = x ]; then`,
     '  start_marker="# >>> NORA MANAGED ENV >>>"',
     '  end_marker="# <<< NORA MANAGED ENV <<<"',
     '  tmp_file="$(mktemp)"',
@@ -63,18 +71,20 @@ function buildHermesRuntimeConfigBootstrapCommand() {
     "  else",
     '    : > "$tmp_file"',
     "  fi",
-    '  if [ -s "$tmp_file" ]; then printf \'\\n\' >> "$tmp_file"; fi',
-    '  printf \'%s\\n\' "$start_marker" >> "$tmp_file"',
-    `  printf '%s' "$${HERMES_MANAGED_ENV_ENV}" | base64 -d >> "$tmp_file"`,
-    "  printf '\\n' >> \"$tmp_file\"",
-    '  printf \'%s\\n\' "$end_marker" >> "$tmp_file"',
+    `  if [ "$${HERMES_MANAGED_ENV_ENV}" != ${JSON.stringify(HERMES_EMPTY_STATE_SENTINEL)} ]; then`,
+    '    if [ -s "$tmp_file" ]; then printf \'\\n\' >> "$tmp_file"; fi',
+    '    printf \'%s\\n\' "$start_marker" >> "$tmp_file"',
+    `    printf '%s' "$${HERMES_MANAGED_ENV_ENV}" | base64 -d >> "$tmp_file"`,
+    "    printf '\\n' >> \"$tmp_file\"",
+    '    printf \'%s\\n\' "$end_marker" >> "$tmp_file"',
+    "  fi",
     '  chown hermes:hermes "$tmp_file" 2>/dev/null || true',
     '  chmod 0600 "$tmp_file"',
     '  mv "$tmp_file" "$HERMES_DATA_DIR/.env"',
     '  chown hermes:hermes "$HERMES_DATA_DIR/.env" 2>/dev/null || true',
     '  chmod 0600 "$HERMES_DATA_DIR/.env"',
     "fi",
-    `if [ -n "\${${HERMES_MODEL_CONFIG_ENV}:-}" ]; then`,
+    `if [ "\${${HERMES_MODEL_CONFIG_ENV}+x}" = x ]; then`,
     '  HERMES_ROOT="/opt/hermes"',
     '  HERMES_PYTHON="$HERMES_ROOT/.venv/bin/python"',
     '  if [ ! -x "$HERMES_PYTHON" ]; then HERMES_PYTHON="$HERMES_ROOT/.venv/bin/python3"; fi',
@@ -104,10 +114,11 @@ function buildHermesRuntimeConfigBootstrapCommand() {
     "    return value",
     "",
     `payload_raw = os.environ.get("${HERMES_MODEL_CONFIG_ENV}", "")`,
-    'payload = json.loads(base64.b64decode(payload_raw).decode("utf-8")) if payload_raw else {}',
+    `clear_model = payload_raw in ("", ${JSON.stringify(HERMES_EMPTY_STATE_SENTINEL)})`,
+    'payload = {} if clear_model else json.loads(base64.b64decode(payload_raw).decode("utf-8"))',
     "config = repair_surrogates(load_config() or {})",
     'current_model = config.get("model")',
-    "model = dict(current_model) if isinstance(current_model, dict) else {}",
+    "model = {} if clear_model else (dict(current_model) if isinstance(current_model, dict) else {})",
     "",
     'default_model = str(payload.get("defaultModel") or "").strip()',
     'provider = str(payload.get("provider") or "").strip()',
@@ -115,28 +126,29 @@ function buildHermesRuntimeConfigBootstrapCommand() {
     'api_key_present = "apiKey" in payload or "api_key" in payload',
     'api_key = str(payload.get("apiKey") or payload.get("api_key") or "").strip()',
     "",
-    "if default_model:",
-    '    model["default"] = default_model',
-    "else:",
-    '    model.pop("default", None)',
-    "",
-    "if provider:",
-    '    model["provider"] = provider',
-    "else:",
-    '    model.pop("provider", None)',
-    "",
-    "if base_url:",
-    '    model["base_url"] = base_url',
-    "else:",
-    '    model.pop("base_url", None)',
-    "",
-    "if api_key_present:",
-    "    if api_key:",
-    '        model["api_key"] = api_key',
+    "if not clear_model:",
+    "    if default_model:",
+    '        model["default"] = default_model',
     "    else:",
+    '        model.pop("default", None)',
+    "",
+    "    if provider:",
+    '        model["provider"] = provider',
+    "    else:",
+    '        model.pop("provider", None)',
+    "",
+    "    if base_url:",
+    '        model["base_url"] = base_url',
+    "    else:",
+    '        model.pop("base_url", None)',
+    "",
+    "    if api_key_present:",
+    "        if api_key:",
+    '            model["api_key"] = api_key',
+    "        else:",
+    '            model.pop("api_key", None)',
+    '    elif provider and provider != "custom":',
     '        model.pop("api_key", None)',
-    'elif provider and provider != "custom":',
-    '    model.pop("api_key", None)',
     "",
     "if model:",
     '    config["model"] = model',
@@ -162,6 +174,7 @@ function buildHermesRuntimeConfigBootstrapCommand() {
 }
 
 module.exports = {
+  HERMES_EMPTY_STATE_SENTINEL,
   HERMES_MANAGED_ENV_ENV,
   HERMES_MODEL_CONFIG_ENV,
   buildHermesManagedEnvBlock,

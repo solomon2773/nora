@@ -38,6 +38,10 @@ const HERMES_EMBED_AGENT_COLUMNS = [
   // resolveHermesDashboardAddress reads it (falls back to 9119 for local). Without
   // it the embed proxy would target the in-container 9119 on the remote address.
   "dashboard_port",
+  // Seed for deriveHermesDashboardBasicAuth — proxyEmbeddedHermes decrypts this
+  // and logs in server-side when the dashboard session is missing/expired.
+  // Without it the seed is undefined and the proxy silently skips login.
+  "gateway_token",
 ];
 
 // OpenClaw gateway embed proxies (server.ts proxyEmbeddedGateway +

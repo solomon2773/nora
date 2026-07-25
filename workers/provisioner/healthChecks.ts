@@ -12,12 +12,21 @@ async function waitForHttpReady(url, options = {}) {
     timeoutMs = 5000,
     acceptStatuses = [200],
     fetchImpl = fetch,
+    beforeAttempt = null,
   } = options;
 
   let lastStatus = null;
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    // Authorization hooks deliberately run outside the network-error catch.
+    // A revoked Remote Docker grant (or a failed authorization lookup) must
+    // stop polling immediately instead of being flattened into "unreachable"
+    // and retried against credentials the worker no longer has authority to use.
+    if (typeof beforeAttempt === "function") {
+      await beforeAttempt({ attempt, url });
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -53,38 +62,58 @@ async function waitForHttpReady(url, options = {}) {
   };
 }
 
-async function waitForAgentReadiness({
-  host,
-  runtimeHost = null,
-  runtimePort = AGENT_RUNTIME_PORT,
-  gatewayHostPort = null,
-  gatewayHost = null,
-  gatewayPort = OPENCLAW_GATEWAY_PORT,
-  checkGateway = true,
-} = {}, options = {}) {
+async function waitForAgentReadiness(
+  {
+    host,
+    runtimeHost = null,
+    runtimePort = AGENT_RUNTIME_PORT,
+    gatewayHostPort = null,
+    gatewayHost = null,
+    gatewayPort = null,
+    checkGateway = true,
+  } = {},
+  options = {},
+) {
   const resolvedRuntimeHost = runtimeHost || host;
   const resolvedRuntimePort = runtimePort || AGENT_RUNTIME_PORT;
 
-  const runtime = await waitForHttpReady(gatewayUrl(resolvedRuntimeHost, resolvedRuntimePort, "/health"), {
-    attempts: 12,
-    intervalMs: 5000,
-    timeoutMs: 5000,
-    acceptStatuses: [200],
-    ...options.runtime,
-  });
+  const runtime = await waitForHttpReady(
+    gatewayUrl(resolvedRuntimeHost, resolvedRuntimePort, "/health"),
+    {
+      attempts: 12,
+      intervalMs: 5000,
+      timeoutMs: 5000,
+      acceptStatuses: [200],
+      ...(typeof options.beforeAttempt === "function"
+        ? { beforeAttempt: options.beforeAttempt }
+        : {}),
+      ...options.runtime,
+    },
+  );
 
   let gateway = null;
   if (checkGateway) {
-    const resolvedGatewayHost = gatewayHostPort
-      ? (gatewayHost || process.env.GATEWAY_HOST || "host.docker.internal")
-      : (gatewayHost || host);
-    const resolvedGatewayPort = gatewayHostPort || gatewayPort || OPENCLAW_GATEWAY_PORT;
+    // Prefer an explicit runtime-internal endpoint when the backend supplies
+    // one. Local Docker can then bind its optional host-published port to
+    // loopback without breaking readiness from the provisioner container.
+    const hasExplicitGatewayEndpoint = Boolean(gatewayHost && gatewayPort);
+    const resolvedGatewayHost = hasExplicitGatewayEndpoint
+      ? gatewayHost
+      : gatewayHostPort
+        ? gatewayHost || process.env.GATEWAY_HOST || "host.docker.internal"
+        : gatewayHost || host;
+    const resolvedGatewayPort = hasExplicitGatewayEndpoint
+      ? gatewayPort
+      : gatewayHostPort || gatewayPort || OPENCLAW_GATEWAY_PORT;
 
     gateway = await waitForHttpReady(gatewayUrl(resolvedGatewayHost, resolvedGatewayPort, "/"), {
       attempts: 15,
       intervalMs: 10000,
       timeoutMs: 5000,
       acceptStatuses: [200, 401, 403],
+      ...(typeof options.beforeAttempt === "function"
+        ? { beforeAttempt: options.beforeAttempt }
+        : {}),
       ...options.gateway,
     });
     gateway = {

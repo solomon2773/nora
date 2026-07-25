@@ -2,7 +2,11 @@
 
 > Learn how to deploy, configure, start, stop, and delete AI agents from the Nora dashboard, including sandbox types and lifecycle states.
 
-Nora gives you a single place to deploy and operate AI agent runtimes. From the Deploy page you configure a name, resource allocation, and sandbox type, then Nora queues the deployment, provisions the container, and brings the agent online. Once an agent is running, you can chat with it, inspect its logs, and open an interactive terminal — all from the same dashboard.
+Nora gives you a single place to deploy and operate AI agent runtimes. From the Deploy page you
+choose the runtime family, one exact execution target, resource allocation, and sandbox profile, then
+Nora queues the deployment, provisions the runtime, and brings the agent online. Once an agent is
+running, you can chat with it, inspect its logs, and open an interactive terminal — all from the same
+dashboard.
 
 ## Before you start
 
@@ -23,17 +27,45 @@ Make sure you have at least one LLM provider key saved in **Settings** before de
   Nora generates a default name such as `OpenClaw-Agent-472`.
 </Step>
 
-  <Step title="Choose a sandbox type">
-    Select the sandbox that will run your agent. See the [sandbox comparison table](#sandbox-types) below for details on each option.
+  <Step title="Choose the runtime family">
+    Select **OpenClaw** or **Hermes** when more than one family is enabled. The runtime family controls
+    the agent contract; it does not decide where the workload runs.
 
     ![Deploy wizard — runtime + sandbox selection](/images/guides/deploy/wizard-runtime.png)
 
   </Step>
 
+  <Step title="Choose the execution target">
+    Select the exact destination: local Docker, a registered `k8s:<id>` cluster, a registered
+    `remote:<id>` Docker host, or another enabled experimental target. Nora records that concrete
+    target on the agent and does not automatically place, fail over, or rebalance it onto a different
+    target.
+
+    A Remote Docker host appears only when its latest manual connection test succeeded and you can
+    deploy to it. Personal hosts allow their owner plus `editor`, `admin`, or `owner` members of a
+    granted workspace. Platform hosts allow platform admins, all accounts when enabled, directly
+    granted users, matching user groups, and `editor+` members of a granted workspace. Workspace
+    viewers can see the host but cannot select it. The current picker exposes Remote Docker only for
+    OpenClaw; see the
+    [Remote Docker backend reference](/configuration/provisioner-backends/remote-docker#hermes-advanced-api-path)
+    for the experimental Hermes API path.
+
+  </Step>
+
+  <Step title="Choose a sandbox profile">
+    Select the sandbox that will run your agent. See the [sandbox comparison table](#sandbox-types)
+    below for details on each option. Hermes supports only the standard profile.
+
+  </Step>
+
 <Step title="Set resource limits">
-  Specify the vCPU count, RAM (MB), and disk size (GB) for the agent container. In self-hosted mode
-  these values are clamped to the operator-configured limits. In PaaS mode they are fixed to your
-  subscription plan.
+  Specify the vCPU count, RAM (MB), and requested disk size (GB). In self-hosted mode these values
+  are clamped to the operator-configured limits. In PaaS mode Nora uses the platform-wide deployment
+  defaults configured by the operator; plan tiers currently control deployment count rather than
+  per-agent resource sizes. Docker and Remote Docker enforce the CPU and memory settings, but
+  `disk_gb` is deployment metadata, not a Docker storage quota. Monitor the host filesystem, images,
+  volumes, writable layers, and logs, and verify the selected host has enough aggregate headroom
+  before deploying.
 </Step>
 
   <Step title="Confirm and deploy">
@@ -44,12 +76,32 @@ Make sure you have at least one LLM provider key saved in **Settings** before de
   </Step>
 </Steps>
 
+## Migrate an existing agent
+
+Choose **Migrate** on the Deploy page when you want Nora to recreate an existing OpenClaw or Hermes
+agent under control-plane management.
+
+- **Upload a bundle** is the supported path for ordinary operators and cross-host migration. Export
+  a Nora migration bundle or supported legacy template from the source, upload it, review the draft,
+  then deploy a fresh Nora-managed runtime.
+- **Live Pull** reads through the backend Docker socket and is therefore available only to a platform
+  admin on a self-hosted control plane. It can inspect a local Docker container; hosted users,
+  non-admin users, and workspace API keys cannot invoke it.
+- **Live SSH pull is disabled.** Nora will not send migration credentials to a host until that path
+  can require independently verified host-key trust. Export and upload a bundle from remote machines
+  instead.
+
+Migration recreates the source as a new managed runtime; it does not adopt the original container in
+place. Review draft warnings before deployment because unsupported runtime-specific state is not
+invented silently.
+
 ## What happens during deployment
 
-After you click **Confirm & Deploy Agent**, the deployment moves through two stages:
+After you click **Confirm & Deploy Agent**, the deployment moves through three stages:
 
 1. **Queued** — The agent record is created and a deployment job is queued. The status is set to `queued` immediately so you can track progress.
-2. **Running** — Nora provisions the container and starts the agent runtime. The status transitions to `running` once the container is live.
+2. **Deploying** — A provisioner worker is creating the workload on the execution target and waiting for readiness.
+3. **Running** — Nora has completed provisioning and the runtime passed its readiness path.
 
 <Note>
   If the container cannot start, the status transitions to `error` or `warning`. From either of
@@ -104,3 +156,10 @@ Nora supports the GA standard sandbox and the experimental NemoClaw sandbox prof
 </Tip>
 
 For a full guide to NemoClaw agents, see [Run secure agents with NemoClaw sandboxes](/guides/nemoclaw).
+
+## Related execution targets
+
+- [Choose a provisioner backend](/configuration/provisioner-backends)
+- [Connect a Remote Docker host](/guides/remote-docker)
+- [Remote Docker backend reference and limitations](/configuration/provisioner-backends/remote-docker)
+- [Kubernetes provisioner backend](/configuration/provisioner-backends/kubernetes)

@@ -36,9 +36,15 @@ This policy applies to:
 
 ## Reporting
 
-If you experience or witness unacceptable behavior, report it privately to the repository maintainer through GitHub, currently `@solomon2773`, instead of opening a public issue or discussion. Include links, screenshots, and any other relevant context so the report can be evaluated quickly.
+If you experience or witness unacceptable behavior in an issue, pull request, comment, or
+discussion, use that item's **Report content** menu and choose **Report to repository admins**
+when GitHub offers it. This sends the report privately instead of opening a public issue or
+discussion. Include links, screenshots, and any other relevant context so the report can be
+evaluated quickly.
 
-If the report concerns the maintainer, use GitHub's own reporting and abuse channels rather than a public thread in this repository.
+If GitHub does not offer the repository-admin option, or if the report concerns the maintainer,
+use [GitHub's private abuse-reporting process](https://docs.github.com/en/communities/maintaining-your-safety-on-github/reporting-abuse-or-spam)
+rather than a public thread in this repository.
 
 If the report involves immediate danger or a credible threat, contact local emergency services first.
 

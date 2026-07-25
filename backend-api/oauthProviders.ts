@@ -1,4 +1,7 @@
 // @ts-nocheck
+// Verifies OAuth identities directly with their upstream provider before Nora
+// links them to a requested email address or provider account id.
+
 const GOOGLE_OIDC_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 const GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo";
 const GITHUB_USER_URL = "https://api.github.com/user";
@@ -31,14 +34,27 @@ async function fetchJson(url, options, providerLabel) {
     throw new Error(
       detail
         ? `${providerLabel} token verification failed: ${detail}`
-        : `${providerLabel} token verification failed (${res.status})`
+        : `${providerLabel} token verification failed (${res.status})`,
     );
   }
 
   return data || {};
 }
 
-function assertRequestedIdentityMatches({ requestedEmail, requestedProviderId, actualEmail, actualProviderId, providerLabel }) {
+/**
+ * Reject a verified upstream identity when it differs from an identity the
+ * client explicitly requested to link.
+ *
+ * @param {Object} identity - Requested and verified identifiers plus provider label.
+ * @returns {void}
+ */
+function assertRequestedIdentityMatches({
+  requestedEmail,
+  requestedProviderId,
+  actualEmail,
+  actualProviderId,
+  providerLabel,
+}) {
   if (requestedEmail && normalizeEmail(requestedEmail) !== normalizeEmail(actualEmail)) {
     throw new Error(`${providerLabel} token email did not match the requested account`);
   }
@@ -48,6 +64,13 @@ function assertRequestedIdentityMatches({ requestedEmail, requestedProviderId, a
   }
 }
 
+/**
+ * Verify a Google ID or access token, including email verification, optional
+ * audience enforcement, and requested-identity matching.
+ *
+ * @param {Object} credentials - Google tokens and optional requested identity.
+ * @returns {Promise<Object>} Verified email, display name, and provider id.
+ */
 async function verifyGoogleIdentity({ accessToken, idToken, email, providerId }) {
   let identity;
 
@@ -75,7 +98,7 @@ async function verifyGoogleIdentity({ accessToken, idToken, email, providerId })
     const data = await fetchJson(
       GOOGLE_OIDC_USERINFO_URL,
       { headers: { Authorization: `Bearer ${accessToken}` } },
-      "Google"
+      "Google",
     );
 
     if (!data.sub) throw new Error("Google token verification failed: missing subject");
@@ -104,6 +127,13 @@ async function verifyGoogleIdentity({ accessToken, idToken, email, providerId })
   return identity;
 }
 
+/**
+ * Verify a GitHub token and select a verified email before matching any
+ * client-requested identity.
+ *
+ * @param {Object} credentials - GitHub access token and optional requested identity.
+ * @returns {Promise<Object>} Verified email, display name, and provider id.
+ */
 async function verifyGitHubIdentity({ accessToken, email, providerId }) {
   if (!accessToken) throw new Error("GitHub OAuth access token is required");
 
@@ -116,8 +146,8 @@ async function verifyGitHubIdentity({ accessToken, email, providerId }) {
   const user = await fetchJson(GITHUB_USER_URL, { headers }, "GitHub");
   const emails = await fetchJson(GITHUB_EMAILS_URL, { headers }, "GitHub");
   const primaryVerified = Array.isArray(emails)
-    ? emails.find((entry) => entry.primary && entry.verified && entry.email)
-      || emails.find((entry) => entry.verified && entry.email)
+    ? emails.find((entry) => entry.primary && entry.verified && entry.email) ||
+      emails.find((entry) => entry.verified && entry.email)
     : null;
   const verifiedEmail = primaryVerified?.email || null;
 
@@ -142,6 +172,12 @@ async function verifyGitHubIdentity({ accessToken, email, providerId }) {
   return identity;
 }
 
+/**
+ * Dispatch OAuth identity verification only to Nora's supported providers.
+ *
+ * @param {Object} credentials - Provider, tokens, and optional requested identity.
+ * @returns {Promise<Object>} Verified normalized identity.
+ */
 async function verifyOAuthIdentity({ provider, accessToken, idToken, email, providerId }) {
   const normalizedProvider = normalizeProvider(provider);
 

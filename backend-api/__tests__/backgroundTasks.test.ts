@@ -72,6 +72,55 @@ describe("background tasks", () => {
     ]);
   });
 
+  it.each([
+    "REMOTE_HOST_ACCESS_REVOKED",
+    "REMOTE_HOST_RETEST_REQUIRED",
+    "REMOTE_HOST_AUTH_CHECK_FAILED",
+  ])("preserves status when Remote Docker inspection fails with %s", async (code) => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "agent-revoked-1",
+          user_id: "former-grantee",
+          container_id: "runtime-1",
+          backend_type: "remote-docker",
+          deploy_target: "remote-docker",
+          execution_target_id: "remote:shared-host",
+          status: "running",
+        },
+      ],
+    });
+    mockContainerManager.status.mockRejectedValueOnce(
+      Object.assign(new Error("remote host state is unknown"), { code }),
+    );
+
+    await reconcileBackgroundAgentStatuses();
+
+    expect(mockDb.query).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["provider_auth_reconciliation_pending", "provider_auth_reconciliation_failed"])(
+    "does not promote a provider-auth held runtime back to running (%s)",
+    async (pausedReason) => {
+      mockDb.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-quarantined-1",
+            container_id: "runtime-1",
+            backend_type: "docker",
+            status: "error",
+            paused_reason: pausedReason,
+          },
+        ],
+      });
+
+      await reconcileBackgroundAgentStatuses();
+
+      expect(mockContainerManager.status).not.toHaveBeenCalled();
+      expect(mockDb.query).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("collects telemetry for running agents and prunes old samples", async () => {
     mockDb.query
       .mockResolvedValueOnce({

@@ -8,7 +8,7 @@ The fastest way to place Nora: **frameworks build agents, builders compose apps,
 
 ## Nora vs. agent frameworks
 
-*LangGraph, CrewAI, AutoGen*
+_LangGraph, CrewAI, AutoGen_
 
 Frameworks are libraries for writing agent logic — graphs, crews, multi-agent conversations. Nora does not compete with them and does not replace them. Nora operates **deployed runtimes**: it provisions them into isolated Docker or Kubernetes environments, syncs provider keys, streams logs and terminal sessions, monitors health, and manages lifecycle.
 
@@ -16,15 +16,15 @@ If your agents are built on a framework and shipped inside a runtime, Nora is th
 
 ## Nora vs. the runtimes themselves
 
-*OpenClaw, Hermes*
+_OpenClaw, Hermes_
 
 OpenClaw and Hermes are the runtimes Nora deploys and manages — they are the workload, not the competition. A single runtime instance gives you one agent on one machine. Nora gives you the fleet view: deploy many instances across hosts and clusters, manage their provider keys and secrets centrally, reach each one's chat, logs, terminal, and embedded UI from one dashboard, and apply monitoring, backups, and RBAC uniformly.
 
-OpenClaw on Docker is the best-supported path today and the recommended first proof. Hermes is supported as a second runtime family.
+OpenClaw on Docker is the best-supported path today and the recommended first live proof. Hermes is supported as a second runtime family. Nora is multi-runtime, but it is not claiming a universal runtime plugin contract: new families must satisfy the public deployment, readiness, lifecycle, logs, files, auth-sync, and operator-surface contracts end to end.
 
 ## Nora vs. visual app and workflow builders
 
-*Dify, Flowise, LobeHub*
+_Dify, Flowise, LobeHub_
 
 Builders give you a canvas for composing LLM apps, RAG pipelines, and tool chains — they own the "create an AI app without code" lane. Nora has no visual workflow canvas and does not aim to be one. It is for teams whose agents already exist as runtimes and who need infrastructure-grade operations: isolated deployment, observability, terminal access, secret management, and audit on infrastructure they control.
 
@@ -32,45 +32,61 @@ If you want to build an app visually, use a builder. If you need to **run agent 
 
 ## Nora vs. LLM observability and eval platforms
 
-*Laminar, OpenLIT, LangWatch*
+_Laminar, OpenLIT, LangWatch_
 
 Those platforms own tracing, evaluations, datasets, and guardrails at the LLM-call level. Nora's monitoring is **runtime operations monitoring**: agent health, queue state, container metrics, live logs, runtime events, and cost visibility. Nora does not currently provide span-level traces, eval suites, or dataset management — treat trace/eval platforms as adjacent integrations, not something Nora replaces.
 
 ## Nora vs. sandbox infrastructure
 
-*Microsandbox and similar isolation tooling*
+_Microsandbox and similar isolation tooling_
 
-Dedicated sandbox projects focus on the isolation primitive itself. Nora packages isolation as part of operations: each agent runs in its own container with configurable CPU/RAM/disk on Docker or Kubernetes, with an experimental NemoClaw sandbox profile layered on top. Proxmox VM placement is a planned, currently release-blocked target. See the [security architecture](/concepts/security) page for the full isolation and trust story.
+Dedicated sandbox projects focus on the isolation primitive itself. Nora packages isolation as part of operations: each agent runs in its own container, with CPU/RAM limits on Docker and Remote Docker and workload plus provisioned-storage requests on Kubernetes. Docker `disk_gb` remains metadata rather than a quota. An experimental NemoClaw sandbox profile layers additional restrictions on supported targets. Proxmox unprivileged LXC placement is experimental for OpenClaw and prepared Hermes images, uses secure API TLS plus pinned SSH, and still requires real-hardware smoke before production. NemoClaw on Proxmox remains blocked. See the [security architecture](/concepts/security) page for the full isolation and trust story.
+
+## Nora vs. integration and tool catalogs
+
+Nora centralizes integration credentials and connectivity metadata so operators can configure services consistently across agents. A catalog entry is not automatically a native executable tool: actual tool behavior depends on the selected runtime, its installed skills, or an MCP adapter. Evaluate the integrations you need end to end instead of treating the catalog count as a count of built-in tools.
 
 ## Quick reference
 
-| You need | Reach for |
-| --- | --- |
-| To write agent logic in code | LangGraph, CrewAI, AutoGen |
-| A personal agent runtime | OpenClaw, Hermes |
-| A visual canvas for LLM apps and RAG | Dify, Flowise, LobeHub |
-| Traces, evals, datasets, guardrails | Laminar, OpenLIT, LangWatch |
-| To deploy, monitor, and operate agent runtimes on your own infrastructure | **Nora** |
+| You need                                                                  | Reach for                   |
+| ------------------------------------------------------------------------- | --------------------------- |
+| To write agent logic in code                                              | LangGraph, CrewAI, AutoGen  |
+| A personal agent runtime                                                  | OpenClaw, Hermes            |
+| A visual canvas for LLM apps and RAG                                      | Dify, Flowise, LobeHub      |
+| Traces, evals, datasets, guardrails                                       | Laminar, OpenLIT, LangWatch |
+| To deploy, monitor, and operate agent runtimes on your own infrastructure | **Nora**                    |
 
 ## Frequently asked
 
 <AccordionGroup>
   <Accordion title="Is Nora an agent framework?">
-    No. Nora operates agent runtimes — it deploys, monitors, and manages them. OpenClaw is the strongest path today, Hermes is supported, and the platform is runtime-friendly by design.
+    No. Nora operates agent runtimes — it deploys, monitors, and manages them. OpenClaw is the
+    strongest path today, Hermes is supported, and the platform is runtime-friendly by design.
   </Accordion>
   <Accordion title="Is it really self-hosted?">
-    Yes. Docker Compose and the one-line installers are the primary trust path. Everything needed to run Nora is in the open repo, licensed Apache 2.0.
+    Yes. Docker Compose and the one-line installers are the primary trust path. Everything needed to
+    run Nora is in the open repo, licensed Apache 2.0.
   </Accordion>
   <Accordion title="Can I use it commercially?">
-    Yes — Apache 2.0 permits commercial use, modification, hosting for clients, and building on top, with no commercial agreement.
+    Yes — Apache 2.0 permits commercial use, modification, hosting for clients, and building on top,
+    with no commercial agreement.
   </Accordion>
   <Accordion title="Does Nora include evals or tracing?">
-    It has runtime monitoring, logs, terminal, events, and cost controls. Full trace/eval platforms are adjacent integrations, not the current core lane.
+    It has runtime monitoring, logs, terminal, events, and cost controls. Full trace/eval platforms
+    are adjacent integrations, not the current core lane.
   </Accordion>
   <Accordion title="What about MCP?">
-    MCP is first-class in both directions. Nora ships a control-plane MCP server (`@noraai/mcp-server`, published to the official MCP Registry) so you can operate the fleet — deploy agents, control their lifecycle, read metrics, events, and per-agent cost — from Claude Code, Claude Desktop, or Cursor; `nora mcp` launches it from the CLI. It also offers per-agent MCP server management, wiring MCP tools into individual agents. That sits alongside the integrations module (69+ providers) and the runtimes' own tool ecosystems (for example ClawHub skills for OpenClaw). Nora is not a public MCP-server marketplace — it exposes and manages MCP for the runtimes it operates.
+    MCP is first-class in both directions. Nora ships a control-plane MCP server
+    (`@noraai/mcp-server`, published to the official MCP Registry) so you can operate the fleet —
+    deploy agents, control their lifecycle, read metrics, events, and per-agent cost — from Claude
+    Code, Claude Desktop, or Cursor; `nora mcp` launches it from the CLI. It also offers per-agent
+    MCP server management, wiring MCP tools into individual agents. That sits alongside the
+    integrations module (69+ providers) and the runtimes' own tool ecosystems (for example ClawHub
+    skills for OpenClaw). Nora is not a public MCP-server marketplace — it exposes and manages MCP
+    for the runtimes it operates.
   </Accordion>
   <Accordion title="Which backend should I try first?">
-    Docker + OpenClaw. The [quickstart](/quickstart) gets you from install to a deployed, chat-ready agent in about 15 minutes.
+    Start with the built-in zero-key demo to validate the operator loop, then use Docker + OpenClaw
+    for the first live workload. The [quickstart](/quickstart) covers both paths.
   </Accordion>
 </AccordionGroup>

@@ -3,19 +3,36 @@ process.env.ENCRYPTION_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef01
 
 const mockDb = { query: jest.fn() };
 const mockRunContainerCommand = jest.fn();
+const mockBuildHermesManagedEnvForAgent = jest.fn();
+const mockWriteHermesEnvToContainer = jest.fn();
+const mockIsKubernetesAgent = jest.fn();
+const mockUpdateEnv = jest.fn();
+const mockRestart = jest.fn();
+const mockWaitForAgentReadiness = jest.fn();
+const mockPersistLifecycleRuntimeAddress = jest.fn();
+const mockAssertRemoteHostAgentUse = jest.fn();
 
 jest.mock("../db", () => mockDb);
 
 jest.mock("../authSync", () => ({
   runContainerCommand: mockRunContainerCommand,
+  buildHermesManagedEnvForAgent: mockBuildHermesManagedEnvForAgent,
+  writeHermesEnvToContainer: mockWriteHermesEnvToContainer,
 }));
 
 jest.mock("../containerManager", () => ({
-  restart: jest.fn(),
+  restart: mockRestart,
+  isKubernetesAgent: mockIsKubernetesAgent,
+  updateEnv: mockUpdateEnv,
+  persistLifecycleRuntimeAddress: mockPersistLifecycleRuntimeAddress,
 }));
 
 jest.mock("../healthChecks", () => ({
-  waitForAgentReadiness: jest.fn(),
+  waitForAgentReadiness: mockWaitForAgentReadiness,
+}));
+
+jest.mock("../remoteHosts", () => ({
+  assertRemoteHostAgentUse: (...args) => mockAssertRemoteHostAgentUse(...args),
 }));
 
 const {
@@ -24,6 +41,7 @@ const {
   readHermesRuntimeSnapshot,
   repairHermesAgentConfig,
   replacePersistedHermesState,
+  saveHermesChannel,
   snapshotToPersistedHermesState,
 } = require("../hermesUi");
 
@@ -36,7 +54,28 @@ function decodeHermesHelperScript(command) {
 describe("Hermes helper execution", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockDb.query.mockReset();
+    mockDb.query.mockReset().mockResolvedValue({ rows: [] });
+    mockIsKubernetesAgent.mockReset().mockReturnValue(false);
+    mockUpdateEnv.mockReset().mockResolvedValue(undefined);
+    mockRestart.mockReset().mockResolvedValue(undefined);
+    mockPersistLifecycleRuntimeAddress
+      .mockReset()
+      .mockImplementation(async (_db, agent, result) => {
+        const host = typeof result?.host === "string" ? result.host.trim() : "";
+        const runtimeHost =
+          typeof result?.runtimeHost === "string" ? result.runtimeHost.trim() : host;
+        if (host) agent.host = host;
+        if (runtimeHost) agent.runtime_host = runtimeHost;
+        return agent;
+      });
+    mockWaitForAgentReadiness.mockReset().mockResolvedValue({
+      ok: true,
+      runtime: { ok: true },
+      gateway: { ok: true },
+    });
+    mockAssertRemoteHostAgentUse.mockReset().mockResolvedValue(null);
+    mockBuildHermesManagedEnvForAgent.mockReset().mockResolvedValue({});
+    mockWriteHermesEnvToContainer.mockReset().mockResolvedValue(undefined);
     mockRunContainerCommand.mockReset().mockResolvedValue({
       output: JSON.stringify({
         runtimeStatus: {},
@@ -46,6 +85,92 @@ describe("Hermes helper execution", () => {
         jobsCount: 0,
         modelConfig: {},
       }),
+    });
+  });
+
+  it("projects Hermes channel env onto the Deployment env for kubernetes agents", async () => {
+    mockIsKubernetesAgent.mockReturnValue(true);
+    mockBuildHermesManagedEnvForAgent.mockResolvedValue({
+      TELEGRAM_BOT_TOKEN: "tok-123",
+      OPENAI_API_KEY: "sk-test",
+    });
+
+    const agent = {
+      id: "agent-hermes-k8s",
+      user_id: "user-1",
+      container_id: "nora-hermes-qa-1",
+      backend_type: "k8s",
+      host: "runtime.internal",
+      runtime_host: "runtime.internal",
+      runtime_port: 8642,
+    };
+
+    await saveHermesChannel(agent, "telegram", { TELEGRAM_BOT_TOKEN: "tok-123" });
+
+    // k8s: the exec-written /opt/data/.env would be wiped by the rollout the
+    // save triggers, so the full managed env must go through the Deployment.
+    expect(mockBuildHermesManagedEnvForAgent).toHaveBeenCalledWith("user-1", "agent-hermes-k8s");
+    expect(mockWriteHermesEnvToContainer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "agent-hermes-k8s" }),
+      { TELEGRAM_BOT_TOKEN: "tok-123", OPENAI_API_KEY: "sk-test" },
+    );
+    const execCommands = mockRunContainerCommand.mock.calls.map((call) => String(call[1] || ""));
+    expect(execCommands.some((command) => command.includes("save_env_value"))).toBe(false);
+    expect(mockRestart).toHaveBeenCalled();
+  });
+
+  it("uses a refreshed Proxmox address for readiness after a Hermes restart", async () => {
+    mockRestart.mockResolvedValueOnce({
+      host: "10.100.110.71",
+      runtimeHost: "10.100.110.71",
+    });
+    const agent = {
+      id: "agent-hermes-proxmox",
+      user_id: "user-1",
+      container_id: "601",
+      backend_type: "proxmox",
+      runtime_family: "hermes",
+      host: "10.100.110.10",
+      runtime_host: "10.100.110.10",
+      runtime_port: 8642,
+    };
+
+    await saveHermesChannel(agent, "telegram", { TELEGRAM_BOT_TOKEN: "tok-proxmox" });
+
+    expect(mockPersistLifecycleRuntimeAddress).toHaveBeenCalledWith(
+      mockDb,
+      expect.objectContaining({ id: "agent-hermes-proxmox" }),
+      { host: "10.100.110.71", runtimeHost: "10.100.110.71" },
+    );
+    expect(mockWaitForAgentReadiness).toHaveBeenCalledWith(
+      expect.objectContaining({
+        host: "10.100.110.71",
+        runtimeHost: "10.100.110.71",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("rechecks a Remote Docker host grant before every Hermes readiness attempt", async () => {
+    const agent = {
+      id: "agent-hermes-remote",
+      user_id: "user-1",
+      container_id: "remote-hermes-1",
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:shared-host",
+      runtime_family: "hermes",
+      host: "203.0.113.10",
+      runtime_host: "203.0.113.10",
+      runtime_port: 8642,
+    };
+
+    await saveHermesChannel(agent, "telegram", { TELEGRAM_BOT_TOKEN: "tok-remote" });
+
+    const readinessOptions = mockWaitForAgentReadiness.mock.calls[0][1];
+    await readinessOptions.beforeAttempt();
+    expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledWith(agent, {
+      includeProfile: false,
     });
   });
 

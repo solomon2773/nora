@@ -1,7 +1,7 @@
 // @ts-nocheck
 const mockDb = { query: jest.fn() };
 const mockEncrypt = jest.fn((value) => `enc(${value})`);
-const mockDecrypt = jest.fn((value) => value.startsWith("enc(") ? value.slice(4, -1) : value);
+const mockDecrypt = jest.fn((value) => (value.startsWith("enc(") ? value.slice(4, -1) : value));
 const mockEnsureEncryptionConfigured = jest.fn();
 const mockSend = jest.fn().mockResolvedValue({ delivered: true });
 
@@ -27,7 +27,11 @@ jest.mock("../channels/adapters", () => ({
     ],
     send: mockSend,
     verify: jest.fn().mockResolvedValue({ valid: true }),
-    formatInbound: jest.fn((payload) => ({ content: payload.text || "ok", sender: "tester", metadata: {} })),
+    formatInbound: jest.fn((payload) => ({
+      content: payload.text || "ok",
+      sender: "tester",
+      metadata: {},
+    })),
   })),
   listAdapterTypes: jest.fn(() => []),
 }));
@@ -45,14 +49,16 @@ describe("channel config encryption", () => {
 
   it("encrypts sensitive config keys before storing a channel", async () => {
     mockDb.query.mockResolvedValueOnce({
-      rows: [{
-        id: "ch-1",
-        agent_id: "agent-1",
-        type: "telegram",
-        name: "Ops Telegram",
-        config: { bot_token: "enc(secret-token)", chat_id: "42" },
-        enabled: true,
-      }],
+      rows: [
+        {
+          id: "ch-1",
+          agent_id: "agent-1",
+          type: "telegram",
+          name: "Ops Telegram",
+          config: { bot_token: "enc(secret-token)", chat_id: "42" },
+          enabled: true,
+        },
+      ],
     });
 
     const result = await channels.createChannel("agent-1", "telegram", "Ops Telegram", {
@@ -72,13 +78,15 @@ describe("channel config encryption", () => {
   it("decrypts stored secrets before adapter send", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "ch-2",
-          agent_id: "agent-1",
-          type: "telegram",
-          enabled: true,
-          config: { bot_token: "enc(secret-token)", chat_id: "42" },
-        }],
+        rows: [
+          {
+            id: "ch-2",
+            agent_id: "agent-1",
+            type: "telegram",
+            enabled: true,
+            config: { bot_token: "enc(secret-token)", chat_id: "42" },
+          },
+        ],
       })
       .mockResolvedValueOnce({ rows: [] });
 
@@ -90,29 +98,37 @@ describe("channel config encryption", () => {
         config: { bot_token: "secret-token", chat_id: "42" },
       }),
       "hello",
-      { to: "42" }
+      { to: "42" },
     );
   });
 
   it("encrypts secret-like non-password keys such as verify_token on update", async () => {
     mockDb.query
       .mockResolvedValueOnce({
-        rows: [{
-          id: "ch-3",
-          agent_id: "agent-1",
-          type: "whatsapp",
-          enabled: true,
-          config: { phone_number_id: "pn_123" },
-        }],
+        rows: [
+          {
+            id: "ch-3",
+            agent_id: "agent-1",
+            type: "whatsapp",
+            enabled: true,
+            config: { phone_number_id: "pn_123" },
+          },
+        ],
       })
       .mockResolvedValueOnce({
-        rows: [{
-          id: "ch-3",
-          agent_id: "agent-1",
-          type: "whatsapp",
-          enabled: true,
-          config: { phone_number_id: "pn_123", access_token: "enc(wa-secret)", verify_token: "enc(verify-me)" },
-        }],
+        rows: [
+          {
+            id: "ch-3",
+            agent_id: "agent-1",
+            type: "whatsapp",
+            enabled: true,
+            config: {
+              phone_number_id: "pn_123",
+              access_token: "enc(wa-secret)",
+              verify_token: "enc(verify-me)",
+            },
+          },
+        ],
       });
 
     const result = await channels.updateChannel("ch-3", "agent-1", {

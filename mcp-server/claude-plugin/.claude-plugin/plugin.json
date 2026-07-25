@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "nora",
+  "displayName": "Nora Agent Ops",
+  "version": "0.1.4",
+  "description": "Inspect and operate self-hosted OpenClaw and Hermes agent fleets from Claude Code through Nora's MCP server.",
+  "author": {
+    "name": "Solomon Tsao",
+    "url": "https://github.com/solomon2773"
+  },
+  "homepage": "https://github.com/solomon2773/nora",
+  "repository": "https://github.com/solomon2773/nora",
+  "license": "Apache-2.0",
+  "keywords": ["nora", "mcp", "agent-ops", "openclaw", "hermes", "self-hosted"],
+  "mcpServers": "./.mcp.json"
+}

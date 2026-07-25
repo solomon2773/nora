@@ -1,59 +1,276 @@
 name: Release npm Packages
 
-# Publishes @noraai/mcp-server and @noraai/cli to the public npm registry when a
-# GitHub release is published (or on demand). Idempotent: a package version
-# that already exists on the registry is skipped, so re-running a release or
-# tagging without bumping a package version is safe.
-#
-# Requires the NPM_TOKEN repository secret (an npm automation token with
-# publish rights on the @noraai scope). `id-token: write` enables npm provenance
-# attestations linking each published tarball to this workflow run.
+# Resolve an exact published product release to one immutable, protected-branch
+# commit before touching package code. Target lifecycle scripts run only in an
+# unprivileged packaging job; the environment-scoped publisher receives only
+# verified tarballs and never checks out or executes the release target.
 
 on:
   release:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to publish (for example, v1.16.5)
+        required: true
 
 permissions:
   contents: read
-  id-token: write
+
+concurrency:
+  group: release-npm-publish
+  cancel-in-progress: false
 
 jobs:
-  publish:
-    name: "npm publish (${{ matrix.package }})"
+  resolve-target:
+    name: Resolve published release
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        package:
-          - mcp-server
-          - cli
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      tag: ${{ steps.target.outputs.tag }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Resolve exact published release target
+        id: target
+        env:
+          DISPATCH_TAG: ${{ inputs.tag || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+        run: node .github/workflows/scripts/verify-release-target.mjs resolve-release
+
+  verify-required-ci:
+    name: Verify CI workflows
+    runs-on: ubuntu-latest
+    needs: resolve-target
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OPTIONAL_WORKFLOWS: |
+        CodeQL
+      REQUIRED_WORKFLOWS: |
+        CI Quality
+        CI Compose Pipeline
+        CI Security
+        CodeQL
+        Supply chain
+      TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Wait for required workflows on the exact release SHA
+        run: node .github/workflows/scripts/require-workflow-success.mjs
+
+  test-package:
+    name: "Test ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-target
+      - verify-required-ci
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: mcp-server
+            directory: mcp-server
+            name: "@noraai/mcp-server"
+          - id: cli
+            directory: cli
+            name: "@noraai/cli"
+    steps:
+      - name: Check out the trusted workflow helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out the CI-gated release target as package data
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve-target.outputs.sha }}
+          path: release-target
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: release-target/${{ matrix.directory }}/package-lock.json
+      - name: Validate exact package metadata
+        env:
+          EXPECTED_PACKAGE_NAME: ${{ matrix.name }}
+          TARGET_DIR: release-target/${{ matrix.directory }}
+        run: node .github/workflows/scripts/verify-release-target.mjs verify-npm-directory
+      - name: Install package dependencies
+        run: npm ci
+        working-directory: release-target/${{ matrix.directory }}
+      - name: Test package
+        run: npm test
+        working-directory: release-target/${{ matrix.directory }}
+
+  package:
+    name: "Package ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-target
+      - test-package
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: mcp-server
+            directory: mcp-server
+            name: "@noraai/mcp-server"
+          - id: cli
+            directory: cli
+            name: "@noraai/cli"
+    steps:
+      - name: Check out the trusted workflow helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out the CI-gated release target as package data
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve-target.outputs.sha }}
+          path: release-target
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Validate exact package metadata
+        id: metadata
+        env:
+          EXPECTED_PACKAGE_NAME: ${{ matrix.name }}
+          TARGET_DIR: release-target/${{ matrix.directory }}
+        run: node .github/workflows/scripts/verify-release-target.mjs verify-npm-directory
+      - name: Build and verify npm tarball
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/npm-package-${{ matrix.id }}
+          EXPECTED_PACKAGE_NAME: ${{ matrix.name }}
+          EXPECTED_VERSION: ${{ steps.metadata.outputs.version }}
+          TARGET_DIR: release-target/${{ matrix.directory }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          package_source="$(realpath "${TARGET_DIR}")"
+          npm pack "${package_source}" --ignore-scripts --pack-destination "${ARTIFACT_DIR}"
+          mapfile -t tarballs < <(find "${ARTIFACT_DIR}" -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one npm tarball, found ${#tarballs[@]}." >&2
+            exit 1
+          fi
+          PACKAGE_TARBALL="${tarballs[0]}" \
+            node .github/workflows/scripts/verify-release-target.mjs verify-npm-tarball
+      - name: Upload verified npm tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: npm-package-${{ matrix.id }}
+          path: ${{ runner.temp }}/npm-package-${{ matrix.id }}/*.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: "Publish ${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-target
+      - package
+    environment: release-publish
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: mcp-server
+            name: "@noraai/mcp-server"
+          - id: cli
+            name: "@noraai/cli"
+    steps:
+      - name: Check out the trusted workflow helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
-          cache: npm
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
-      - run: npm ci
-        working-directory: ${{ matrix.package }}
-      - run: npm test
-        working-directory: ${{ matrix.package }}
-      - name: Publish if version is new
-        working-directory: ${{ matrix.package }}
+      - name: Revalidate release provenance after environment approval
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DISPATCH_TAG: ${{ inputs.tag || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_SHA: ${{ needs.resolve-target.outputs.sha }}
+          EXPECTED_TAG: ${{ needs.resolve-target.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+        run: node .github/workflows/scripts/verify-release-target.mjs resolve-release
+      - name: Download verified npm tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: npm-package-${{ matrix.id }}
+          path: ${{ runner.temp }}/npm-package-${{ matrix.id }}
+      - name: Revalidate npm tarball metadata
+        id: metadata
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/npm-package-${{ matrix.id }}
+          EXPECTED_PACKAGE_NAME: ${{ matrix.name }}
         run: |
           set -euo pipefail
-          name="$(node -p "require('./package.json').name")"
-          version="$(node -p "require('./package.json').version")"
-          if npm view "${name}@${version}" version >/dev/null 2>&1; then
-            echo "${name}@${version} already published — skipping."
+          mapfile -t tarballs < <(find "${ARTIFACT_DIR}" -maxdepth 1 -type f -name '*.tgz' -print)
+          if [[ ${#tarballs[@]} -ne 1 ]]; then
+            echo "Expected exactly one npm tarball, found ${#tarballs[@]}." >&2
+            exit 1
+          fi
+          echo "tarball=${tarballs[0]}" >> "${GITHUB_OUTPUT}"
+          PACKAGE_TARBALL="${tarballs[0]}" \
+            node .github/workflows/scripts/verify-release-target.mjs verify-npm-tarball
+      - name: Publish if version is new
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE_NAME: ${{ matrix.name }}
+          PACKAGE_TARBALL: ${{ steps.metadata.outputs.tarball }}
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
+          PROBE_ID: ${{ matrix.id }}
+        run: |
+          set -euo pipefail
+          probe_error="${RUNNER_TEMP}/npm-view-${PROBE_ID}.err"
+          probe_status=0
+          published_version="$(npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version \
+            --registry=https://registry.npmjs.org 2>"${probe_error}")" || probe_status=$?
+          if [[ ${probe_status} -eq 0 ]]; then
+            if [[ "${published_version}" != "${PACKAGE_VERSION}" ]]; then
+              echo "npm returned version '${published_version}', expected '${PACKAGE_VERSION}'." >&2
+              exit 1
+            fi
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} already published; skipping."
             exit 0
           fi
-          npm publish --provenance --access public
-          echo "Published ${name}@${version}."
+          if ! grep -Eqi 'E404|404 Not Found' "${probe_error}"; then
+            cat "${probe_error}" >&2
+            echo "Could not determine whether ${PACKAGE_NAME}@${PACKAGE_VERSION} exists." >&2
+            exit "${probe_status}"
+          fi
+          npm publish "${PACKAGE_TARBALL}" --ignore-scripts --provenance --access public \
+            --registry=https://registry.npmjs.org
+          echo "Published ${PACKAGE_NAME}@${PACKAGE_VERSION}."

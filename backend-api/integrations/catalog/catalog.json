@@ -538,10 +538,21 @@
       },
       { "key": "imap.host", "label": "IMAP Host", "type": "text", "required": true },
       { "key": "imap.port", "label": "IMAP Port", "type": "number", "required": true },
-      { "key": "imap.secure", "label": "Use TLS for IMAP", "type": "checkbox", "required": false },
+      {
+        "key": "imap.secure",
+        "label": "Require implicit TLS for IMAP",
+        "type": "checkbox",
+        "required": false,
+        "defaultValue": true
+      },
       { "key": "smtp.host", "label": "SMTP Host", "type": "text", "required": true },
       { "key": "smtp.port", "label": "SMTP Port", "type": "number", "required": true },
-      { "key": "smtp.secure", "label": "Use TLS for SMTP", "type": "checkbox", "required": false },
+      {
+        "key": "smtp.secure",
+        "label": "Use implicit TLS for SMTP (otherwise require STARTTLS)",
+        "type": "checkbox",
+        "required": false
+      },
       { "key": "smtp.fromAddress", "label": "From Address", "type": "email", "required": true },
       { "key": "smtp.fromName", "label": "From Name", "type": "text", "required": false },
       {

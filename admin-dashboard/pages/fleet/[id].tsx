@@ -59,9 +59,7 @@ function ActionButton({
 function InfoRow({ label, value }) {
   return (
     <div className="rounded-[1.25rem] bg-slate-50 px-4 py-4">
-      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
-        {label}
-      </p>
+      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</p>
       <p className="mt-2 text-sm font-semibold text-slate-950">{value}</p>
     </div>
   );
@@ -134,8 +132,7 @@ export default function FleetAgentDetailPage() {
 
   useEffect(() => {
     if (!id || loading) return undefined;
-    const isTransient =
-      agent && (agent.status === "queued" || agent.status === "deploying");
+    const isTransient = agent && (agent.status === "queued" || agent.status === "deploying");
     const intervalId = setInterval(loadAgent, isTransient ? 5000 : 15000);
     return () => clearInterval(intervalId);
   }, [agent, id, loadAgent, loading]);
@@ -145,9 +142,7 @@ export default function FleetAgentDetailPage() {
 
     if (
       action === "delete" &&
-      !window.confirm(
-        `Delete ${agent.name}? This permanently removes the agent and its runtime.`
-      )
+      !window.confirm(`Delete ${agent.name}? This permanently removes the agent and its runtime.`)
     ) {
       return;
     }
@@ -156,12 +151,12 @@ export default function FleetAgentDetailPage() {
       action === "start"
         ? `/api/admin/agents/${id}/start`
         : action === "stop"
-        ? `/api/admin/agents/${id}/stop`
-        : action === "restart"
-        ? `/api/admin/agents/${id}/restart`
-        : action === "redeploy"
-        ? `/api/admin/agents/${id}/redeploy`
-        : `/api/admin/agents/${id}`;
+          ? `/api/admin/agents/${id}/stop`
+          : action === "restart"
+            ? `/api/admin/agents/${id}/restart`
+            : action === "redeploy"
+              ? `/api/admin/agents/${id}/redeploy`
+              : `/api/admin/agents/${id}`;
 
     const method = action === "delete" ? "DELETE" : "POST";
 
@@ -217,9 +212,7 @@ export default function FleetAgentDetailPage() {
   }
 
   const current = stats?.current || {};
-  const historySamples = Array.isArray(history?.samples)
-    ? history.samples.slice(-8).reverse()
-    : [];
+  const historySamples = Array.isArray(history?.samples) ? history.samples.slice(-8).reverse() : [];
 
   return (
     <AdminLayout>
@@ -338,27 +331,19 @@ export default function FleetAgentDetailPage() {
 
         <div className="grid gap-6 xl:grid-cols-[0.95fr,1.05fr]">
           <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-            <h2 className="text-lg font-black tracking-tight text-slate-950">
-              Runtime metadata
-            </h2>
+            <h2 className="text-lg font-black tracking-tight text-slate-950">Runtime metadata</h2>
             <p className="mt-1 text-sm font-medium text-slate-500">
               Last-known ownership and runtime placement details.
             </p>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
               <InfoRow label="Owner" value={agent.ownerEmail || "Unknown"} />
-              <InfoRow
-                label="Created"
-                value={formatDateTime(agent.created_at)}
-              />
+              <InfoRow label="Created" value={formatDateTime(agent.created_at)} />
               <InfoRow
                 label="Backend / Node"
                 value={`${agent.backend_type || "docker"} · ${agent.node || "node n/a"}`}
               />
-              <InfoRow
-                label="Container"
-                value={agent.container_id || "No active container"}
-              />
+              <InfoRow label="Container" value={agent.container_id || "No active container"} />
               <InfoRow
                 label="Runtime Host"
                 value={
@@ -428,7 +413,8 @@ export default function FleetAgentDetailPage() {
                           {formatMemoryMb(sample.memory_usage_mb)}
                         </td>
                         <td className="px-2 py-4 text-sm font-semibold text-slate-900">
-                          {formatRateMb(sample.network_rx_rate_mbps)} / {formatRateMb(sample.network_tx_rate_mbps)}
+                          {formatRateMb(sample.network_rx_rate_mbps)} /{" "}
+                          {formatRateMb(sample.network_tx_rate_mbps)}
                         </td>
                         <td className="px-2 py-4 text-sm font-semibold text-slate-900">
                           {sample.pids ?? "—"}
@@ -444,9 +430,7 @@ export default function FleetAgentDetailPage() {
 
         <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
           <div className="mb-5 flex flex-col gap-1">
-            <h2 className="text-lg font-black tracking-tight text-slate-950">
-              Live runtime logs
-            </h2>
+            <h2 className="text-lg font-black tracking-tight text-slate-950">Live runtime logs</h2>
             <p className="text-sm font-medium text-slate-500">
               Direct websocket log stream for admin diagnosis.
             </p>

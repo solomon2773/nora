@@ -55,13 +55,13 @@ The standard sandbox (`standard`) runs OpenClaw inside a Docker container with t
 
 ### NemoClaw sandbox
 
-The NemoClaw sandbox (`nemoclaw`) is experimental. It runs OpenClaw inside a secure, NVIDIA-powered sandbox environment with policy controls. It is built on [NVIDIA Nemotron](https://build.nvidia.com) models and uses OpenShell policy enforcement to restrict what the agent runtime can do inside the container.
+The NemoClaw sandbox (`nemoclaw`) is experimental. It runs OpenClaw inside a policy-controlled OpenShell sandbox and routes model inference to configured [NVIDIA Nemotron](https://build.nvidia.com) APIs. Nora does not allocate a local GPU device to the container.
 
 Use NemoClaw when you need:
 
 - Stronger runtime isolation for sensitive workloads
 - Policy-controlled execution environments
-- NVIDIA Nemotron model access integrated at the sandbox level
+- NVIDIA Nemotron model access through configured API credentials
 
 <Warning>
   NemoClaw must be enabled by your Nora operator before it is available as a sandbox option. If you

@@ -15,9 +15,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
-COPY --from=builder /app/.next/standalone/app/ ./
-COPY --from=builder /app/.next/static ./.next/static
+COPY --chown=node:node --from=builder /app/.next/standalone/app/ ./
+COPY --chown=node:node --from=builder /app/.next/static ./.next/static
 RUN --mount=from=builder,source=/app,target=/build \
-    cp -r /build/public ./public 2>/dev/null || true
+    cp -r /build/public ./public 2>/dev/null || true \
+    && chown -R node:node /app
 EXPOSE 3000
+USER node
 CMD ["node", "server.js"]

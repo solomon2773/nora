@@ -15,6 +15,7 @@ import {
   ShoppingBag,
   TriangleAlert,
   Users,
+  UsersRound,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { formatDateTime } from "../lib/format";
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { name: "Queue", icon: TriangleAlert, href: "/queue" },
   { name: "Users", icon: Users, href: "/users" },
   { name: "Members", icon: ShieldCheck, href: "/members" },
+  { name: "User Groups", icon: UsersRound, href: "/user-groups" },
   { name: "Kubernetes", icon: Boxes, href: "/kubernetes" },
   { name: "Remote Hosts", icon: Server, href: "/remote-hosts" },
   { name: "Agent Hub", icon: ShoppingBag, href: "/agent-hub" },

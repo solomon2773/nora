@@ -1,7 +1,7 @@
 {
   "name": "@noraai/mcp-server",
-  "version": "0.1.1",
-  "description": "MCP server for the Nora agent ops control plane — operate your agent fleet from Claude Code, Claude Desktop, Cursor, or any MCP client.",
+  "version": "0.1.4",
+  "description": "MCP server for Nora — deploy, monitor, and operate self-hosted OpenClaw and Hermes agent fleets on Docker or Kubernetes.",
   "mcpName": "io.github.solomon2773/nora",
   "license": "Apache-2.0",
   "type": "module",
@@ -31,12 +31,20 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "nora",
     "agents",
+    "agent-management",
+    "agent-orchestration",
     "openclaw",
     "hermes",
-    "ops"
+    "ops",
+    "devops",
+    "llmops",
+    "docker",
+    "kubernetes",
+    "self-hosted"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

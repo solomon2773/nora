@@ -1,133 +1,294 @@
 name: Publish to MCP Registry
 
-# Lists @noraai/mcp-server in the official MCP Registry
-# (registry.modelcontextprotocol.io) so PulseMCP / Glama / MCP-aware clients can
-# discover it. Runs after a GitHub release is published, alongside the npm
-# release (release-npm.yml) — it polls npm until the released version is visible
-# because the registry validates ownership by fetching the published package's
-# `mcpName` field. Auth is GitHub OIDC (no secret): the io.github.solomon2773/*
-# namespace is authorized by the workflow's OIDC identity, which must match the
-# `name` in mcp-server/server.json and `mcpName` in mcp-server/package.json.
-#
-# Idempotent: a version already in the registry is skipped, and a published npm
-# tarball without `mcpName` is skipped (with a notice) rather than failing the
-# release. The MCP Registry is in preview; pin mcp-publisher below as needed.
+# Publish only an exact, stable MCP payload from a CI-gated GitHub release.
+# Target package scripts run without OIDC or secrets; the environment-scoped
+# publisher receives a validated data artifact and a checksum-verified binary.
 
 on:
   release:
     types:
       - published
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to publish (for example, v1.16.5)
+        required: true
 
 permissions:
   contents: read
-  id-token: write # GitHub OIDC for `mcp-publisher login github-oidc`
+
+concurrency:
+  group: release-mcp-registry-publish
+  cancel-in-progress: false
 
 env:
   MCP_PUBLISHER_VERSION: v1.7.9
+  MCP_PUBLISHER_CHECKSUMS_SHA256: e84c4329507f205b111b35a9b30f330945ef5c329648a65260f15d69fcdbf94d
   NPM_VISIBILITY_TIMEOUT_SECS: "180"
 
 jobs:
-  publish-mcp-registry:
-    name: Publish server.json to the MCP Registry
+  resolve-target:
+    name: Resolve published release
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      tag: ${{ steps.target.outputs.tag }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Resolve exact published release target
+        id: target
+        env:
+          DISPATCH_TAG: ${{ inputs.tag || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+        run: node .github/workflows/scripts/verify-release-target.mjs resolve-release
 
-      - name: Read package metadata
-        id: meta
-        working-directory: mcp-server
+  verify-required-ci:
+    name: Verify CI workflows
+    runs-on: ubuntu-latest
+    needs: resolve-target
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OPTIONAL_WORKFLOWS: |
+        CodeQL
+      REQUIRED_WORKFLOWS: |
+        CI Quality
+        CI Compose Pipeline
+        CI Security
+        CodeQL
+        Supply chain
+      TARGET_SHA: ${{ needs.resolve-target.outputs.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Wait for required workflows on the exact release SHA
+        run: node .github/workflows/scripts/require-workflow-success.mjs
+
+  test-package:
+    name: Test MCP server package
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-target
+      - verify-required-ci
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the trusted workflow helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out the CI-gated release target as package data
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve-target.outputs.sha }}
+          path: release-target
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: release-target/mcp-server/package-lock.json
+      - name: Validate exact MCP package and server metadata
+        env:
+          TARGET_DIR: release-target/mcp-server
+        run: node .github/workflows/scripts/verify-release-target.mjs verify-mcp-directory
+      - name: Install MCP server dependencies
+        run: npm ci
+        working-directory: release-target/mcp-server
+      - name: Test MCP server package
+        run: npm test
+        working-directory: release-target/mcp-server
+
+  prepare-payload:
+    name: Validate MCP Registry payload
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-target
+      - test-package
+    permissions:
+      contents: read
+    outputs:
+      mcp_name: ${{ steps.metadata.outputs.mcp_name }}
+      name: ${{ steps.metadata.outputs.name }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Check out the trusted workflow helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Check out the CI-gated release target as package data
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.resolve-target.outputs.sha }}
+          path: release-target
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Validate exact MCP package and server metadata
+        id: metadata
+        env:
+          TARGET_DIR: release-target/mcp-server
+        run: node .github/workflows/scripts/verify-release-target.mjs verify-mcp-directory
+      - name: Stage the validated registry payload
+        env:
+          EXPECTED_VERSION: ${{ steps.metadata.outputs.version }}
+          PAYLOAD_DIR: ${{ runner.temp }}/mcp-registry-payload
+          TARGET_DIR: release-target/mcp-server
         run: |
           set -euo pipefail
-          name="$(node -p "require('./package.json').name")"
-          version="$(node -p "require('./package.json').version")"
-          mcp_name="$(node -p "require('./package.json').mcpName || ''")"
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "mcp_name=${mcp_name}" >> "$GITHUB_OUTPUT"
-          # Skip prerelease versions (e.g. 0.2.0-rc.1) — they don't belong in the registry.
-          if [[ "${version}" == *-* ]]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping MCP Registry publish for prerelease ${name}@${version}."
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
+          mkdir -p "${PAYLOAD_DIR}"
+          cp "${TARGET_DIR}/package.json" "${PAYLOAD_DIR}/package.json"
+          cp "${TARGET_DIR}/server.json" "${PAYLOAD_DIR}/server.json"
+          TARGET_DIR="${PAYLOAD_DIR}" \
+            node .github/workflows/scripts/verify-release-target.mjs verify-mcp-directory
+      - name: Upload the validated registry payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-registry-payload
+          path: ${{ runner.temp }}/mcp-registry-payload
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Wait for the npm version to be visible (registry validates mcpName from it)
-        if: steps.meta.outputs.skip == 'false'
-        id: npmwait
+  publish-mcp-registry:
+    name: Publish server.json to the MCP Registry
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-target
+      - prepare-payload
+    environment: release-publish
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the trusted workflow helpers
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Revalidate release provenance after environment approval
+        env:
+          DISPATCH_TAG: ${{ inputs.tag || '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_SHA: ${{ needs.resolve-target.outputs.sha }}
+          EXPECTED_TAG: ${{ needs.resolve-target.outputs.tag }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || '' }}
+        run: node .github/workflows/scripts/verify-release-target.mjs resolve-release
+      - name: Download the validated registry payload
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mcp-registry-payload
+          path: ${{ runner.temp }}/mcp-registry-payload
+      - name: Revalidate exact MCP payload metadata
+        id: metadata
+        env:
+          EXPECTED_VERSION: ${{ needs.prepare-payload.outputs.version }}
+          TARGET_DIR: ${{ runner.temp }}/mcp-registry-payload
+        run: node .github/workflows/scripts/verify-release-target.mjs verify-mcp-directory
+      - name: Wait for exact npm metadata
+        env:
+          MCP_NAME: ${{ steps.metadata.outputs.mcp_name }}
+          PACKAGE_NAME: ${{ steps.metadata.outputs.name }}
+          PACKAGE_VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           set -euo pipefail
-          name="${{ steps.meta.outputs.name }}"
-          version="${{ steps.meta.outputs.version }}"
-          deadline=$(( SECONDS + ${NPM_VISIBILITY_TIMEOUT_SECS} ))
-          until npm view "${name}@${version}" version >/dev/null 2>&1; do
-            if (( SECONDS >= deadline )); then
-              echo "::warning::${name}@${version} not visible on npm after ${NPM_VISIBILITY_TIMEOUT_SECS}s; skipping registry publish."
-              echo "ready=false" >> "$GITHUB_OUTPUT"
-              exit 0
+          deadline=$((SECONDS + NPM_VISIBILITY_TIMEOUT_SECS))
+          while true; do
+            published_version="$(npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version \
+              --registry=https://registry.npmjs.org 2>/dev/null || true)"
+            if [[ "${published_version}" == "${PACKAGE_VERSION}" ]]; then
+              break
             fi
-            echo "Waiting for ${name}@${version} to appear on npm..."
+            if ((SECONDS >= deadline)); then
+              echo "${PACKAGE_NAME}@${PACKAGE_VERSION} was not visible on npm after ${NPM_VISIBILITY_TIMEOUT_SECS}s." >&2
+              exit 1
+            fi
+            echo "Waiting for ${PACKAGE_NAME}@${PACKAGE_VERSION} to appear on npm..."
             sleep 10
           done
-          # The registry reads the package.json mcpName from the published tarball;
-          # an older tarball without it would fail validation, so guard on it.
-          published_mcp_name="$(npm view "${name}@${version}" mcpName 2>/dev/null || true)"
-          if [[ "${published_mcp_name}" != "${{ steps.meta.outputs.mcp_name }}" ]]; then
-            echo "::warning::Published ${name}@${version} has mcpName='${published_mcp_name}', expected '${{ steps.meta.outputs.mcp_name }}'; skipping registry publish."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            exit 0
+
+          published_mcp_name="$(npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" mcpName \
+            --registry=https://registry.npmjs.org 2>/dev/null || true)"
+          if [[ "${published_mcp_name}" != "${MCP_NAME}" ]]; then
+            echo "Published ${PACKAGE_NAME}@${PACKAGE_VERSION} has mcpName='${published_mcp_name}', expected '${MCP_NAME}'." >&2
+            exit 1
           fi
-          echo "ready=true" >> "$GITHUB_OUTPUT"
-
-      - name: Sync the published version into server.json
-        if: steps.meta.outputs.skip == 'false' && steps.npmwait.outputs.ready == 'true'
-        working-directory: mcp-server
-        run: |
-          set -euo pipefail
-          version="${{ steps.meta.outputs.version }}"
-          tmp="$(mktemp)"
-          # Fail loudly if server.json ever loses its packages array rather than
-          # silently syncing only the top-level version.
-          jq --arg v "${version}" '
-            if (.packages | length) == 0 then error("server.json has no packages[] to version")
-            else .version = $v | (.packages[].version) = $v end
-          ' server.json > "${tmp}"
-          mv "${tmp}" server.json
-          echo "server.json now at version ${version}:"
-          jq '{name, version, package: .packages[0].identifier}' server.json
-
-      - name: Install mcp-publisher
-        if: steps.meta.outputs.skip == 'false' && steps.npmwait.outputs.ready == 'true'
+      - name: Install checksum-verified mcp-publisher
+        id: publisher
+        env:
+          INSTALL_DIR: ${{ runner.temp }}/mcp-publisher
         run: |
           set -euo pipefail
           os="$(uname -s | tr '[:upper:]' '[:lower:]')"
           arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
-          url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_${os}_${arch}.tar.gz"
-          echo "Downloading ${url}"
-          curl -fsSL "${url}" | tar xz mcp-publisher
-          ./mcp-publisher --version || true
+          release_version="${MCP_PUBLISHER_VERSION#v}"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          checksums="registry_${release_version}_checksums.txt"
+          release_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
 
-      - name: Authenticate to the MCP Registry (GitHub OIDC)
-        if: steps.meta.outputs.skip == 'false' && steps.npmwait.outputs.ready == 'true'
-        run: ./mcp-publisher login github-oidc
+          mkdir -p "${INSTALL_DIR}"
+          curl --retry 3 --retry-all-errors -fsSLo "${INSTALL_DIR}/${archive}" \
+            "${release_url}/${archive}"
+          curl --retry 3 --retry-all-errors -fsSLo "${INSTALL_DIR}/${checksums}" \
+            "${release_url}/${checksums}"
 
-      - name: Publish server.json (tolerate an already-listed version)
-        if: steps.meta.outputs.skip == 'false' && steps.npmwait.outputs.ready == 'true'
+          printf '%s  %s\n' "${MCP_PUBLISHER_CHECKSUMS_SHA256}" \
+            "${INSTALL_DIR}/${checksums}" | sha256sum -c -
+          (
+            cd "${INSTALL_DIR}"
+            awk -v name="${archive}" \
+              '$2 == name { print; found=1 } END { if (!found) exit 1 }' \
+              "${checksums}" | sha256sum -c -
+            tar -xzf "${archive}" mcp-publisher
+          )
+          publisher_path="${INSTALL_DIR}/mcp-publisher"
+          test -x "${publisher_path}"
+          "${publisher_path}" --version || true
+          echo "path=${publisher_path}" >> "${GITHUB_OUTPUT}"
+      - name: Authenticate to the MCP Registry with GitHub OIDC
+        env:
+          MCP_PUBLISHER_PATH: ${{ steps.publisher.outputs.path }}
+        run: |
+          "${MCP_PUBLISHER_PATH}" login github-oidc
+      - name: Publish server.json if version is new
+        env:
+          MCP_NAME: ${{ steps.metadata.outputs.mcp_name }}
+          MCP_PUBLISHER_PATH: ${{ steps.publisher.outputs.path }}
+          MCP_VERSION: ${{ steps.metadata.outputs.version }}
+          SERVER_JSON: ${{ runner.temp }}/mcp-registry-payload/server.json
         run: |
           set -uo pipefail
-          out="$(./mcp-publisher publish mcp-server/server.json 2>&1)" || rc=$?
+          out="$("${MCP_PUBLISHER_PATH}" publish "${SERVER_JSON}" 2>&1)" || rc=$?
           echo "${out}"
           rc=${rc:-0}
           if [[ ${rc} -ne 0 ]]; then
-            # Re-publishing the same version is a no-op for us, not a failure.
-            if echo "${out}" | grep -qiE "already exists|already published|duplicate|version .* exists"; then
-              echo "::notice::${{ steps.meta.outputs.mcp_name }}@${{ steps.meta.outputs.version }} already in the registry — skipping."
+            if echo "${out}" | grep -qiE 'already exists|already published|duplicate|version .* exists'; then
+              echo "${MCP_NAME}@${MCP_VERSION} already exists in the MCP Registry; skipping."
               exit 0
             fi
-            echo "::error::mcp-publisher publish failed (exit ${rc})."
-            exit ${rc}
+            echo "mcp-publisher publish failed with exit ${rc}." >&2
+            exit "${rc}"
           fi
-          echo "::notice::Published ${{ steps.meta.outputs.mcp_name }}@${{ steps.meta.outputs.version }} to the MCP Registry."
+          echo "Published ${MCP_NAME}@${MCP_VERSION} to the MCP Registry."

@@ -33,19 +33,68 @@ const { handleExec } = require("./execEndpoint");
 const PORT = parseInt(process.env.AGENT_HTTP_PORT || String(AGENT_RUNTIME_PORT));
 const LOG_FILE = "/var/log/openclaw-agent.log";
 const OPENCLAW_CLI = process.env.OPENCLAW_CLI_PATH || "/usr/local/bin/openclaw";
+const MAX_EXEC_BODY_BYTES = 64 * 1024;
 
-// Simple JSON body parser
-function parseBody(req) {
-  return new Promise((resolve) => {
+function requestBodyTooLargeError(maxBytes) {
+  const error = new Error(`Request body exceeds ${maxBytes} bytes`);
+  error.code = "REQUEST_BODY_TOO_LARGE";
+  error.statusCode = 413;
+  return error;
+}
+
+// Simple JSON body parser. Exec requests pass an AbortSignal so a client that
+// disconnects mid-body cannot leave this promise waiting forever for `end`.
+function parseBody(req, { signal = null, maxBytes = null } = {}) {
+  return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => {
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString()));
-      } catch {
-        resolve({});
+    let totalBytes = 0;
+    let settled = false;
+    const cleanup = () => {
+      req.removeListener("data", onData);
+      req.removeListener("end", onEnd);
+      req.removeListener("error", onError);
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      // Continue consuming the request without buffering it so the server can
+      // return a clean 413 on a keep-alive connection.
+      req.resume();
+      reject(error);
+    };
+    const onData = (chunk) => {
+      totalBytes += chunk.length;
+      if (maxBytes != null && totalBytes > maxBytes) {
+        fail(requestBodyTooLargeError(maxBytes));
+        return;
       }
-    });
+      chunks.push(chunk);
+    };
+    const onEnd = () => {
+      try {
+        settle(JSON.parse(Buffer.concat(chunks).toString()));
+      } catch {
+        settle({});
+      }
+    };
+    const onError = () => settle({});
+    const onAbort = () => settle({});
+
+    req.on("data", onData);
+    req.once("end", onEnd);
+    req.once("error", onError);
+    if (signal) {
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    }
   });
 }
 
@@ -56,14 +105,13 @@ function json(res, status, data) {
 
 // Every route except /health requires `Authorization: Bearer <gateway token>`.
 // The token (OPENCLAW_GATEWAY_TOKEN) is the per-agent secret the control plane
-// already holds. Constant-time compared. If no token is provisioned we cannot
-// enforce, so we fail OPEN (and warn loudly at boot) rather than brick a
-// runtime that was never given one — the historical behavior was fully open.
+// already holds. Constant-time compared. A missing token fails closed for
+// every sensitive route; only /health remains available for orchestration.
 const RUNTIME_AUTH_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || "";
 const RUNTIME_PUBLIC_PATHS = new Set(["/health"]);
 
 function isRuntimeRequestAuthorized(req) {
-  if (!RUNTIME_AUTH_TOKEN) return true; // unenforceable; warned at startup
+  if (!RUNTIME_AUTH_TOKEN) return false;
   const header = req.headers["authorization"] || "";
   // Parse "Bearer <token>" with plain string ops — a `\s+(.+)` regex here is a
   // ReDoS footgun (the two quantifiers both match spaces, so a header of
@@ -550,9 +598,38 @@ const server = http.createServer(async (req, res) => {
   // Handler lives in execEndpoint.ts, which is intentionally excluded from
   // CodeQL analysis (see that file's header + .github/codeql-config.yml).
   if (req.method === "POST" && path === "/exec") {
-    const body = await parseBody(req);
-    const result = await handleExec(body);
-    return json(res, 200, result);
+    const controller = new AbortController();
+    const abortExec = () => {
+      if (!controller.signal.aborted) {
+        controller.abort(new Error("Runtime exec request closed"));
+      }
+    };
+    const closeExec = () => {
+      if (!res.writableEnded) abortExec();
+    };
+    req.once("aborted", abortExec);
+    res.once("close", closeExec);
+    if (req.aborted || req.destroyed || res.destroyed) abortExec();
+    try {
+      const body = await parseBody(req, {
+        signal: controller.signal,
+        maxBytes: MAX_EXEC_BODY_BYTES,
+      });
+      if (controller.signal.aborted) return;
+      const result = await handleExec(body, { signal: controller.signal });
+      if (!res.destroyed && !res.writableEnded) {
+        return json(res, 200, result);
+      }
+      return;
+    } catch (error) {
+      if (error?.code === "REQUEST_BODY_TOO_LARGE" && !res.destroyed && !res.writableEnded) {
+        return json(res, 413, { error: "request_body_too_large" });
+      }
+      throw error;
+    } finally {
+      req.removeListener("aborted", abortExec);
+      res.removeListener("close", closeExec);
+    }
   }
 
   // ── GET /integrations ─────────────────────────────────
@@ -832,10 +909,10 @@ function startServer() {
     console.log(`[openclaw-runtime] HTTP server listening on port ${PORT}`);
     if (!RUNTIME_AUTH_TOKEN) {
       console.warn(
-        "[openclaw-runtime] SECURITY WARNING: OPENCLAW_GATEWAY_TOKEN is not set — the runtime API (including /exec) is UNAUTHENTICATED. Ensure this port is never network-reachable.",
+        "[openclaw-runtime] SECURITY WARNING: OPENCLAW_GATEWAY_TOKEN is not set — sensitive runtime routes are disabled; only /health is available.",
       );
     }
   });
 }
 
-module.exports = { startServer, server };
+module.exports = { MAX_EXEC_BODY_BYTES, startServer, server };

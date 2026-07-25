@@ -17,6 +17,12 @@ function bustCache() {
   configuredCache = null;
 }
 
+/**
+ * Check whether SMTP delivery is configured, failing closed and caching the
+ * boolean result briefly for notification hot paths.
+ *
+ * @returns {Promise<boolean>} Whether the minimum SMTP settings are available.
+ */
 async function isConfigured() {
   const now = Date.now();
   if (configuredCache && configuredCache.expiresAt > now) {
@@ -50,6 +56,13 @@ function buildFromHeader(config) {
   return `"${safeName}" <${config.fromAddress}>`;
 }
 
+/**
+ * Send platform email without throwing; validation, configuration, transport,
+ * and delivery failures are returned as `{ delivered: false, error }`.
+ *
+ * @param {Object} [message={}] - Recipients, subject, bodies, and optional reply-to.
+ * @returns {Promise<Object>} Delivery result and optional message id or error.
+ */
 async function sendMail({ to, subject, text, html, replyTo } = {}) {
   if (!to || (Array.isArray(to) && to.length === 0)) {
     return { delivered: false, error: "to address required" };
@@ -98,6 +111,11 @@ async function sendMail({ to, subject, text, html, replyTo } = {}) {
   }
 }
 
+/**
+ * Verify the current SMTP transport without throwing configuration or network errors.
+ *
+ * @returns {Promise<Object>} `{ ok: true }` or a stable failure result.
+ */
 async function verifyConnection() {
   const config = await getSettings();
   if (!config) return { ok: false, error: "not_configured" };

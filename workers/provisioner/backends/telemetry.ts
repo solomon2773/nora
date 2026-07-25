@@ -24,10 +24,7 @@ const PROXMOX_DEFAULT_CAPABILITIES = Object.freeze({
 });
 
 function toFiniteNumber(value) {
-  const parsed =
-    typeof value === "string" && value.trim() !== ""
-      ? Number(value)
-      : value;
+  const parsed = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
   return Number.isFinite(parsed) ? parsed : null;
 }
 
@@ -113,9 +110,7 @@ function buildUnavailableTelemetry({
 }
 
 function uptimeFromContainerInfo(info) {
-  const startedAt = info?.State?.StartedAt
-    ? new Date(info.State.StartedAt).getTime()
-    : 0;
+  const startedAt = info?.State?.StartedAt ? new Date(info.State.StartedAt).getTime() : 0;
   if (!info?.State?.Running || !startedAt) return 0;
   return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
 }
@@ -149,12 +144,9 @@ function dockerCpuPercent(stats) {
     (stats?.cpu_stats?.cpu_usage?.total_usage || 0) -
     (stats?.precpu_stats?.cpu_usage?.total_usage || 0);
   const systemDelta =
-    (stats?.cpu_stats?.system_cpu_usage || 0) -
-    (stats?.precpu_stats?.system_cpu_usage || 0);
+    (stats?.cpu_stats?.system_cpu_usage || 0) - (stats?.precpu_stats?.system_cpu_usage || 0);
   const cpuCount =
-    stats?.cpu_stats?.online_cpus ||
-    stats?.cpu_stats?.cpu_usage?.percpu_usage?.length ||
-    1;
+    stats?.cpu_stats?.online_cpus || stats?.cpu_stats?.cpu_usage?.percpu_usage?.length || 1;
 
   if (systemDelta <= 0) return 0;
   return roundMetric((cpuDelta / systemDelta) * cpuCount * 100);
@@ -178,8 +170,7 @@ function buildDockerTelemetry({ stats, info, backendType = "docker" }) {
       cpu_percent: dockerCpuPercent(stats),
       memory_usage_mb: bytesToMegabytes(memActual, 0),
       memory_limit_mb: bytesToMegabytes(memLimit, 0),
-      memory_percent:
-        memLimit > 0 ? roundMetric((memActual / memLimit) * 100) : 0,
+      memory_percent: memLimit > 0 ? roundMetric((memActual / memLimit) * 100) : 0,
       network_rx_mb: bytesToMegabytes(network.received),
       network_tx_mb: bytesToMegabytes(network.transmitted),
       disk_read_mb: bytesToMegabytes(disk.read),

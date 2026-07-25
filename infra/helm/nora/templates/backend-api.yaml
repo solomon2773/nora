@@ -14,12 +14,18 @@ spec:
       labels:
         {{- include "nora.selectorLabels" (dict "root" . "component" "backend-api") | nindent 8 }}
     spec:
+      automountServiceAccountToken: {{ .Values.security.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      {{- include "nora.preferredPodAntiAffinity" (dict "root" . "component" "backend-api") | nindent 6 }}
       {{- include "nora.imagePullSecrets" . | nindent 6 }}
       {{- include "nora.waitForDbInit" . | nindent 6 }}
       containers:
         - name: backend-api
           image: {{ include "nora.image" (dict "root" . "name" "nora-backend-api") }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- toYaml .Values.security.containerSecurityContext | nindent 12 }}
           ports:
             - name: http
               containerPort: 4000
@@ -27,6 +33,11 @@ spec:
           env:
             {{- include "nora.extraEnv" (dict "root" . "extra" .Values.commonEnv) | nindent 12 }}
           volumeMounts:
+            - name: scratch
+              mountPath: /tmp
+            - name: runtime-secrets
+              mountPath: /run/secrets
+              readOnly: true
             {{- if .Values.backupsVolume.enabled }}
             - name: nora-backups
               mountPath: /var/lib/nora-backups
@@ -42,6 +53,18 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
+          # The API binds only after transactional schema migration completes.
+          # Give first installs and rolling upgrades time to wait for the
+          # advisory lock without liveness restarting the process mid-migration.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            # 132 * 5s = 660s, covering the documented 600s migration
+            # statement window plus process and probe startup overhead.
+            failureThreshold: 132
           livenessProbe:
             httpGet:
               path: /health
@@ -51,6 +74,13 @@ spec:
           resources:
             {{- toYaml .Values.backendApi.resources | nindent 12 }}
       volumes:
+        - name: scratch
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi
+        - name: runtime-secrets
+          secret:
+            secretName: {{ include "nora.secretName" . }}
         {{- if .Values.backupsVolume.enabled }}
         - name: nora-backups
           persistentVolumeClaim:

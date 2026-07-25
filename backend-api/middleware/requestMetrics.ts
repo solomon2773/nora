@@ -1,6 +1,6 @@
 // @ts-nocheck
-const { recordApiMetric } = require('../metrics');
-const safeRecordApiMetric = typeof recordApiMetric === 'function' ? recordApiMetric : () => {};
+const { recordApiMetric } = require("../metrics");
+const safeRecordApiMetric = typeof recordApiMetric === "function" ? recordApiMetric : () => {};
 
 /**
  * Middleware that records request latency and status for API performance tracking.
@@ -8,9 +8,9 @@ const safeRecordApiMetric = typeof recordApiMetric === 'function' ? recordApiMet
  */
 function requestMetrics(req, res, next) {
   const start = process.hrtime.bigint();
-  res.on('finish', () => {
+  res.on("finish", () => {
     // Skip health checks and static assets
-    if (req.originalUrl === '/health') return;
+    if (req.originalUrl === "/health") return;
 
     const durationMs = Number(process.hrtime.bigint() - start) / 1e6;
     safeRecordApiMetric({

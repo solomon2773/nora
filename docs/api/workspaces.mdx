@@ -4,7 +4,7 @@
 
 Workspaces let you organise agents into logical groups — for example by project, team, or environment. You create a workspace, invite teammates, add agents you own, and query which agents belong to a given workspace. Workspace roles control team access: viewers can read, editors can operate assigned agents, and admins or owners can manage assignments.
 
-***
+---
 
 ## List workspaces
 
@@ -16,19 +16,34 @@ GET /workspaces
 
 ### Response
 
-<ResponseField name="id" type="string">Workspace UUID.</ResponseField>
-<ResponseField name="name" type="string">Workspace display name.</ResponseField>
-<ResponseField name="user_id" type="string">UUID of the owning user.</ResponseField>
-<ResponseField name="created_at" type="string">ISO 8601 creation timestamp.</ResponseField>
-<ResponseField name="role" type="string">Caller role in the workspace.</ResponseField>
-<ResponseField name="agent_count" type="number">Number of assigned agents.</ResponseField>
-<ResponseField name="member_count" type="number">Number of workspace members.</ResponseField>
+<ResponseField name="id" type="string">
+  Workspace UUID.
+</ResponseField>
+<ResponseField name="name" type="string">
+  Workspace display name.
+</ResponseField>
+<ResponseField name="user_id" type="string">
+  UUID of the owning user.
+</ResponseField>
+<ResponseField name="created_at" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
+<ResponseField name="role" type="string">
+  Caller role in the workspace.
+</ResponseField>
+<ResponseField name="agent_count" type="number">
+  Number of assigned agents.
+</ResponseField>
+<ResponseField name="member_count" type="number">
+  Number of workspace members.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/workspaces \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/workspaces \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -45,7 +60,7 @@ GET /workspaces
 ]
 ```
 
-***
+---
 
 ## Create a workspace
 
@@ -63,18 +78,27 @@ POST /workspaces
 
 ### Response
 
-<ResponseField name="id" type="string">New workspace UUID.</ResponseField>
-<ResponseField name="name" type="string">Workspace name.</ResponseField>
-<ResponseField name="user_id" type="string">UUID of the owning user.</ResponseField>
-<ResponseField name="created_at" type="string">ISO 8601 creation timestamp.</ResponseField>
+<ResponseField name="id" type="string">
+  New workspace UUID.
+</ResponseField>
+<ResponseField name="name" type="string">
+  Workspace name.
+</ResponseField>
+<ResponseField name="user_id" type="string">
+  UUID of the owning user.
+</ResponseField>
+<ResponseField name="created_at" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X POST http://localhost:8080/api/workspaces \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"name":"Production"}'
-  ```
+```bash curl theme={null}
+curl -X POST http://localhost:8080/api/workspaces \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Production"}'
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -90,7 +114,7 @@ POST /workspaces
 | ------ | -------------------------------------------- |
 | `400`  | Missing name, or name exceeds 100 characters |
 
-***
+---
 
 ## List agents in a workspace
 
@@ -110,17 +134,28 @@ GET /workspaces/:id/agents
 
 Returns an array of agent records joined with their workspace assignment details.
 
-<ResponseField name="agentId" type="string">Agent UUID.</ResponseField>
-<ResponseField name="agentName" type="string">Agent display name.</ResponseField>
-<ResponseField name="agentStatus" type="string">Current agent status.</ResponseField>
-<ResponseField name="role" type="string">Role assigned to this agent in the workspace, if any.</ResponseField>
-<ResponseField name="isDirectOwner" type="boolean">Whether the caller owns the agent directly.</ResponseField>
+<ResponseField name="agentId" type="string">
+  Agent UUID.
+</ResponseField>
+<ResponseField name="agentName" type="string">
+  Agent display name.
+</ResponseField>
+<ResponseField name="agentStatus" type="string">
+  Current agent status.
+</ResponseField>
+<ResponseField name="role" type="string">
+  Role assigned to this agent in the workspace, if any.
+</ResponseField>
+<ResponseField name="isDirectOwner" type="boolean">
+  Whether the caller owns the agent directly.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/workspaces/b2c3d4e5-f6a7-8901-bcde-f12345678901/agents \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl http://localhost:8080/api/workspaces/b2c3d4e5-f6a7-8901-bcde-f12345678901/agents \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -135,7 +170,7 @@ Returns an array of agent records joined with their workspace assignment details
 ]
 ```
 
-***
+---
 
 ## Add an agent to a workspace
 
@@ -165,17 +200,24 @@ POST /workspaces/:id/agents
 
 Returns the workspace membership record.
 
-<ResponseField name="workspace_id" type="string">Workspace UUID.</ResponseField>
-<ResponseField name="agent_id" type="string">Agent UUID.</ResponseField>
-<ResponseField name="role" type="string">Assigned role, or `null`.</ResponseField>
+<ResponseField name="workspace_id" type="string">
+  Workspace UUID.
+</ResponseField>
+<ResponseField name="agent_id" type="string">
+  Agent UUID.
+</ResponseField>
+<ResponseField name="role" type="string">
+  Assigned role, or `null`.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X POST http://localhost:8080/api/workspaces/b2c3d4e5-f6a7-8901-bcde-f12345678901/agents \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"agentId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","role":"primary"}'
-  ```
+```bash curl theme={null}
+curl -X POST http://localhost:8080/api/workspaces/b2c3d4e5-f6a7-8901-bcde-f12345678901/agents \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agentId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","role":"primary"}'
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -191,7 +233,7 @@ Returns the workspace membership record.
 | `400`  | Missing `agentId`                         |
 | `404`  | Agent not found or does not belong to you |
 
-***
+---
 
 ## List assignment candidates
 
@@ -212,7 +254,7 @@ GET /workspaces/:id/agent-candidates
 ]
 ```
 
-***
+---
 
 ## Remove an agent assignment
 
@@ -226,11 +268,17 @@ DELETE /workspaces/:id/agents/:agentId
 { "success": true }
 ```
 
-***
+---
 
 ## Cost dashboard
 
 Return workspace token-cost groups, per-agent token usage rows, unassigned owned agents, and a unique fleet total that avoids double-counting agents assigned to multiple workspaces. Cost rows include token usage grouped by model.
+
+<Note>
+  Session users receive every workspace they can access plus their unassigned owned agents. A
+  workspace API key with `workspaces:read` receives the same response envelope, but it contains only
+  the key's exact bound workspace and an empty `unassigned` group.
+</Note>
 
 ```
 GET /workspaces/cost?period_days=30
@@ -287,7 +335,7 @@ GET /workspaces/cost?period_start=2026-05-01&period_end=2026-05-21
 }
 ```
 
-***
+---
 
 ## Delete a workspace
 
@@ -305,13 +353,16 @@ DELETE /workspaces/:id
 
 ### Response
 
-<ResponseField name="success" type="boolean">`true` when the workspace was deleted.</ResponseField>
+<ResponseField name="success" type="boolean">
+  `true` when the workspace was deleted.
+</ResponseField>
 
+{/* prettier-ignore */}
 <CodeGroup>
-  ```bash curl theme={null}
-  curl -X DELETE http://localhost:8080/api/workspaces/b2c3d4e5-f6a7-8901-bcde-f12345678901 \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+curl -X DELETE http://localhost:8080/api/workspaces/b2c3d4e5-f6a7-8901-bcde-f12345678901 \
+  -H "Authorization: Bearer $TOKEN"
+```
 </CodeGroup>
 
 ```json theme={null}
@@ -319,5 +370,6 @@ DELETE /workspaces/:id
 ```
 
 <Warning>
-  Deleting a workspace is irreversible. All agent memberships are removed immediately. The agents themselves continue to run and remain accessible through the Agents API.
+  Deleting a workspace is irreversible. All agent memberships are removed immediately. The agents
+  themselves continue to run and remain accessible through the Agents API.
 </Warning>

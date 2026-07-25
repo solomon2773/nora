@@ -44,14 +44,18 @@ function normalizeSavedSkillEntries(entries = []) {
 
 function computeMissingSavedSkills(savedSkills = [], installedSkills = []) {
   const normalizedSaved = normalizeSavedSkillEntries(savedSkills);
-  const installedSlugs = new Set(normalizeInstalledSkillEntries(installedSkills).map((entry) => entry.slug));
+  const installedSlugs = new Set(
+    normalizeInstalledSkillEntries(installedSkills).map((entry) => entry.slug),
+  );
   return normalizedSaved.filter((entry) => !installedSlugs.has(entry.installSlug));
 }
 
 function computeOrphanedInstalledSkills(savedSkills = [], installedSkills = []) {
   const normalizedSaved = normalizeSavedSkillEntries(savedSkills);
   const savedSlugs = new Set(normalizedSaved.map((entry) => entry.installSlug));
-  return normalizeInstalledSkillEntries(installedSkills).filter((entry) => !savedSlugs.has(entry.slug));
+  return normalizeInstalledSkillEntries(installedSkills).filter(
+    (entry) => !savedSlugs.has(entry.slug),
+  );
 }
 
 function removeSavedSkillEntry(entries = [], slug, author = "") {
@@ -68,6 +72,22 @@ function removeSavedSkillEntry(entries = [], slug, author = "") {
   });
 }
 
+/**
+ * Merge Nora's saved ClawHub entries, the runtime lockfile view, and any
+ * in-flight jobs into one operator-facing skill list.
+ *
+ * The returned rows intentionally preserve drift instead of hiding it:
+ * `healthy` means saved+installed match, `missing_runtime` means Nora expects
+ * the skill but the runtime lacks it, and `orphaned_runtime` means the runtime
+ * has a skill Nora is not currently tracking. Pending install/delete jobs win
+ * over those steady-state statuses so the UI can show transitional state.
+ *
+ * @param {Array<object>} [savedSkills=[]] Saved ClawHub entries from `agents.clawhub_skills`.
+ * @param {Array<object>} [installedSkills=[]] Runtime lockfile entries currently installed.
+ * @param {Array<object>} [pendingJobs=[]] In-flight ClawHub jobs keyed by slug.
+ * @returns {Array<object>} Sorted merged skill rows with stable metadata plus a
+ * derived `status` describing healthy, drifted, or pending state.
+ */
 function mergeClawhubSkillState(savedSkills = [], installedSkills = [], pendingJobs = []) {
   const normalizedSaved = normalizeSavedSkillEntries(savedSkills);
   const normalizedInstalled = normalizeInstalledSkillEntries(installedSkills);
@@ -91,13 +111,14 @@ function mergeClawhubSkillState(savedSkills = [], installedSkills = [], pendingJ
       author: saved.author,
       pagePath: saved.pagePath,
       installedAt: saved.installedAt || null,
-      status: pending?.operation === "delete"
-        ? "pending_delete"
-        : pending?.operation === "install"
-          ? "pending_install"
-          : installed
-            ? "healthy"
-            : "missing_runtime",
+      status:
+        pending?.operation === "delete"
+          ? "pending_delete"
+          : pending?.operation === "install"
+            ? "pending_install"
+            : installed
+              ? "healthy"
+              : "missing_runtime",
     });
     installedBySlug.delete(saved.installSlug);
   }

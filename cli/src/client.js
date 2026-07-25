@@ -20,9 +20,7 @@ function requireConfig() {
     );
   }
   if (!config.token) {
-    throw new Error(
-      "No API token found. Run `nora login --token nora_...` or set NORA_TOKEN.",
-    );
+    throw new Error("No API token found. Run `nora login --token nora_...` or set NORA_TOKEN.");
   }
   return config;
 }
@@ -59,9 +57,7 @@ async function request(method, path, { body, query } = {}) {
       (typeof parsed === "string" && parsed) ||
       `Request failed (${response.status})`;
     const code =
-      parsed && typeof parsed === "object" && typeof parsed.code === "string"
-        ? parsed.code
-        : null;
+      parsed && typeof parsed === "object" && typeof parsed.code === "string" ? parsed.code : null;
     throw new ApiError(response.status, message, code);
   }
   return parsed;

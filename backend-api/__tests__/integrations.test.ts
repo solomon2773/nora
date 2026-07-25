@@ -12,6 +12,7 @@ jest.mock("../crypto", () => ({
 }));
 
 const integrations = require("../integrations");
+const { providerRegistry } = require("../integrations/services/integrationsService");
 const {
   activateWecomForOpenClawAgent,
   buildWecomOpenClawChannelConfig,
@@ -37,6 +38,31 @@ describe("integration secret handling", () => {
     expect(integrations.integrationProviderAffectsLlmAuth("huggingface")).toBe(true);
     expect(integrations.integrationProviderAffectsLlmAuth("github")).toBe(false);
     expect(integrations.integrationProviderAffectsLlmAuth("slack")).toBe(false);
+  });
+
+  it("fails closed when a catalog provider has no registered strategy", async () => {
+    const provider = providerRegistry.resolve("stale-provider");
+
+    await expect(
+      provider.test(
+        {
+          row: { provider: "stale-provider" },
+          token: "stored-token",
+          config: {},
+        },
+        { fetch: jest.fn() },
+      ),
+    ).resolves.toEqual({
+      success: false,
+      error: 'No integration strategy is registered for provider "stale-provider"',
+    });
+    expect(() =>
+      provider.mapToEnv({
+        row: { provider: "stale-provider" },
+        token: "stored-token",
+        config: {},
+      }),
+    ).toThrow('No integration strategy is registered for provider "stale-provider"');
   });
 
   it("re-exports the email config normalizer through the legacy integrations shim", () => {

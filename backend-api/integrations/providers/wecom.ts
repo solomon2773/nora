@@ -159,6 +159,14 @@ function parseAccountsJson(value: unknown): Record<string, any>[] {
   }
 }
 
+/**
+ * Expand dotted input and canonicalize WeCom accounts, policies, advanced settings, and status.
+ *
+ * Malformed additional-account or per-group allowlist JSON is rejected rather than discarded.
+ *
+ * @param {Object} [rawConfig={}] - Nested or dotted WeCom configuration.
+ * @returns {Object} Canonical saved configuration.
+ */
 export function normalizeWecomConfigInput(rawConfig: Record<string, unknown> = {}): WecomConfig {
   const next = expandDottedInput(rawConfig);
   const mode = stringValue(next.mode || "bot") || "bot";
@@ -195,6 +203,12 @@ export function normalizeWecomConfigInput(rawConfig: Record<string, unknown> = {
   };
 }
 
+/**
+ * Convert canonical account and group maps back to editable JSON text fields for the UI.
+ *
+ * @param {Object} [rawConfig={}] - Saved WeCom configuration.
+ * @returns {Object} Display-ready configuration.
+ */
 export function normalizeWecomDisplayConfig(rawConfig: Record<string, unknown> = {}): WecomConfig {
   const normalized = normalizeWecomConfigInput(rawConfig);
   return {
@@ -238,20 +252,25 @@ export const wecomProvider: Provider = {
   authType: "custom",
 
   async test(ctx: DecryptedIntegration, _deps: ProviderDeps): Promise<ConnectivityResult> {
-    const normalized = normalizeWecomConfigInput(ctx.config || {});
-    const errors = validateRequiredFields(normalized);
-    if (errors.length) {
-      return {
-        success: false,
-        error: errors[0],
-        message: errors[0],
-      };
-    }
+    try {
+      const normalized = normalizeWecomConfigInput(ctx.config || {});
+      const errors = validateRequiredFields(normalized);
+      if (errors.length) {
+        return {
+          success: false,
+          error: errors[0],
+          message: errors[0],
+        };
+      }
 
-    return {
-      success: true,
-      message: "WeCom configuration saved and ready for activation wiring.",
-    };
+      return {
+        success: true,
+        message: "WeCom configuration saved and ready for activation wiring.",
+      };
+    } catch (error: any) {
+      const message = error?.message ?? String(error);
+      return { success: false, error: message, message };
+    }
   },
 
   mapToEnv(_ctx: DecryptedIntegration): EnvMapping {
@@ -261,6 +280,12 @@ export const wecomProvider: Provider = {
     };
   },
 
+  /**
+   * Remove account credentials while retaining topology, policies, and activation status for sync.
+   *
+   * @param {Object} [config={}] - Decrypted WeCom configuration.
+   * @returns {Object} Runtime manifest metadata without bot or agent secrets.
+   */
   sanitizeForSync(config: Record<string, unknown> = {}) {
     const normalized = normalizeWecomConfigInput(config);
     return {

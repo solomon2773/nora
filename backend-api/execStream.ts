@@ -7,6 +7,44 @@ const containerManager = require("./containerManager");
 const { resolveAgentBackendType } = require("./agentRuntimeFields");
 const { extractSessionTokenFromUpgrade } = require("./authCookie");
 const { findAccessibleAgentForActor } = require("./middleware/ownership");
+const { assertRemoteHostAgentUse, isRemoteHostAccessRevokedError } = require("./remoteHosts");
+
+const ACCESS_RECHECK_MS = Math.max(
+  250,
+  Number.parseInt(process.env.REMOTE_HOST_AUTH_RECHECK_MS || "1000", 10) || 1000,
+);
+
+function authorizationFailure(message, code, cause) {
+  const error = new Error(message);
+  if (code) error.code = code;
+  if (cause) error.cause = cause;
+  error.authorizationCheckFailed = true;
+  return error;
+}
+
+function isAuthorizationFailure(error) {
+  return (
+    error?.authorizationCheckFailed ||
+    isRemoteHostAccessRevokedError(error) ||
+    error?.code === "REMOTE_HOST_AUTH_CHECK_FAILED"
+  );
+}
+
+function publicAuthorizationError(error) {
+  if (isRemoteHostAccessRevokedError(error)) {
+    return { message: error.message, code: error.code };
+  }
+  if (error?.code === "REMOTE_HOST_AUTH_CHECK_FAILED") {
+    return {
+      message: "Unable to verify Remote Docker host access",
+      code: "REMOTE_HOST_AUTH_CHECK_FAILED",
+    };
+  }
+  return {
+    message: error?.authorizationCheckFailed ? error.message : "Unable to verify agent access",
+    ...(error?.code ? { code: error.code } : {}),
+  };
+}
 
 // Direct Docker access needed for exec sessions (containerManager.exec returns
 // the raw exec object, but we need the Docker container object for full TTY support)
@@ -18,18 +56,15 @@ try {
   console.warn("dockerode not available — interactive terminal will be unavailable");
 }
 
+// The JSON wire protocol accepts input/resize messages and emits
+// output/system/error messages.
+
 /**
- * Attach interactive terminal WebSocket server to an HTTP server.
- * Clients connect to: ws://<host>/ws/exec/<agentId>?token=<jwt>
+ * Attach an editor-authorized terminal WebSocket endpoint, selecting full
+ * Docker TTY support or the limited exec stream exposed by another backend.
  *
- * Protocol (JSON messages from client):
- *   { type: "input",  data: "<keystrokes>" }
- *   { type: "resize", cols: 80, rows: 24 }
- *
- * Protocol (JSON messages to client):
- *   { type: "output", data: "<terminal output>" }
- *   { type: "system", message: "..." }
- *   { type: "error",  message: "..." }
+ * @param {Object} server - HTTP server receiving the upgrade handler.
+ * @returns {Object} Attached WebSocket server.
  */
 function attachExecStream(server) {
   const wss = new WebSocketServer({ noServer: true });
@@ -58,12 +93,36 @@ function attachExecStream(server) {
 
   wss.on("connection", async (ws, _req, agentId, user) => {
     try {
-      const agent = await findAccessibleAgentForActor(agentId, user, "editor");
-      if (!agent) {
-        ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
-        ws.close();
-        return;
-      }
+      const findAuthorizedAgent = async () => {
+        let currentAgent;
+        try {
+          currentAgent = await findAccessibleAgentForActor(agentId, user, "editor");
+        } catch (error) {
+          throw authorizationFailure(
+            "Unable to verify agent access",
+            "AGENT_ACCESS_CHECK_FAILED",
+            error,
+          );
+        }
+        if (!currentAgent) throw authorizationFailure("Agent not found");
+
+        try {
+          await assertRemoteHostAgentUse(currentAgent, { includeProfile: false });
+        } catch (error) {
+          if (isRemoteHostAccessRevokedError(error)) {
+            error.authorizationCheckFailed = true;
+            throw error;
+          }
+          throw authorizationFailure(
+            "Unable to verify Remote Docker host access",
+            "REMOTE_HOST_AUTH_CHECK_FAILED",
+            error,
+          );
+        }
+        return currentAgent;
+      };
+
+      const agent = await findAuthorizedAgent();
 
       if (!agent.container_id) {
         ws.send(
@@ -75,6 +134,43 @@ function attachExecStream(server) {
         ws.close();
         return;
       }
+
+      // Start actor + Remote Docker grant checks before status or terminal
+      // attachment. Either operation may block, but workspace removal,
+      // demotion, or host-grant revocation must still close the socket.
+      let accessTimer = null;
+      let accessCheckPromise = null;
+      const clearAccessTimer = () => {
+        if (accessTimer) {
+          clearInterval(accessTimer);
+          accessTimer = null;
+        }
+      };
+      const runAccessCheck = () => {
+        if (ws.readyState !== 1) return Promise.resolve();
+        if (accessCheckPromise) return accessCheckPromise;
+        accessCheckPromise = (async () => {
+          try {
+            await findAuthorizedAgent();
+          } catch (error) {
+            clearAccessTimer();
+            const publicError = publicAuthorizationError(error);
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "error", ...publicError }));
+              ws.close();
+            }
+          } finally {
+            accessCheckPromise = null;
+          }
+        })();
+        return accessCheckPromise;
+      };
+      accessTimer = setInterval(() => {
+        void runAccessCheck();
+      }, ACCESS_RECHECK_MS);
+      accessTimer.unref?.();
+      ws.on("close", clearAccessTimer);
+      ws.on("error", clearAccessTimer);
 
       // Live status reconciliation — check if container is actually running
       let isRunning = agent.status === "running";
@@ -88,6 +184,7 @@ function attachExecStream(server) {
       } catch {
         // trust DB status
       }
+      if (ws.readyState !== 1) return;
 
       if (!isRunning) {
         ws.send(
@@ -118,12 +215,24 @@ function attachExecStream(server) {
           Tty: true,
           Env: ["TERM=xterm-256color"],
         });
+        if (ws.readyState !== 1) return;
 
         const stream = await exec.start({
           hijack: true,
           stdin: true,
           Tty: true,
         });
+
+        const cleanupDockerExec = () => {
+          if (typeof stream.end === "function") stream.end();
+          if (typeof stream.destroy === "function") stream.destroy();
+        };
+        ws.on("close", cleanupDockerExec);
+        ws.on("error", cleanupDockerExec);
+        if (ws.readyState !== 1) {
+          cleanupDockerExec();
+          return;
+        }
 
         ws.send(
           JSON.stringify({
@@ -160,10 +269,6 @@ function attachExecStream(server) {
             stream.write(raw);
           }
         });
-
-        ws.on("close", () => {
-          stream.end();
-        });
       } else {
         // Non-Docker backends — basic shell via containerManager.exec
         ws.send(
@@ -173,8 +278,30 @@ function attachExecStream(server) {
           }),
         );
 
+        let backendStream = null;
+        let backendStdin = null;
+        const cleanupBackendExec = () => {
+          if (backendStdin && typeof backendStdin.end === "function") {
+            backendStdin.end();
+          }
+          if (backendStream && typeof backendStream.destroy === "function") {
+            backendStream.destroy();
+          }
+        };
+        // Register cleanup before awaiting the remote attach. Authorization can
+        // be revoked while containerManager.exec() is still establishing SSH;
+        // when that late result arrives, the closed socket must not orphan it.
+        ws.on("close", cleanupBackendExec);
+        ws.on("error", cleanupBackendExec);
+
         try {
           const execResult = await containerManager.exec(agent);
+          backendStream = execResult?.stream || null;
+          backendStdin = execResult?.stdin || null;
+          if (ws.readyState !== 1) {
+            cleanupBackendExec();
+            return;
+          }
           if (!execResult) {
             ws.send(
               JSON.stringify({
@@ -185,7 +312,7 @@ function attachExecStream(server) {
             ws.close();
             return;
           }
-          if (!execResult.stream || typeof execResult.stream.on !== "function") {
+          if (!backendStream || typeof backendStream.on !== "function") {
             ws.send(
               JSON.stringify({
                 type: "error",
@@ -202,8 +329,6 @@ function attachExecStream(server) {
             }),
           );
 
-          const backendStream = execResult.stream;
-          const backendStdin = execResult.stdin || null;
           let inputUnsupportedNotified = false;
 
           if (backendStream && typeof backendStream.on === "function") {
@@ -260,23 +385,29 @@ function attachExecStream(server) {
               }
             }
           });
-
-          ws.on("close", () => {
-            if (backendStdin && typeof backendStdin.end === "function") {
-              backendStdin.end();
-            }
-            if (backendStream && typeof backendStream.destroy === "function") {
-              backendStream.destroy();
-            }
-          });
         } catch (err) {
-          ws.send(JSON.stringify({ type: "error", message: `Exec failed: ${err.message}` }));
-          ws.close();
+          cleanupBackendExec();
+          if (ws.readyState === 1) {
+            const publicError = isAuthorizationFailure(err)
+              ? publicAuthorizationError(err)
+              : { message: `Exec failed: ${err.message}` };
+            ws.send(JSON.stringify({ type: "error", ...publicError }));
+            ws.close();
+          }
         }
       }
     } catch (err) {
-      ws.send(JSON.stringify({ type: "error", message: `Terminal error: ${err.message}` }));
-      ws.close();
+      if (ws.readyState === 1) {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            ...(isAuthorizationFailure(err)
+              ? publicAuthorizationError(err)
+              : { message: "Terminal error" }),
+          }),
+        );
+        ws.close();
+      }
     }
   });
 

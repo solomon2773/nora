@@ -132,8 +132,8 @@ export default function QueuePage() {
               Deployment queue and DLQ
             </h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
-              Inspect queue pressure, review failed jobs, and retry dead-lettered
-              deployments without leaving the admin surface.
+              Inspect queue pressure, review failed jobs, and retry dead-lettered deployments
+              without leaving the admin surface.
             </p>
           </div>
 
@@ -219,9 +219,7 @@ export default function QueuePage() {
           <section className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-black tracking-tight text-slate-950">
-                  Job detail
-                </h2>
+                <h2 className="text-lg font-black tracking-tight text-slate-950">Job detail</h2>
                 <p className="mt-1 text-sm font-medium text-slate-500">
                   Inspect payloads and retry failed work from the DLQ.
                 </p>
@@ -245,9 +243,7 @@ export default function QueuePage() {
             {!selectedJob ? (
               <div className="mt-6 flex h-56 flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-slate-200 bg-slate-50 text-center text-slate-400">
                 <AlertTriangle size={34} className="mb-3 opacity-60" />
-                <p className="text-sm font-semibold">
-                  Select a DLQ job to inspect it.
-                </p>
+                <p className="text-sm font-semibold">Select a DLQ job to inspect it.</p>
               </div>
             ) : (
               <div className="mt-6 space-y-5">

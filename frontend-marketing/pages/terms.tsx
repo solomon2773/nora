@@ -1,5 +1,5 @@
-import Head from "next/head";
 import Link from "next/link";
+import SeoHead from "../components/SeoHead";
 
 // NOTE: Boilerplate for a self-hosted-OSS product + hosted reference deployment.
 // Have it reviewed by counsel and set a real contact address before launch.
@@ -20,13 +20,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function Terms() {
   return (
     <>
-      <Head>
-        <title>Terms of Service | Nora</title>
-        <meta
-          name="description"
-          content="Terms governing use of the hosted Nora reference deployment. The Nora software itself is open source under the Apache 2.0 License."
-        />
-      </Head>
+      <SeoHead
+        title="Terms of Service | Nora"
+        description="Terms for the hosted Nora reference deployment. The Nora software remains open source under the Apache 2.0 License."
+        path="/terms"
+      />
 
       <div className="site-shell min-h-screen px-4 pb-16 pt-4 text-brand-ink sm:px-6">
         <header className="mx-auto flex max-w-3xl items-center justify-between rounded-2xl border border-brand-cyan/25 bg-white/90 px-4 py-3 shadow-xl shadow-brand-ink/10 backdrop-blur-xl sm:px-5">

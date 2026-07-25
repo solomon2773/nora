@@ -4,7 +4,11 @@
 
 Nora is the self-hosted AI agent ops platform — an operator-facing control plane for OpenClaw, Hermes, and supported sandboxed runtimes. Three browser surfaces sit behind one nginx ingress, platform state lives in PostgreSQL, background work is coordinated through Redis and BullMQ, and runtimes are provisioned (or proxied) through backend adapters that share the runtime contract package in `agent-runtime/`.
 
-The public repo centers on a single control-plane host. Agent workloads can stay on the local Docker host or be placed onto GA Kubernetes targets without changing the operator workflow. NemoClaw is an experimental sandbox profile layered onto supported targets, and Proxmox is a planned execution target that remains release-blocked today.
+The public repo centers on a single control-plane host. Agent workloads can stay on the local Docker
+host, be placed onto GA Kubernetes targets, use an experimental operator-registered Remote Docker
+host over SSH, or opt into experimental Proxmox LXC placement without changing the core operator
+workflow. NemoClaw is an experimental sandbox profile layered onto supported targets; NemoClaw on
+Proxmox remains blocked.
 
 ![Operator dashboard — the surface this architecture renders to the user](/images/operator/dashboard.png)
 
@@ -28,7 +32,7 @@ flowchart LR
     end
 
     subgraph RuntimeInfra["Runtime execution layer"]
-        Provisioner --> Adapters["Backend adapters<br/>Docker / k3s/k8s / Proxmox (blocked)"]
+        Provisioner --> Adapters["Backend adapters<br/>Docker / Remote Docker / k3s-k8s / Proxmox"]
         Adapters --> Runtime["Provisioned agent runtime"]
         API <--> Runtime
     end
@@ -43,7 +47,7 @@ flowchart LR
 | Admin workspace          | `admin-dashboard/`                          | Fleet-wide administration, moderation, audit, platform settings, release upgrades.                                                                                                |
 | Reverse proxy            | `nginx.conf`, `nginx.public.conf`, `infra/` | Routes browser traffic to the correct UI or API surface and carries WebSocket / SSE traffic.                                                                                      |
 | Control-plane API        | `backend-api/`                              | Auth, persistence, workspace RBAC, API keys, queue orchestration, monitoring, alert rules, Agent Hub logic, runtime coordination, and runtime proxy endpoints.                    |
-| Durable state            | PostgreSQL 15                               | Accounts, agents, workspaces, members, invitations, API keys, deployments, migration drafts, snapshots, Agent Hub content, integrations, channels, metrics, events, alert rules.  |
+| Durable state            | PostgreSQL 15                               | Accounts, agents, workspaces, members, remote hosts and grants, API keys, deployments, migration drafts, snapshots, Agent Hub content, integrations, channels, metrics, events.   |
 | Queue and worker handoff | Redis 7 + BullMQ                            | Carries deployment, ClawHub-install, backup, and alert-delivery jobs between the API and workers.                                                                                 |
 | Provisioning worker      | `workers/provisioner/`                      | Resolves backend choice, injects bootstrap state, applies imported managed state, waits for readiness, persists status. Also runs the ClawHub-install and alert-delivery workers. |
 | Backup worker            | `workers/backup/`                           | Captures encrypted backup archives, runs scheduled backups, prunes expired backups.                                                                                               |
@@ -79,22 +83,27 @@ WebSocket upgrades are handled at the nginx layer; the Express app attaches WS h
 - Security middleware: helmet, CORS, rate limiting, correlation IDs, prototype-pollution-safe input validation
 - Auth middleware (session JWT + workspace-scoped API key bearer auth)
 - Workspace-scoped route families for agents, alert rules, API keys, channels, integrations, LLM providers, monitoring, Agent Hub, and workspace members
-- Admin-only routes for fleet operations, audit, moderation, release upgrades, and platform settings
+- Session-only Remote Docker registration for personal hosts plus workspace-based host grants
+- Admin-only routes for platform Remote Docker hosts, fleet operations, audit, moderation, release upgrades, and platform settings
 - Gateway proxy with SSRF guards (`gatewayProxy.ts` — exposes `createGatewayRouter` + `attachGatewayWS`)
 - Background telemetry (`backgroundTasks.ts`, `scheduler.ts`) and release-availability checks (`releaseInfo.ts`)
 
 ### State and queue boundaries
 
-| Service        | What it stores or carries                                                                                                                                                                                                            |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| PostgreSQL     | Users, workspaces, workspace_members (RBAC), invitations, API keys (HMAC-hashed), agents, agent_versions, deployments, migration drafts, snapshots, Agent Hub listings/versions/reports, alert rules, backups, integrations, events. |
-| Redis + BullMQ | Four queues: `deployments`, `clawhub-jobs`, `backups`, `alert-deliveries`. Each has its own retry, backoff, and DLQ retention configured in `backend-api/redisQueue.ts`.                                                             |
+| Service        | What it stores or carries                                                                                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL     | Users, user groups, workspaces, workspace members, personal/platform Remote Docker hosts and grants, API keys (HMAC-hashed), agents, deployments, migration drafts, snapshots, Agent Hub records, alert rules, backups, integrations, and events. |
+| Redis + BullMQ | Four queues: `deployments`, `clawhub-jobs`, `backups`, `alert-deliveries`. Each has its own retry, backoff, and DLQ retention configured in `backend-api/redisQueue.ts`.                                                                          |
 
 The API persists desired state first, then hands long-running work to a queue-backed worker. That keeps provisioning failures, retries, and delayed readiness out of the synchronous browser request path.
 
 ### Workspace RBAC
 
-Every meaningful resource — agents, alert rules, API keys, Agent Hub listings, backups — is scoped to a workspace. A workspace has a creator (`workspaces.user_id`) plus a row per member in `workspace_members` with one of four roles:
+Shared agents and other workspace resources use workspace RBAC. Personal Remote Docker hosts remain
+directly user-owned and may be granted into a workspace without transferring credentials or
+ownership. Platform hosts are owned by the control plane, managed by any platform admin, and may
+also grant access through workspaces, direct users, user groups, or all accounts. A workspace has a
+creator (`workspaces.user_id`) plus a row per member in `workspace_members` with one of four roles:
 
 | Role     | Can read | Can edit | Can manage members | Can delete workspace |
 | -------- | -------- | -------- | ------------------ | -------------------- |
@@ -103,11 +112,22 @@ Every meaningful resource — agents, alert rules, API keys, Agent Hub listings,
 | `admin`  | ✅       | ✅       | ✅                 | ❌                   |
 | `owner`  | ✅       | ✅       | ✅                 | ✅                   |
 
-Permission checks read from `workspace_members.role`, never from `workspaces.user_id` directly. Invitations land in `workspace_invitations` with a hashed token signed by `NORA_WORKSPACE_INVITE_SECRET` (falls back to `JWT_SECRET`).
+Permission checks read from `workspace_members.role`, never from `workspaces.user_id` directly.
+Invitations land in `workspace_invitations` with a hashed token signed by
+`NORA_WORKSPACE_INVITE_SECRET` (falls back to `JWT_SECRET`). For either host type, a workspace viewer
+can see the host and an editor or higher can deploy. Workspace access never permits connection or
+credential changes: the personal owner manages a personal host, while any platform admin manages a
+platform host.
 
 ### API keys and bearer auth
 
-Each workspace can mint scoped API keys (`/app/workspaces/:id/api-keys`). Tokens are bearer-only, prefixed `nora_`, hashed at rest with HMAC-SHA256, and carry a fixed scope set: `agents:read`, `agents:write`, `workspaces:read`, `monitoring:read`, `integrations:read`, `integrations:write`. Workspace mutation, member management, and key issuance stay on session auth — an API key cannot mint another key.
+Each workspace can mint scoped API keys (`/app/workspaces/:id/api-keys`). Tokens are bearer-only,
+prefixed `nora_`, hashed at rest with HMAC-SHA256, and carry a fixed scope set: `agents:read`,
+`agents:write`, `workspaces:read`, `monitoring:read`, `integrations:read`, `integrations:write`.
+Workspace mutation, member management, key issuance, and every `/remote-hosts` management operation
+stay on session auth. Migration upload, draft, and live-inspection routes are also session-only. An
+API key cannot mint another key, manage a Remote Docker host, or ask the control plane to inspect a
+container or network source.
 
 ## Migration and filesystem contract
 
@@ -117,13 +137,16 @@ Nora ships a control-plane-managed migration path for both `openclaw` and `herme
 
 1. The operator prepares a migration draft from one of:
    - An uploaded Nora migration bundle or legacy OpenClaw template JSON
-   - A live Docker source
-   - A live SSH source
+   - A local live Docker source, available only to a platform admin on a self-hosted control plane
 2. `backend-api/agentMigrations.ts` normalizes the imported data and stores an encrypted manifest in PostgreSQL.
 3. The operator deploys a new Nora-managed agent using that draft.
 4. The provisioning worker recreates the runtime under Nora control instead of adopting the original runtime in place.
 
 Nora does not bind to the legacy runtime as-is. It uses the draft as desired state for a fresh Nora-managed deployment.
+
+Live SSH pull is disabled until Nora can require independently verified host-key trust. Export a
+bundle on the source machine and upload it instead. Live Docker pull is privileged because it reads
+through the control plane's Docker socket; hosted deployments and non-admin users cannot invoke it.
 
 ### Import surface
 
@@ -146,15 +169,21 @@ Unsupported runtime-specific state is surfaced as draft warnings instead of bein
 
 ### Selection model
 
-Nora chooses a concrete backend through three layers of intent:
+Nora chooses a concrete backend through four layers of intent:
 
-| Layer           | Current values             | Meaning                                                                                                                                                                                |
-| --------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime family  | `openclaw`, `hermes`       | Which operator contract the runtime satisfies.                                                                                                                                         |
-| Deploy target   | `docker`, `k8s`, `proxmox` | Where the runtime should be scheduled. Docker and Kubernetes are GA; `proxmox` is known but release-blocked. `k3s` is accepted as a user-facing id and normalizes to `k8s` internally. |
-| Sandbox profile | `standard`, `nemoclaw`     | Which isolation profile should wrap the runtime. NemoClaw is experimental.                                                                                                             |
+| Layer            | Current values                                              | Meaning                                                                                                                                      |
+| ---------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime family   | `openclaw`, `hermes`                                        | Which operator contract the runtime satisfies.                                                                                               |
+| Deploy target    | `docker`, `k8s`, `remote-docker`, `proxmox`                 | Which adapter family runs the workload. Docker and Kubernetes are GA; Remote Docker and Proxmox are experimental. `k3s` normalizes to `k8s`. |
+| Execution target | `docker`, `k8s:<cluster-id>`, `remote:<host-id>`, `proxmox` | The concrete destination recorded on the agent. Registered Kubernetes clusters and Remote Docker hosts require their exact id.               |
+| Sandbox profile  | `standard`, `nemoclaw`                                      | Which isolation profile wraps the runtime. NemoClaw is experimental, OpenClaw-only, and blocked on Proxmox.                                  |
 
-The worker resolves the final backend through shared metadata in `agent-runtime/lib/backendCatalog.ts`. See [Provisioner backends](/configuration/provisioner-backends) for the supported combinations and their maturity.
+The worker resolves the final backend through shared metadata in
+`agent-runtime/lib/backendCatalog.ts`. Placement is explicit: selecting `remote:build-host` does not
+let Nora substitute another host. The port allocator prevents Nora-managed published-port collisions,
+but Remote Docker has no aggregate host-capacity admission, automatic placement, failover, drain, or
+rebalance. See [Provisioner backends](/configuration/provisioner-backends) for the supported
+combinations and their maturity.
 
 ### Provisioning lifecycle
 
@@ -222,19 +251,24 @@ Failed jobs are retained on each queue for inspection. The DLQ surface for deplo
 - `backend-api/` also owns migration draft inspection/storage and all runtime file access mediation. Browser users do not receive direct host or container filesystem access.
 - `workers/provisioner/` and `workers/backup/` handle long-running infrastructure work outside the request path. They consume queued jobs and write the result back into control-plane state.
 - `agent-runtime/` defines the runtime-side contract used after launch. Control-plane code depends on that contract rather than embedding backend-specific assumptions everywhere.
-- External execution systems such as Docker, Kubernetes, planned Proxmox placement, and NVIDIA secure sandboxes are reached through backend adapters instead of directly from browser surfaces.
+- External execution systems such as Docker, experimental Remote Docker over SSH, Kubernetes,
+  experimental Proxmox LXC placement, and NVIDIA secure sandboxes are reached through backend
+  adapters instead of directly from browser surfaces.
+- Remote-host SSH credentials are encrypted at rest and masked in API responses. Only the personal
+  owner or a platform admin for the corresponding host type can replace them; all-account, direct-user,
+  user-group, and workspace grants permit placement only and never reveal credentials.
 - Stored secrets — provider keys, integration credentials, OAuth tokens, backup encryption material, SMTP password — are AES-256-GCM encrypted with `ENCRYPTION_KEY`. API keys and Agent Hub installation keys are HMAC-hashed at rest, not encrypted.
 
 ## Deployment topologies
 
 ![Fleet view — control plane managing multiple agent placements](/images/operator/fleet.png)
 
-| Topology                            | Ingress owner                                  | Control plane placement | Agent placement                                                 | Best fit                                                                       |
-| ----------------------------------- | ---------------------------------------------- | ----------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Local single-host                   | Nora nginx on `NGINX_HTTP_PORT`                | One Docker Compose host | Local Docker by default                                         | Evaluation, local proof, small self-hosted installs                            |
-| Public domain, Nora-managed ingress | Nora nginx on public ports                     | One Docker Compose host | Local Docker or supported external targets                      | Straightforward public self-hosting                                            |
-| Public domain behind external proxy | Host or upstream proxy terminates and forwards | One Docker Compose host | Local Docker or supported external targets                      | Existing nginx, Cloudflare, or host-managed TLS setups                         |
-| External runtime targets            | Same ingress as above                          | One Docker Compose host | Kubernetes (k3s/k8s) GA, NemoClaw experimental, Proxmox planned | Teams that need different runtime placement without changing operator workflow |
+| Topology                            | Ingress owner                                  | Control plane placement | Agent placement                                                      | Best fit                                                                       |
+| ----------------------------------- | ---------------------------------------------- | ----------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Local single-host                   | Nora nginx on `NGINX_HTTP_PORT`                | One Docker Compose host | Local Docker by default                                              | Evaluation, local proof, small self-hosted installs                            |
+| Public domain, Nora-managed ingress | Nora nginx on public ports                     | One Docker Compose host | Local Docker or supported external targets                           | Straightforward public self-hosting                                            |
+| Public domain behind external proxy | Host or upstream proxy terminates and forwards | One Docker Compose host | Local Docker or supported external targets                           | Existing nginx, Cloudflare, or host-managed TLS setups                         |
+| External runtime targets            | Same ingress as above                          | One Docker Compose host | Kubernetes GA; Remote Docker, NemoClaw, and Proxmox LXC experimental | Teams that need different runtime placement without changing operator workflow |
 
 The clearest public path today is one host running the control plane, with agent runtimes launched locally through Docker by default. Public-domain setups can either let Nora own public ingress directly or put an external reverse proxy in front of Nora's internal nginx.
 
@@ -243,8 +277,13 @@ The clearest public path today is one host running the control plane, with agent
 - The public OSS path is primarily a single-host control plane. The repo does not currently claim a first-class HA or distributed control-plane deployment story.
 - OpenClaw is the default runtime family. Hermes is a narrower, deployment-first runtime path with a different operator contract.
 - Migration recreates runtimes under Nora control; it does not adopt a legacy runtime in place.
-- Hermes is a runtime family, not a backend id. Docker and Kubernetes are the current GA Hermes execution targets, and Hermes import applies only the supported Nora-managed/runtime state described above.
-- Kubernetes (k3s/k8s) is a GA execution-target option for agents. NemoClaw is an experimental sandbox profile, and Proxmox is planned but release-blocked.
+- Hermes is a runtime family, not a backend id. Docker and Kubernetes are the current GA Hermes
+  execution targets. Remote Docker Hermes support is experimental and currently requires the agent
+  deployment API because the Hermes picker does not merge registered hosts.
+- Kubernetes (k3s/k8s) is a GA execution-target option for agents. Remote Docker, NemoClaw, and
+  Proxmox LXC placement are experimental.
+- Remote Docker's manual connection result has no expiry or continuous health loop. Nora does not
+  automatically move workloads when a remote host becomes stale, unreachable, or overloaded.
 
 ## Related
 
@@ -258,10 +297,10 @@ The clearest public path today is one host running the control plane, with agent
 </Card>
 
 <Card title="Workspaces" icon="folders" href="/concepts/workspaces">
-  Workspace ownership, RBAC roles, and member invitations.
+  Workspace ownership, RBAC roles, member invitations, and Remote Docker grants.
 </Card>
 
-  <Card title="Agent Hub" icon="store" href="/concepts/agent-hub">
-    Listing types, share targets, version model, source-catalog API keys.
+  <Card title="Remote Docker" icon="server" href="/configuration/provisioner-backends/remote-docker">
+    SSH, test scope, explicit placement, sharing, capacity limits, and safe retirement.
   </Card>
 </CardGroup>

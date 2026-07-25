@@ -5,6 +5,15 @@ const {
   gatewayUrl,
 } = require("../agent-runtime/lib/contracts");
 
+/**
+ * Retry an HTTP probe until an accepted status is returned or attempts run out.
+ * Timeouts, transport errors, and rejected statuses are reported in the result
+ * instead of being thrown.
+ *
+ * @param {string} url - Endpoint to probe.
+ * @param {Object} options - Retry, timeout, accepted-status, and fetch overrides.
+ * @returns {Promise<Object>} Structured readiness result with the last failure.
+ */
 async function waitForHttpReady(url, options = {}) {
   const {
     attempts = 15,
@@ -12,12 +21,20 @@ async function waitForHttpReady(url, options = {}) {
     timeoutMs = 5000,
     acceptStatuses = [200],
     fetchImpl = fetch,
+    beforeAttempt = null,
   } = options;
 
   let lastStatus = null;
   let lastError = null;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    // Authorization hooks run outside the network-error catch so revocation or
+    // an authorization-store failure stops polling instead of being flattened
+    // into a retryable runtime reachability error.
+    if (typeof beforeAttempt === "function") {
+      await beforeAttempt({ attempt, url });
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -53,15 +70,27 @@ async function waitForHttpReady(url, options = {}) {
   };
 }
 
-async function waitForAgentReadiness({
-  host,
-  runtimeHost = null,
-  runtimePort = AGENT_RUNTIME_PORT,
-  gatewayHostPort = null,
-  gatewayHost = null,
-  gatewayPort = OPENCLAW_GATEWAY_PORT,
-  checkGateway = true,
-} = {}, options = {}) {
+/**
+ * Probe an agent runtime and, optionally, its published gateway endpoint.
+ * Gateway 401/403 responses count as ready because they prove the service is
+ * listening; published ports default to GATEWAY_HOST or host.docker.internal.
+ *
+ * @param {Object} target - Runtime and gateway host/port configuration.
+ * @param {Object} options - Per-probe overrides passed to waitForHttpReady.
+ * @returns {Promise<Object>} Combined runtime and gateway readiness result.
+ */
+async function waitForAgentReadiness(
+  {
+    host,
+    runtimeHost = null,
+    runtimePort = AGENT_RUNTIME_PORT,
+    gatewayHostPort = null,
+    gatewayHost = null,
+    gatewayPort = null,
+    checkGateway = true,
+  } = {},
+  options = {},
+) {
   const resolvedRuntimeHost = runtimeHost || host;
   const resolvedRuntimePort = runtimePort || AGENT_RUNTIME_PORT;
 
@@ -72,27 +101,38 @@ async function waitForAgentReadiness({
       intervalMs: 5000,
       timeoutMs: 5000,
       acceptStatuses: [200],
+      ...(typeof options.beforeAttempt === "function"
+        ? { beforeAttempt: options.beforeAttempt }
+        : {}),
       ...options.runtime,
-    }
+    },
   );
 
   let gateway = null;
   if (checkGateway) {
-    const resolvedGatewayHost = gatewayHostPort
-      ? (gatewayHost || process.env.GATEWAY_HOST || "host.docker.internal")
-      : (gatewayHost || host);
-    const resolvedGatewayPort = gatewayHostPort || gatewayPort || OPENCLAW_GATEWAY_PORT;
+    // Prefer an explicit runtime-internal endpoint when the backend supplies
+    // one. Local Docker can then bind its optional host-published port to
+    // loopback without breaking readiness from the provisioner container.
+    const hasExplicitGatewayEndpoint = Boolean(gatewayHost && gatewayPort);
+    const resolvedGatewayHost = hasExplicitGatewayEndpoint
+      ? gatewayHost
+      : gatewayHostPort
+        ? gatewayHost || process.env.GATEWAY_HOST || "host.docker.internal"
+        : gatewayHost || host;
+    const resolvedGatewayPort = hasExplicitGatewayEndpoint
+      ? gatewayPort
+      : gatewayHostPort || gatewayPort || OPENCLAW_GATEWAY_PORT;
 
-    gateway = await waitForHttpReady(
-      gatewayUrl(resolvedGatewayHost, resolvedGatewayPort, "/"),
-      {
-        attempts: 15,
-        intervalMs: 10000,
-        timeoutMs: 5000,
-        acceptStatuses: [200, 401, 403],
-        ...options.gateway,
-      }
-    );
+    gateway = await waitForHttpReady(gatewayUrl(resolvedGatewayHost, resolvedGatewayPort, "/"), {
+      attempts: 15,
+      intervalMs: 10000,
+      timeoutMs: 5000,
+      acceptStatuses: [200, 401, 403],
+      ...(typeof options.beforeAttempt === "function"
+        ? { beforeAttempt: options.beforeAttempt }
+        : {}),
+      ...options.gateway,
+    });
     gateway = {
       ...gateway,
       host: resolvedGatewayHost,

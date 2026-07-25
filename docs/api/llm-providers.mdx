@@ -2,13 +2,35 @@
 
 > Store, update, and sync LLM provider API keys to your running Nora agents. Keys are masked in all API responses and never returned in plain text.
 
-The LLM Providers API lets you associate API keys for language model services (OpenAI, Anthropic, and others) with your Nora account. When you add or update a provider key, Nora automatically syncs it to any running agents so they can immediately start using the new credential. Keys are encrypted at rest and **never returned in plain text** — all responses show a masked version of the key.
+The LLM Providers API lets you associate API keys for language model services (OpenAI, Anthropic, and others) with your Nora account. Provider create, update, and delete requests reconcile the complete current provider state to running agents before the request reports success. Keys are encrypted at rest and **never returned in plain text** — all responses show a masked version of the key.
+
+<Warning>
+  This user-global API requires session authentication. Workspace API keys are rejected with `403
+  session_required`, regardless of scope, before provider credentials, defaults, or runtime
+  reconciliation can be changed.
+</Warning>
 
 <Note>
-  After adding or updating a provider, Nora automatically calls the sync endpoint in the background. You can also trigger a manual sync with `POST /llm-providers/sync`.
+  You can also trigger the same reconciliation explicitly with `POST /llm-providers/sync`.
 </Note>
 
-***
+## Mutation and revocation semantics
+
+Provider mutations are serialized per user with provisioning and lifecycle reconciliation. Nora
+replaces its managed environment, `auth-profiles.json`, OpenClaw SQLite auth profiles, custom-provider
+configuration, and managed default-model state from the current database contents, including when
+that desired state is empty.
+
+A successful mutation can include `sync_warning` when an agent could not be updated but Nora
+confirmed that it was stopped and quarantined with
+`paused_reason=provider_auth_reconciliation_failed`. A later start or restart must reconcile the
+current provider state before that lifecycle request reports success.
+
+If the database mutation committed but Nora cannot confirm runtime reconciliation or containment,
+the API returns `502` with `committed: true` and per-agent `sync_results`. Do not blindly retry a
+create request after this response; first list the saved providers and inspect the affected agents.
+
+---
 
 ## List available providers
 
@@ -24,17 +46,26 @@ This endpoint is available to all authenticated users and does not depend on whi
 
 Returns an array of provider descriptors.
 
-<ResponseField name="id" type="string">Provider identifier, e.g. `openai`, `anthropic`.</ResponseField>
-<ResponseField name="name" type="string">Human-readable provider name.</ResponseField>
-<ResponseField name="models" type="string[]">Supported model identifiers for this provider.</ResponseField>
-<ResponseField name="requiresApiKey" type="boolean">Present only for catalog entries that do not need a key — such as the built-in `demo` provider (`"Demo (built-in, no key required)"`), which carries `requiresApiKey: false`. Omitted for key-requiring providers.</ResponseField>
+<ResponseField name="id" type="string">
+  Provider identifier, e.g. `openai`, `anthropic`.
+</ResponseField>
+<ResponseField name="name" type="string">
+  Human-readable provider name.
+</ResponseField>
+<ResponseField name="models" type="string[]">
+  Supported model identifiers for this provider.
+</ResponseField>
+<ResponseField name="requiresApiKey" type="boolean">
+  Present only for catalog entries that do not need a key — such as the built-in `demo` provider
+  (`"Demo (built-in, no key required)"`), which carries `requiresApiKey: false`. Omitted for
+  key-requiring providers.
+</ResponseField>
 
-<CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/llm-providers/available \
-    -H "Authorization: Bearer $TOKEN"
-  ```
-</CodeGroup>
+```bash curl theme={null}
+curl \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/llm-providers/available
+```
 
 ```json theme={null}
 [
@@ -56,7 +87,7 @@ Returns an array of provider descriptors.
 ]
 ```
 
-***
+---
 
 ## List your saved providers
 
@@ -68,40 +99,53 @@ GET /llm-providers
 
 ### Response
 
-<ResponseField name="id" type="string">Provider record UUID.</ResponseField>
-<ResponseField name="provider" type="string">Provider identifier.</ResponseField>
-<ResponseField name="api_key_masked" type="string">Masked key, e.g. `sk-...abc123`. The full key is never returned.</ResponseField>
-<ResponseField name="model" type="string">Default model selected for this provider.</ResponseField>
-<ResponseField name="config" type="object">Additional provider-specific configuration.</ResponseField>
-<ResponseField name="is_default" type="boolean">Whether this is the default provider for new agents.</ResponseField>
-<ResponseField name="created_at" type="string">ISO 8601 creation timestamp.</ResponseField>
+<ResponseField name="id" type="string">
+  Provider record UUID.
+</ResponseField>
+<ResponseField name="provider" type="string">
+  Provider identifier.
+</ResponseField>
+<ResponseField name="api_key_masked" type="string">
+  Masked key, e.g. `sk-...abc123`. The full key is never returned.
+</ResponseField>
+<ResponseField name="model" type="string">
+  Default model selected for this provider.
+</ResponseField>
+<ResponseField name="config" type="object">
+  Additional provider-specific configuration.
+</ResponseField>
+<ResponseField name="is_default" type="boolean">
+  Whether this is the default provider for new agents.
+</ResponseField>
+<ResponseField name="created_at" type="string">
+  ISO 8601 creation timestamp.
+</ResponseField>
 
-<CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/llm-providers \
-    -H "Authorization: Bearer $TOKEN"
-  ```
-</CodeGroup>
+```bash curl theme={null}
+curl \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/llm-providers
+```
 
 ```json theme={null}
 [
-{
-  "id": "f1e2d3c4-b5a6-7890-abcd-012345678901",
-  "provider": "anthropic",
-  "api_key_masked": "sk-a••••••••xyz9",
-  "model": "claude-opus-4-6",
-  "config": {},
-  "is_default": true,
-  "created_at": "2025-02-01T12:00:00.000Z"
-}
+  {
+    "id": "f1e2d3c4-b5a6-7890-abcd-012345678901",
+    "provider": "anthropic",
+    "api_key_masked": "sk-a••••••••xyz9",
+    "model": "claude-opus-4-6",
+    "config": {},
+    "is_default": true,
+    "created_at": "2025-02-01T12:00:00.000Z"
+  }
 ]
 ```
 
-***
+---
 
 ## Add a provider
 
-Save a new LLM provider API key to your account. After the record is saved, Nora syncs the key to all your running agents in the background.
+Save a new LLM provider API key to your account. After the record is saved, Nora synchronously reconciles the current provider state to affected running agents before returning success.
 
 ```
 POST /llm-providers
@@ -110,15 +154,19 @@ POST /llm-providers
 ### Request body
 
 <ParamField body="provider" type="string" required>
-  Provider identifier, e.g. `openai`, `anthropic`. Must match a value from `GET /llm-providers/available`.
+  Provider identifier, e.g. `openai`, `anthropic`. Must match a value from `GET
+  /llm-providers/available`.
 </ParamField>
 
 <ParamField body="apiKey" type="string">
-  The API key issued by the provider. Required for every provider except the built-in `demo` provider, whose token is derived server-side — omit `apiKey` when `provider` is `demo`. The `demo` entry is flagged `requiresApiKey: false` in `GET /llm-providers/available`.
+  The API key issued by the provider. Required for every provider except the built-in `demo`
+  provider, whose token is derived server-side — omit `apiKey` when `provider` is `demo`. The `demo`
+  entry is flagged `requiresApiKey: false` in `GET /llm-providers/available`.
 </ParamField>
 
 <ParamField body="model" type="string">
-  Default model to use for this provider, e.g. `claude-opus-4-6` for Anthropic or `gpt-5.5` for OpenAI.
+  Default model to use for this provider, e.g. `claude-opus-4-6` for Anthropic or `gpt-5.5` for
+  OpenAI.
 </ParamField>
 
 <ParamField body="config" type="object">
@@ -148,11 +196,12 @@ Returns the saved provider record (`id`, `provider`, `model`, `is_default`, `cre
 }
 ```
 
-| Status | Condition                                                                                  |
-| ------ | ------------------------------------------------------------------------------------------ |
-| `400`  | Missing `provider`, missing `apiKey` for a key-requiring provider, or unrecognised provider |
+| Status | Condition                                                                                                                     |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | Missing `provider`, missing `apiKey` for a key-requiring provider, or unrecognised provider                                   |
+| `502`  | Provider was saved, but runtime reconciliation or containment could not be confirmed; the response includes `committed: true` |
 
-***
+---
 
 ## Update a provider
 
@@ -190,6 +239,8 @@ PUT /llm-providers/:id
 
 Returns the updated provider record with the key masked.
 
+The update can return committed `502` with the same reconciliation semantics described above.
+
 <CodeGroup>
   ```bash curl theme={null}
   curl -X PUT http://localhost:8080/api/llm-providers/f1e2d3c4-b5a6-7890-abcd-012345678901 \
@@ -199,11 +250,13 @@ Returns the updated provider record with the key masked.
   ```
 </CodeGroup>
 
-***
+---
 
 ## Delete a provider
 
-Remove a provider record from your account. Running agents will lose access to the key on their next sync.
+Remove a provider record from your account. Nora performs exact empty-state-aware reconciliation for
+running agents as part of the same request. If an affected runtime cannot be reconciled, Nora stops
+and quarantines it; if that containment cannot be confirmed, the deletion returns committed `502`.
 
 ```
 DELETE /llm-providers/:id
@@ -217,20 +270,22 @@ DELETE /llm-providers/:id
 
 ### Response
 
-<ResponseField name="success" type="boolean">`true` when the record was deleted.</ResponseField>
+<ResponseField name="success" type="boolean">
+  `true` when the record was deleted.
+</ResponseField>
 
-<CodeGroup>
-  ```bash curl theme={null}
-  curl -X DELETE http://localhost:8080/api/llm-providers/f1e2d3c4-b5a6-7890-abcd-012345678901 \
-    -H "Authorization: Bearer $TOKEN"
-  ```
-</CodeGroup>
+```bash curl theme={null}
+curl \
+  -X DELETE \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/llm-providers/f1e2d3c4-b5a6-7890-abcd-012345678901
+```
 
 ```json theme={null}
 { "success": true }
 ```
 
-***
+---
 
 ## Sync keys to agents
 
@@ -248,15 +303,21 @@ POST /llm-providers/sync
 
 ### Response
 
-<ResponseField name="synced" type="number">Number of agents that were successfully synced.</ResponseField>
-<ResponseField name="total" type="number">Total number of agents attempted.</ResponseField>
+<ResponseField name="synced" type="number">
+  Number of agents that were successfully synced.
+</ResponseField>
+<ResponseField name="total" type="number">
+  Total number of agents attempted.
+</ResponseField>
 
 <ResponseField name="results" type="object[]">
   Per-agent sync results.
 
   <Expandable title="properties">
     <ResponseField name="agentId" type="string">Agent UUID.</ResponseField>
-    <ResponseField name="status" type="string">`synced` or `skipped` or `error`.</ResponseField>
+    <ResponseField name="status" type="string">`synced`, `skipped`, or `failed`.</ResponseField>
+    <ResponseField name="runtimeStopped" type="boolean">For failures, whether Nora confirmed that the runtime was stopped.</ResponseField>
+    <ResponseField name="quarantinePersisted" type="boolean">For failures, whether Nora persisted the provider-auth quarantine.</ResponseField>
   </Expandable>
 </ResponseField>
 
@@ -268,12 +329,13 @@ POST /llm-providers/sync
     -d '{}'
   ```
 
-  ```bash curl (single agent) theme={null}
-  curl -X POST http://localhost:8080/api/llm-providers/sync \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"agentId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}'
-  ```
+```bash curl (single agent) theme={null}
+curl -X POST http://localhost:8080/api/llm-providers/sync \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agentId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}'
+```
+
 </CodeGroup>
 
 ```json theme={null}

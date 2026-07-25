@@ -147,7 +147,7 @@ When digging into a specific failure, scope the log view to errors only — the 
 
     **NemoClaw sandbox fails to start**
 
-    NemoClaw is disabled by default. To enable it, add `nemoclaw` to the enabled sandbox profiles and provide a valid NVIDIA API key in your `.env` file:
+    NemoClaw is disabled by default. To enable it, add `nemoclaw` to the enabled sandbox profiles and provide a valid NVIDIA API key either as a user provider key in **Settings** or as a platform fallback in `.env`:
 
     ```bash theme={null}
     ENABLED_SANDBOX_PROFILES=standard,nemoclaw
@@ -156,9 +156,99 @@ When digging into a specific failure, scope the log view to errors only — the 
 
     Restart the stack after making these changes. If NemoClaw still fails, confirm that your NVIDIA API key is active and has access to the NVIDIA NIM endpoints Nora uses.
 
+    For Kubernetes, also confirm `NEMOCLAW_SANDBOX_IMAGE` points to an image your nodes can pull. The default is Nora's GHCR image; offline clusters must preload `nora-nemoclaw-agent:local` and override the env var.
+
     <Warning>
       Do not paste your NVIDIA API key into GitHub Issues or Discussions. Share only masked or redacted values when asking for help.
     </Warning>
+
+  </Accordion>
+
+  <Accordion title="Remote Docker issues">
+    **Host says Connected, but deployment fails**
+
+    The Remote Hosts **Test** action runs only from `backend-api`. It applies a 10-second overall
+    SSH/Docker probe deadline and runs `docker version` as the registered user. It does not test
+    `worker-provisioner`, image pulls, host capacity, published-port routing, runtime readiness,
+    lifecycle actions, or backups. The successful result has no expiry or background refresh.
+
+    Re-run **Test**, then inspect the worker and API logs while deploying a disposable agent:
+
+    ```bash theme={null}
+    docker compose logs -f backend-api worker-provisioner worker-backup
+    ```
+
+    Verify the worker can reach the SSH address, the remote host has registry/provider egress and
+    enough capacity, and the configured gateway address plus allocated `19000-19999` ports are
+    reachable from Nora.
+
+    ***
+
+    **Host is missing from the Deploy page**
+
+    Confirm the host is enabled, configured, and its latest manual test succeeded. A personal host
+    requires ownership or an `editor+` workspace grant. A platform host permits platform admins,
+    all accounts when enabled, directly granted users, matching user groups, and `editor+` members of
+    a granted workspace. Workspace viewers see the host but cannot deploy. The current dashboard
+    injects Remote Docker targets into OpenClaw's picker only; Hermes Remote Docker uses the experimental
+    [advanced API path](/configuration/provisioner-backends/remote-docker#hermes-advanced-api-path).
+
+    ***
+
+    **Agent or container still exists after host access is revoked**
+
+    This is expected. Unsharing or removing a platform access grant changes authorization only. It
+    does not stop, move, delete, or rebalance existing containers. After the agent owner loses their
+    final qualifying path, Nora
+    denies active operations—including new/queued deployment work, start/restart, live runtime
+    access, logs, terminal, backup capture, non-stop scheduled actions, and ClawHub—and closes
+    rechecked active streams. Live status and telemetry collection stops. The stored agent record,
+    lifecycle status, and previously collected telemetry history can remain visible but are no longer
+    live. **Stop**, whether manual or scheduled, and **Delete** remain available for cleanup only
+    while the registration still retains the previously trusted SSH host-key pin.
+
+    Follow the documented [drain procedure](/configuration/provisioner-backends/remote-docker#unshare-or-retire-a-host-safely):
+    back up or export the agent, create and validate a replacement elsewhere, delete the old Remote
+    Docker agent, and then unshare. If unshare already happened, use the retained **Stop** or
+    **Delete** action. If the pin was reset or lost, Nora fails closed and keeps the agent record;
+    verify the host out of band, re-run **Test** where possible, or remove the runtime manually. For
+    an urgent incident, also close direct network access to the published ports and rotate the SSH
+    credential.
+
+    ***
+
+    **Remote host cannot be deleted**
+
+    Nora returns `409` while any non-deleted agent still references the host's `remote:<id>` target.
+    Migrate or delete those agents first. Unsharing a workspace does not remove the references.
+
+    After deletion succeeds, Nora permanently reserves the personal or platform host id. This
+    prevents a different machine and credential from later inheriting the old `remote:<id>` target.
+    If you need to register a replacement, choose a new label/id.
+
+    See [Remote Docker setup and limitations](/configuration/provisioner-backends/remote-docker) for
+    host compatibility, test scope, firewall rules, capacity limits, and sharing semantics.
+
+    ***
+
+    **Remote host key changed after an intentional rebuild or rotation**
+
+    First verify the replacement SSH host key through the machine console or another trusted
+    out-of-band channel. Then open the host's owning surface—**App -> Remote Hosts** for a personal
+    host or **Admin -> Remote Hosts** for a platform host—choose **Reset SSH pin**, type the exact host
+    label or id, and confirm. Nora clears the pin and previous Test state without changing the stored
+    credentials. Run **Test** immediately; deployments and active use remain blocked until the new
+    key is captured and pinned. If you cannot explain and independently verify the key change, do not
+    reset it.
+
+    ***
+
+    **A personal host is read-only in Admin**
+
+    This is intentional. Platform admins manage platform hosts under **Admin -> Remote Hosts**. A
+    personal host remains managed by its user owner under **App -> Remote Hosts**; its Admin fleet row
+    exposes only masked inventory metadata. Do not copy its credentials into a new platform record to
+    work around the ownership boundary.
 
   </Accordion>
 

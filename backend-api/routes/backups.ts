@@ -14,8 +14,14 @@ const { addBackupJob } = require("../redisQueue");
 const monitoring = require("../monitoring");
 const { createMutationFailureAuditMiddleware } = require("../auditLog");
 const { asyncHandler } = require("../middleware/errorHandler");
+const { requireSession } = require("../middleware/auth");
 
 const router = express.Router();
+// Backup archives can contain full agent state and restore creates new runtime
+// drafts. Do not let a workspace API key inherit its issuer's owner access.
+// This router is mounted at /agents alongside other routers, so scope the
+// guard to backup paths instead of intercepting unrelated /agents requests.
+router.use("/:id/backups", requireSession);
 router.use(createMutationFailureAuditMiddleware("backup"));
 
 router.get(

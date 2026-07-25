@@ -1,0 +1,8 @@
+# Keep a maintainer automatically requested on public pull requests.
+* @solomon2773
+
+# Shared-blast-radius and contributor-facing areas deserve explicit routing.
+/backend-api/integrations/ @solomon2773
+/workers/provisioner/backends/ @solomon2773
+/.github/ @solomon2773
+/docs/ @solomon2773

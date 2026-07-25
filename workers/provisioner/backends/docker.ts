@@ -1,17 +1,24 @@
 // @ts-nocheck
 const ProvisionerBackend = require("./interface");
+const { demuxDockerExecStream } = require("./dockerExecStream");
 const crypto = require("crypto");
 const path = require("path");
 const {
+  buildOpenClawAuthImportFromFileCommand,
+  buildOpenClawGatewayPairingCommand,
   buildOpenClawInstallCommand,
   buildOpenClawConfigMergeScript,
-  buildMcpServersConfig,
+  buildOpenClawManagedConfigEnvPruneCommand,
+  buildOpenClawManagedMcpServersCommand,
+  buildOpenClawManagedProviderStateCommand,
   buildOpenClawCustomProviders,
   buildIntegrationToolWrapperScript,
+  buildMcpServerWrapperScript,
   buildRuntimeBootstrapFiles,
   buildTemplatePayloadBootstrapFiles,
   buildRuntimeEnv,
-  foundryDefaultModel,
+  decodeOpenClawManagedMcpServers,
+  OPENCLAW_MANAGED_MCP_SERVERS_ENV,
 } = require("../../../agent-runtime/lib/runtimeBootstrap");
 const {
   OPENCLAW_GATEWAY_PORT,
@@ -27,8 +34,186 @@ const {
   DOCKER_CAPABILITIES,
   uptimeFromContainerInfo,
 } = require("./telemetry");
+const { isDockerPortBindConflict } = require("./dockerPublishedPorts");
 
 const pendingImageBuilds = new Map();
+const DEFAULT_AGENT_PIDS_LIMIT = 512;
+const DEFAULT_LOCAL_PUBLISH_HOST_IP = "127.0.0.1";
+const MANAGED_ENV_ROOT = "/opt/nora-managed-env";
+const MANAGED_ENV_STATE_PATH = `${MANAGED_ENV_ROOT}/state.json`;
+const MANAGED_ENV_APPLY_PATH = `${MANAGED_ENV_ROOT}/apply.sh`;
+const MANAGED_ENV_OPENCLAW_RECONCILE_PATH = `${MANAGED_ENV_ROOT}/reconcile-openclaw.sh`;
+const MANAGED_ENV_HERMES_PROFILE_PATH = "/etc/profile.d/nora-managed-env.sh";
+const OPENCLAW_STARTUP_PATH = "/opt/openclaw-runtime/start.sh";
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const OPENCLAW_MANAGED_MODEL_PROVIDER_IDS = Object.freeze([
+  "anthropic",
+  "openai",
+  "google",
+  "groq",
+  "mistral",
+  "deepseek",
+  "openrouter",
+  "together",
+  "cohere",
+  "xai",
+  "moonshot",
+  "zai",
+  "ollama",
+  "minimax",
+  "github-copilot",
+  "huggingface",
+  "cerebras",
+  "nvidia",
+  "azure-openai-responses",
+  "nora-demo",
+]);
+
+const MANAGED_ENV_APPLY_BLOCK = Object.freeze([
+  "# >>> NORA MANAGED ENV APPLY >>>",
+  `if [ -r ${MANAGED_ENV_APPLY_PATH} ]; then . ${MANAGED_ENV_APPLY_PATH} || exit $?; fi`,
+  "# <<< NORA MANAGED ENV APPLY <<<",
+]);
+const MANAGED_ENV_OPENCLAW_RECONCILE_BLOCK = Object.freeze([
+  "# >>> NORA MANAGED RUNTIME RECONCILE >>>",
+  `if [ -x ${MANAGED_ENV_OPENCLAW_RECONCILE_PATH} ]; then ${MANAGED_ENV_OPENCLAW_RECONCILE_PATH} || exit $?; fi`,
+  "# <<< NORA MANAGED RUNTIME RECONCILE <<<",
+]);
+
+function normalizeManagedEnvNames(names = []) {
+  const normalized = [];
+  for (const rawName of Array.isArray(names) ? names : []) {
+    const name = String(rawName || "").trim();
+    if (!name) continue;
+    if (!ENV_NAME_RE.test(name)) {
+      throw new Error(`Invalid managed runtime environment variable name: ${name}`);
+    }
+    if (!normalized.includes(name)) normalized.push(name);
+  }
+  return normalized;
+}
+
+function normalizeManagedEnvValues(envVars = {}) {
+  const normalized = Object.create(null);
+  for (const [rawName, rawValue] of Object.entries(envVars || {})) {
+    const name = String(rawName || "").trim();
+    if (!ENV_NAME_RE.test(name)) {
+      throw new Error(`Invalid runtime environment variable name: ${rawName}`);
+    }
+    const value = String(rawValue ?? "");
+    if (value.includes("\0")) {
+      throw new Error(`Runtime environment variable ${name} contains a NUL byte`);
+    }
+    normalized[name] = value;
+  }
+  return normalized;
+}
+
+function normalizeManagedEnvState(value = {}) {
+  const managedNames = normalizeManagedEnvNames(value?.managedNames);
+  const values = normalizeManagedEnvValues(value?.values);
+  return {
+    version: 1,
+    managedNames: [...new Set(managedNames)].sort(),
+    values,
+  };
+}
+
+function stripCustomProviderSecrets(customProviders = {}) {
+  return Object.fromEntries(
+    Object.entries(customProviders || {}).map(([providerId, providerConfig]) => {
+      const sanitized = { ...(providerConfig || {}) };
+      delete sanitized.apiKey;
+      delete sanitized.api_key;
+      return [providerId, sanitized];
+    }),
+  );
+}
+
+function sanitizeBootstrapGatewayConfig(gatewayConfig = {}) {
+  const sanitized = JSON.parse(JSON.stringify(gatewayConfig || {}));
+  delete sanitized.env;
+  if (sanitized.gateway?.auth && typeof sanitized.gateway.auth === "object") {
+    delete sanitized.gateway.auth.password;
+    delete sanitized.gateway.auth.token;
+  }
+  if (sanitized.models?.providers && typeof sanitized.models.providers === "object") {
+    for (const provider of Object.values(sanitized.models.providers)) {
+      if (provider && typeof provider === "object") delete provider.apiKey;
+    }
+  }
+  if (sanitized.mcpServers && typeof sanitized.mcpServers === "object") {
+    for (const server of Object.values(sanitized.mcpServers)) {
+      if (server && typeof server === "object") delete server.env;
+    }
+  }
+  return sanitized;
+}
+
+function buildManagedEnvApplyScript() {
+  return [
+    "#!/bin/sh",
+    "# Source this file; it intentionally changes only Nora's managed names.",
+    `export NORA_MANAGED_ENV_STATE=${JSON.stringify(MANAGED_ENV_STATE_PATH)}`,
+    'if [ ! -r "$NORA_MANAGED_ENV_STATE" ]; then unset NORA_MANAGED_ENV_STATE; return 0 2>/dev/null || exit 0; fi',
+    // Render into a temp file first rather than piping this heredoc straight into
+    // `node <<'EOF' ... EOF)`: nesting a heredoc inside `$(...)` trips the lexer on
+    // some /bin/sh implementations (observed: bash 3.2), which misparses quotes in
+    // the heredoc body and fails with "unexpected EOF while looking for matching '".
+    'nora_managed_env_render="$(mktemp)" || return $?',
+    "cat <<'__NORA_RENDER_MANAGED_ENV__' > \"$nora_managed_env_render\"",
+    "const fs = require('fs');",
+    "const statePath = process.env.NORA_MANAGED_ENV_STATE;",
+    "const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));",
+    "const validName = /^[A-Za-z_][A-Za-z0-9_]*$/;",
+    "const names = Array.isArray(state.managedNames) ? state.managedNames : [];",
+    "const values = state && state.values && typeof state.values === 'object' && !Array.isArray(state.values) ? state.values : {};",
+    'const quote = (value) => "\'" + String(value).replace(/\'/g, "\'\\"\'\\"\'") + "\'";',
+    "for (const name of names) {",
+    "  if (!validName.test(String(name))) throw new Error('Invalid Nora managed environment name');",
+    "  process.stdout.write('unset ' + name + '\\n');",
+    "}",
+    "for (const [name, value] of Object.entries(values)) {",
+    "  if (!validName.test(name)) throw new Error('Invalid Nora managed environment name');",
+    "  process.stdout.write('export ' + name + '=' + quote(value) + '\\n');",
+    "}",
+    "__NORA_RENDER_MANAGED_ENV__",
+    'nora_managed_env_commands="$(node "$nora_managed_env_render")" || { rm -f "$nora_managed_env_render"; return $?; }',
+    'rm -f "$nora_managed_env_render"',
+    'eval "$nora_managed_env_commands"',
+    "unset nora_managed_env_commands NORA_MANAGED_ENV_STATE nora_managed_env_render",
+    "",
+  ].join("\n");
+}
+
+function ensureOpenClawManagedStartupHooks(source) {
+  let script = String(source || "");
+  if (!script.trim()) throw new Error("OpenClaw startup script is empty");
+
+  if (!script.includes(MANAGED_ENV_APPLY_BLOCK[0])) {
+    const firstNewline = script.indexOf("\n");
+    const insertion = `${MANAGED_ENV_APPLY_BLOCK.join("\n")}\n`;
+    script =
+      firstNewline >= 0
+        ? `${script.slice(0, firstNewline + 1)}${insertion}${script.slice(firstNewline + 1)}`
+        : `${script}\n${insertion}`;
+  }
+
+  if (!script.includes(MANAGED_ENV_OPENCLAW_RECONCILE_BLOCK[0])) {
+    const lines = script.split("\n");
+    let index = lines.findIndex((line) => line.includes("/opt/openclaw-runtime/lib/agent.ts"));
+    if (index < 0) {
+      index = lines.findIndex((line) => /exec .*gateway/.test(line));
+    }
+    if (index < 0) {
+      throw new Error("Could not locate the OpenClaw launch boundary for managed reconciliation");
+    }
+    lines.splice(index, 0, ...MANAGED_ENV_OPENCLAW_RECONCILE_BLOCK);
+    script = lines.join("\n");
+  }
+
+  return script;
+}
 
 function loadDockerCtor() {
   return require(
@@ -59,6 +244,12 @@ function throwIfAborted(abortSignal, stage = "docker create") {
   throw reason;
 }
 
+function isDockerNotFound(error) {
+  return (
+    error?.statusCode === 404 || /no such container|not found/i.test(String(error?.message || ""))
+  );
+}
+
 function safeContainerName(prefix, name, id) {
   const suffix =
     String(id || Date.now().toString(36))
@@ -82,6 +273,40 @@ class DockerBackend extends ProvisionerBackend {
     const Docker = loadDockerCtor();
     this.docker = new Docker({ socketPath: "/var/run/docker.sock" });
     this._composeNetwork = null; // cached
+  }
+
+  // Local Docker ports are intentionally host-loopback-only by default. An
+  // operator can opt into another concrete host interface for a standalone
+  // install, while remote Docker overrides this hook because its published
+  // ports must be reachable across the registered host network.
+  _publishedPortHostIp() {
+    const configured = String(process.env.DOCKER_AGENT_BIND_IP || "").trim();
+    if (!configured) return DEFAULT_LOCAL_PUBLISH_HOST_IP;
+
+    const net = require("node:net");
+    if (net.isIP(configured)) return configured;
+
+    console.warn(
+      `[docker] Ignoring invalid DOCKER_AGENT_BIND_IP=${configured}; using ${DEFAULT_LOCAL_PUBLISH_HOST_IP}`,
+    );
+    return DEFAULT_LOCAL_PUBLISH_HOST_IP;
+  }
+
+  async isHostPortBound(port, { ignoreContainerName } = {}) {
+    const candidate = Number(port);
+    if (!Number.isInteger(candidate) || candidate < 1 || candidate > 65535) return false;
+
+    const ignoredName = String(ignoreContainerName || "").trim();
+    const containers = await this.docker.listContainers({ all: false });
+    return containers.some((container) => {
+      const names = Array.isArray(container?.Names)
+        ? container.Names.map((name) => String(name || "").replace(/^\//, ""))
+        : [];
+      if (ignoredName && names.includes(ignoredName)) return false;
+      return Array.isArray(container?.Ports)
+        ? container.Ports.some((binding) => Number(binding?.PublicPort) === candidate)
+        : false;
+    });
   }
 
   /**
@@ -229,7 +454,8 @@ class DockerBackend extends ProvisionerBackend {
     }
   }
 
-  _buildBootstrapFiles({ gatewayConfig, pairedJson, buildAuthScript, templatePayload }) {
+  _buildBootstrapFiles({ gatewayConfig, buildAuthScript, templatePayload }) {
+    const sanitizedGatewayConfig = sanitizeBootstrapGatewayConfig(gatewayConfig);
     const runtimeFiles = buildRuntimeBootstrapFiles().map(({ relPath, source }) => ({
       name: `opt/openclaw-runtime/lib/${relPath}`,
       content: source,
@@ -239,20 +465,20 @@ class DockerBackend extends ProvisionerBackend {
 
     const startupScript = [
       "#!/bin/sh",
+      ...MANAGED_ENV_APPLY_BLOCK,
       "set -eu",
       buildOpenClawInstallCommand([getStandardDockerPackageSpec()]),
       "mkdir -p ~/.openclaw/devices",
-      ...buildOpenClawConfigMergeScript(gatewayConfig),
-      "cat <<'__NORA_PAIRED_DEVICES__' > ~/.openclaw/devices/paired.json",
-      pairedJson,
-      "__NORA_PAIRED_DEVICES__",
-      "printf '{}' > ~/.openclaw/devices/pending.json",
+      ...buildOpenClawConfigMergeScript(sanitizedGatewayConfig),
+      buildOpenClawGatewayPairingCommand(),
       "mkdir -p /var/log /root/.openclaw/workspace /root/.openclaw/agents/main/agent",
       "touch /var/log/openclaw-agent.log",
+      ...MANAGED_ENV_OPENCLAW_RECONCILE_BLOCK,
       '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/agent.ts >> /var/log/openclaw-agent.log 2>&1 &',
       "if [ ! -f /root/.openclaw/agents/main/agent/auth-profiles.json ]; then",
       '  "$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js',
       "fi",
+      buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
       `exec "$OPENCLAW_BIN" gateway --port ${OPENCLAW_GATEWAY_PORT}`,
       "",
     ].join("\n");
@@ -263,6 +489,11 @@ class DockerBackend extends ProvisionerBackend {
       {
         name: "usr/local/bin/nora-integration-tool",
         content: buildIntegrationToolWrapperScript(),
+        mode: 0o755,
+      },
+      {
+        name: "usr/local/bin/nora-mcp-server",
+        content: buildMcpServerWrapperScript(),
         mode: 0o755,
       },
       {
@@ -313,12 +544,214 @@ class DockerBackend extends ProvisionerBackend {
     }
 
     for (const file of files) {
-      await addEntry({ name: file.name, mode: file.mode || 0o644 }, file.content);
+      await addEntry(
+        {
+          name: file.name,
+          mode: file.mode || 0o644,
+          ...(Number.isInteger(file.uid) ? { uid: file.uid } : {}),
+          ...(Number.isInteger(file.gid) ? { gid: file.gid } : {}),
+        },
+        file.content,
+      );
     }
 
     pack.finalize();
     const archive = await archivePromise;
     await container.putArchive(archive, { path: "/" });
+  }
+
+  async _readContainerFile(container, filePath) {
+    const archive = await container.getArchive({ path: filePath });
+    const tar = loadTarStream();
+    const extract = tar.extract();
+    return new Promise((resolve, reject) => {
+      let found = false;
+      extract.on("entry", (header, stream, next) => {
+        const chunks = [];
+        stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        stream.on("error", reject);
+        stream.on("end", () => {
+          if (!found && header?.type !== "directory") {
+            found = true;
+            resolve(Buffer.concat(chunks).toString("utf8"));
+          }
+          next();
+        });
+        stream.resume();
+      });
+      extract.on("finish", () => {
+        if (!found) reject(new Error(`Container file ${filePath} was not present in its archive`));
+      });
+      extract.on("error", reject);
+      archive.on("error", reject);
+      archive.pipe(extract);
+    });
+  }
+
+  async _readManagedEnvState(container) {
+    try {
+      const source = await this._readContainerFile(container, MANAGED_ENV_STATE_PATH);
+      return normalizeManagedEnvState(JSON.parse(source));
+    } catch (error) {
+      if (
+        isDockerNotFound(error) ||
+        /not present|no such file/i.test(String(error?.message || ""))
+      ) {
+        return normalizeManagedEnvState();
+      }
+      throw error;
+    }
+  }
+
+  _managedOpenClawConfigPaths() {
+    return {
+      configPath: "/root/.openclaw/openclaw.json",
+      markerPath: "/root/.openclaw/.nora-managed-default-model",
+    };
+  }
+
+  async _managedEnvFileOwnership(_container) {
+    return {};
+  }
+
+  async _initialManagedEnvFileOwnership(_container) {
+    return {};
+  }
+
+  async _containerUserOwnership(container, username) {
+    const passwd = await this._readContainerFile(container, "/etc/passwd");
+    const fields = passwd
+      .split("\n")
+      .find((line) => line.startsWith(`${username}:`))
+      ?.split(":");
+    const uid = Number(fields?.[2]);
+    const gid = Number(fields?.[3]);
+    if (!Number.isInteger(uid) || uid < 0 || !Number.isInteger(gid) || gid < 0) {
+      throw new Error(`Container image is missing the required ${username} runtime user`);
+    }
+    return { uid, gid };
+  }
+
+  _buildOpenClawManagedReconcileScript(state) {
+    const { configPath, markerPath } = this._managedOpenClawConfigPaths();
+    const managedNames = new Set(state.managedNames);
+    const shouldManageProviderConfig = [
+      "MICROSOFT_FOUNDRY_API_KEY",
+      "MICROSOFT_FOUNDRY_BASE_URL",
+      "MICROSOFT_FOUNDRY_API_VERSION",
+      "MICROSOFT_FOUNDRY_DEPLOYMENT",
+      "NORA_DEMO_LLM_TOKEN",
+      "NORA_DEMO_LLM_BASE_URL",
+      "NORA_DEFAULT_OPENCLAW_MODEL",
+    ].some((name) => managedNames.has(name));
+    const providerStateCommand = shouldManageProviderConfig
+      ? buildOpenClawManagedProviderStateCommand({
+          customProviders: stripCustomProviderSecrets(buildOpenClawCustomProviders(state.values)),
+          defaultModel: state.values.NORA_DEFAULT_OPENCLAW_MODEL || null,
+          managedModelProviderIds: OPENCLAW_MANAGED_MODEL_PROVIDER_IDS,
+          configPath,
+          markerPath,
+        })
+      : "true";
+    const mcpStateCommand = managedNames.has(OPENCLAW_MANAGED_MCP_SERVERS_ENV)
+      ? buildOpenClawManagedMcpServersCommand(
+          decodeOpenClawManagedMcpServers(state.values[OPENCLAW_MANAGED_MCP_SERVERS_ENV] || ""),
+          { configPath },
+        )
+      : "true";
+
+    return [
+      "#!/bin/sh",
+      "set -eu",
+      buildOpenClawManagedConfigEnvPruneCommand([...state.managedNames, "OPENCLAW_GATEWAY_TOKEN"], {
+        configPath,
+      }),
+      providerStateCommand,
+      mcpStateCommand,
+      "if [ -f /opt/openclaw-runtime/lib/build-auth.js ]; then",
+      '  "$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js',
+      "fi",
+      "",
+    ].join("\n");
+  }
+
+  async updateEnv(containerId, envVars = {}, options = {}) {
+    const entries = normalizeManagedEnvValues(envVars);
+    const requestedManagedNames = normalizeManagedEnvNames(options?.managedEnvNames);
+    if (Object.keys(entries).length === 0 && requestedManagedNames.length === 0) return;
+
+    const container = this.docker.getContainer(containerId);
+    // create() calls this after uploading the bootstrap archive but before the
+    // container's first start. No prior managed state can exist on that path,
+    // and the uploaded startup script already contains the managed hooks, so
+    // avoid reading either file back over Docker (or Remote Docker over SSH).
+    const initializeManagedState = options?.initializeManagedState === true;
+    const previous = initializeManagedState
+      ? normalizeManagedEnvState()
+      : await this._readManagedEnvState(container);
+    const replaceManagedState = options?.replaceManagedState === true;
+    const managedNames = new Set(previous.managedNames);
+    const values = Object.assign(Object.create(null), previous.values);
+
+    for (const name of requestedManagedNames) {
+      managedNames.add(name);
+      if (replaceManagedState) delete values[name];
+    }
+    for (const [name, value] of Object.entries(entries)) {
+      values[name] = value;
+    }
+
+    const state = normalizeManagedEnvState({ managedNames: [...managedNames], values });
+    const managedFileOwnership = initializeManagedState
+      ? await this._initialManagedEnvFileOwnership(container)
+      : await this._managedEnvFileOwnership(container);
+    const files = [
+      {
+        name: MANAGED_ENV_STATE_PATH.replace(/^\//, ""),
+        content: `${JSON.stringify(state)}\n`,
+        mode: 0o600,
+        ...managedFileOwnership,
+      },
+      {
+        name: MANAGED_ENV_APPLY_PATH.replace(/^\//, ""),
+        content: buildManagedEnvApplyScript(),
+        mode: 0o700,
+        ...managedFileOwnership,
+      },
+    ];
+
+    if (String(options?.runtimeFamily || "openclaw").toLowerCase() === "hermes") {
+      files.push({
+        name: MANAGED_ENV_HERMES_PROFILE_PATH.replace(/^\//, ""),
+        content: [
+          "# Nora exact managed environment replacement for Hermes login startup.",
+          `if [ -r ${MANAGED_ENV_APPLY_PATH} ]; then . ${MANAGED_ENV_APPLY_PATH} || return $?; fi`,
+          "",
+        ].join("\n"),
+        mode: 0o644,
+      });
+    } else {
+      files.push({
+        name: MANAGED_ENV_OPENCLAW_RECONCILE_PATH.replace(/^\//, ""),
+        content: this._buildOpenClawManagedReconcileScript(state),
+        mode: 0o700,
+        ...managedFileOwnership,
+      });
+      if (!initializeManagedState) {
+        const currentStartup = await this._readContainerFile(container, OPENCLAW_STARTUP_PATH);
+        files.push({
+          name: OPENCLAW_STARTUP_PATH.replace(/^\//, ""),
+          content: ensureOpenClawManagedStartupHooks(currentStartup),
+          mode: 0o755,
+          ...managedFileOwnership,
+        });
+      }
+    }
+
+    await this._putBootstrapFiles(container, files);
+    console.log(
+      `[docker] Replaced ${requestedManagedNames.length} managed env name(s) for container ${containerId}`,
+    );
   }
 
   async create(config) {
@@ -332,9 +765,10 @@ class DockerBackend extends ProvisionerBackend {
       env,
       container_name,
       templatePayload,
-      mcpServers: mcpServerEntries,
+      credentialManagedEnvNames = [],
       abortSignal,
       gatewayHostPort: allocatedGatewayPort,
+      runtimeHostPort: allocatedRuntimePort,
     } = config;
     const containerName = container_name || safeContainerName("nora-oclaw", name, id);
     let container = null;
@@ -387,72 +821,15 @@ class DockerBackend extends ProvisionerBackend {
     // Generate per-agent Gateway auth token (32 bytes = 256 bits of entropy)
     const gatewayToken = crypto.randomBytes(32).toString("hex");
 
-    // Derive deterministic Ed25519 device identity from gatewayToken —
-    // same derivation used by gatewayProxy.ts so both sides share the keypair.
-    const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
-    const PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-    const seed = crypto
-      .createHash("sha256")
-      .update("openclaw-device:" + gatewayToken)
-      .digest();
-    const privateDer = Buffer.concat([PKCS8_PREFIX, seed]);
-    const privateKey = crypto.createPrivateKey({ key: privateDer, format: "der", type: "pkcs8" });
-    const publicKey = crypto.createPublicKey(privateKey);
-    const spki = publicKey.export({ type: "spki", format: "der" });
-    const rawPub = spki.subarray(ED25519_SPKI_PREFIX.length);
-    const deviceId = crypto.createHash("sha256").update(rawPub).digest("hex");
-    const pubB64 = rawPub
-      .toString("base64")
-      .replaceAll("+", "-")
-      .replaceAll("/", "_")
-      .replace(/=+$/g, "");
-
-    // Pre-approved device pairing JSON — gateway reads this on startup so the
-    // proxy's first connect (using the same deterministic identity) is already
-    // paired and receives full operator scopes.
-    const allScopes = [
-      "operator.admin",
-      "operator.read",
-      "operator.write",
-      "operator.approvals",
-      "operator.pairing",
-    ];
-    const nowMs = Date.now();
-    const pairedJson = JSON.stringify({
-      [deviceId]: {
-        deviceId,
-        publicKey: pubB64,
-        platform: "linux",
-        clientId: "gateway-client",
-        clientMode: "backend",
-        role: "operator",
-        roles: ["operator"],
-        scopes: allScopes,
-        approvedScopes: allScopes,
-        tokens: {
-          operator: {
-            token: crypto.randomBytes(32).toString("hex"),
-            role: "operator",
-            scopes: allScopes,
-            createdAtMs: nowMs,
-          },
-        },
-        createdAtMs: nowMs,
-        approvedAtMs: nowMs,
-      },
-    });
-
     // Convert env object to array of KEY=VALUE + inject runtime/gateway contract vars.
     // Dockerode's `Env:` replaces the image's ENV rather than merging, so we
     // always declare the openclaw + tsx binary paths explicitly — the bootstrap
     // fast-path check won't find them otherwise. The Nora OpenClaw agent image
     // installs under `/usr/local/bin` (npm global prefix of node:24-slim).
     const envArray = Object.entries({
-      ...(env || {}),
       ...buildRuntimeEnv(),
       OPENCLAW_CLI_PATH: "/usr/local/bin/openclaw",
       OPENCLAW_TSX_BIN: "/usr/local/bin/tsx",
-      OPENCLAW_GATEWAY_TOKEN: gatewayToken,
     }).map(([k, v]) => `${k}=${v}`);
 
     // Build auth-profiles.json from any LLM API keys in env
@@ -480,32 +857,6 @@ class DockerBackend extends ProvisionerBackend {
       // real provider key wins the first-configured default-model heuristic.
       NORA_DEMO_LLM_TOKEN: "nora-demo",
     };
-    // Build auth-profiles at CREATION TIME to determine the default model for setModelCmd.
-    // This is only used for model selection — the actual auth-profiles.json on disk is
-    // written dynamically at startup via authProfilesCmd below, so it stays correct
-    // on every container restart without baking in stale or missing keys.
-    const authProfiles = {
-      version: 1,
-      profiles: {},
-      order: {},
-      lastGood: {},
-    };
-    const configuredProviders = [];
-    if (env) {
-      for (const [envKey, provider] of Object.entries(llmKeyMap)) {
-        if (env[envKey]) {
-          const profileId = `${provider}:default`;
-          configuredProviders.push(provider);
-          authProfiles.profiles[profileId] = {
-            type: "api_key",
-            provider,
-            key: env[envKey],
-          };
-          authProfiles.order[provider] = [profileId];
-          authProfiles.lastGood[provider] = profileId;
-        }
-      }
-    }
     // Dynamic auth-profiles builder: a node script written into the container
     // before first boot. Because it reads env vars at runtime (not creation time),
     // it stays correct on every restart — even after keys were injected post-creation.
@@ -525,44 +876,6 @@ class DockerBackend extends ProvisionerBackend {
       `require("fs").writeFileSync("/root/.openclaw/agents/main/agent/auth-profiles.json",JSON.stringify(s));` +
       `require("fs").chmodSync("/root/.openclaw/agents/main/agent/auth-profiles.json",0o600);`;
 
-    // Determine default model from the first auth profile provider
-    const providerModelDefaults = {
-      anthropic: "anthropic/claude-sonnet-4-5",
-      openai: "openai/gpt-5.5",
-      google: "google/gemini-3-flash-preview",
-      groq: "groq/llama-3.3-70b-versatile",
-      mistral: "mistral/mistral-large-latest",
-      deepseek: "deepseek/deepseek-chat",
-      openrouter: "openrouter/auto",
-      together: "together/moonshotai/Kimi-K2.5",
-      cohere: "cohere/command-r-plus",
-      xai: "xai/grok-4",
-      nvidia: "nvidia/nvidia/nemotron-3-super-120b-a12b",
-      moonshot: "moonshot/kimi-k2.5",
-      zai: "zai/glm-5",
-      minimax: "minimax/MiniMax-M2.7",
-      // Foundry model strings must use OpenClaw's `azure-openai-responses`
-      // provider id (see buildOpenClawCustomProviders) — `microsoft-foundry/...`
-      // throws "Unknown model" upstream. The deployment name is resolved from
-      // MICROSOFT_FOUNDRY_DEPLOYMENT (arbitrary per Azure resource), falling
-      // back to "gpt-5.5".
-      "microsoft-foundry": foundryDefaultModel(env || {}),
-      "nora-demo": "nora-demo/nora-demo-1",
-    };
-    const firstProvider = configuredProviders[0];
-    // The worker computes NORA_DEFAULT_OPENCLAW_MODEL from the user's explicit
-    // default provider row; honor that before falling back to the
-    // first-configured-key heuristic (which only reflects env map order).
-    const defaultModel =
-      (env && env.NORA_DEFAULT_OPENCLAW_MODEL) ||
-      (firstProvider ? providerModelDefaults[firstProvider] : undefined);
-
-    // Set default model in the config file BEFORE gateway starts (not via background CLI after).
-    // Writing it into openclaw.json pre-launch avoids the config-change file watcher triggering
-    // a SIGUSR1 restart loop when `openclaw models set` rewrites the config post-boot.
-    const safeDefaultModel =
-      defaultModel && /^[a-zA-Z0-9_\-/.]+$/.test(defaultModel) ? defaultModel : null;
-
     // Use the port the worker reserved for this agent's host (collision-safe,
     // BYOC Phase B). Fall back to the legacy deterministic hash only if no
     // allocation was passed (older callers / safety net).
@@ -571,7 +884,14 @@ class DockerBackend extends ProvisionerBackend {
       Number.isInteger(allocatedPort) && allocatedPort >= 1 && allocatedPort <= 65535
         ? allocatedPort
         : 19000 + ((parseInt(id.replace(/\D/g, "").slice(0, 4)) || 0) % 1000);
-
+    const allocatedRuntimePortNumber = Number(allocatedRuntimePort);
+    const runtimeHostPort =
+      Number.isInteger(allocatedRuntimePortNumber) &&
+      allocatedRuntimePortNumber >= 1 &&
+      allocatedRuntimePortNumber <= 65535
+        ? allocatedRuntimePortNumber
+        : null;
+    const publishedPortHostIp = this._publishedPortHostIp(config);
     const allowedOrigins = new Set([
       "http://localhost:8080",
       "http://127.0.0.1:8080",
@@ -608,34 +928,14 @@ class DockerBackend extends ProvisionerBackend {
         bind: "lan",
         mode: "local",
         reload: { mode: "hot" },
-        auth: {
-          password: gatewayToken,
-        },
         trustedProxies: ["127.0.0.1", "::1"],
         controlUi: {
           allowedOrigins: [...allowedOrigins],
         },
       },
     };
-    if (safeDefaultModel) {
-      gatewayConfig.agents = { defaults: { model: safeDefaultModel } };
-    }
-    // Register OpenAI-compatible providers OpenClaw doesn't ship natively
-    // (Microsoft Foundry, today). Without this, model strings like
-    // `microsoft-foundry/<deployment>` resolve to "Unknown model" upstream.
-    const customProviders = buildOpenClawCustomProviders(env || {});
-    if (Object.keys(customProviders).length > 0) {
-      gatewayConfig.models = { providers: customProviders };
-    }
-    // Per-agent MCP servers (credential-resolved by the worker). OpenClaw spawns
-    // each over stdio; merged into openclaw.json alongside the other config.
-    if (Array.isArray(mcpServerEntries) && mcpServerEntries.length > 0) {
-      gatewayConfig.mcpServers = buildMcpServersConfig(mcpServerEntries);
-    }
-
     const bootstrapFiles = this._buildBootstrapFiles({
       gatewayConfig,
-      pairedJson,
       buildAuthScript,
       templatePayload,
     });
@@ -670,10 +970,17 @@ class DockerBackend extends ProvisionerBackend {
         .slice(0, 63) || `agent-${id}`;
 
     const volumeName = `nora_agent_state_${id}`;
-    try {
-      await this.docker.createVolume({ Name: volumeName });
-    } catch (e) {
-      if (!String(e.message).includes("already exists")) throw e;
+    // The agent's real state root. Without this, /root/.openclaw lives on the
+    // container writable layer and is lost whenever the container is
+    // recreated (image update, redeploy) — the /mnt volume only covers the
+    // integration-tool state dir.
+    const homeVolumeName = `nora_agent_home_${id}`;
+    for (const volume of [volumeName, homeVolumeName]) {
+      try {
+        await this.docker.createVolume({ Name: volume });
+      } catch (e) {
+        if (!String(e.message).includes("already exists")) throw e;
+      }
     }
 
     try {
@@ -693,12 +1000,24 @@ class DockerBackend extends ProvisionerBackend {
           Memory: (ram_mb || 2048) * 1024 * 1024,
           // Restart policy
           RestartPolicy: { Name: "unless-stopped" },
+          // Standard agents do not need ambient Linux capabilities. Bound the
+          // process tree as well so a runaway tool cannot exhaust host PIDs.
+          CapDrop: ["ALL"],
+          SecurityOpt: ["no-new-privileges:true"],
+          PidsLimit: DEFAULT_AGENT_PIDS_LIMIT,
           // Publish gateway port for direct browser access (control UI).
           // Use a deterministic port based on agent ID to survive container restarts.
-          PortBindings: { "18789/tcp": [{ HostPort: String(hostPort) }] },
+          PortBindings: {
+            "18789/tcp": [{ HostIp: publishedPortHostIp, HostPort: String(hostPort) }],
+            ...(runtimeHostPort
+              ? {
+                  "9090/tcp": [{ HostIp: publishedPortHostIp, HostPort: String(runtimeHostPort) }],
+                }
+              : {}),
+          },
           // DNS servers for internet access from within the container
           Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
-          Binds: [`${volumeName}:/mnt/nora-agent-state`],
+          Binds: [`${volumeName}:/mnt/nora-agent-state`, `${homeVolumeName}:/root/.openclaw`],
         },
         NetworkingConfig: composeNetwork
           ? {
@@ -715,6 +1034,20 @@ class DockerBackend extends ProvisionerBackend {
 
       throwIfAborted(abortSignal, `docker bootstrap for ${containerName}`);
       await this._putBootstrapFiles(container, bootstrapFiles);
+      // User/provider/integration values must never enter immutable Docker
+      // Config.Env. Stage them in Nora's owner-only managed state while the
+      // container is still stopped; the startup hook applies the exact set
+      // before auth/config bootstrap and gateway launch.
+      await this.updateEnv(
+        container.id,
+        { ...(env || {}), OPENCLAW_GATEWAY_TOKEN: gatewayToken },
+        {
+          managedEnvNames: credentialManagedEnvNames,
+          replaceManagedState: true,
+          initializeManagedState: true,
+          runtimeFamily: "openclaw",
+        },
+      );
       throwIfAborted(abortSignal, `docker start for ${containerName}`);
       await container.start();
 
@@ -739,11 +1072,24 @@ class DockerBackend extends ProvisionerBackend {
       // Get the published host port for the gateway (for direct browser access to control UI)
       const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
       const gatewayHostPort = portBindings?.[0]?.HostPort || null;
+      const runtimePortBindings = info.NetworkSettings?.Ports?.["9090/tcp"];
+      const publishedRuntimeHostPort = runtimePortBindings?.[0]?.HostPort || null;
 
       console.log(
-        `[docker] Container ${containerName} (${container.id}) started at ${host} (gateway port 18789, host port ${gatewayHostPort || "none"})`,
+        `[docker] Container ${containerName} (${container.id}) started at ${host} (gateway port 18789, host port ${gatewayHostPort || "none"}, runtime host port ${publishedRuntimeHostPort || "none"})`,
       );
-      return { containerId: containerName, host, gatewayToken, containerName, gatewayHostPort };
+      return {
+        containerId: containerName,
+        host,
+        gatewayToken,
+        containerName,
+        gatewayHostPort,
+        // Keep control-plane and worker traffic on the container network even
+        // though the optional direct browser port is host-loopback-only.
+        gatewayHost: host,
+        gatewayPort: OPENCLAW_GATEWAY_PORT,
+        runtimeHostPort: publishedRuntimeHostPort,
+      };
     } catch (error) {
       if (container) {
         try {
@@ -752,41 +1098,81 @@ class DockerBackend extends ProvisionerBackend {
           // Best effort cleanup only.
         }
       }
-      try {
-        await this.docker.getVolume(volumeName).remove({ force: true });
-      } catch {
-        // Best effort cleanup only.
+      // A bind conflict is recoverable locally: the worker can persist a
+      // replacement reservation and retry create(). Keep named volumes on every
+      // bind conflict, including remote Docker failures, so a port collision
+      // never erases durable agent state while the operator resolves it.
+      if (!isDockerPortBindConflict(error)) {
+        for (const volume of [volumeName, homeVolumeName]) {
+          try {
+            await this.docker.getVolume(volume).remove({ force: true });
+          } catch {
+            // Best effort cleanup only.
+          }
+        }
       }
       throw error;
     }
   }
 
-  async destroy(containerId) {
+  async destroy(containerId, { agentId: requestedAgentId } = {}) {
     console.log(`[docker] Destroying container ${containerId}`);
     const container = this.docker.getContainer(containerId);
 
-    let agentId = null;
+    let agentId = requestedAgentId || null;
+    let containerExists = true;
     try {
       const info = await container.inspect();
-      agentId = info.Config?.Labels?.["openclaw.agent.id"];
-    } catch {
-      // Container may already be gone; proceed to volume cleanup using what we have.
+      agentId = info.Config?.Labels?.["openclaw.agent.id"] || agentId;
+    } catch (error) {
+      if (!isDockerNotFound(error)) throw error;
+      containerExists = false;
     }
 
-    try {
-      await container.stop({ t: 10 });
-    } catch (e) {
-      // Already stopped
+    if (containerExists) {
+      try {
+        await container.stop({ t: 10 });
+      } catch (e) {
+        // Already stopped
+      }
+      try {
+        await container.remove({ force: true });
+        console.log(`[docker] Container ${containerId} removed`);
+      } catch (error) {
+        if (!isDockerNotFound(error)) throw error;
+      }
+    } else {
+      console.log(`[docker] Container ${containerId} already absent`);
     }
-    await container.remove({ force: true });
-    console.log(`[docker] Container ${containerId} removed`);
 
     if (agentId) {
-      try {
-        await this.docker.getVolume(`nora_agent_state_${agentId}`).remove({ force: true });
-        console.log(`[docker] Volume nora_agent_state_${agentId} removed`);
-      } catch (e) {
-        console.warn(`[docker] Could not remove volume for agent ${agentId}: ${e.message}`);
+      const volumeCleanupFailures = [];
+      for (const volume of [`nora_agent_state_${agentId}`, `nora_agent_home_${agentId}`]) {
+        try {
+          await this.docker.getVolume(volume).remove({ force: true });
+          console.log(`[docker] Volume ${volume} removed`);
+        } catch (error) {
+          if (isDockerNotFound(error)) {
+            console.log(`[docker] Volume ${volume} already absent`);
+            continue;
+          }
+          console.warn(
+            `[docker] Could not remove volume ${volume} for agent ${agentId}: ${error.message}`,
+          );
+          volumeCleanupFailures.push({ volume, error });
+        }
+      }
+      if (volumeCleanupFailures.length > 0) {
+        const failedVolumes = volumeCleanupFailures.map(({ volume }) => volume);
+        const error = new Error(
+          `Failed to remove Nora-managed Docker ${failedVolumes.length === 1 ? "volume" : "volumes"} ` +
+            `${failedVolumes.join(", ")} for agent ${agentId}. The container is absent, but durable ` +
+            "state may remain; retry deletion after correcting Docker volume access.",
+        );
+        error.code = "DOCKER_VOLUME_CLEANUP_FAILED";
+        error.volumeNames = failedVolumes;
+        error.cause = volumeCleanupFailures[0].error;
+        throw error;
       }
     }
   }
@@ -803,6 +1189,31 @@ class DockerBackend extends ProvisionerBackend {
     } catch {
       return { running: false, uptime: 0, cpu: null, memory: null };
     }
+  }
+
+  async inspectEnv(containerId, { envNames = [] } = {}) {
+    const container = this.docker.getContainer(containerId);
+    const info = await container.inspect();
+    const allowed = new Set(
+      (Array.isArray(envNames) ? envNames : [])
+        .map((name) => String(name || "").trim())
+        .filter(Boolean),
+    );
+    const env = {};
+    for (const entry of Array.isArray(info?.Config?.Env) ? info.Config.Env : []) {
+      const separator = String(entry).indexOf("=");
+      const key = separator >= 0 ? String(entry).slice(0, separator) : String(entry);
+      if (!key || (allowed.size > 0 && !allowed.has(key))) continue;
+      env[key] = separator >= 0 ? String(entry).slice(separator + 1) : "";
+    }
+    const managedState = await this._readManagedEnvState(container);
+    for (const name of managedState.managedNames) {
+      if (allowed.size > 0 && !allowed.has(name)) continue;
+      env[name] = Object.prototype.hasOwnProperty.call(managedState.values, name)
+        ? managedState.values[name]
+        : "";
+    }
+    return env;
   }
 
   async stats(containerId) {
@@ -868,21 +1279,29 @@ class DockerBackend extends ProvisionerBackend {
 
   async exec(containerId, opts = {}) {
     const container = this.docker.getContainer(containerId);
+    const tty = opts.tty !== false;
     const execInstance = await container.exec({
       Cmd: opts.cmd || ["/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash || exec sh"],
       AttachStdin: true,
       AttachStdout: true,
       AttachStderr: true,
-      Tty: opts.tty !== false,
+      Tty: tty,
       Env: opts.env || ["TERM=xterm-256color"],
     });
-    const stream = await execInstance.start({
+    const rawStream = await execInstance.start({
       hijack: true,
       stdin: true,
-      Tty: opts.tty !== false,
+      Tty: tty,
     });
-    return { exec: execInstance, stream };
+    if (tty) return { exec: execInstance, stream: rawStream };
+
+    // Docker multiplexes stdout/stderr behind 8-byte frame headers whenever
+    // TTY is disabled. Demux at the adapter boundary so command consumers see
+    // the same plain byte stream as Kubernetes and Proxmox adapters.
+    return { exec: execInstance, stream: demuxDockerExecStream(this.docker, rawStream) };
   }
 }
 
 module.exports = DockerBackend;
+module.exports.buildManagedEnvApplyScript = buildManagedEnvApplyScript;
+module.exports.ensureOpenClawManagedStartupHooks = ensureOpenClawManagedStartupHooks;

@@ -12,39 +12,85 @@ global:
   imagePullPolicy: IfNotPresent
   imagePullSecrets: []
 
+# Secure defaults for Nora application pods. Component-specific data-store and
+# edge contexts live under their own values because their upstream images use
+# different numeric users.
+security:
+  automountServiceAccountToken: false
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    capabilities:
+      drop: ["ALL"]
+
+availability:
+  # When a component has more than one replica, keep one available through
+  # voluntary disruptions and prefer spreading replicas across nodes.
+  podDisruptionBudgets: true
+  preferredPodAntiAffinity: true
+
 # Public origin operators will reach Nora on. Feeds NEXTAUTH_URL and
 # CORS_ORIGINS. With ingress enabled, set this to https://<ingress host>.
 publicUrl: http://localhost:8080
 
 platformMode: selfhosted
 # Kubernetes is the only usable agent deploy target when Nora itself runs in a
-# pod: the provisioner has no Docker socket in-cluster (see chart README).
+# pod: the provisioner has no Docker socket in-cluster (see chart README). The
+# chart rejects values that omit k8s or include docker instead of silently
+# advertising a local target that cannot work.
 enabledBackends: k8s
 enabledRuntimeFamilies: openclaw
 enabledSandboxProfiles: standard
 
 secrets:
   # Name of an existing Secret carrying JWT_SECRET, ENCRYPTION_KEY,
-  # NORA_BACKUP_ENCRYPTION_KEY, NORA_API_KEY_HASH_SECRET, and DB_PASSWORD.
-  # Leave empty to let the chart create one from the values below.
+  # NORA_BACKUP_ENCRYPTION_KEY, NORA_API_KEY_HASH_SECRET,
+  # NORA_AGENT_HUB_API_KEY_HASH_SECRET, and DB_PASSWORD.
+  # The Secret is mounted at /run/secrets for control-plane pods rather than
+  # injected wholesale with envFrom. Leave empty to create it from values below.
   existingSecret: ""
   # Required when existingSecret is empty (no insecure defaults are shipped):
-  #   openssl rand -hex 32   # for each of the four keys below
+  #   openssl rand -hex 32   # for each key below; keep the two hash keys distinct
   jwtSecret: ""
   encryptionKey: ""
   backupEncryptionKey: ""
   apiKeyHashSecret: ""
+  # Required and distinct from apiKeyHashSecret for new installs. Upgrades from
+  # older chart values may leave it empty to retain the legacy shared-key fallback.
+  agentHubApiKeyHashSecret: ""
   dbPassword: ""
 
 # Extra non-secret environment variables applied to backend-api and both
 # workers (the control-plane processes). See .env.example for the catalog.
+# Canonical chart fields such as ENABLED_BACKENDS, PLATFORM_MODE, DB_HOST, and
+# REDIS_HOST are reserved and fail rendering if repeated here.
 backendEnv: {}
 
-# Extra environment variables applied to every Nora pod.
+# Extra environment variables applied to backend-api and both workers after the
+# nora-env ConfigMap. Do not put secrets here; use secrets.existingSecret or
+# frontendMarketing.oauthExistingSecret. For upgrade compatibility only, the
+# five legacy OAuth keys are forwarded selectively to marketing when that
+# dedicated Secret is not configured. Canonical chart fields are reserved and
+# cannot be overridden through this compatibility map.
 commonEnv: {}
 
+# Explicit non-secret frontend allowlist. Frontends never inherit commonEnv or
+# the control-plane Secret. Component env maps below add per-frontend values.
+frontendEnv: {}
+
 nginx:
-  image: nginx:1.29
+  image: nginx:1.29-alpine
   replicas: 1
   service:
     # ClusterIP behind an Ingress; switch to LoadBalancer/NodePort to expose
@@ -56,6 +102,21 @@ nginx:
     requests:
       cpu: 50m
       memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    capabilities:
+      drop: ["ALL"]
 
 ingress:
   enabled: false
@@ -69,6 +130,15 @@ ingress:
 
 frontendMarketing:
   replicas: 1
+  # Optional Secret containing any of OAUTH_LOGIN_ENABLED, GOOGLE_CLIENT_ID,
+  # GOOGLE_CLIENT_SECRET, GITHUB_CLIENT_ID, and GITHUB_CLIENT_SECRET. Only the
+  # marketing deployment can read these optional keys. It may name the same
+  # Secret as secrets.existingSecret so the backend loads the OAuth values from
+  # /run/secrets while marketing receives only this allowlist.
+  oauthExistingSecret: ""
+  # Runtime values used only by the marketing/OAuth server, for example
+  # API_INTERNAL_URL or NEXTAUTH_URL. Prefer oauthExistingSecret for OAuth data.
+  env: {}
   resources:
     requests:
       cpu: 50m
@@ -76,6 +146,7 @@ frontendMarketing:
 
 frontendDashboard:
   replicas: 1
+  env: {}
   resources:
     requests:
       cpu: 50m
@@ -83,6 +154,7 @@ frontendDashboard:
 
 adminDashboard:
   replicas: 1
+  env: {}
   resources:
     requests:
       cpu: 50m
@@ -105,6 +177,7 @@ workerProvisioner:
 
 workerBackup:
   enabled: true
+  replicas: 1
   concurrency: 2
   resources:
     requests:
@@ -144,6 +217,22 @@ postgresql:
     requests:
       cpu: 100m
       memory: 256Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    capabilities:
+      drop: ["ALL"]
   external:
     host: ""
     port: 5432
@@ -159,6 +248,21 @@ redis:
     requests:
       cpu: 50m
       memory: 64Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 999
+    runAsGroup: 999
+    capabilities:
+      drop: ["ALL"]
   external:
     host: ""
     port: 6379

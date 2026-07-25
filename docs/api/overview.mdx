@@ -5,7 +5,12 @@
 The Nora REST API is a JSON-over-HTTP interface that lets you deploy agents, manage LLM providers, configure channels, and observe platform health programmatically. Every request must be authenticated — with either a session JWT or a workspace API key — except for the public health, config, and webhook endpoints listed below. All request and response bodies use `application/json`.
 
 <Tip>
-  Every Nora instance also serves a machine-readable **OpenAPI 3.1 spec** at `GET /api/api.json` and an **interactive API reference** at `/api/api-docs`. The spec covers the tier-1 surface (agents, budgets, monitoring, LLM providers, auth) and is drift-tested in CI against the actual routers, so it cannot silently go stale.
+  Every Nora instance also serves a machine-readable **OpenAPI 3.1 spec** at `GET /api/api.json` and
+  an **interactive API reference** at `/api/api-docs`. The spec covers agents, schedules and
+  versions, monitoring, LLM providers, auth, workspaces, API keys, alerts, integrations, channels,
+  backups, Agent Hub, self-hosted-only remote hosts, and the admin doctor endpoint. CI drift-tests
+  those operations against the actual routers, so documented routes cannot silently disappear;
+  browser-only admin and experimental surfaces remain intentionally outside the spec.
 </Tip>
 
 ## Base URL
@@ -23,7 +28,8 @@ https://app.example.com/api
 ```
 
 <Note>
-  All paths in this reference omit the `/api` prefix for brevity. When making real requests, include `/api` — for example `http://localhost:8080/api/agents`.
+  All paths in this reference omit the `/api` prefix for brevity. When making real requests, include
+  `/api` — for example `http://localhost:8080/api/agents`.
 </Note>
 
 ## Authentication
@@ -50,19 +56,38 @@ X-Api-Key: nora_<key>
 
 API keys carry **scopes** that are enforced per endpoint, drawn from the recognized v1 set:
 
-| Scope                 | Grants                                          |
-| --------------------- | ----------------------------------------------- |
-| `agents:read`         | Read agents in the workspace                    |
-| `agents:write`        | Create, update, and operate agents              |
-| `workspaces:read`     | Read workspace metadata and members             |
-| `monitoring:read`     | Read monitoring metrics and events              |
-| `integrations:read`   | Read integration configurations                 |
-| `integrations:write`  | Create and remove integrations                  |
+| Scope                | Grants                                         |
+| -------------------- | ---------------------------------------------- |
+| `agents:read`        | Read agents in the workspace                   |
+| `agents:write`       | Create, update, and operate agents             |
+| `workspaces:read`    | Read workspace metadata and members            |
+| `monitoring:read`    | Read monitoring metrics and events             |
+| `integrations:read`  | Read integration configurations                |
+| `integrations:write` | Create and remove integrations                 |
+| `admin:read`         | Run read-only diagnostics as the issuing admin |
 
 Session-authenticated requests skip scope checks (role-based guards apply instead). A request whose API key lacks the required scope is rejected with `403` and `{ "code": "missing_scope" }`.
 
+Explicit `Authorization`, `X-Api-Key`, and `X-Nora-Api-Key` credentials take precedence over the
+ambient session cookie. Nora rejects conflicting explicit credentials with `400` and `{ "code":
+"conflicting_auth" }` instead of silently selecting the more privileged identity.
+
+Agent scopes are also workspace-bound: an API key can list or address only agents assigned to the
+workspace where the key was issued, even when its issuing user owns or can access agents elsewhere.
+Non-Remote agents created through deploy, adopt, or duplicate are atomically assigned to that
+workspace before queue or runtime work begins.
+
+The issuing user must remain an active user and a member or owner of the bound workspace. Removing
+that issuer makes the key unusable; issue a replacement from another workspace admin instead of
+allowing a retained credential to impersonate a deleted or removed account.
+
 <Note>
-  Some mutating or destructive operations are **session-only** and reject API keys even with a valid scope — for example monitoring writes, workspace writes, and API-key issuance. These return `403` with `{ "code": "session_required" }`.
+  Some operations are **session-only** and reject API keys even with a valid scope — including demo
+  activation, migration-draft deployment, Remote Docker placement and existing-agent operations,
+  user-global LLM-provider credentials, platform-wide performance monitoring, workspace writes, and
+  API-key issuance. These return `403` with `{ "code": "session_required" }`. Workspace monitoring
+  and cost reads remain available with their documented scopes, but are restricted to the key's
+  exact bound workspace.
 </Note>
 
 ## Rate limiting
@@ -98,12 +123,14 @@ These endpoints do not require authentication.
 GET /health
 ```
 
-Returns `{"status":"ok"}` once the server has finished its startup sequence (database migrations, catalog seeding). During startup it returns `503` with `{"status":"starting"}`.
+Returns `{"status":"ok"}` after the server has finished its startup sequence, including database migrations and catalog seeding. The API does not bind its HTTP listener until that sequence succeeds.
 
 <CodeGroup>
-  ```bash curl theme={null}
-  curl http://localhost:8080/api/health
-  ```
+
+```bash curl theme={null}
+curl http://localhost:8080/api/health
+```
+
 </CodeGroup>
 
 ```json theme={null}
@@ -116,7 +143,7 @@ Returns `{"status":"ok"}` once the server has finished its startup sequence (dat
 GET /config/platform
 ```
 
-Returns the platform mode and, in self-hosted deployments, the operator-configured resource limits.
+Returns the platform mode, runtime/deploy catalogs, safe public feature capabilities, and, in self-hosted deployments, the operator-configured resource limits.
 
 <ResponseField name="mode" type="string">
   Platform mode. One of `selfhosted` or `paas`.
@@ -134,6 +161,12 @@ Returns the platform mode and, in self-hosted deployments, the operator-configur
 
 <ResponseField name="billingEnabled" type="boolean">
   Whether Stripe billing is active.
+</ResponseField>
+
+<ResponseField name="capabilities.localDockerDemo" type="object">
+  Whether the exact `openclaw` + local `docker` + `standard` runtime tuple required by one-click
+  demo activation is enabled. Includes the tuple, `requiresLiveDocker: true`, and a public `issue`
+  when unavailable. The mutation still checks the Docker daemon live before queueing work.
 </ResponseField>
 
 ### NemoClaw config
@@ -165,15 +198,19 @@ Returns the NemoClaw sandbox configuration for the current deployment.
 The following request authenticates and lists your agents:
 
 <CodeGroup>
-  ```bash curl theme={null}
-  # 1. Get a token
-  TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
-    -H "Content-Type: application/json" \
-    -d '{"email":"you@example.com","password":"yourpassword"}' \
-    | jq -r .token)
 
-  # 2. Call a protected endpoint
-  curl http://localhost:8080/api/agents \
-    -H "Authorization: Bearer $TOKEN"
-  ```
+```bash curl theme={null}
+# 1. Get a token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"yourpassword"}' \
+  | jq -r .token)
+
+# 2. Call a protected endpoint
+
+curl http://localhost:8080/api/agents \
+-H "Authorization: Bearer $TOKEN"
+
+```
+
 </CodeGroup>

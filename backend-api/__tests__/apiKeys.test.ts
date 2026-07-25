@@ -111,6 +111,37 @@ describe("apiKeys.verifyApiKey", () => {
   it("returns null when no row matches", async () => {
     mockDb.query.mockResolvedValueOnce({ rows: [] });
     expect(await apiKeys.verifyApiKey("nora_xxx")).toBeNull();
+    const [sql] = mockDb.query.mock.calls[0];
+    expect(sql).toContain("JOIN users u ON u.id = k.created_by");
+    expect(sql).toContain("JOIN workspace_members issuer_membership");
+    expect(sql).toContain("issuer_membership.workspace_id = k.workspace_id");
+    expect(sql).not.toContain("w.user_id = k.created_by");
+  });
+
+  it("rejects a former workspace creator's key after removal when another owner remains", async () => {
+    const workspace = { id: "ws-1", user_id: "former-owner", name: "Prod" };
+    const memberships = [{ workspace_id: "ws-1", user_id: "current-owner", role: "owner" }];
+    const key = {
+      id: "k-former-owner",
+      workspace_id: workspace.id,
+      created_by: workspace.user_id,
+    };
+
+    mockDb.query.mockImplementationOnce(async (sql) => {
+      expect(sql).toContain("JOIN workspace_members issuer_membership");
+      expect(sql).not.toContain("w.user_id = k.created_by");
+
+      const issuerIsCurrentMember = memberships.some(
+        (member) => member.workspace_id === key.workspace_id && member.user_id === key.created_by,
+      );
+      return { rows: issuerIsCurrentMember ? [key] : [] };
+    });
+
+    await expect(apiKeys.verifyApiKey("nora_former_owner")).resolves.toBeNull();
+    expect(memberships).toContainEqual(
+      expect.objectContaining({ user_id: "current-owner", role: "owner" }),
+    );
+    expect(mockDb.query).toHaveBeenCalledTimes(1);
   });
 
   it("returns the key + workspace + user envelope on a match", async () => {
@@ -158,8 +189,13 @@ describe("API key endpoints (HTTP)", () => {
     listMembers: jest.fn().mockResolvedValue([]),
     listInvitations: jest.fn().mockResolvedValue([]),
   }));
-  jest.mock("../integrations", () => ({}));
-  jest.mock("../channels", () => ({}));
+  jest.mock("../integrations", () => ({
+    connectIntegration: jest.fn(),
+    listIntegrations: jest.fn().mockResolvedValue([]),
+  }));
+  jest.mock("../channels", () => ({
+    listChannels: jest.fn().mockResolvedValue([]),
+  }));
   jest.mock("../llmProviders", () => ({
     getAvailableProviders: jest.fn().mockReturnValue([]),
     listProviders: jest.fn().mockResolvedValue([]),
@@ -190,6 +226,7 @@ describe("API key endpoints (HTTP)", () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
     expect(res.body.find((s) => s.value === "agents:read")).toBeDefined();
+    expect(res.body.find((s) => s.value === "admin:read")).toBeDefined();
   });
 
   it("POST /workspaces/:id/api-keys requires admin role", async () => {
@@ -327,6 +364,384 @@ describe("auth middleware: API key intake", () => {
     expect(res.body.error).toMatch(/workspaces:read/);
   });
 
+  it("keeps Agent Hub and backup state behind session authentication", async () => {
+    const keyRow = {
+      id: "k-sensitive",
+      workspace_id: "ws-1",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["agents:read", "agents:write", "integrations:read", "integrations:write"],
+      status: "active",
+      workspace_name: "Prod",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+
+    mockDb.query.mockResolvedValueOnce({ rows: [keyRow] }).mockResolvedValueOnce({ rows: [] });
+    const hub = await request(app)
+      .get("/agent-hub")
+      .set("Authorization", "Bearer nora_sensitive_hub");
+    expect(hub.status).toBe(403);
+    expect(hub.body.code).toBe("session_required");
+
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-1", backend_type: "docker", deploy_target: "docker" }],
+      });
+    const backups = await request(app)
+      .get("/agents/agent-1/backups")
+      .set("Authorization", "Bearer nora_sensitive_backup");
+    expect(backups.status).toBe(403);
+    expect(backups.body.code).toBe("session_required");
+  });
+
+  it("requires integration scopes before an API key can reach channel ownership", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "k-channels",
+            workspace_id: "ws-1",
+            created_by: "user-1",
+            key_hash: "h",
+            key_prefix: "nora_p",
+            scopes: ["agents:read"],
+            status: "active",
+            workspace_name: "Prod",
+            user_email: "u@x.com",
+            user_role: "user",
+            user_name: "U",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-1", backend_type: "docker", deploy_target: "docker" }],
+      });
+
+    const res = await request(app)
+      .get("/agents/agent-1/channels")
+      .set("Authorization", "Bearer nora_channels_readonly");
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("missing_scope");
+    expect(res.body.error).toMatch(/integrations:read/);
+  });
+
+  it("accepts monitoring:read alone for assigned agent metrics", async () => {
+    const keyRow = {
+      id: "k-monitoring-only",
+      workspace_id: "ws-1",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["monitoring:read"],
+      status: "active",
+      workspace_name: "Prod",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-1", backend_type: "docker", deploy_target: "docker" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-1",
+            user_id: "user-1",
+            backend_type: "docker",
+            deploy_target: "docker",
+          },
+        ],
+      });
+
+    const res = await request(app)
+      .get("/agents/agent-1/metrics")
+      .set("Authorization", "Bearer nora_monitoring_only");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("rechecks the exact key-workspace assignment before agent metrics", async () => {
+    const metrics = require("../metrics");
+    metrics.getAgentMetrics.mockClear();
+    const keyRow = {
+      id: "k-monitoring-revoked",
+      workspace_id: "ws-1",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["monitoring:read"],
+      status: "active",
+      workspace_name: "Prod",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      // The global path guard sees the assignment.
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-1", backend_type: "docker", deploy_target: "docker" }],
+      })
+      // The route loader rechecks after the assignment is revoked.
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .get("/agents/agent-1/metrics")
+      .set("Authorization", "Bearer nora_monitoring_revoked");
+
+    expect(res.status).toBe(404);
+    expect(metrics.getAgentMetrics).not.toHaveBeenCalled();
+  });
+
+  it("accepts integrations:read alone for a teammate-owned assigned agent", async () => {
+    const keyRow = {
+      id: "k-integrations-only",
+      workspace_id: "ws-1",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["integrations:read"],
+      status: "active",
+      workspace_name: "Prod",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-shared", backend_type: "docker", deploy_target: "docker" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-shared",
+            user_id: "teammate-1",
+            backend_type: "docker",
+            deploy_target: "docker",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [{ role: "editor" }] });
+
+    const res = await request(app)
+      .get("/agents/agent-shared/integrations")
+      .set("Authorization", "Bearer nora_integrations_only");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("rejects an integration mutation when placement becomes Remote Docker after middleware", async () => {
+    const integrations = require("../integrations");
+    integrations.connectIntegration.mockClear();
+    const keyRow = {
+      id: "k-integrations-race",
+      workspace_id: "ws-1",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["integrations:write"],
+      status: "active",
+      workspace_name: "Prod",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    const localAgent = {
+      id: "agent-race",
+      user_id: "teammate-1",
+      runtime_family: "openclaw",
+      backend_type: "docker",
+      deploy_target: "docker",
+      execution_target_id: "docker",
+      status: "running",
+    };
+    const remoteAgent = {
+      ...localAgent,
+      backend_type: "remote-docker",
+      deploy_target: "remote-docker",
+      execution_target_id: "remote:race-host",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      // Global path guard and route access middleware both see local placement.
+      .mockResolvedValueOnce({ rows: [localAgent] })
+      .mockResolvedValueOnce({ rows: [localAgent] })
+      // The mutation handler's authoritative runtime load sees Remote Docker.
+      .mockResolvedValueOnce({ rows: [remoteAgent] });
+
+    const res = await request(app)
+      .post("/agents/agent-race/integrations")
+      .set("Authorization", "Bearer nora_integrations_race")
+      .send({ provider: "github", token: "secret" });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/session authentication/i),
+        code: "session_required",
+      }),
+    );
+    expect(integrations.connectIntegration).not.toHaveBeenCalled();
+  });
+
+  it.each(["twitter", "linkedin"])("keeps the %s OAuth callback session-only", async (provider) => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: `k-${provider}-callback`,
+            workspace_id: "ws-1",
+            created_by: "user-1",
+            key_hash: "h",
+            key_prefix: "nora_p",
+            scopes: ["integrations:write"],
+            status: "active",
+            workspace_name: "Prod",
+            user_email: "u@x.com",
+            user_role: "user",
+            user_name: "U",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .get(`/integrations/${provider}/oauth/callback?state=test&code=test`)
+      .set("Authorization", `Bearer nora_${provider}_callback`);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("session_required");
+    expect(mockDb.query).toHaveBeenCalledTimes(2);
+  });
+
+  it("allows integrations:read channels on a teammate-owned assigned agent", async () => {
+    const keyRow = {
+      id: "k-channels-shared",
+      workspace_id: "ws-1",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["integrations:read"],
+      status: "active",
+      workspace_name: "Prod",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    const teammateAgent = {
+      id: "agent-shared",
+      user_id: "teammate-1",
+      runtime_family: "hermes",
+      backend_type: "docker",
+      deploy_target: "docker",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [teammateAgent] })
+      .mockResolvedValueOnce({ rows: [teammateAgent] });
+
+    const res = await request(app)
+      .get("/agents/agent-shared/channels")
+      .set("Authorization", "Bearer nora_channels_shared");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(expect.objectContaining({ runtime: "legacy", channels: [] }));
+  });
+
+  it("rejects channels when an assigned agent becomes Remote Docker after the path guard", async () => {
+    const channels = require("../channels");
+    channels.listChannels.mockClear();
+    const keyRow = {
+      id: "k-channels-race",
+      workspace_id: "ws-1",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["integrations:read"],
+      status: "active",
+      workspace_name: "Prod",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-race", backend_type: "docker", deploy_target: "docker" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-race",
+            user_id: "teammate-1",
+            runtime_family: "openclaw",
+            backend_type: "remote-docker",
+            deploy_target: "remote-docker",
+            execution_target_id: "remote:race-host",
+          },
+        ],
+      });
+
+    const res = await request(app)
+      .get("/agents/agent-race/channels")
+      .set("Authorization", "Bearer nora_channels_race");
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        error: expect.stringMatching(/session authentication/i),
+        code: "session_required",
+      }),
+    );
+    expect(channels.listChannels).not.toHaveBeenCalled();
+  });
+
+  it("requires the explicit admin:read scope for API-key doctor access", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "k-admin",
+            workspace_id: "ws-1",
+            created_by: "admin-1",
+            key_hash: "h",
+            key_prefix: "nora_p",
+            scopes: ["monitoring:read"],
+            status: "active",
+            workspace_name: "Prod",
+            user_email: "admin@x.com",
+            user_role: "admin",
+            user_name: "Admin",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .get("/admin/doctor")
+      .set("Authorization", "Bearer nora_admin_without_scope");
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("missing_scope");
+    expect(res.body.error).toMatch(/admin:read/);
+  });
+
   it("blocks API keys from mutating workspaces (session-required)", async () => {
     mockDb.query
       .mockResolvedValueOnce({
@@ -421,8 +836,8 @@ describe("auth middleware: API key intake", () => {
 
   it("rejects an API key reaching another workspace's agent", async () => {
     mockDb.query
-      // verifyApiKey: key bound to ws-A; needs both scopes because the request
-      // crosses two scope-gated routers (agents.ts then monitoring.ts).
+      // verifyApiKey: key bound to ws-A. Agent metrics use their documented
+      // monitoring scope without also requiring agents:read.
       .mockResolvedValueOnce({
         rows: [
           {
@@ -431,7 +846,7 @@ describe("auth middleware: API key intake", () => {
             created_by: "user-1",
             key_hash: "h",
             key_prefix: "nora_p",
-            scopes: ["agents:read", "monitoring:read"],
+            scopes: ["monitoring:read"],
             status: "active",
             workspace_name: "A",
             user_email: "u@x.com",
@@ -449,6 +864,100 @@ describe("auth middleware: API key intake", () => {
       .set("Authorization", "Bearer nora_crossagent");
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("wrong_workspace");
+  });
+
+  it.each([
+    ["get", "/agents/agent-other"],
+    ["post", "/agents/agent-other/nemoclaw/policy"],
+    ["post", "/agents/agent-other/start"],
+    ["get", "/agents/agent-other/gateway/status"],
+  ])("rejects cross-workspace API-key access before %s %s side effects", async (method, path) => {
+    const keyRow = {
+      id: "k-agent-boundary",
+      workspace_id: "ws-A",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["agents:read", "agents:write"],
+      status: "active",
+      workspace_name: "A",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const pending = request(app)[method](path).set("Authorization", "Bearer nora_agent_boundary");
+    const res = method === "post" ? await pending.send({}) : await pending;
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_workspace");
+    expect(mockDb.query).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps agent file access session-only before workspace-agent lookup", async () => {
+    const keyRow = {
+      id: "k-file-session-only",
+      workspace_id: "ws-A",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["agents:read"],
+      status: "active",
+      workspace_name: "A",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    mockDb.query.mockResolvedValueOnce({ rows: [keyRow] }).mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app)
+      .get("/agents/agent-other/files/content?root=workspace&path=AGENT.md")
+      .set("Authorization", "Bearer nora_file_session_only");
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("session_required");
+    expect(mockDb.query).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps existing Remote Docker agent operations session-only for workspace API keys", async () => {
+    const keyRow = {
+      id: "k-remote-agent",
+      workspace_id: "ws-A",
+      created_by: "user-1",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["agents:write"],
+      status: "active",
+      workspace_name: "A",
+      user_email: "u@x.com",
+      user_role: "user",
+      user_name: "U",
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-remote",
+            backend_type: "remote-docker",
+            deploy_target: "remote-docker",
+            execution_target_id: "remote:build-host",
+          },
+        ],
+      });
+
+    const res = await request(app)
+      .post("/agents/agent-remote/stop")
+      .set("Authorization", "Bearer nora_remote_agent");
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("session_required");
+    expect(mockDb.query).toHaveBeenCalledTimes(3);
   });
 
   it("filters GET /workspaces to the API key's bound workspace only", async () => {
@@ -486,29 +995,128 @@ describe("auth middleware: API key intake", () => {
     expect(res.body).toEqual([{ id: "ws-A", name: "A", role: "owner" }]);
   });
 
-  it("falls back to API key intake when x-api-key header is set", async () => {
+  it("rejects an API key whose issuing user no longer exists", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "k-2",
+          workspace_id: "ws-1",
+          created_by: null,
+          key_hash: "h",
+          key_prefix: "nora_zzzz",
+          scopes: ["workspaces:read"],
+          status: "active",
+          workspace_name: "Prod",
+          user_email: null,
+          user_role: null,
+          user_name: null,
+        },
+      ],
+    });
+
+    const res = await request(app).get("/workspaces").set("x-api-key", "nora_some_other_token");
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("Invalid or expired API key");
+    expect(mockDb.query).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["Authorization", "Bearer nora_restricted_over_cookie"],
+    ["x-api-key", "nora_restricted_over_cookie"],
+  ])(
+    "prefers explicit %s API-key authentication over a valid session cookie",
+    async (name, value) => {
+      const cookieToken = jwt.sign(
+        { id: "session-user", email: "session@example.com", role: "user" },
+        JWT_SECRET,
+        { algorithm: "HS256", expiresIn: "1h" },
+      );
+      mockDb.query
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: "k-restricted",
+              workspace_id: "ws-A",
+              created_by: "key-user",
+              key_hash: "h",
+              key_prefix: "nora_p",
+              scopes: ["agents:read"],
+              status: "active",
+              workspace_name: "A",
+              user_email: "key@example.com",
+              user_role: "user",
+              user_name: "Key User",
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await request(app)
+        .get("/workspaces")
+        .set("Cookie", `nora_auth=${cookieToken}`)
+        .set(name, value);
+
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("missing_scope");
+      expect(res.body.error).toMatch(/workspaces:read/);
+    },
+  );
+
+  it("rejects conflicting explicit authentication headers before verification", async () => {
+    const res = await request(app)
+      .get("/workspaces")
+      .set("Authorization", "Bearer nora_first")
+      .set("x-api-key", "nora_second");
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: "Conflicting authentication headers",
+      code: "conflicting_auth",
+    });
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("loads teammate-owned assigned agents for API-key NemoClaw routes", async () => {
+    const keyRow = {
+      id: "k-shared-agent",
+      workspace_id: "ws-A",
+      created_by: "key-user",
+      key_hash: "h",
+      key_prefix: "nora_p",
+      scopes: ["agents:read"],
+      status: "active",
+      workspace_name: "A",
+      user_email: "key@example.com",
+      user_role: "user",
+      user_name: "Key User",
+    };
+
     mockDb.query
+      .mockResolvedValueOnce({ rows: [keyRow] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-shared", backend_type: "docker", deploy_target: "docker" }],
+      })
       .mockResolvedValueOnce({
         rows: [
           {
-            id: "k-2",
-            workspace_id: "ws-1",
-            created_by: null,
-            key_hash: "h",
-            key_prefix: "nora_zzzz",
-            scopes: ["workspaces:read"],
-            status: "active",
-            workspace_name: "Prod",
-            user_email: null,
-            user_role: null,
-            user_name: null,
+            id: "agent-shared",
+            user_id: "teammate-1",
+            status: "stopped",
+            runtime_family: "openclaw",
+            backend_type: "docker",
+            deploy_target: "docker",
+            sandbox_type: "nemoclaw",
+            sandbox_profile: "nemoclaw",
           },
         ],
-      })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
+      });
 
-    const res = await request(app).get("/workspaces").set("x-api-key", "nora_some_other_token");
-    expect(res.status).toBe(200);
+    const status = await request(app)
+      .get("/agents/agent-shared/nemoclaw/status")
+      .set("Authorization", "Bearer nora_shared_nemoclaw");
+
+    expect(status.status).toBe(200);
+    expect(status.body).toEqual({ status: "stopped", sandbox: null });
   });
 });

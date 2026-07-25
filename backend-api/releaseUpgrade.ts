@@ -15,6 +15,13 @@ const DEFAULT_UPGRADE_REF = "master";
 const DEFAULT_ENV_FILE = ".env";
 const DEFAULT_COMPOSE_FILES = ["docker-compose.yml"];
 const DEFAULT_LOG_TAIL_LINES = 80;
+const DEFAULT_HEALTHCHECK_ATTEMPTS = 221;
+const DEFAULT_HEALTHCHECK_INTERVAL_SECONDS = 3;
+const LEGACY_HEALTHCHECK_ATTEMPTS = 40;
+const LEGACY_HEALTHCHECK_INTERVAL_SECONDS = 3;
+const MAX_HEALTHCHECK_WINDOW_SECONDS = 3900;
+const DEFAULT_HEALTHCHECK_WINDOW_SECONDS =
+  (DEFAULT_HEALTHCHECK_ATTEMPTS - 1) * DEFAULT_HEALTHCHECK_INTERVAL_SECONDS;
 const HOST_REPO_MOUNT = "/nora-host-repo";
 const RUNNING_PHASES = new Set([
   "queued",
@@ -26,6 +33,8 @@ const RUNNING_PHASES = new Set([
 ]);
 
 const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+
+// ── Upgrade configuration ───────────────────────────────────────
 
 function readString(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -43,6 +52,61 @@ function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(String(value || "").trim(), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed;
+}
+
+function parseHealthcheckInteger(value, fallback, max) {
+  const normalized = readString(value);
+  if (!normalized) return fallback;
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) return null;
+  return parsed;
+}
+
+function normalizeHealthcheckBudget(env = process.env, warn = console.warn) {
+  let attemptsRaw = readString(env.NORA_UPGRADE_HEALTHCHECK_ATTEMPTS);
+  let intervalRaw = readString(env.NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS);
+  if (
+    attemptsRaw === String(LEGACY_HEALTHCHECK_ATTEMPTS) &&
+    intervalRaw === String(LEGACY_HEALTHCHECK_INTERVAL_SECONDS)
+  ) {
+    attemptsRaw = String(DEFAULT_HEALTHCHECK_ATTEMPTS);
+    intervalRaw = String(DEFAULT_HEALTHCHECK_INTERVAL_SECONDS);
+  }
+  const attempts = parseHealthcheckInteger(
+    attemptsRaw,
+    DEFAULT_HEALTHCHECK_ATTEMPTS,
+    MAX_HEALTHCHECK_WINDOW_SECONDS + 1,
+  );
+  const intervalSeconds = parseHealthcheckInteger(
+    intervalRaw,
+    DEFAULT_HEALTHCHECK_INTERVAL_SECONDS,
+    MAX_HEALTHCHECK_WINDOW_SECONDS,
+  );
+  const firstToFinalWindowSeconds =
+    attempts === null || intervalSeconds === null ? null : (attempts - 1) * intervalSeconds;
+
+  if (
+    attempts === null ||
+    intervalSeconds === null ||
+    firstToFinalWindowSeconds > MAX_HEALTHCHECK_WINDOW_SECONDS
+  ) {
+    if (typeof warn === "function") {
+      warn(
+        `Invalid NORA_UPGRADE health-check overrides (attempts='${attemptsRaw}', interval='${intervalRaw}s'); ` +
+          `using ${DEFAULT_HEALTHCHECK_ATTEMPTS} attempts every ${DEFAULT_HEALTHCHECK_INTERVAL_SECONDS}s ` +
+          `(${DEFAULT_HEALTHCHECK_WINDOW_SECONDS}s from first to final attempt). Values must be positive ` +
+          `integers with a first-to-final window no greater than ${MAX_HEALTHCHECK_WINDOW_SECONDS}s.`,
+      );
+    }
+    return {
+      attempts: DEFAULT_HEALTHCHECK_ATTEMPTS,
+      intervalSeconds: DEFAULT_HEALTHCHECK_INTERVAL_SECONDS,
+      firstToFinalWindowSeconds: DEFAULT_HEALTHCHECK_WINDOW_SECONDS,
+    };
+  }
+
+  return { attempts, intervalSeconds, firstToFinalWindowSeconds };
 }
 
 function createHttpError(message, statusCode = 400) {
@@ -172,6 +236,13 @@ async function pathExists(filePath, type = "any") {
   }
 }
 
+/**
+ * Resolve and validate direct-upgrade configuration from environment values and
+ * Compose labels, marking it unavailable for an invalid host path or source.
+ *
+ * @param {Object} env - Environment-style upgrade configuration.
+ * @returns {Promise<Object>} Internal runner and public capability configuration.
+ */
 async function resolveUpgradeConfig(env = process.env) {
   const composeMetadata = await inspectCurrentComposeMetadata();
   const autoConfig = buildAutoUpgrade(env, { includeInternal: true });
@@ -234,6 +305,8 @@ async function resolveUpgradeConfig(env = process.env) {
   };
 }
 
+// ── Persisted state and public projections ──────────────────────
+
 function buildIdleState() {
   return {
     job: null,
@@ -283,6 +356,14 @@ function publicJob(job) {
   };
 }
 
+/**
+ * Best-effort redaction for known environment secrets and common credential
+ * patterns. It reduces accidental disclosure but is not an exhaustive sanitizer.
+ *
+ * @param {string} input - Log or error text.
+ * @param {Object} env - Environment containing values to redact.
+ * @returns {string} Redacted text.
+ */
 function redactText(input, env = process.env) {
   let output = String(input || "");
   const secretValues = [
@@ -310,6 +391,13 @@ async function ensureStateDir(env = process.env) {
   await fsp.mkdir(getStateDir(env), { recursive: true });
 }
 
+/**
+ * Read persisted upgrade state, falling back to idle after missing, malformed,
+ * or unreadable state; non-missing failures are logged.
+ *
+ * @param {Object} env - Environment selecting the state directory.
+ * @returns {Promise<Object>} Persisted or synthesized idle state.
+ */
 async function readState(env = process.env) {
   try {
     const payload = await fsp.readFile(getStatePath(env), "utf8");
@@ -323,6 +411,14 @@ async function readState(env = process.env) {
   return buildIdleState();
 }
 
+/**
+ * Overwrite the upgrade state file directly and refresh its update timestamp;
+ * persistence does not use a temporary-file rename for atomic replacement.
+ *
+ * @param {Object} state - Complete state to persist.
+ * @param {Object} env - Environment selecting the state directory.
+ * @returns {Promise<Object>} Persisted state with updatedAt.
+ */
 async function writeState(state, env = process.env) {
   await ensureStateDir(env);
   const nextState = {
@@ -361,6 +457,8 @@ async function readLogTail(logFile, env = process.env) {
   }
 }
 
+// ── Privileged runner launch ────────────────────────────────────
+
 async function ensureRunnerImage(image) {
   await new Promise((resolve, reject) => {
     docker.pull(image, (pullError, stream) => {
@@ -388,6 +486,16 @@ function buildRunnerCommand() {
   ].join("\n");
 }
 
+/**
+ * Pull and launch the privileged upgrade runner. The container receives the host
+ * repo as a read-write bind, the Docker socket, and the durable state volume;
+ * its container ID is persisted before start.
+ *
+ * @param {Object} job - Mutable upgrade job state.
+ * @param {Object} config - Resolved runner and repository configuration.
+ * @param {Object} env - Environment forwarded to runner configuration.
+ * @returns {Promise<Object>} Started Docker container.
+ */
 async function launchRunnerContainer(job, config, env = process.env) {
   const image = config.runnerImage || DEFAULT_RUNNER_IMAGE;
   const stateVolume = config.stateVolume || DEFAULT_STATE_VOLUME;
@@ -396,6 +504,7 @@ async function launchRunnerContainer(job, config, env = process.env) {
   const repoSlug = normalizeGithubRepoSlug(sourceRepo);
   const envFile = config.envFile || DEFAULT_ENV_FILE;
   const composeFiles = normalizeComposeFiles(config.composeFiles);
+  const healthcheckBudget = normalizeHealthcheckBudget(env);
 
   await docker.createVolume({ Name: stateVolume });
   await ensureRunnerImage(image);
@@ -413,8 +522,8 @@ async function launchRunnerContainer(job, config, env = process.env) {
       `NORA_HOST_REPO_DIR=${config.hostRepoDir}`,
       `NORA_ENV_FILE=${envFile}`,
       `NORA_UPGRADE_COMPOSE_FILES=${composeFiles.join(":")}`,
-      `NORA_UPGRADE_HEALTHCHECK_ATTEMPTS=${readString(env.NORA_UPGRADE_HEALTHCHECK_ATTEMPTS) || "40"}`,
-      `NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS=${readString(env.NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS) || "3"}`,
+      `NORA_UPGRADE_HEALTHCHECK_ATTEMPTS=${healthcheckBudget.attempts}`,
+      `NORA_UPGRADE_HEALTHCHECK_INTERVAL_SECONDS=${healthcheckBudget.intervalSeconds}`,
       `NORA_UPGRADE_PUBLIC_HEALTH_URL=${readString(env.NORA_UPGRADE_PUBLIC_HEALTH_URL)}`,
     ],
     WorkingDir: config.hostRepoDir,
@@ -437,6 +546,8 @@ async function launchRunnerContainer(job, config, env = process.env) {
   await container.start();
   return container;
 }
+
+// ── Preflight and public orchestration ──────────────────────────
 
 function buildCheck(id, label, status, message, detail = {}) {
   return { id, label, status, message, detail };
@@ -510,6 +621,14 @@ async function validateRepoMirrorFiles(config) {
   return checks;
 }
 
+/**
+ * Evaluate upgrade enablement, target availability, repository configuration,
+ * Docker access, and visible deployment files. A missing read-only repo mirror
+ * is a warning because the runner performs the file checks again.
+ *
+ * @param {Object} options - Optional release/config snapshots and environment.
+ * @returns {Promise<Object>} Readiness status with pass, warning, and fail checks.
+ */
 async function buildReleaseUpgradePreflight({
   release = null,
   config = null,
@@ -615,6 +734,13 @@ async function buildReleaseUpgradePreflight({
   };
 }
 
+/**
+ * Read the current public upgrade status, including fresh release/preflight data,
+ * persisted job state, and a redacted log tail.
+ *
+ * @param {Object} env - Environment-style release and runner configuration.
+ * @returns {Promise<Object>} Public upgrade capability and job status.
+ */
 async function getReleaseUpgradeStatus(env = process.env) {
   const release = await buildReleaseInfo(env);
   const config = await resolveUpgradeConfig(env);
@@ -643,6 +769,14 @@ async function getReleaseUpgradeStatus(env = process.env) {
   };
 }
 
+/**
+ * Queue and launch a direct GitHub upgrade after a fresh preflight. A persisted
+ * running phase is rejected, but the read/check/write sequence is not a
+ * cross-process lock; launch failures are persisted before returning HTTP 503.
+ *
+ * @param {Object} options - Requesting actor and environment configuration.
+ * @returns {Promise<Object>} Public status for the launched upgrade.
+ */
 async function startReleaseUpgrade({ actor = null, env = process.env } = {}) {
   const release = await buildReleaseInfo(env);
   const config = await resolveUpgradeConfig(env);
@@ -725,6 +859,7 @@ module.exports = {
   buildReleaseUpgradePreflight,
   getReleaseUpgradeStatus,
   launchRunnerContainer,
+  normalizeHealthcheckBudget,
   readState,
   redactText,
   resolveUpgradeConfig,

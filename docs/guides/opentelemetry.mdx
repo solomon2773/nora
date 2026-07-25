@@ -11,20 +11,23 @@ It is **disabled by default** and **fail-open**: a collector outage or misconfig
 
 ## What gets exported
 
-**Spans (OTLP only):** one `chat` span per recorded LLM exchange, with `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.system` (provider), `gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.conversation.id` (session), and `nora.agent.id` / `nora.runtime.family` / `nora.source`. The span is bracketed around the runtime call, so its duration reflects real latency.
+**Spans (OTLP only):** one `chat` span per recorded LLM exchange, with `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.system` (provider), `gen_ai.usage.input_tokens` / `output_tokens`, `gen_ai.conversation.id` (session), and `nora.agent.id` / `nora.runtime.family` / `nora.sandbox.profile` / `nora.source`. The span is bracketed around the runtime call, so its duration reflects real latency.
 
 **Metrics (OTLP and/or Prometheus):**
 
-| Instrument | Type | Notes |
-| --- | --- | --- |
-| `gen_ai.client.token.usage` | histogram | Tokens per exchange, split by `gen_ai.token.type` (`input` / `output`) |
-| `nora.agent.cost.usd` | counter | Estimated spend, attributed by agent + model, using the same model-aware pricing as `/app/cost` |
-| `nora.agent.cpu.percent` | gauge | Latest sampled container CPU per running agent |
-| `nora.agent.memory.percent` | gauge | Latest sampled container memory percent per running agent |
-| `nora.agent.memory.usage` | gauge | Latest sampled container memory (MB) per running agent |
+| Instrument                  | Type      | Notes                                                                                           |
+| --------------------------- | --------- | ----------------------------------------------------------------------------------------------- |
+| `gen_ai.client.token.usage` | histogram | Tokens per exchange, split by `gen_ai.token.type` (`input` / `output`)                          |
+| `nora.agent.cost.usd`       | counter   | Estimated spend, attributed by agent + model, using the same model-aware pricing as `/app/cost` |
+| `nora.agent.cpu.percent`    | gauge     | Latest sampled container CPU per running agent                                                  |
+| `nora.agent.memory.percent` | gauge     | Latest sampled container memory percent per running agent                                       |
+| `nora.agent.memory.usage`   | gauge     | Latest sampled container memory (MB) per running agent                                          |
 
 <Note>
-Nora observes telemetry at the **exchange** granularity it actually receives from the runtimes. Per-LLM-call and per-tool-call sub-spans depend on event streams OpenClaw and Hermes do not currently expose to the control plane, and are tracked as a future enhancement. A2A Agent Cards are likewise on the roadmap.
+  Nora observes telemetry at the **exchange** granularity it actually receives from the runtimes.
+  Per-LLM-call and per-tool-call sub-spans depend on event streams OpenClaw and Hermes do not
+  currently expose to the control plane, and are tracked as a future enhancement. A2A Agent Cards
+  are likewise on the roadmap.
 </Note>
 
 ## Enable it
@@ -61,4 +64,4 @@ With Prometheus enabled:
 curl -s http://localhost:9464/metrics | grep -E 'gen_ai_client_token_usage|nora_agent_cost_usd'
 ```
 
-Drive one agent chat, then re-scrape — the token histogram and cost counter will carry your agent + model labels.
+Drive one agent chat, then re-scrape — the token histogram and cost counter will carry your agent, model, runtime family, and sandbox profile labels. For a NemoClaw smoke, deploy an OpenClaw agent with `sandbox_profile=nemoclaw`; the export should show `nora.runtime.family=openclaw` and `nora.sandbox.profile=nemoclaw` without any API-key labels.

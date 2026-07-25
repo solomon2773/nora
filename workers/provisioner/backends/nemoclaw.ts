@@ -3,15 +3,20 @@
 // Creates OpenShell-sandboxed agents with NVIDIA Nemotron inference,
 // strict network/filesystem policies, and controlled egress.
 
-const Docker = require("dockerode");
-const ProvisionerBackend = require("./interface");
+const DockerBackend = require("./docker");
+const { ensureOpenClawManagedStartupHooks } = DockerBackend;
+const { demuxDockerExecStream } = require("./dockerExecStream");
+const { ensureNemoClawImage } = require("./nemoclawImage");
 const crypto = require("crypto");
 const path = require("path");
 const {
+  buildOpenClawAuthImportFromFileCommand,
+  buildOpenClawGatewayPairingCommand,
   buildOpenClawInstallCommand,
   buildTemplatePayloadBootstrapCommand,
   buildRuntimeBootstrapFiles,
   buildIntegrationToolWrapperScript,
+  buildMcpServerWrapperScript,
   buildRuntimeEnv,
 } = require("../../../agent-runtime/lib/runtimeBootstrap");
 const {
@@ -19,21 +24,24 @@ const {
   AGENT_RUNTIME_PORT,
 } = require("../../../agent-runtime/lib/contracts");
 const {
+  getNemoClawDefaultModel,
+  getNemoClawSandboxImage,
+} = require("../../../agent-runtime/lib/nemoclawDefaults");
+const { getStandardDockerPackageSpec } = require("../../../agent-runtime/lib/agentImages");
+const {
   buildDockerTelemetry,
   buildUnavailableTelemetry,
   DOCKER_CAPABILITIES,
   uptimeFromContainerInfo,
 } = require("./telemetry");
 
-// Default to the Nora-built NemoClaw image (OpenShell sandbox base +
-// tsx prebaked so the bootstrap's install fast-path check passes under
-// the non-root UID-998 + Landlock restrictions). Build it with
-// `docker build -f agent-runtime/Dockerfile.nemoclaw-agent -t nora-nemoclaw-agent:local agent-runtime/`
-// or set NEMOCLAW_SANDBOX_IMAGE to pin a different tag.
-const SANDBOX_IMAGE = process.env.NEMOCLAW_SANDBOX_IMAGE || "nora-nemoclaw-agent:local";
+// Default to the Nora-built GHCR image (OpenShell sandbox base + tsx prebaked).
+// Set NEMOCLAW_SANDBOX_IMAGE=nora-nemoclaw-agent:local to use a preloaded local
+// image on offline Docker/k3s nodes.
+const SANDBOX_IMAGE = getNemoClawSandboxImage(process.env);
 
-const DEFAULT_MODEL =
-  process.env.NEMOCLAW_DEFAULT_MODEL || "nvidia/nvidia/nemotron-3-super-120b-a12b";
+const DEFAULT_MODEL = getNemoClawDefaultModel(process.env);
+const sandboxImageRefreshStates = new Map();
 
 // Baseline network policy — only these endpoints are allowed.
 // Matches NemoClaw's openclaw-sandbox.yaml spec.
@@ -84,11 +92,48 @@ function safeContainerName(prefix, name, id) {
   return `${prefix}-${slug}-${suffix}`;
 }
 
-class NemoClawBackend extends ProvisionerBackend {
+class NemoClawBackend extends DockerBackend {
   constructor() {
     super();
-    this.docker = new Docker({ socketPath: "/var/run/docker.sock" });
     this._composeNetwork = null;
+  }
+
+  _managedOpenClawConfigPaths() {
+    return {
+      configPath: "/sandbox/.openclaw/openclaw.json",
+      markerPath: "/sandbox/.openclaw/.nora-managed-default-model",
+    };
+  }
+
+  async _initialManagedEnvFileOwnership(_container) {
+    // NemoClaw's sandbox home and tmpfs are pinned to this image contract.
+    return { uid: 998, gid: 998 };
+  }
+
+  async _managedEnvFileOwnership(container) {
+    return this._containerUserOwnership(container, "sandbox");
+  }
+
+  _sandboxImageRefreshKey() {
+    const target = this.executionTargetId
+      ? [this.executionTargetId, this.profile?.sshHost || "", this.profile?.sshPort || ""].join(":")
+      : "local";
+    return `${target}\0${SANDBOX_IMAGE}`;
+  }
+
+  async _ensureSandboxImage() {
+    const key = this._sandboxImageRefreshKey();
+    let state = sandboxImageRefreshStates.get(key);
+    if (!state) {
+      state = { pending: null, refreshed: false };
+      sandboxImageRefreshStates.set(key, state);
+    }
+    await ensureNemoClawImage({
+      docker: this.docker,
+      image: SANDBOX_IMAGE,
+      state,
+      log: (message) => console.log(`[nemoclaw] ${message}`),
+    });
   }
 
   async _findComposeNetwork() {
@@ -149,7 +194,7 @@ class NemoClawBackend extends ProvisionerBackend {
     return this._composeNetwork;
   }
 
-  _buildBootstrapFiles({ pairedJson, buildAuthScript, policyJson, templatePayload, gatewayToken }) {
+  _buildBootstrapFiles({ buildAuthScript, policyJson, templatePayload }) {
     const runtimeFiles = buildRuntimeBootstrapFiles().map(({ relPath, source }) => ({
       name: `opt/openclaw-runtime/lib/${relPath}`,
       content: source,
@@ -158,36 +203,43 @@ class NemoClawBackend extends ProvisionerBackend {
     const templateBootstrapCmd = buildTemplatePayloadBootstrapCommand(templatePayload);
     const policyJsonB64 = Buffer.from(policyJson).toString("base64");
 
-    const startupScript = [
-      "#!/bin/sh",
-      "set -eu",
-      buildOpenClawInstallCommand(["openclaw@latest", "nemoclaw@latest"]),
-      "mkdir -p ~/.openclaw/devices",
-      "cat <<'__NORA_GATEWAY_CONFIG__' > ~/.openclaw/openclaw.json",
-      JSON.stringify({ gateway: { port: OPENCLAW_GATEWAY_PORT, bind: "lan", mode: "local" } }),
-      "__NORA_GATEWAY_CONFIG__",
-      "chmod 0600 ~/.openclaw/openclaw.json",
-      "cat <<'__NORA_PAIRED_DEVICES__' > ~/.openclaw/devices/paired.json",
-      pairedJson,
-      "__NORA_PAIRED_DEVICES__",
-      "chmod 0600 ~/.openclaw/devices/paired.json",
-      "printf '{}' > ~/.openclaw/devices/pending.json",
-      "mkdir -p /opt/openclaw",
-      `printf '%s' '${policyJsonB64}' | base64 -d > /opt/openclaw/policy.yaml`,
-      templateBootstrapCmd ? `${templateBootstrapCmd}true` : "true",
-      "mkdir -p /var/log /root/.openclaw/workspace /root/.openclaw/agents/main/agent",
-      "touch /var/log/openclaw-agent.log",
-      '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/agent.ts >> /var/log/openclaw-agent.log 2>&1 &',
-      '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js',
-      `exec "$OPENCLAW_BIN" gateway --port ${OPENCLAW_GATEWAY_PORT} --password ${gatewayToken}`,
-      "",
-    ].join("\n");
+    const startupScript = ensureOpenClawManagedStartupHooks(
+      [
+        "#!/bin/sh",
+        "set -eu",
+        buildOpenClawInstallCommand([
+          getStandardDockerPackageSpec(),
+          process.env.NEMOCLAW_PACKAGE || "nemoclaw@latest",
+        ]),
+        "mkdir -p ~/.openclaw/devices",
+        "cat <<'__NORA_GATEWAY_CONFIG__' > ~/.openclaw/openclaw.json",
+        JSON.stringify({ gateway: { port: OPENCLAW_GATEWAY_PORT, bind: "lan", mode: "local" } }),
+        "__NORA_GATEWAY_CONFIG__",
+        "chmod 0600 ~/.openclaw/openclaw.json",
+        buildOpenClawGatewayPairingCommand({ defaultHome: "/sandbox" }),
+        "mkdir -p /opt/openclaw",
+        `printf '%s' '${policyJsonB64}' | base64 -d > /opt/openclaw/policy.yaml`,
+        templateBootstrapCmd ? `${templateBootstrapCmd}true` : "true",
+        "mkdir -p /var/log /root/.openclaw/workspace /root/.openclaw/agents/main/agent",
+        "touch /var/log/openclaw-agent.log",
+        '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/agent.ts >> /var/log/openclaw-agent.log 2>&1 &',
+        '"$OPENCLAW_TSX_BIN" /opt/openclaw-runtime/lib/build-auth.js',
+        buildOpenClawAuthImportFromFileCommand({ requireCli: true }),
+        `exec "$OPENCLAW_BIN" gateway --port ${OPENCLAW_GATEWAY_PORT}`,
+        "",
+      ].join("\n"),
+    );
 
     return [
       ...runtimeFiles,
       {
         name: "usr/local/bin/nora-integration-tool",
         content: buildIntegrationToolWrapperScript(),
+        mode: 0o755,
+      },
+      {
+        name: "usr/local/bin/nora-mcp-server",
+        content: buildMcpServerWrapperScript(),
         mode: 0o755,
       },
       {
@@ -238,7 +290,15 @@ class NemoClawBackend extends ProvisionerBackend {
     }
 
     for (const file of files) {
-      await addEntry({ name: file.name, mode: file.mode || 0o644 }, file.content);
+      await addEntry(
+        {
+          name: file.name,
+          mode: file.mode || 0o644,
+          ...(Number.isInteger(file.uid) ? { uid: file.uid } : {}),
+          ...(Number.isInteger(file.gid) ? { gid: file.gid } : {}),
+        },
+        file.content,
+      );
     }
 
     pack.finalize();
@@ -247,30 +307,26 @@ class NemoClawBackend extends ProvisionerBackend {
   }
 
   async create(config) {
-    const { id, name, vcpu, ram_mb, disk_gb, env, container_name, templatePayload } = config;
+    const {
+      id,
+      name,
+      vcpu,
+      ram_mb,
+      disk_gb,
+      env,
+      container_name,
+      templatePayload,
+      credentialManagedEnvNames = [],
+      gatewayHostPort: allocatedGatewayPort,
+      runtimeHostPort: allocatedRuntimePort,
+    } = config;
     const containerName = container_name || safeContainerName("nora-oclaw", name, id);
     const model = (env && env.NEMOCLAW_MODEL) || DEFAULT_MODEL;
     let container = null;
 
     console.log(`[nemoclaw] Creating sandbox ${containerName} from ${SANDBOX_IMAGE}`);
 
-    // Pull the sandbox image
-    try {
-      await this.docker.getImage(SANDBOX_IMAGE).inspect();
-      console.log(`[nemoclaw] Image ${SANDBOX_IMAGE} already present`);
-    } catch {
-      console.log(`[nemoclaw] Pulling image ${SANDBOX_IMAGE}...`);
-      await new Promise((resolve, reject) => {
-        this.docker.pull(SANDBOX_IMAGE, (err, stream) => {
-          if (err) return reject(err);
-          this.docker.modem.followProgress(stream, (err) => {
-            if (err) return reject(err);
-            console.log(`[nemoclaw] Image ${SANDBOX_IMAGE} pulled successfully`);
-            resolve();
-          });
-        });
-      });
-    }
+    await this._ensureSandboxImage();
 
     // Remove orphaned containers
     try {
@@ -291,60 +347,6 @@ class NemoClawBackend extends ProvisionerBackend {
 
     // Generate per-agent Gateway auth token + Ed25519 device identity
     const gatewayToken = crypto.randomBytes(16).toString("hex");
-    const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
-    const PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
-    const seed = crypto
-      .createHash("sha256")
-      .update("openclaw-device:" + gatewayToken)
-      .digest();
-    const privateDer = Buffer.concat([PKCS8_PREFIX, seed]);
-    const privateKey = crypto.createPrivateKey({
-      key: privateDer,
-      format: "der",
-      type: "pkcs8",
-    });
-    const publicKey = crypto.createPublicKey(privateKey);
-    const spki = publicKey.export({ type: "spki", format: "der" });
-    const rawPub = spki.subarray(ED25519_SPKI_PREFIX.length);
-    const deviceId = crypto.createHash("sha256").update(rawPub).digest("hex");
-    const pubB64 = rawPub
-      .toString("base64")
-      .replaceAll("+", "-")
-      .replaceAll("/", "_")
-      .replace(/=+$/g, "");
-
-    const allScopes = [
-      "operator.admin",
-      "operator.read",
-      "operator.write",
-      "operator.approvals",
-      "operator.pairing",
-    ];
-    const nowMs = Date.now();
-    const pairedJson = JSON.stringify({
-      [deviceId]: {
-        deviceId,
-        publicKey: pubB64,
-        platform: "linux",
-        clientId: "gateway-client",
-        clientMode: "backend",
-        role: "operator",
-        roles: ["operator"],
-        scopes: allScopes,
-        approvedScopes: allScopes,
-        tokens: {
-          operator: {
-            token: crypto.randomBytes(32).toString("hex"),
-            role: "operator",
-            scopes: allScopes,
-            createdAtMs: nowMs,
-          },
-        },
-        createdAtMs: nowMs,
-        approvedAtMs: nowMs,
-      },
-    });
-
     // Build env array — inject runtime/gateway contract vars + NemoClaw model.
     // The OpenShell sandbox image installs openclaw + tsx under /usr/bin (npm
     // global prefix is `/usr`, not `/usr/local`). Dockerode's Env: replaces
@@ -356,21 +358,14 @@ class NemoClawBackend extends ProvisionerBackend {
     // when Env is empty; a non-empty Env list disables that derivation, so we
     // set it explicitly to the sandbox user's home. OpenClaw's gateway reads
     // $HOME to locate ~/.openclaw for its setup files.
+    const managedEnv = { ...(env || {}) };
     const envArray = Object.entries({
-      ...(env || {}),
       ...buildRuntimeEnv(),
       HOME: "/sandbox",
       OPENCLAW_CLI_PATH: "/usr/bin/openclaw",
       OPENCLAW_TSX_BIN: "/usr/bin/tsx",
-      OPENCLAW_GATEWAY_TOKEN: gatewayToken,
       NEMOCLAW_MODEL: model,
     }).map(([k, v]) => `${k}=${v}`);
-    // Ensure NVIDIA_API_KEY is present
-    if (env && env.NVIDIA_API_KEY) {
-      // already in envArray
-    } else if (process.env.NVIDIA_API_KEY) {
-      envArray.push(`NVIDIA_API_KEY=${process.env.NVIDIA_API_KEY}`);
-    }
 
     // Build auth-profiles with NVIDIA endpoint
     const llmKeyMap = {
@@ -417,11 +412,9 @@ class NemoClawBackend extends ProvisionerBackend {
       model,
     };
     const bootstrapFiles = this._buildBootstrapFiles({
-      pairedJson,
       buildAuthScript,
       policyJson: JSON.stringify(policyForContainer),
       templatePayload,
-      gatewayToken,
     });
     const launch = {
       Entrypoint: ["/bin/sh"],
@@ -434,6 +427,22 @@ class NemoClawBackend extends ProvisionerBackend {
     if (composeNetwork) {
       networkingConfig[composeNetwork] = {};
     }
+    const requestedHostPort = Number(allocatedGatewayPort);
+    const gatewayPortBinding =
+      !composeNetwork &&
+      Number.isInteger(requestedHostPort) &&
+      requestedHostPort >= 1 &&
+      requestedHostPort <= 65535
+        ? { "18789/tcp": [{ HostPort: String(requestedHostPort) }] }
+        : undefined;
+    const requestedRuntimeHostPort = Number(allocatedRuntimePort);
+    const runtimePortBinding =
+      !composeNetwork &&
+      Number.isInteger(requestedRuntimeHostPort) &&
+      requestedRuntimeHostPort >= 1 &&
+      requestedRuntimeHostPort <= 65535
+        ? { "9090/tcp": [{ HostPort: String(requestedRuntimeHostPort) }] }
+        : undefined;
 
     // DNS-safe hostname from agent name (avoids Bonjour conflicts across containers)
     const safeHostname =
@@ -457,6 +466,9 @@ class NemoClawBackend extends ProvisionerBackend {
           NanoCpus: (vcpu || 2) * 1e9,
           Memory: (ram_mb || 2048) * 1024 * 1024,
           RestartPolicy: { Name: "unless-stopped" },
+          ...(gatewayPortBinding || runtimePortBinding
+            ? { PortBindings: { ...(gatewayPortBinding || {}), ...(runtimePortBinding || {}) } }
+            : {}),
           // DNS only for allowed endpoints — OpenShell controls egress
           Dns: ["8.8.8.8", "8.8.4.4"],
           // Security hardening: drop all capabilities, add back only what's needed
@@ -486,6 +498,16 @@ class NemoClawBackend extends ProvisionerBackend {
       });
 
       await this._putBootstrapFiles(container, bootstrapFiles);
+      await this.updateEnv(
+        container.id,
+        { ...managedEnv, OPENCLAW_GATEWAY_TOKEN: gatewayToken },
+        {
+          managedEnvNames: credentialManagedEnvNames,
+          replaceManagedState: true,
+          initializeManagedState: true,
+          runtimeFamily: "openclaw",
+        },
+      );
       await container.start();
 
       // NOTE: We do NOT connect to bridge network — NemoClaw enforces controlled
@@ -500,11 +522,22 @@ class NemoClawBackend extends ProvisionerBackend {
       } else {
         host = info.NetworkSettings?.IPAddress || "localhost";
       }
+      const portBindings = info.NetworkSettings?.Ports?.["18789/tcp"];
+      const gatewayHostPort = portBindings?.[0]?.HostPort || null;
+      const runtimePortBindings = info.NetworkSettings?.Ports?.["9090/tcp"];
+      const runtimeHostPort = runtimePortBindings?.[0]?.HostPort || null;
 
       console.log(
-        `[nemoclaw] Container ${containerName} (${container.id}) started at ${host} (gateway port 18789, model: ${model})`,
+        `[nemoclaw] Container ${containerName} (${container.id}) started at ${host} (gateway port 18789, host port ${gatewayHostPort || "none"}, runtime host port ${runtimeHostPort || "none"}, model: ${model})`,
       );
-      return { containerId: containerName, host, gatewayToken, containerName };
+      return {
+        containerId: containerName,
+        host,
+        gatewayToken,
+        containerName,
+        gatewayHostPort,
+        runtimeHostPort,
+      };
     } catch (error) {
       if (container) {
         try {
@@ -540,6 +573,10 @@ class NemoClawBackend extends ProvisionerBackend {
     } catch {
       return { running: false, uptime: 0, cpu: null, memory: null };
     }
+  }
+
+  async inspectEnv(containerId, { envNames = [] } = {}) {
+    return super.inspectEnv(containerId, { envNames });
   }
 
   async stats(containerId) {
@@ -604,20 +641,24 @@ class NemoClawBackend extends ProvisionerBackend {
 
   async exec(containerId, opts = {}) {
     const container = this.docker.getContainer(containerId);
+    const tty = opts.tty !== false;
     const execInstance = await container.exec({
       Cmd: opts.cmd || ["/bin/sh", "-c", "command -v bash >/dev/null 2>&1 && exec bash || exec sh"],
       AttachStdin: true,
       AttachStdout: true,
       AttachStderr: true,
-      Tty: opts.tty !== false,
+      Tty: tty,
       Env: opts.env || ["TERM=xterm-256color"],
     });
-    const stream = await execInstance.start({
+    const rawStream = await execInstance.start({
       hijack: true,
       stdin: true,
-      Tty: opts.tty !== false,
+      Tty: tty,
     });
-    return { exec: execInstance, stream };
+    return {
+      exec: execInstance,
+      stream: tty ? rawStream : demuxDockerExecStream(this.docker, rawStream),
+    };
   }
 
   /**
@@ -634,7 +675,8 @@ class NemoClawBackend extends ProvisionerBackend {
         AttachStdout: true,
         AttachStderr: true,
       });
-      const stream = await exec.start();
+      const rawStream = await exec.start();
+      const stream = demuxDockerExecStream(this.docker, rawStream);
       return new Promise((resolve) => {
         let output = "";
         stream.on("data", (chunk) => (output += chunk.toString()));

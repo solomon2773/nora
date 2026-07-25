@@ -1,7 +1,7 @@
 name: Bug report
 description: Report a defect in Nora (control plane, worker, runtime, dashboards, or setup script).
 title: "[bug] "
-labels: ["bug", "triage"]
+labels: ["bug"]
 body:
   - type: markdown
     attributes:
@@ -62,6 +62,7 @@ body:
         - setup script (setup.sh / setup.ps1)
         - docs
         - CI / release
+        - CLI / MCP server
         - other / unsure
     validations:
       required: true
@@ -75,8 +76,21 @@ body:
         - docker (default)
         - kubernetes / k3s
         - proxmox
-        - nemoclaw
-        - hermes
+        - remote docker
+        - external / adopted runtime
+        - not applicable
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime family / sandbox profile
+      multiple: true
+      options:
+        - OpenClaw (standard)
+        - OpenClaw with NemoClaw sandbox
+        - Hermes
         - not applicable
     validations:
       required: true
@@ -119,4 +133,6 @@ body:
         - label: I have searched existing issues and this is not a duplicate.
           required: true
         - label: I have removed any secrets, tokens, or PII from logs and screenshots.
+          required: true
+        - label: I have included the Nora version and enough environment detail to reproduce the issue.
           required: true

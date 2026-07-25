@@ -7,14 +7,55 @@ const containerManager = require("./containerManager");
 const { resolveAgentBackendType } = require("./agentRuntimeFields");
 const { extractSessionTokenFromUpgrade } = require("./authCookie");
 const { findAccessibleAgentForActor } = require("./middleware/ownership");
+const { assertRemoteHostAgentUse, isRemoteHostAccessRevokedError } = require("./remoteHosts");
+
+const ACCESS_RECHECK_MS = Math.max(
+  250,
+  Number.parseInt(process.env.REMOTE_HOST_AUTH_RECHECK_MS || "1000", 10) || 1000,
+);
+
+function authorizationFailure(message, code, cause) {
+  const error = new Error(message);
+  if (code) error.code = code;
+  if (cause) error.cause = cause;
+  error.authorizationCheckFailed = true;
+  return error;
+}
+
+function isAuthorizationFailure(error) {
+  return (
+    error?.authorizationCheckFailed ||
+    isRemoteHostAccessRevokedError(error) ||
+    error?.code === "REMOTE_HOST_AUTH_CHECK_FAILED"
+  );
+}
+
+function publicAuthorizationError(error) {
+  if (isRemoteHostAccessRevokedError(error)) {
+    return { message: error.message, code: error.code };
+  }
+  if (error?.code === "REMOTE_HOST_AUTH_CHECK_FAILED") {
+    return {
+      message: "Unable to verify Remote Docker host access",
+      code: "REMOTE_HOST_AUTH_CHECK_FAILED",
+    };
+  }
+  return {
+    message: error?.authorizationCheckFailed ? error.message : "Unable to verify agent access",
+    ...(error?.code ? { code: error.code } : {}),
+  };
+}
 
 /**
- * Attach the live-log WebSocket server to an existing HTTP server.
+ * Attach a viewer-authorized live-log WebSocket endpoint to an HTTP server.
  * Clients connect to  ws://<host>/ws/logs/<agentId> (cookie-authenticated)
  * or the legacy  ws://<host>/ws/logs/<agentId>?token=<jwt>  form.
  *
  * Uses containerManager for multi-backend support (Docker, K8s, Proxmox).
  * Reconciles live container status before deciding to stream.
+ *
+ * @param {Object} server - HTTP server receiving the upgrade handler.
+ * @returns {Object} Attached WebSocket server.
  */
 function attachLogStream(server) {
   const wss = new WebSocketServer({ noServer: true });
@@ -45,12 +86,85 @@ function attachLogStream(server) {
 
   wss.on("connection", async (ws, _req, agentId, user) => {
     try {
-      const agent = await findAccessibleAgentForActor(agentId, user, "viewer");
-      if (!agent) {
-        ws.send(JSON.stringify({ type: "error", message: "Agent not found" }));
-        ws.close();
-        return;
-      }
+      const findAuthorizedAgent = async () => {
+        let currentAgent;
+        try {
+          currentAgent = await findAccessibleAgentForActor(agentId, user, "viewer");
+        } catch (error) {
+          throw authorizationFailure(
+            "Unable to verify agent access",
+            "AGENT_ACCESS_CHECK_FAILED",
+            error,
+          );
+        }
+        if (!currentAgent) throw authorizationFailure("Agent not found");
+
+        try {
+          await assertRemoteHostAgentUse(currentAgent, { includeProfile: false });
+        } catch (error) {
+          if (isRemoteHostAccessRevokedError(error)) {
+            error.authorizationCheckFailed = true;
+            throw error;
+          }
+          throw authorizationFailure(
+            "Unable to verify Remote Docker host access",
+            "REMOTE_HOST_AUTH_CHECK_FAILED",
+            error,
+          );
+        }
+        return currentAgent;
+      };
+
+      const agent = await findAuthorizedAgent();
+
+      // Keep actor membership and the durable-owner Remote Docker grant live
+      // for the entire socket lifetime, including while status/log attachment
+      // is blocked and while a no-container connection waits idle.
+      let logStream = null;
+      let accessTimer = null;
+      let accessCheckPromise = null;
+      let clientClosed = ws.readyState !== 1;
+      const clearAccessTimer = () => {
+        if (accessTimer) {
+          clearInterval(accessTimer);
+          accessTimer = null;
+        }
+      };
+      const cleanupLogStream = () => {
+        clientClosed = true;
+        clearAccessTimer();
+        if (logStream && typeof logStream.destroy === "function") logStream.destroy();
+      };
+      const closeForAuthorizationFailure = (error) => {
+        clearAccessTimer();
+        const publicError = publicAuthorizationError(error);
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: "error", ...publicError }));
+          ws.close();
+        } else {
+          cleanupLogStream();
+        }
+      };
+      const runAccessCheck = () => {
+        if (clientClosed || ws.readyState !== 1) return Promise.resolve();
+        if (accessCheckPromise) return accessCheckPromise;
+        accessCheckPromise = (async () => {
+          try {
+            await findAuthorizedAgent();
+          } catch (error) {
+            closeForAuthorizationFailure(error);
+          } finally {
+            accessCheckPromise = null;
+          }
+        })();
+        return accessCheckPromise;
+      };
+      ws.on("close", cleanupLogStream);
+      ws.on("error", cleanupLogStream);
+      accessTimer = setInterval(() => {
+        void runAccessCheck();
+      }, ACCESS_RECHECK_MS);
+      accessTimer.unref?.();
 
       const backendType = resolveAgentBackendType(agent);
       ws.send(
@@ -84,6 +198,7 @@ function attachLogStream(server) {
       } catch {
         // Can't reach container runtime — trust DB status
       }
+      if (clientClosed || ws.readyState !== 1) return;
 
       if (!isRunning) {
         ws.send(
@@ -97,9 +212,12 @@ function attachLogStream(server) {
       }
 
       // ── Stream real container logs via containerManager ─────
-      let logStream = null;
       try {
         logStream = await containerManager.logs(agent, { follow: true, tail: 100 });
+        if (clientClosed || ws.readyState !== 1) {
+          cleanupLogStream();
+          return;
+        }
 
         if (!logStream) {
           ws.send(
@@ -174,6 +292,7 @@ function attachLogStream(server) {
         });
 
         logStream.on("error", (err) => {
+          clearAccessTimer();
           if (ws.readyState === 1) {
             ws.send(
               JSON.stringify({
@@ -186,29 +305,34 @@ function attachLogStream(server) {
           }
         });
       } catch (err) {
+        cleanupLogStream();
+        const publicError = isAuthorizationFailure(err)
+          ? publicAuthorizationError(err)
+          : { message: `Failed to attach to container: ${err.message}` };
+        if (ws.readyState === 1) {
+          ws.send(
+            JSON.stringify({
+              type: "error",
+              timestamp: new Date().toISOString(),
+              ...publicError,
+            }),
+          );
+          ws.close();
+        }
+        return;
+      }
+    } catch (err) {
+      if (ws.readyState === 1) {
         ws.send(
           JSON.stringify({
             type: "error",
-            timestamp: new Date().toISOString(),
-            message: `Failed to attach to container: ${err.message}`,
+            ...(isAuthorizationFailure(err)
+              ? publicAuthorizationError(err)
+              : { message: "Internal error" }),
           }),
         );
-        return;
+        ws.close();
       }
-
-      ws.on("close", () => {
-        if (logStream && typeof logStream.destroy === "function") {
-          logStream.destroy();
-        }
-      });
-      ws.on("error", () => {
-        if (logStream && typeof logStream.destroy === "function") {
-          logStream.destroy();
-        }
-      });
-    } catch (err) {
-      ws.send(JSON.stringify({ type: "error", message: "Internal error" }));
-      ws.close();
     }
   });
 

@@ -10,7 +10,7 @@ Older snapshots, stale forks, and heavily modified self-hosted deployments may r
 
 ## How to Report a Vulnerability
 
-Report vulnerabilities privately to the repository maintainer through GitHub, currently `@solomon2773`.
+Use GitHub's [private vulnerability report form](https://github.com/solomon2773/nora/security/advisories/new) to disclose vulnerabilities to the Nora maintainers. Do not use a public issue, discussion, or pull request.
 
 When possible, include:
 
@@ -21,7 +21,7 @@ When possible, include:
 - any suggested mitigation
 - whether the issue is already known to anyone else
 
-If GitHub private vulnerability reporting is available for the repository, prefer that path. Otherwise, contact the maintainer privately through GitHub rather than posting in a public thread.
+The report and follow-up discussion remain private between the reporter and repository maintainers until coordinated disclosure.
 
 ## What Not To Do
 

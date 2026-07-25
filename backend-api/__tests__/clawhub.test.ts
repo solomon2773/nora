@@ -1,4 +1,7 @@
 // @ts-nocheck
+const express = require("express");
+const request = require("supertest");
+
 jest.mock("../db", () => ({
   query: jest.fn(),
 }));
@@ -103,7 +106,7 @@ describe("clawhub routes", () => {
     if (!layer) {
       throw new Error(`Route not found: ${method.toUpperCase()} ${path}`);
     }
-    return layer.route.stack[0].handle;
+    return layer.route.stack.at(-1).handle;
   }
 
   function createMockRes() {
@@ -120,6 +123,149 @@ describe("clawhub routes", () => {
       },
     };
   }
+
+  function buildApiKeyApp(scopes) {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = { id: "user-1" };
+      req.apiKey = { id: "key-1", workspaceId: "ws-A", scopes };
+      req.apiKeyWorkspace = { id: "ws-A" };
+      next();
+    });
+    app.use(router);
+    return app;
+  }
+
+  it("requires agents scopes before API-key ClawHub agent access", async () => {
+    const app = buildApiKeyApp(["workspaces:read"]);
+
+    const res = await request(app).get("/agents/agent-1/skills");
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("missing_scope");
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects API-key ClawHub access outside the bound workspace", async () => {
+    const app = buildApiKeyApp(["agents:read"]);
+    db.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/agents/agent-1/skills");
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_workspace");
+    expect(runContainerCommand).not.toHaveBeenCalled();
+  });
+
+  it("keeps Remote Docker ClawHub access session-only for API keys", async () => {
+    const app = buildApiKeyApp(["agents:read"]);
+    db.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "agent-1",
+          backend_type: "remote-docker",
+          deploy_target: "remote-docker",
+          execution_target_id: "remote:host-a",
+        },
+      ],
+    });
+
+    const res = await request(app).get("/agents/agent-1/skills");
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("session_required");
+    expect(runContainerCommand).not.toHaveBeenCalled();
+  });
+
+  it("binds API-key ClawHub job polling to the job's agent workspace", async () => {
+    const app = buildApiKeyApp(["agents:read"]);
+    getClawhubJobStatus.mockResolvedValueOnce({
+      jobId: "job-other",
+      agentId: "agent-other",
+      status: "success",
+    });
+    db.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/jobs/job-other");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "job_not_found" });
+  });
+
+  it("hides a ClawHub job when its agent becomes Remote Docker before authorization", async () => {
+    const app = buildApiKeyApp(["agents:read"]);
+    getClawhubJobStatus.mockResolvedValueOnce({
+      jobId: "job-remote-race",
+      agentId: "agent-1",
+      status: "success",
+    });
+    db.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "agent-1",
+          backend_type: "remote-docker",
+          deploy_target: "remote-docker",
+          execution_target_id: "remote:host-a",
+        },
+      ],
+    });
+
+    const res = await request(app).get("/jobs/job-remote-race");
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "job_not_found" });
+  });
+
+  it("allows API-key ClawHub access to a teammate-owned assigned agent", async () => {
+    const app = buildApiKeyApp(["agents:read"]);
+    db.query
+      .mockResolvedValueOnce({
+        rows: [{ id: "agent-1", backend_type: "docker", deploy_target: "docker" }],
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-1",
+            user_id: "teammate-1",
+            status: "running",
+            container_id: "container-1",
+            backend_type: "docker",
+            runtime_family: "openclaw",
+            deploy_target: "docker",
+            sandbox_profile: "standard",
+            clawhub_skills: [],
+          },
+        ],
+      });
+    runContainerCommand.mockResolvedValueOnce({ output: '{"version":1,"skills":{}}' });
+
+    const res = await request(app).get("/agents/agent-1/skills");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ skills: [] });
+    expect(db.query.mock.calls[1][0]).toMatch(/FROM workspace_agents wa/);
+  });
+
+  it("returns the same not-found response for missing and unauthorized jobs", async () => {
+    const app = buildApiKeyApp(["agents:read"]);
+
+    getClawhubJobStatus.mockResolvedValueOnce(null);
+    const missing = await request(app).get("/jobs/job-missing");
+
+    getClawhubJobStatus.mockResolvedValueOnce({
+      jobId: "job-private",
+      agentId: "agent-private",
+      status: "success",
+    });
+    db.query.mockResolvedValueOnce({ rows: [] });
+    const unauthorized = await request(app).get("/jobs/job-private");
+
+    expect(missing.status).toBe(404);
+    expect(unauthorized.status).toBe(404);
+    expect(missing.body).toEqual({ error: "job_not_found" });
+    expect(unauthorized.body).toEqual(missing.body);
+  });
 
   it("returns normalized browse results and caps limit at 50", async () => {
     const handler = getRouteHandler("/skills");

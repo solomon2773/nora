@@ -23,8 +23,25 @@ const DockerBackend = require("./docker");
 
 const DEFAULT_SSH_PORT = 22;
 
+function createRemoteDockerPinRequiredError(profile = {}) {
+  const target = profile.label || profile.executionTargetId || "the registered remote host";
+  const error = new Error(
+    `Remote Docker host ${target} has no pinned SSH host key. Run Test from a trusted network ` +
+      "before Nora performs lifecycle or provisioning operations.",
+  );
+  error.statusCode = 409;
+  error.code = "REMOTE_HOST_PIN_REQUIRED";
+  return error;
+}
+
 // Translate a remote_hosts profile into dockerode SSH connection options.
 function buildRemoteDockerOptions(profile = {}) {
+  const expectedHostKey = typeof profile.sshHostKey === "string" ? profile.sshHostKey.trim() : "";
+  // TOFU is confined to backend-api's explicit Test probe, which captures and
+  // persists the presented key. Every operational Docker-over-SSH connection —
+  // create, lifecycle, exec, backup capture, and cleanup — requires that pin.
+  if (!expectedHostKey) throw createRemoteDockerPinRequiredError(profile);
+
   const sshOptions = {};
   if (profile.sshAuthMode === "password") {
     if (profile.sshPassword) sshOptions.password = profile.sshPassword;
@@ -32,6 +49,12 @@ function buildRemoteDockerOptions(profile = {}) {
     if (profile.sshPrivateKey) sshOptions.privateKey = Buffer.from(profile.sshPrivateKey);
     if (profile.sshPassphrase) sshOptions.passphrase = profile.sshPassphrase;
   }
+  // Host-key pinning (MITM protection): the explicit connection test owns TOFU;
+  // operational clients accept only the exact key it persisted.
+  sshOptions.hostVerifier = (key) => {
+    const presented = Buffer.isBuffer(key) ? key.toString("base64") : String(key || "");
+    return presented === expectedHostKey;
+  };
   return {
     protocol: "ssh",
     host: profile.sshHost,
@@ -88,6 +111,12 @@ class RemoteDockerBackend extends DockerBackend {
     return null;
   }
 
+  // Remote-host agents are intentionally reachable through the registered
+  // host. Keep this explicit so the local backend can remain loopback-only.
+  _publishedPortHostIp() {
+    return "0.0.0.0";
+  }
+
   async create(config = {}) {
     const result = await super.create(config);
     // The gateway port is published on the REMOTE host's interface, so point
@@ -95,13 +124,18 @@ class RemoteDockerBackend extends DockerBackend {
     // (resolveGatewayAddress prefers gateway_host + gateway_port). Without this
     // it would fall back to host.docker.internal, which is the wrong machine.
     const gatewayHost = this.profile.gatewayHost || this.profile.sshHost;
+    const runtimeHostPort =
+      Number(result.runtimeHostPort) || Number(config.runtimeHostPort) || null;
     return {
       ...result,
       gatewayHost,
       gatewayPort: result.gatewayHostPort || null,
+      runtimeHost: gatewayHost,
+      runtimePort: runtimeHostPort || result.runtimePort || null,
     };
   }
 }
 
 module.exports = RemoteDockerBackend;
 module.exports.buildRemoteDockerOptions = buildRemoteDockerOptions;
+module.exports.createRemoteDockerPinRequiredError = createRemoteDockerPinRequiredError;

@@ -1,0 +1,141 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/schemas/mcpb-manifest-v0.4.schema.json",
+  "manifest_version": "0.4",
+  "name": "nora",
+  "display_name": "Nora",
+  "version": "0.1.4",
+  "description": "Operate your self-hosted Nora agent fleet from Claude Desktop.",
+  "long_description": "Connect Claude Desktop to a Nora control plane you operate. Deploy and control OpenClaw or Hermes agents, inspect fleet health, and read metrics, events, and cost through Nora's workspace-scoped API.",
+  "author": {
+    "name": "Nora",
+    "email": "privacy@solomontsao.com",
+    "url": "https://nora.solomontsao.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solomon2773/nora.git"
+  },
+  "homepage": "https://nora.solomontsao.com",
+  "documentation": "https://noradocs.solomontsao.com/guides/mcp-server",
+  "support": "https://github.com/solomon2773/nora/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "src/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/src/index.js"],
+      "env": {
+        "NORA_API_URL": "${user_config.api_url}",
+        "NORA_API_KEY": "${user_config.api_key}",
+        "NORA_MCP_ALLOW_DESTRUCTIVE": "${user_config.allow_destructive}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "list_agents",
+      "description": "List agents accessible to the configured Nora workspace."
+    },
+    {
+      "name": "get_agent",
+      "description": "Get live status and runtime details for one agent."
+    },
+    {
+      "name": "get_agent_stats",
+      "description": "Get real-time resource and execution statistics for one agent."
+    },
+    {
+      "name": "get_agent_versions",
+      "description": "List an agent's configuration version history."
+    },
+    {
+      "name": "deploy_agent",
+      "description": "Provision and deploy a new OpenClaw or Hermes agent."
+    },
+    {
+      "name": "start_agent",
+      "description": "Start a stopped agent runtime."
+    },
+    {
+      "name": "stop_agent",
+      "description": "Stop an agent while preserving its state."
+    },
+    {
+      "name": "restart_agent",
+      "description": "Restart a running agent in place."
+    },
+    {
+      "name": "redeploy_agent",
+      "description": "Re-provision an agent with its current configuration."
+    },
+    {
+      "name": "delete_agent",
+      "description": "Permanently delete an agent when destructive tools are explicitly enabled."
+    },
+    {
+      "name": "get_platform_metrics",
+      "description": "Get workspace fleet counts and provisioning queue metrics."
+    },
+    {
+      "name": "get_fleet_status",
+      "description": "Get the fleet-wide needs-attention roll-up."
+    },
+    {
+      "name": "list_monitoring_events",
+      "description": "List recent agent and platform monitoring events."
+    },
+    {
+      "name": "get_agent_metrics",
+      "description": "Get time-series usage metrics for one agent."
+    },
+    {
+      "name": "get_agent_metrics_summary",
+      "description": "Get aggregated usage metrics for one agent."
+    },
+    {
+      "name": "get_agent_cost",
+      "description": "Get token and USD cost roll-ups for one agent."
+    }
+  ],
+  "keywords": [
+    "mcp",
+    "ai-agents",
+    "agent-operations",
+    "openclaw",
+    "hermes",
+    "self-hosted",
+    "docker",
+    "kubernetes"
+  ],
+  "license": "Apache-2.0",
+  "privacy_policies": ["https://nora.solomontsao.com/privacy"],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=20.0.0"
+    }
+  },
+  "user_config": {
+    "api_url": {
+      "type": "string",
+      "title": "Nora URL",
+      "description": "The public base URL of your Nora deployment, for example https://nora.example.com.",
+      "required": true
+    },
+    "api_key": {
+      "type": "string",
+      "title": "Nora API key",
+      "description": "A workspace API key created in Nora under Workspace -> API Keys.",
+      "sensitive": true,
+      "required": true
+    },
+    "allow_destructive": {
+      "type": "boolean",
+      "title": "Enable permanent deletion",
+      "description": "Expose delete_agent. Leave disabled unless you want Claude to be able to permanently delete agents.",
+      "default": false,
+      "required": false
+    }
+  }
+}

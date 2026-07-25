@@ -23,25 +23,44 @@ type SidebarProps = {
   collapsed?: boolean;
   onToggleCollapse?: (() => void) | null;
   onClose?: (() => void) | null;
+  platformMode?: string | null;
+};
+type NavItem = {
+  name: string;
+  icon: typeof LayoutDashboard;
+  href: string;
+  selfHostedOnly?: boolean;
 };
 
 const REPO_URL = "https://github.com/solomon2773/nora";
+const NAV_ITEMS: NavItem[] = [
+  { name: "Dashboard", icon: LayoutDashboard, href: "/app/dashboard" },
+  { name: "Getting Started", icon: ListChecks, href: "/app/getting-started" },
+  { name: "Agents", icon: Bot, href: "/app/agents" },
+  { name: "Agent Hub", icon: ShoppingBag, href: "/app/agent-hub" },
+  { name: "Deploy", icon: Rocket, href: "/app/deploy" },
+  {
+    name: "Remote Hosts",
+    icon: Server,
+    href: "/app/remote-hosts",
+    selfHostedOnly: true,
+  },
+  { name: "Workspaces", icon: FolderOpen, href: "/app/workspaces" },
+  { name: "Monitoring", icon: BarChart3, href: "/app/monitoring" },
+  { name: "Logs", icon: ScrollText, href: "/app/logs" },
+];
 
-export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }: SidebarProps) {
+export default function Sidebar({
+  collapsed = false,
+  onToggleCollapse,
+  onClose,
+  platformMode = null,
+}: SidebarProps) {
   const router = useRouter();
   const { localizePath, t } = useI18n();
-
-  const navItems = [
-    { name: "Dashboard", icon: LayoutDashboard, href: "/app/dashboard" },
-    { name: "Getting Started", icon: ListChecks, href: "/app/getting-started" },
-    { name: "Agents", icon: Bot, href: "/app/agents" },
-    { name: "Agent Hub", icon: ShoppingBag, href: "/app/agent-hub" },
-    { name: "Deploy", icon: Rocket, href: "/app/deploy" },
-    { name: "Remote Hosts", icon: Server, href: "/app/remote-hosts" },
-    { name: "Workspaces", icon: FolderOpen, href: "/app/workspaces" },
-    { name: "Monitoring", icon: BarChart3, href: "/app/monitoring" },
-    { name: "Logs", icon: ScrollText, href: "/app/logs" },
-  ];
+  const navItems = NAV_ITEMS.filter(
+    (item) => !item.selfHostedOnly || platformMode === "selfhosted",
+  );
 
   const isActive = (path) => {
     const normalized = path.replace(/^\/app/, "") || "/";
@@ -49,7 +68,8 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
   };
 
   return (
-    <div
+    <aside
+      aria-label={t("Primary navigation")}
       className={clsx(
         "bg-brand-ink text-brand-foreground flex flex-col border-r border-brand-cyan/10 shadow-2xl z-50 overflow-y-auto transition-all duration-300",
         collapsed ? "w-[68px]" : "w-64",
@@ -82,7 +102,9 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
         {/* Mobile close button */}
         {onClose && !collapsed && (
           <button
+            type="button"
             onClick={onClose}
+            aria-label={t("Close navigation menu")}
             className="ml-auto rounded-lg p-1.5 text-brand-foreground/50 transition-colors hover:bg-brand-cyan/10 hover:text-brand-foreground lg:hidden"
           >
             <X size={18} />
@@ -91,7 +113,7 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
       </div>
 
       {/* Nav Items */}
-      <div className={clsx("flex-1 space-y-1", collapsed ? "px-2" : "px-4")}>
+      <nav className={clsx("flex-1 space-y-1", collapsed ? "px-2" : "px-4")}>
         {!collapsed && (
           <div className="mb-4 flex items-center gap-2 px-4 text-[10px] font-bold uppercase tracking-[0.2em] text-brand-cyan/55">
             {t("Main Operations")}
@@ -105,6 +127,8 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
             href={localizePath(item.href)}
             className="block"
             title={collapsed ? t(item.name) : undefined}
+            aria-label={collapsed ? t(item.name) : undefined}
+            aria-current={isActive(item.href) ? "page" : undefined}
           >
             <div
               className={clsx(
@@ -127,12 +151,15 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
               {!collapsed && t(item.name)}
 
               {isActive(item.href) && (
-                <div className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-brand-ink"></div>
+                <div
+                  aria-hidden="true"
+                  className="absolute left-0 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r-full bg-brand-ink"
+                ></div>
               )}
             </div>
           </a>
         ))}
-      </div>
+      </nav>
 
       {/* Footer */}
       <div
@@ -172,6 +199,8 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
           href={localizePath("/app/settings")}
           className="block"
           title={collapsed ? t("Settings") : undefined}
+          aria-label={collapsed ? t("Settings") : undefined}
+          aria-current={isActive("/app/settings") ? "page" : undefined}
         >
           <div
             className={clsx(
@@ -190,7 +219,10 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
         {/* Collapse toggle — desktop only */}
         {onToggleCollapse && (
           <button
+            type="button"
             onClick={onToggleCollapse}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? t("Expand sidebar") : t("Collapse sidebar")}
             className={clsx(
               "flex items-center gap-3 rounded-xl text-sm font-medium transition-all w-full text-brand-foreground/50 hover:bg-brand-cyan/10 hover:text-brand-foreground",
               collapsed ? "justify-center px-2 py-3" : "px-4 py-3",
@@ -202,6 +234,6 @@ export default function Sidebar({ collapsed = false, onToggleCollapse, onClose }
           </button>
         )}
       </div>
-    </div>
+    </aside>
   );
 }

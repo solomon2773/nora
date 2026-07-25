@@ -1,16 +1,35 @@
 FROM node:24-alpine
 WORKDIR /app
 ENV NODE_PATH=/app/node_modules
+ARG NPM_INSTALL_TIMEOUT_SECONDS=900
 
 RUN apk add --no-cache postgresql-client
 
 COPY workers/backup/package.json workers/backup/package-lock.json* ./
-RUN npm ci --omit=dev || npm install --omit=dev
+RUN set -eu; \
+  timeout -k 30 "$NPM_INSTALL_TIMEOUT_SECONDS" npm ci --omit=dev \
+  || { \
+    status=$?; \
+    case "$status" in 124|137|143) exit "$status" ;; esac; \
+    timeout -k 30 "$NPM_INSTALL_TIMEOUT_SECONDS" npm install --omit=dev; \
+  }
+
+# Cache backend runtime dependencies independently from the full source tree.
+# The later COPY merges into /backend-api and preserves this node_modules tree.
+COPY backend-api/package.json backend-api/package-lock.json* /backend-api/
+RUN set -eu; \
+  cd /backend-api; \
+  timeout -k 30 "$NPM_INSTALL_TIMEOUT_SECONDS" npm ci --omit=dev \
+  || { \
+    status=$?; \
+    case "$status" in 124|137|143) exit "$status" ;; esac; \
+    timeout -k 30 "$NPM_INSTALL_TIMEOUT_SECONDS" npm install --omit=dev; \
+  }
 
 COPY tsconfig.base.json /tsconfig.base.json
 COPY workers/backup/ ./
 COPY backend-api /backend-api
 COPY agent-runtime /agent-runtime
-RUN cd /backend-api && (npm ci --omit=dev || npm install --omit=dev)
+COPY workers/provisioner/backends /backend-api/backends
 
 CMD ["npm", "start"]

@@ -14,8 +14,7 @@ describe("external (adopted runtime) catalog recognition", () => {
   it("normalizes the external deploy target", () => {
     expect(normalizeDeployTargetName("external")).toBe("external");
     expect(normalizeDeployTargetName("EXTERNAL")).toBe("external");
-    // unknown values still fall back to docker (external did not widen the fallback)
-    expect(normalizeDeployTargetName("moon")).toBe("docker");
+    expect(() => normalizeDeployTargetName("moon")).toThrow("Unknown deploy target: moon");
   });
 
   it("normalizes the external execution target id", () => {

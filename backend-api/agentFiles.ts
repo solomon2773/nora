@@ -1,12 +1,19 @@
 // @ts-nocheck
+// Provides the bounded filesystem surface exposed by the agent file API. Every
+// runtime command revalidates canonical paths inside an allowlisted root.
+
 const path = require("path");
 const { runContainerCommand } = require("./authSync");
 const { shellSingleQuote } = require("../agent-runtime/lib/containerCommand");
 
 const MAX_INLINE_FILE_BYTES = 5 * 1024 * 1024;
 
+// Root and path policy
+
 function normalizeRelativePath(rawValue, { allowEmpty = true } = {}) {
-  const raw = String(rawValue || "").replace(/\\/g, "/").trim();
+  const raw = String(rawValue || "")
+    .replace(/\\/g, "/")
+    .trim();
   if (!raw) return allowEmpty ? "" : null;
 
   const normalized = path.posix.normalize(raw).replace(/^\/+/, "");
@@ -15,8 +22,19 @@ function normalizeRelativePath(rawValue, { allowEmpty = true } = {}) {
   return normalized;
 }
 
+/**
+ * Describe the filesystem roots Nora exposes for an agent's runtime family,
+ * including each root's read/write policy and file-or-directory shape.
+ *
+ * @param {Object} [agent={}] - Agent whose runtime family selects the roots.
+ * @returns {Array} Allowlisted filesystem root descriptors.
+ */
 function rootsForAgent(agent = {}) {
-  if (String(agent.runtime_family || "").trim().toLowerCase() === "hermes") {
+  if (
+    String(agent.runtime_family || "")
+      .trim()
+      .toLowerCase() === "hermes"
+  ) {
     return [
       {
         id: "workspace",
@@ -68,7 +86,8 @@ function rootsForAgent(agent = {}) {
       path: "/root/.openclaw",
       access: "ro",
       kind: "directory",
-      description: "Read-only OpenClaw runtime home, including agent files, sessions, and support state.",
+      description:
+        "Read-only OpenClaw runtime home, including agent files, sessions, and support state.",
     },
   ];
 }
@@ -91,6 +110,15 @@ function fileRootRelativeName(root) {
   return path.posix.basename(String(root?.path || ""));
 }
 
+/**
+ * Resolve a relative path within an allowlisted root without accepting parent
+ * traversal or additional paths beneath a dedicated single-file root.
+ *
+ * @param {Object} root - Allowlisted root descriptor.
+ * @param {string} [relativePath=""] - User-supplied path within the root.
+ * @param {Object} [options={}] - Whether the empty root path is allowed.
+ * @returns {string} Absolute runtime path constrained to the selected root.
+ */
 function resolveAbsolutePath(root, relativePath = "", { allowEmpty = true } = {}) {
   const normalized = normalizeRelativePath(relativePath, { allowEmpty });
   if (normalized == null) {
@@ -123,13 +151,22 @@ function assertWritableRoot(root, relativePath = "", operation = "write") {
   throw error;
 }
 
+/**
+ * Enforce root write policy, including the restricted operations supported by
+ * OpenClaw's dedicated single-file configuration root.
+ *
+ * @param {Object} root - Root receiving the mutation.
+ * @param {string} [relativePath=""] - Requested target inside the root.
+ * @param {string} [operation="write"] - Mutation being attempted.
+ * @returns {void}
+ */
 function assertWritableTarget(root, relativePath = "", operation = "write") {
   assertWritableRoot(root, relativePath, operation);
 
   if (!isFileRoot(root)) return;
   if (operation !== "write") {
     const error = new Error(
-      "This filesystem root only supports editing and downloading the OpenClaw config file"
+      "This filesystem root only supports editing and downloading the OpenClaw config file",
     );
     error.statusCode = 403;
     throw error;
@@ -173,6 +210,17 @@ function mapFileCommandError(error) {
   return error;
 }
 
+// Guarded runtime command execution
+
+/**
+ * Run a filesystem command and translate internal sentinel failures into
+ * stable HTTP-shaped errors without exposing raw runtime details.
+ *
+ * @param {Object} agent - Agent whose runtime executes the command.
+ * @param {string} command - Guarded shell command.
+ * @param {Object} [options={}] - Runtime command options.
+ * @returns {Promise<Object>} Runtime command result.
+ */
 async function runFileCommand(agent, command, options = {}) {
   try {
     return await runContainerCommand(agent, command, options);
@@ -181,6 +229,13 @@ async function runFileCommand(agent, command, options = {}) {
   }
 }
 
+/**
+ * Build a shell guard that resolves symlinks and rejects targets escaping the
+ * canonical allowlisted root.
+ *
+ * @param {Object} options - Root, target, and missing-target behavior.
+ * @returns {string} Shell fragment that defines validated root and target paths.
+ */
 function buildInsideRootGuard({ rootPath, targetPath, missingTargetUsesParent = false }) {
   return [
     `root_path=${shellSingleQuote(rootPath)}`,
@@ -195,6 +250,16 @@ function buildInsideRootGuard({ rootPath, targetPath, missingTargetUsesParent = 
   ].join("\n");
 }
 
+// Filesystem reads
+
+/**
+ * List one allowlisted directory or expose a dedicated file root as one entry.
+ *
+ * @param {Object} agent - Agent whose runtime should be inspected.
+ * @param {string} rootId - Allowlisted root identifier.
+ * @param {string} [relativePath=""] - Directory path within the root.
+ * @returns {Promise<Object>} Root metadata and sorted entries.
+ */
 async function listFiles(agent, rootId, relativePath = "") {
   const root = resolveRoot(agent, rootId);
   const absolutePath = resolveAbsolutePath(root, relativePath);
@@ -260,10 +325,9 @@ async function listFiles(agent, rootId, relativePath = "") {
     const type = segments[index + 1];
     const size = Number.parseInt(segments[index + 2], 10) || 0;
     const mtime = Number.parseFloat(segments[index + 3]);
-    const entryPath = normalizeRelativePath(
-      relativePath ? `${relativePath}/${name}` : name,
-      { allowEmpty: false }
-    );
+    const entryPath = normalizeRelativePath(relativePath ? `${relativePath}/${name}` : name, {
+      allowEmpty: false,
+    });
 
     if (!entryPath) continue;
 
@@ -295,6 +359,15 @@ async function listFiles(agent, rootId, relativePath = "") {
   };
 }
 
+/**
+ * Read a file as base64 after canonical containment checks, rejecting inline
+ * previews larger than the configured size limit.
+ *
+ * @param {Object} agent - Agent whose runtime owns the file.
+ * @param {string} rootId - Allowlisted root identifier.
+ * @param {string} [relativePath=""] - File path within the root.
+ * @returns {Promise<Object>} File metadata and base64 content.
+ */
 async function readFile(agent, rootId, relativePath = "") {
   const root = resolveRoot(agent, rootId);
   const absolutePath = resolveAbsolutePath(root, relativePath, {
@@ -333,6 +406,18 @@ async function readFile(agent, rootId, relativePath = "") {
   };
 }
 
+// Filesystem mutations
+
+/**
+ * Atomically replace a writable file through a guarded temporary-file rename.
+ *
+ * @param {Object} agent - Agent whose runtime receives the file.
+ * @param {string} rootId - Writable root identifier.
+ * @param {string} [relativePath=""] - Target file path within the root.
+ * @param {string} [contentBase64=""] - Base64-encoded file content.
+ * @param {number} [mode=0o644] - File mode applied before installation.
+ * @returns {Promise<Object>} Success result.
+ */
 async function writeFile(agent, rootId, relativePath = "", contentBase64 = "", mode = 0o644) {
   const root = resolveRoot(agent, rootId);
   assertWritableTarget(root, relativePath, "write");
@@ -361,6 +446,15 @@ async function writeFile(agent, rootId, relativePath = "", contentBase64 = "", m
   return { success: true };
 }
 
+/**
+ * Create a directory only after validating both its parent and resulting
+ * canonical path remain inside a writable root.
+ *
+ * @param {Object} agent - Agent whose runtime receives the directory.
+ * @param {string} rootId - Writable root identifier.
+ * @param {string} [relativePath=""] - Directory path within the root.
+ * @returns {Promise<Object>} Success result.
+ */
 async function createDirectory(agent, rootId, relativePath = "") {
   const root = resolveRoot(agent, rootId);
   assertWritableTarget(root, relativePath, "mkdir");
@@ -386,6 +480,16 @@ async function createDirectory(agent, rootId, relativePath = "") {
   return { success: true };
 }
 
+/**
+ * Move a path after canonical containment checks on the source and
+ * destination parent.
+ *
+ * @param {Object} agent - Agent whose runtime owns the path.
+ * @param {string} rootId - Writable root identifier.
+ * @param {string} [fromPath=""] - Existing source path.
+ * @param {string} [toPath=""] - Destination path.
+ * @returns {Promise<Object>} Success result.
+ */
 async function movePath(agent, rootId, fromPath = "", toPath = "") {
   const root = resolveRoot(agent, rootId);
   assertWritableTarget(root, fromPath, "move");
@@ -410,6 +514,14 @@ async function movePath(agent, rootId, fromPath = "", toPath = "") {
   return { success: true };
 }
 
+/**
+ * Recursively delete a non-root target after writable-root and canonical-path checks.
+ *
+ * @param {Object} agent - Agent whose runtime owns the target.
+ * @param {string} rootId - Writable root identifier.
+ * @param {string} [relativePath=""] - File or directory to remove.
+ * @returns {Promise<Object>} Success result.
+ */
 async function deletePath(agent, rootId, relativePath = "") {
   const root = resolveRoot(agent, rootId);
   assertWritableTarget(root, relativePath, "delete");
@@ -435,6 +547,17 @@ async function deletePath(agent, rootId, relativePath = "") {
   return { success: true };
 }
 
+// Download packaging
+
+/**
+ * Download a guarded file directly or package a guarded directory as a gzip
+ * archive, returning base64 content and attachment metadata.
+ *
+ * @param {Object} agent - Agent whose runtime owns the target.
+ * @param {string} rootId - Allowlisted root identifier.
+ * @param {string} [relativePath=""] - File, directory, or root path.
+ * @returns {Promise<Object>} Download kind, filename, content type, and base64 payload.
+ */
 async function downloadPath(agent, rootId, relativePath = "") {
   const root = resolveRoot(agent, rootId);
   const absolutePath = resolveAbsolutePath(root, relativePath);
@@ -449,10 +572,10 @@ async function downloadPath(agent, rootId, relativePath = "") {
     'if [ -d "$target_real" ]; then',
     '  printf "directory\\0"',
     '  tar -C "$target_real" -czf - . | base64 | tr -d "\\n"',
-    'else',
+    "else",
     '  printf "file\\0"',
     '  base64 "$target_real" | tr -d "\\n"',
-    'fi',
+    "fi",
   ].join("\n");
 
   const { output } = await runFileCommand(agent, command, { timeout: 120000 });
@@ -466,10 +589,8 @@ async function downloadPath(agent, rootId, relativePath = "") {
 
   return {
     kind,
-    filename:
-      kind === "directory" ? `${name || root.id}.tar.gz` : name || `${root.id}.bin`,
-    contentType:
-      kind === "directory" ? "application/gzip" : "application/octet-stream",
+    filename: kind === "directory" ? `${name || root.id}.tar.gz` : name || `${root.id}.bin`,
+    contentType: kind === "directory" ? "application/gzip" : "application/octet-stream",
     contentBase64,
   };
 }

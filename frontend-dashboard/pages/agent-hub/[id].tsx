@@ -1037,13 +1037,13 @@ function InstallTemplateDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[9998] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[9998] flex items-start justify-center overflow-y-auto p-4 py-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="install-template-dialog-title"
     >
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+      <div className="relative my-auto w-full max-w-lg max-h-[calc(100vh-3rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
         <div className="flex items-start gap-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50">
             <Plus size={18} className="text-blue-600" />

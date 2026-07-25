@@ -43,6 +43,7 @@ test("registers read and write tools; delete_agent only when destructive is allo
   assert.ok(safeNames.includes("list_agents"));
   assert.ok(safeNames.includes("deploy_agent"));
   assert.ok(safeNames.includes("get_agent_cost"));
+  assert.ok(safeNames.includes("get_agent_stats"));
   assert.ok(!safeNames.includes("delete_agent"));
 
   const destructive = await connect(
@@ -134,6 +135,7 @@ test("the HTTP client sends bearer auth and parses JSON for a valid path", async
   const fetchImpl = async (url, opts) => {
     seen.url = url.toString();
     seen.auth = opts.headers.Authorization;
+    seen.userAgent = opts.headers["User-Agent"];
     return { ok: true, status: 200, text: async () => JSON.stringify({ id: AID }) };
   };
   const api = createApi({ baseUrl: "https://nora.example.com", apiKey: "nora_test", fetchImpl });
@@ -141,6 +143,7 @@ test("the HTTP client sends bearer auth and parses JSON for a valid path", async
   assert.deepEqual(body, { id: AID });
   assert.equal(seen.url, `https://nora.example.com/api/agents/${AID}`);
   assert.equal(seen.auth, "Bearer nora_test");
+  assert.equal(seen.userAgent, "nora-mcp-server/0.1.4");
 });
 
 test("per-agent observability tools use the /api/agents/:id paths", async () => {
@@ -152,11 +155,27 @@ test("per-agent observability tools use the /api/agents/:id paths", async () => 
   });
   await client.callTool({ name: "get_agent_metrics_summary", arguments: { id: AID } });
   await client.callTool({ name: "get_agent_cost", arguments: { id: AID, periodDays: 7 } });
+  await client.callTool({ name: "get_agent_stats", arguments: { id: AID } });
   assert.equal(api.calls[0].path, `/api/agents/${AID}/metrics`);
   assert.deepEqual(api.calls[0].opts.query, { type: "token_usage" });
   assert.equal(api.calls[1].path, `/api/agents/${AID}/metrics/summary`);
   assert.equal(api.calls[2].path, `/api/agents/${AID}/cost`);
   assert.deepEqual(api.calls[2].opts.query, { periodDays: 7 });
+  assert.equal(api.calls[3].path, `/api/agents/${AID}/stats`);
+});
+
+test("get_fleet_status calls the monitoring fleet-status endpoint", async () => {
+  const fleetStatus = { agentsNeedingAttention: 2, degradedComponents: [] };
+  const api = mockApi({ "GET /api/monitoring/fleet-status": fleetStatus });
+  const client = await connect(createServer({ api, env: {} }));
+  const result = await client.callTool({ name: "get_fleet_status", arguments: {} });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(JSON.parse(result.content[0].text), fleetStatus);
+  assert.deepEqual(api.calls[0], {
+    method: "GET",
+    path: "/api/monitoring/fleet-status",
+    opts: undefined,
+  });
 });
 
 test("API errors surface as isError tool results with status and message", async () => {
@@ -175,6 +194,7 @@ test("tool annotations mark reads read-only and destructive writes destructive",
   const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
   assert.equal(byName.list_agents.annotations.readOnlyHint, true);
   assert.equal(byName.get_platform_metrics.annotations.readOnlyHint, true);
+  assert.equal(byName.get_fleet_status.annotations.readOnlyHint, true);
   assert.equal(byName.stop_agent.annotations.destructiveHint, true);
   assert.equal(byName.deploy_agent.annotations.destructiveHint, false);
 });

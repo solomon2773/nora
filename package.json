@@ -5,12 +5,19 @@
     "node": ">=24 <25"
   },
   "scripts": {
+    "contributor:setup": "node scripts/contributor.mjs setup",
+    "contributor:check": "node scripts/contributor.mjs check",
+    "scaffold:integration": "node scripts/scaffold-integration-provider.mjs",
+    "scaffold:backend": "node scripts/scaffold-backend-adapter.mjs",
+    "test:scaffolds": "node --test scripts/extension-scaffolds.test.mjs",
+    "test:repository-metadata": "node --test scripts/repository-metadata.test.mjs",
+    "validate:extensions": "node scripts/validate-extension-scaffolds.mjs",
     "ci:format:check": "prettier --check",
     "ci:format:write": "prettier --write",
     "ci:license-check": "node .github/workflows/scripts/license-check.mjs",
     "ci:lint": "eslint --ext .js,.jsx,.ts,.tsx,.cjs,.mjs --max-warnings=0",
     "ci:secret-scan": "node .github/workflows/scripts/scan-sensitive-config.mjs",
-    "ci:validate-infra": "node .github/workflows/scripts/validate-infra.mjs"
+    "ci:validate-infra": "node .github/workflows/scripts/validate-infra.mjs && node --test scripts/infra-security.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.38.0",

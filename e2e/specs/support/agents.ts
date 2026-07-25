@@ -18,6 +18,17 @@ type PlatformExecutionTarget = {
   configured?: boolean;
 };
 
+type AccessibleRemoteHost = {
+  id?: string;
+  executionTargetId?: string;
+  enabled?: boolean;
+  configured?: boolean;
+  connected?: boolean;
+  available?: boolean;
+  canDeploy?: boolean;
+  [key: string]: unknown;
+};
+
 type PlatformConfig = {
   enabledBackends?: string[];
   enabledDeployTargets?: string[];
@@ -39,6 +50,7 @@ type DeployAgentOptions = {
   name?: string;
   runtimeFamily?: string;
   backend?: string;
+  executionTargetId?: string;
   sandboxProfile?: string;
   vcpu?: number;
   ramMb?: number;
@@ -72,6 +84,12 @@ type ChannelOptions = {
 
 type IntegrationRecord = {
   id: string;
+  provider?: string;
+  [key: string]: unknown;
+};
+
+type ProviderKeyRecord = {
+  id?: string;
   provider?: string;
   [key: string]: unknown;
 };
@@ -190,12 +208,61 @@ async function getPlatformConfig(request: APIRequestContext, token: string) {
   return normalizePlatformConfig(body);
 }
 
-function backendSupported(platform: PlatformConfig, backendId: string) {
+function selectAccessibleRemoteExecutionTarget(
+  value: unknown,
+  requestedExecutionTargetId: string,
+): PlatformExecutionTarget | null {
+  const requested = requestedExecutionTargetId.trim();
+  if (!requested.startsWith("remote:") || !Array.isArray(value)) return null;
+
+  for (const entry of value) {
+    if (!isJsonRecord(entry)) continue;
+    const host = entry as AccessibleRemoteHost;
+    const executionTargetId =
+      typeof host.executionTargetId === "string" && host.executionTargetId.trim()
+        ? host.executionTargetId.trim()
+        : typeof host.id === "string" && host.id.trim()
+          ? `remote:${host.id.trim()}`
+          : "";
+
+    if (executionTargetId !== requested) continue;
+    if (
+      host.enabled !== true ||
+      host.configured !== true ||
+      host.connected !== true ||
+      host.available !== true ||
+      host.canDeploy !== true
+    ) {
+      return null;
+    }
+
+    // Keep the real-matrix catalog view intentionally minimal. The
+    // session-only endpoint returns masked connection metadata, but target
+    // resolution needs only the canonical id and its availability flags.
+    return { id: executionTargetId, available: true, configured: true };
+  }
+
+  return null;
+}
+
+async function getAccessibleRemoteExecutionTarget(
+  request: APIRequestContext,
+  token: string,
+  executionTargetId: string,
+) {
+  const { body } = await apiJson<AccessibleRemoteHost[]>(request, "/api/remote-hosts", { token });
+  return selectAccessibleRemoteExecutionTarget(body, executionTargetId);
+}
+
+function backendSupported(platform: PlatformConfig, backendId: string, executionTargetId?: string) {
   if (Array.isArray(platform.executionTargets)) {
-    const target = platform.executionTargets.find((entry) => entry?.id === backendId);
+    const target = platform.executionTargets.find(
+      (entry) => entry?.id === (executionTargetId || backendId),
+    );
     if (target) {
       return target.available !== false && target.configured !== false;
     }
+    if (executionTargetId) return false;
   }
 
   const enabled = platform.enabledBackends || platform.enabledDeployTargets || [];
@@ -219,6 +286,7 @@ async function deployAgent(
     name,
     runtimeFamily = "openclaw",
     backend = "docker",
+    executionTargetId,
     sandboxProfile = "standard",
     vcpu = 1,
     ramMb = 1024,
@@ -227,6 +295,7 @@ async function deployAgent(
     model,
   }: DeployAgentOptions = {},
 ) {
+  const target = executionTargetId || backend;
   const { body } = await apiJson<AgentRecord>(request, "/api/agents/deploy", {
     method: "POST",
     token,
@@ -234,7 +303,8 @@ async function deployAgent(
       name,
       runtime_family: runtimeFamily,
       backend_type: backend,
-      deploy_target: backend,
+      deploy_target: target,
+      execution_target_id: executionTargetId,
       sandbox_profile: sandboxProfile,
       vcpu,
       ram_mb: ramMb,
@@ -336,7 +406,7 @@ async function startAgent(request: APIRequestContext, token: string, agentId: st
 }
 
 async function deleteAgent(request: APIRequestContext, token: string, agentId: string) {
-  await apiJson(request, `/api/agents/${agentId}`, {
+  return apiJson(request, `/api/agents/${agentId}`, {
     method: "DELETE",
     token,
     failOnStatus: false,
@@ -388,12 +458,21 @@ async function saveProviderKey(
   token: string,
   { provider, apiKey, model }: SaveProviderKeyOptions,
 ) {
-  const { body } = await apiJson(request, "/api/llm-providers", {
+  const { body } = await apiJson<ProviderKeyRecord>(request, "/api/llm-providers", {
     method: "POST",
     token,
     data: { provider, apiKey, model },
   });
-  return body;
+  return assertJsonRecord<ProviderKeyRecord>(body, "/api/llm-providers");
+}
+
+async function setProviderDefault(request: APIRequestContext, token: string, providerId: string) {
+  const { body } = await apiJson<ProviderKeyRecord>(request, `/api/llm-providers/${providerId}`, {
+    method: "PUT",
+    token,
+    data: { is_default: true },
+  });
+  return assertJsonRecord<ProviderKeyRecord>(body, `/api/llm-providers/${providerId}`);
 }
 
 async function listProviders(request: APIRequestContext, token: string) {
@@ -600,6 +679,8 @@ async function deleteChannel(
 
 export {
   getPlatformConfig,
+  getAccessibleRemoteExecutionTarget,
+  selectAccessibleRemoteExecutionTarget,
   backendSupported,
   runtimeSupported,
   deployAgent,
@@ -613,6 +694,7 @@ export {
   chatOpenClaw,
   chatHermes,
   saveProviderKey,
+  setProviderDefault,
   listProviders,
   connectIntegration,
   testIntegration,
