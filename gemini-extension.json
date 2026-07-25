@@ -1,7 +1,7 @@
 {
   "name": "nora",
   "description": "Operate self-hosted OpenClaw and Hermes agent fleets from Gemini CLI.",
-  "version": "1.16.5",
+  "version": "1.16.6",
   "settings": [
     {
       "name": "Nora API URL",

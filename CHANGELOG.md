@@ -4,6 +4,55 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
+## [v1.16.6](https://github.com/solomon2773/nora/releases/tag/v1.16.6) — 2026-07-24
+
+Terminal/Logs connectivity, Hermes dashboard access, and CI/dependency hardening patch: agent
+terminal and log streaming reach the runtime again for every agent, the Hermes Web UI authenticates
+on the hardened image, and advisory auditing moves off the per-pull-request gate so a newly published
+upstream advisory no longer blocks unrelated changes.
+
+### Added
+
+- The Hermes dashboard now authenticates via HTTP basic-auth, so its Web UI works on the hardened
+  image instead of being unreachable.
+- Local Docker Hermes agents can now be reached through an external connect flow.
+- `nora workspaces list --json` emits machine-readable output for operator automation and scripting.
+
+### Changed
+
+- Agent gateway global and mutation rate-limit caps are now environment-configurable
+  (`GLOBAL_RATE_LIMIT_MAX` / `GLOBAL_RATE_LIMIT_WINDOW_MS`, `MUTATION_RATE_LIMIT_MAX` /
+  `MUTATION_RATE_LIMIT_WINDOW_MS`), so single-source-IP deployments — CI and browser E2E behind one
+  localhost address, or a shared reverse proxy — no longer self-throttle into HTTP 429 cascades.
+  Production defaults are unchanged at 1000 requests per 15 minutes and 60 mutations per minute per
+  IP.
+- npm advisory auditing now runs as a daily scheduled sweep with Dependabot remediation instead of a
+  per-pull-request blocking check. Because `npm audit` resolves against the live advisory database,
+  an unrelated newly published advisory no longer fails every open pull request; the blocking
+  Security gate retains the deterministic sensitive-config scan, license-policy, and infra-validation
+  checks.
+- Backend unit-test coverage expands to the audit-source and API-token helpers, and the integrations
+  documentation index now links the existing per-provider guides.
+- Release metadata advances the Gemini extension manifest to `1.16.6` and the Helm chart to `0.7.6`
+  with application version `1.16.6`.
+
+### Fixed
+
+- Agent Terminal and Logs now connect to the runtime. The nginx `/api/ws/` location used a variable
+  `proxy_pass` that does not append the matched location remainder, so `/api/ws/exec/{id}` and
+  `/api/ws/logs/{id}` reached the backend as a bare `/ws/` and matched no upgrade handler; the
+  WebSocket upgrade hung and surfaced as `--- Session ended ---` in the Terminal and
+  `Waiting for logs...` in Logs. The full `/ws/...` path is now reconstructed with a regex capture
+  and applied to both the local and E2E nginx configurations. This affected every agent, not only
+  Hermes.
+- The provisioner worker now resolves backend adapters from `/app/backends` in the production image
+  instead of failing to locate them.
+- Hermes Docker deployment no longer fails after its readiness probe times out, and the fix is
+  ported to the Kubernetes backend.
+- High-severity npm advisories are cleared across services, including the `postcss` path-traversal
+  advisories reached transitively through `sanitize-html` in `agent-runtime` and through the build
+  toolchain in the dashboards.
+
 ## [v1.16.5](https://github.com/solomon2773/nora/releases/tag/v1.16.5) — 2026-07-19
 
 Activation, Remote Docker administration, extension safety, and operator-readiness patch: the
