@@ -3,14 +3,21 @@
 // which authenticates every route except /health with the per-agent gateway
 // token. Most agent objects passed around the backend already carry
 // gateway_token, but some loading queries omit it (e.g. the auth-sync query);
-// fall back to a cheap indexed lookup so no caller path can silently send an
-// empty token and get a 401.
+// fall back to a cheap indexed lookup. A missing token or failed lookup produces
+// empty headers and lets the runtime reject the request.
 
 const db = require("./db");
 const { decrypt } = require("./crypto");
 const { assertRemoteHostAgentUse, isRemoteDockerAgent } = require("./remoteHosts");
 const { buildRuntimeAuthHeaders } = require("../agent-runtime/lib/agentEndpoints");
 
+/**
+ * Resolve decrypted bearer headers from an agent row or an id-scoped database
+ * fallback, returning empty headers when no token is available.
+ *
+ * @param {Object|null} agent - Agent carrying a gateway token or id for fallback lookup.
+ * @returns {Promise<Object>} Runtime authorization headers, or an empty object.
+ */
 async function runtimeAuthHeaders(agent) {
   // gateway_token is encrypted at rest (AES-256-GCM). decrypt() is transparent
   // to legacy plaintext tokens (colon-free hex), so it is safe to call here

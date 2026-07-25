@@ -57,7 +57,7 @@ cd e2e && npm run smoke:runtime-path        # Runtime resolution
 cd e2e && npm run capture:operator-readme   # Regenerate README screenshots
 ```
 
-CI is split across `.github/workflows/ci-quality.yml`, `.github/workflows/ci-security.yml`, `.github/workflows/ci-compose.yml`, and `.github/workflows/ci-codeql.yml` on pull requests and pushes to `master` under Node 24.
+CI is split across `.github/workflows/ci-quality.yml`, `.github/workflows/ci-security.yml`, `.github/workflows/ci-compose.yml`, and `.github/workflows/ci-codeql.yml` on pull requests and pushes to `master` under Node 24. npm advisory auditing is deliberately **not** a per-PR blocking check — `npm audit` queries the live advisory DB, so an unchanged lockfile would flip red whenever an unrelated advisory is published. It runs instead on a schedule in `.github/workflows/dependency-audit.yml` (daily + `workflow_dispatch`), with Dependabot security updates handling remediation; the blocking `Security gate` in `ci-security.yml` covers only the deterministic checks (secret scan, license policy, infra validation).
 
 ## Architecture
 
@@ -106,6 +106,7 @@ Two consequences that routinely confuse agents:
 
 - **The mount shadows the host `backend-api/backends/` directory at runtime.** Inside the backend-api container, `/app/backends/*` resolves to the worker's copy, _not_ the host files under `backend-api/backends/`. A change to a host file that the mount shadows has **no runtime effect** in the container.
 - **`backend-api/backends/hermes.ts` and `nemoclaw.ts` are re-export shims** (`module.exports = require("../../workers/provisioner/backends/<name>")`) — edit the worker source, never the shim. The one genuinely backend-owned file there is `telemetry.ts` (backend telemetry normalization), which is distinct from the worker's `telemetry.ts`.
+- **`containerManager.resolveBackendPath` loads adapters from `/app/backends` first.** That directory holds the worker's real adapters in every layout (backend-api prod `COPY`, worker-provisioner prod image, and the dev bind mount), so lifecycle/destroy calls resolve correctly even in the worker-provisioner prod image, where `containerManager` runs from `/backend-api` and the shims' `../../workers/...` path is dead (there is no `/workers` dir). Don't reintroduce reliance on the shim path for prod resolution.
 
 Treat `workers/provisioner/backends/` and `agent-runtime/` as **shared-blast-radius zones**: an edit there changes both backend-api and the worker, so verify both consumers.
 

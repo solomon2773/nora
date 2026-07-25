@@ -51,6 +51,7 @@ const {
   runtimeUrlForAgent,
 } = require("../../agent-runtime/lib/agentEndpoints");
 const { getDefaultAgentImage } = require("../../agent-runtime/lib/agentImages");
+const { deriveHermesDashboardBasicAuth } = require("../../agent-runtime/lib/hermesDashboardAuth");
 const {
   DEFAULT_RUNTIME_FAMILY,
   KNOWN_RUNTIME_FAMILIES,
@@ -448,6 +449,14 @@ async function removeFailedDemoActivation(queryable, agentId, userId) {
   }
 }
 
+/**
+ * Resolve the image Nora should deploy for a requested runtime selection,
+ * preferring an explicit override, then the current image when the runtime path
+ * is unchanged, and finally the runtime-family default image.
+ *
+ * @param {Object} [options={}] - Requested and fallback image/runtime inputs.
+ * @returns {string|null} Image Nora should persist for the agent.
+ */
 function resolveRequestedImage({
   requestedImage,
   runtimeFields = null,
@@ -478,6 +487,13 @@ function normalizeRequestedRuntimeFamily(value) {
   return normalizeRuntimeFamilyName(value);
 }
 
+/**
+ * Validate that the requested runtime selection is enabled and fully
+ * configured on this Nora control plane.
+ *
+ * @param {Object} runtimeFields - Requested runtime/backend selection fields.
+ * @returns {Object} Runtime-selection status when the request is allowed.
+ */
 function assertRuntimeSelectionAvailable(runtimeFields) {
   const status = getRuntimeSelectionStatus(runtimeFields);
   if (!status.enabled) {
@@ -502,6 +518,14 @@ function assertRuntimeSelectionAvailable(runtimeFields) {
   return status;
 }
 
+/**
+ * Validate the requested runtime path and ensure any Kubernetes or Remote
+ * Docker execution target is available to the owning user.
+ *
+ * @param {Object} runtimeFields - Requested runtime/backend selection fields.
+ * @param {string} ownerUserId - User id used to validate remote-host-backed execution targets.
+ * @returns {Promise<Object>} Runtime-selection status for the validated target.
+ */
 async function assertRuntimeTargetAvailable(runtimeFields, ownerUserId) {
   const status = assertRuntimeSelectionAvailable(runtimeFields);
   await assertKubernetesExecutionTargetAvailable(runtimeFields);
@@ -534,6 +558,13 @@ function normalizeGatewayHost(value) {
   }
 }
 
+/**
+ * Determine the externally reachable gateway host Nora should publish for an
+ * agent, preferring explicit env configuration before request headers.
+ *
+ * @param {Object} req - Express request used to inspect forwarded host headers.
+ * @returns {string} Hostname Nora should expose in agent gateway URLs.
+ */
 function resolvePublishedGatewayHost(req) {
   const configuredHost = normalizeGatewayHost(process.env.GATEWAY_HOST);
   if (configuredHost) return configuredHost;
@@ -551,6 +582,13 @@ function resolvePublishedGatewayHost(req) {
   return normalizeGatewayHost(req.get("host")) || "localhost";
 }
 
+/**
+ * Determine the externally reachable gateway protocol Nora should publish for
+ * an agent, preferring explicit env configuration before request headers.
+ *
+ * @param {Object} req - Express request used to inspect forwarded protocol headers.
+ * @returns {string} `https` or `http` for published gateway URLs.
+ */
 function resolvePublishedGatewayProtocol(req) {
   const configuredProtocol = String(
     process.env.GATEWAY_PROTOCOL || process.env.GATEWAY_SCHEME || "",
@@ -565,6 +603,96 @@ function resolvePublishedGatewayProtocol(req) {
   // The control plane itself may be behind HTTPS, but inheriting that scheme
   // produces browser TLS errors on direct gateway ports like :19618.
   return "http";
+}
+
+// Runtime API port inside the Hermes container (Nora's compose network talks
+// to this via runtime_host:runtime_port; this constant is only used to look
+// up the matching HOST-published port binding below).
+const HERMES_RUNTIME_PORT = 8642;
+
+// Externally-reachable connect info for Hermes Desktop / direct clients on a
+// LOCAL Docker agent. Nora's own traffic uses the compose-network address
+// (runtime_host:runtime_port); this is the host-published address instead:
+//   runtime API  -> DOCKER_AGENT_BIND_IP:<published 8642 host port>
+//   dashboard    -> DOCKER_AGENT_BIND_IP:<published 9119 host port>
+// Both host ports are read by inspecting the live container bindings (never
+// persisted — persisting the dashboard host port would corrupt the embed
+// proxy's resolveHermesDashboardAddress). The host shown to the operator is
+// whatever they browsed Nora on (X-Forwarded-Host / GATEWAY_HOST), matching
+// the OpenClaw ui-info pattern.
+// A published-port HostIp is usable as the advertised connect host only when it
+// is a concrete routable address. Docker's bind-all (0.0.0.0 / ::) and loopback
+// addresses tell us nothing about where an external client should connect, so
+// those fall back to the browsing-host heuristic.
+function isRoutablePublishHostIp(hostIp) {
+  const ip = String(hostIp || "").trim();
+  if (!ip) return false;
+  if (ip === "0.0.0.0" || ip === "::" || ip === "[::]") return false;
+  if (ip === "localhost" || ip === "::1" || ip === "[::1]") return false;
+  if (/^127\./.test(ip)) return false;
+  return true;
+}
+
+function formatHostForUrl(host) {
+  // Bracket IPv6 literals so their colons don't collide with the port separator.
+  return require("net").isIP(host) === 6 ? `[${host}]` : host;
+}
+
+async function resolveHermesConnectInfo(agent, req) {
+  // The connect block carries the decrypted runtime API key, so it is a
+  // management capability rather than ordinary status metadata. Keep the
+  // shared Hermes status route intact while omitting durable credentials for
+  // non-owner workspace members and control-plane API keys.
+  if (req?.apiKey || agent?.effective_role !== "owner") return null;
+
+  const runtimeFields = buildAgentRuntimeFields(agent);
+  if (runtimeFields.runtime_family !== "hermes") return null;
+  if (runtimeFields.deploy_target !== "docker") return null;
+  if (!agent.container_id) return null;
+
+  let runtimeApiHostPort = null;
+  let dashboardHostPort = null;
+  let runtimeHostIp = null;
+  try {
+    const Docker = require("dockerode");
+    const docker = new Docker({ socketPath: "/var/run/docker.sock" });
+    const info = await docker.getContainer(agent.container_id).inspect();
+    const ports = info.NetworkSettings?.Ports || {};
+    const runtimeBinding = ports[`${HERMES_RUNTIME_PORT}/tcp`];
+    const dashboardBinding = ports[`${HERMES_DASHBOARD_PORT}/tcp`];
+    runtimeApiHostPort = runtimeBinding?.[0]?.HostPort
+      ? parseInt(runtimeBinding[0].HostPort, 10)
+      : null;
+    dashboardHostPort = dashboardBinding?.[0]?.HostPort
+      ? parseInt(dashboardBinding[0].HostPort, 10)
+      : null;
+    // The interface the ports are actually bound to (DOCKER_AGENT_BIND_IP).
+    runtimeHostIp = runtimeBinding?.[0]?.HostIp || null;
+  } catch (err) {
+    console.warn(
+      `[hermes-connect] Could not inspect published ports for agent ${agent.id}: ${err.message}`,
+    );
+    return null;
+  }
+
+  // No published runtime API port means the operator has not exposed it
+  // (DOCKER_AGENT_BIND_IP not set to a routable interface, or ports absent).
+  if (!runtimeApiHostPort) return null;
+
+  const proto = resolvePublishedGatewayProtocol(req);
+  // Prefer the actual publish interface (source of truth) when it is routable;
+  // otherwise fall back to the browsing-host heuristic (loopback default / the
+  // remote 0.0.0.0 variant, where the bind IP doesn't identify a reachable host).
+  const host = isRoutablePublishHostIp(runtimeHostIp)
+    ? formatHostForUrl(runtimeHostIp)
+    : resolvePublishedGatewayHost(req);
+  const apiKey = await resolveHermesApiToken(agent);
+
+  return {
+    runtimeApiUrl: `${proto}://${host}:${runtimeApiHostPort}`,
+    dashboardUrl: dashboardHostPort ? `${proto}://${host}:${dashboardHostPort}` : null,
+    apiKey: apiKey || null,
+  };
 }
 
 function normalizeClawhubSkillEntry(entry) {
@@ -603,6 +731,13 @@ function normalizeClawhubSkillEntry(entry) {
   };
 }
 
+/**
+ * Normalize and deduplicate the ClawHub-installed-skill metadata Nora stores on
+ * an agent row.
+ *
+ * @param {Array} entries - Raw installed-skill entries from the request or DB.
+ * @returns {Array} Stable list of normalized ClawHub skill descriptors.
+ */
 function normalizeClawhubSkills(entries) {
   if (!Array.isArray(entries)) return [];
 
@@ -834,6 +969,14 @@ function createStatusCodeError(message, statusCode) {
   return error;
 }
 
+/**
+ * Load an agent for Hermes WebUI endpoints and enforce the extra runtime-state
+ * invariants those routes rely on.
+ *
+ * @param {Object} req - Express request carrying the target `:id` and user context.
+ * @param {Object} [options={}] - Access requirements for the lookup.
+ * @returns {Promise<Object>} Accessible Hermes agent ready for downstream WebUI actions.
+ */
 async function loadHermesUiAgent(req, { requiredRole = "viewer" } = {}) {
   const agent = await findAccessibleAgentForRequest(req, req.params.id, requiredRole);
   if (!agent) {
@@ -920,27 +1063,51 @@ function buildHermesDashboardUnsupportedMessage(versionLine = "") {
   );
 }
 
-function buildHermesDashboardEnsureCommand() {
-  return [
+function buildHermesDashboardEnsureCommand(dashboardAuth = null) {
+  const lines = [
     'HERMES_BIN="/opt/hermes/.venv/bin/hermes"',
     '[ -x "$HERMES_BIN" ] || HERMES_BIN="$(command -v hermes 2>/dev/null || true)"',
     'if [ -z "$HERMES_BIN" ]; then echo "STATUS=missing-cli"; exit 0; fi',
     'VERSION="$("$HERMES_BIN" version 2>/dev/null | head -n 1 || true)"',
     'if ! "$HERMES_BIN" --help 2>/dev/null | grep -q "dashboard"; then echo "STATUS=missing-dashboard"; printf "VERSION=%s\\n" "$VERSION"; exit 0; fi',
     `if python3 -c 'import socket,sys;s=socket.socket();s.settimeout(1);rc=s.connect_ex(("127.0.0.1",${HERMES_DASHBOARD_PORT}));s.close();sys.exit(0 if rc==0 else 1)'; then echo "STATUS=already-running"; printf "VERSION=%s\\n" "$VERSION"; exit 0; fi`,
-    'if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1; then setsid gosu hermes "$HERMES_BIN" dashboard --host 0.0.0.0 --insecure --no-open < /dev/null & else setsid "$HERMES_BIN" dashboard --host 0.0.0.0 --insecure --no-open < /dev/null & fi',
+    'if [ "$(id -u)" = "0" ] && command -v gosu >/dev/null 2>&1; then setsid gosu hermes "$HERMES_BIN" dashboard --host 0.0.0.0 --no-open < /dev/null & else setsid "$HERMES_BIN" dashboard --host 0.0.0.0 --no-open < /dev/null & fi',
     "started=0",
     `for _attempt in 1 2 3 4 5; do if python3 -c 'import socket,sys;s=socket.socket();s.settimeout(1);rc=s.connect_ex(("127.0.0.1",${HERMES_DASHBOARD_PORT}));s.close();sys.exit(0 if rc==0 else 1)'; then started=1; break; fi; sleep 1; done`,
     'if [ "$started" = "1" ]; then echo "STATUS=started"; else echo "STATUS=start-failed"; fi',
     'printf "VERSION=%s\\n" "$VERSION"',
-  ].join("; ");
+  ];
+  if (dashboardAuth) {
+    // Existing containers created before dashboard-auth support lack the
+    // HERMES_DASHBOARD_BASIC_AUTH_* vars in their baked env. Derive them from the
+    // agent's gateway_token (control-plane side) and export them here so the
+    // relaunched dashboard starts with Hermes's basic-auth provider — letting an
+    // existing agent's Web UI work again without a data-losing container recreate.
+    lines.unshift(
+      `export HERMES_DASHBOARD_BASIC_AUTH_USERNAME='${dashboardAuth.username}'`,
+      `export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD='${dashboardAuth.password}'`,
+      `export HERMES_DASHBOARD_BASIC_AUTH_SECRET='${dashboardAuth.secret}'`,
+    );
+  }
+  return lines.join("; ");
 }
 
 async function ensureHermesDashboardProcess(agent) {
   try {
-    const { output } = await runContainerCommand(agent, buildHermesDashboardEnsureCommand(), {
-      timeout: 15000,
-    });
+    let dashboardAuth = null;
+    try {
+      const token = await resolveHermesApiToken(agent);
+      if (token) dashboardAuth = deriveHermesDashboardBasicAuth(token);
+    } catch (err) {
+      console.warn(
+        `[hermes-dashboard] could not derive dashboard auth for agent ${agent.id}: ${err.message}`,
+      );
+    }
+    const { output } = await runContainerCommand(
+      agent,
+      buildHermesDashboardEnsureCommand(dashboardAuth),
+      { timeout: 15000 },
+    );
     const lines = String(output || "")
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -1348,6 +1515,8 @@ router.get(
       gatewayError = error.message || "Failed to read Hermes gateway state";
     }
 
+    const connect = await resolveHermesConnectInfo(agent, req);
+
     res.json({
       url: runtimeUrlForAgent(agent, "/v1"),
       runtime: runtimeAddress,
@@ -1359,6 +1528,7 @@ router.get(
       configuredProvider,
       configuredBaseUrl,
       directoryUpdatedAt,
+      ...(connect ? { connect } : {}),
       ...(gateway ? { gateway } : {}),
       ...(modelsError ? { modelsError } : {}),
       ...(gatewayError ? { gatewayError } : {}),
@@ -2980,3 +3150,4 @@ router.post(
 );
 
 module.exports = router;
+module.exports.buildHermesDashboardEnsureCommand = buildHermesDashboardEnsureCommand;

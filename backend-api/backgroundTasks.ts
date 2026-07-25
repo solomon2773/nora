@@ -21,6 +21,13 @@ function shouldPreserveStatusAfterRemoteHostError(error) {
   );
 }
 
+/**
+ * Collect telemetry for running container-backed agents and prune samples older
+ * than seven days. Individual and task-level failures are intentionally ignored.
+ *
+ * @param {Object} options - Database and telemetry-collector overrides.
+ * @returns {Promise<void>}
+ */
 async function collectBackgroundTelemetry({
   dbClient = db,
   telemetryCollector = collectAgentTelemetrySample,
@@ -51,6 +58,13 @@ async function collectBackgroundTelemetry({
   }
 }
 
+/**
+ * Reconcile persisted container-backed agent states with runtime liveness.
+ * Resolver failures are treated as not running; all reconciliation is best-effort.
+ *
+ * @param {Object} options - Database and status-resolver overrides.
+ * @returns {Promise<void>}
+ */
 async function reconcileBackgroundAgentStatuses({
   dbClient = db,
   statusResolver = (agent) => containerManager.status(agent),
@@ -95,11 +109,13 @@ async function reconcileBackgroundAgentStatuses({
   }
 }
 
-// Reconcile ADOPTED external runtimes (BYOC Phase C2). They have no container, so
-// the container reconciler above skips them (container_id IS NULL). Liveness comes
-// from an SSRF-safe HTTP probe of the operator-declared endpoint instead, then the
-// same reconcileAgentStatus transitions apply (reachable -> running / recovers;
-// unreachable -> stopped). Best-effort.
+/**
+ * Reconcile adopted runtimes through SSRF-safe HTTP probes because they have no
+ * container to inspect. Probe failures count as down and the sweep never throws.
+ *
+ * @param {Object} options - Database and health-probe overrides.
+ * @returns {Promise<void>}
+ */
 async function reconcileExternalAgentStatuses({
   dbClient = db,
   healthProbe = probeExternalAgentHealth,

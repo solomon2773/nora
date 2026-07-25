@@ -83,6 +83,12 @@ function buildLegacyChannel(channel = {}, typeMeta = {}) {
   };
 }
 
+/**
+ * Project database-backed adapters into the same channel payload shape used by OpenClaw.
+ *
+ * @param {string} agentId - Agent whose legacy channels should be listed.
+ * @returns {Promise<Object>} Unified channels, capabilities, and type metadata.
+ */
 async function listLegacyChannelsPayload(agentId) {
   const [channelRows, availableTypes] = await Promise.all([
     channels.listChannels(agentId),

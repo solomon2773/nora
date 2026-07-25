@@ -1236,6 +1236,39 @@ describe("provisioning runtime/gateway contracts", () => {
     expect(result.policyStatus).toBe("supported");
   });
 
+  it("launches Hermes under the image's PID-1 init without re-exec'ing /init", async () => {
+    const K8sBackend = require("../../workers/provisioner/backends/k8s");
+    const backend = new K8sBackend(k8sProfile({ hermesNamespace: "hermes-agents" }));
+
+    await backend.create({
+      id: "hermes-init-guard",
+      name: "Hermes Init Guard",
+      runtimeFamily: "hermes",
+      vcpu: 2,
+      ram_mb: 2048,
+      env: {},
+    });
+
+    // Bug #1 (#297): the pod must launch args-only so the image ENTRYPOINT
+    // (/init, s6-overlay as PID 1) supervises the bootstrap. A nested /init in
+    // the bootstrap script fatals with "s6-overlay-suexec: can only run as
+    // pid 1" and kills the container before the runtime port can bind.
+    const deployment = mockCreateNamespacedDeployment.mock.calls[0][0].body;
+    const container = deployment.spec.template.spec.containers[0];
+    expect(container.command).toBeUndefined();
+    expect(container.args).toEqual(["bash", "-lc", ". /opt/nora-bootstrap/bootstrap.sh"]);
+
+    const bootstrapConfigMap = mockCreateNamespacedConfigMap.mock.calls
+      .map((call) => call[0].body)
+      .find((body) => body?.metadata?.labels?.["nora.bootstrap"] === "true");
+    expect(bootstrapConfigMap).toBeDefined();
+    const script = bootstrapConfigMap.data["bootstrap.sh"];
+    expect(script).not.toContain("/init");
+    expect(script).toContain('nohup "$HERMES_BIN" dashboard --host 0.0.0.0 --no-open');
+    expect(script).not.toContain("--insecure");
+    expect(script).toContain('exec "$HERMES_BIN" gateway run');
+  });
+
   it("replaces an existing NetworkPolicy instead of failing on redeploy", async () => {
     mockCreateNamespacedNetworkPolicy
       .mockRejectedValueOnce({
@@ -1827,20 +1860,40 @@ describe("Hermes dashboard provisioning", () => {
     expect(config.Env).toEqual(
       expect.arrayContaining(["GATEWAY_HEALTH_URL=http://127.0.0.1:8642"]),
     );
+    // Bug #2 (#297): the gateway API key must be baked into the container env so
+    // the s6-supervised gateway (which reads /run/s6/container_environment, not
+    // the sourced managed-env file) inherits it on every boot, including
+    // auth-reconcile restarts. It must match the token returned to the control plane.
+    const apiServerKeyEnv = config.Env.find((entry) => entry.startsWith("API_SERVER_KEY="));
+    expect(apiServerKeyEnv).toBe(`API_SERVER_KEY=${result.gatewayToken}`);
+    // Dashboard basic-auth credential is baked into the container env and must
+    // match what the proxy re-derives from the returned gateway token.
+    const derivedDash =
+      require("../../agent-runtime/lib/hermesDashboardAuth").deriveHermesDashboardBasicAuth(
+        result.gatewayToken,
+      );
+    expect(config.Env).toEqual(
+      expect.arrayContaining([
+        `HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${derivedDash.username}`,
+        `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${derivedDash.password}`,
+        `HERMES_DASHBOARD_BASIC_AUTH_SECRET=${derivedDash.secret}`,
+      ]),
+    );
     expect(config.Entrypoint).toBeUndefined();
     expect(config.Cmd).toEqual([
       "bash",
       "-lc",
       expect.stringContaining('HERMES_BIN="/opt/hermes/.venv/bin/hermes"'),
     ]);
-    expect(config.Cmd[2]).toContain("exec /init bash -lc");
-    expect(config.Cmd[2]).toContain(
-      'nohup "$HERMES_BIN" dashboard --host 0.0.0.0 --insecure --no-open',
-    );
+    // Bug #1 (#297): the CMD must NOT re-exec /init. The image's PID-1 /init
+    // (s6-overlay) supervises this command directly; a nested /init fatals with
+    // "s6-overlay-suexec: can only run as pid 1" and exits before port 8642 binds.
+    expect(config.Cmd[2]).not.toContain("/init");
+    expect(config.Cmd[2]).toContain('nohup "$HERMES_BIN" dashboard --host 0.0.0.0 --no-open');
+    expect(config.Cmd[2]).not.toContain("--insecure");
     expect(config.Cmd[2]).toContain(">> /opt/data/hermes-dashboard.log 2>&1");
     expect(config.Cmd[2]).not.toContain("/proc/1/fd");
     expect(config.Cmd[2]).toContain('exec "$HERMES_BIN" gateway run');
-    expect(config.Cmd[2].match(/\/init/g)).toHaveLength(1);
     expect(config.Cmd.join(" ")).not.toContain("/opt/hermes/docker/entrypoint.sh");
     expect(config.ExposedPorts).toEqual({
       "8642/tcp": {},

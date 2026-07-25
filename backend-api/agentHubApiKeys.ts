@@ -51,6 +51,13 @@ function addUniqueSecret(secrets, secret) {
   if (secret && !secrets.includes(secret)) secrets.push(secret);
 }
 
+/**
+ * Resolve the primary HMAC secret and, during verification, legacy secrets used
+ * before key rotation; production fails closed when no strong secret exists.
+ *
+ * @param {Object} [options={}] - Whether legacy secret candidates are included.
+ * @returns {Array} Ordered unique hashing secrets.
+ */
 function apiKeyHashSecrets({ includeLegacy = false } = {}) {
   const secrets = [];
   addUniqueSecret(secrets, explicitHashSecret());
@@ -140,6 +147,14 @@ function extractApiKey(req) {
   return "";
 }
 
+/**
+ * Create a high-entropy Agent Hub API key, storing only its HMAC hash and
+ * returning the raw key once in the creation response.
+ *
+ * @param {string} userId - User who owns the key.
+ * @param {string} label - Human-readable key label.
+ * @returns {Promise<Object>} Serialized key plus its one-time raw value.
+ */
 async function createApiKey(userId, label) {
   if (!userId) {
     const error = new Error("userId is required");
@@ -185,6 +200,13 @@ async function revokeApiKey(keyId, userId) {
   return result.rows[0] ? serializeApiKey(result.rows[0]) : null;
 }
 
+/**
+ * Verify an active key against current and legacy hashes, transparently
+ * rehashing legacy matches and updating last-used time.
+ *
+ * @param {string} rawKey - Presented Agent Hub API key.
+ * @returns {Promise<Object|null>} Authenticated key and publisher, or `null`.
+ */
 async function verifyApiKey(rawKey) {
   const normalized = String(rawKey || "").trim();
   if (!normalized) return null;
@@ -239,6 +261,14 @@ async function verifyApiKey(rawKey) {
   };
 }
 
+/**
+ * Authenticate an Agent Hub API request and attach its key and publisher context.
+ *
+ * @param {Object} req - Express request containing a supported API-key header.
+ * @param {Object} res - Express response used for authentication failures.
+ * @param {Function} next - Express continuation.
+ * @returns {Promise<void>} Resolves after authentication or error forwarding.
+ */
 async function requireAgentHubApiKey(req, res, next) {
   try {
     const rawKey = extractApiKey(req);

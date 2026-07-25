@@ -40,6 +40,13 @@ function normalizeToolParameterSchema(schema: unknown): Record<string, unknown> 
   return schema as Record<string, unknown>;
 }
 
+/**
+ * Convert synced integration manifests into collision-free runtime tool declarations.
+ *
+ * @param {Object[]} [integrations=[]] - Synced integrations with declared tool specs.
+ * @param {Object} [options={}] - Names already reserved by other tool sources.
+ * @returns {Array} Executable and manifest-backed tool catalog entries.
+ */
 export function buildIntegrationToolCatalogEntries(
   integrations: any[] = [],
   options: BuildToolCatalogOptions = {},

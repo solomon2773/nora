@@ -18,6 +18,15 @@ const router = express.Router();
 router.use(requireSession);
 router.use(requireAdmin);
 
+/**
+ * Record fleet audit activity without letting monitoring failures fail the request.
+ *
+ * @param {Object} req - Express request used to build audit metadata.
+ * @param {string} eventType - Monitoring event type.
+ * @param {string} message - Human-readable event message.
+ * @param {Object} [context={}] - Fleet-specific audit context.
+ * @returns {Promise<void>} Settled best-effort logging promise.
+ */
 function logFleetEvent(req, eventType, message, context = {}) {
   return Promise.resolve(
     monitoring.logEvent(eventType, message, buildAuditMetadata(req, context)),

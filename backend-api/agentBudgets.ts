@@ -11,8 +11,8 @@
 //     the status reconciler flips stopped->running whenever the container is
 //     live, so re-enforcement is what makes the pause stick).
 //
-// Alert events (agent.budget_soft_exceeded / agent.budget_exceeded) are
-// deduped per bucket via last_alerted_pct, exactly like workspace budgets.
+// Alert events (agent.budget_soft_exceeded / agent.budget_exceeded) use
+// last_alerted_pct for best-effort per-bucket suppression, like workspace budgets.
 // Enforcement itself is NOT deduped: while over the hard cap and running,
 // every check re-pauses.
 
@@ -24,6 +24,8 @@ const monitoring = require("./monitoring");
 const VALID_PERIODS = new Set(["daily", "weekly", "monthly"]);
 const PERIOD_DAYS = { daily: 1, weekly: 7, monthly: 30 };
 const PAUSED_REASON_BUDGET = "budget_exceeded";
+
+// Budget normalization and persistence
 
 function normalizePeriod(value) {
   const period = String(value || "monthly").trim();
@@ -82,6 +84,15 @@ async function listBudgets(agentId, { dbClient = db } = {}) {
   return result.rows.map(serializeBudget);
 }
 
+/**
+ * Validate and upsert one budget for an agent and rolling spend window while
+ * preserving the existing row's identity and alert state on update.
+ *
+ * @param {string} agentId - Agent that owns the budget.
+ * @param {Object} [payload={}] - Requested limit, period, and soft threshold.
+ * @param {Object} [options={}] - Optional database dependency override.
+ * @returns {Promise<Object>} Persisted budget.
+ */
 async function upsertBudget(agentId, payload = {}, { dbClient = db } = {}) {
   const period = normalizePeriod(payload.period);
   const limitUsd = normalizeLimit(payload.limitUsd ?? payload.limit_usd);
@@ -103,6 +114,14 @@ async function upsertBudget(agentId, payload = {}, { dbClient = db } = {}) {
   return serializeBudget(result.rows[0]);
 }
 
+/**
+ * Delete a budget only when it belongs to the requested agent.
+ *
+ * @param {string} budgetId - Budget to delete.
+ * @param {string} agentId - Agent expected to own the budget.
+ * @param {Object} [options={}] - Optional database dependency override.
+ * @returns {Promise<boolean>} Whether a matching budget was deleted.
+ */
 async function deleteBudget(budgetId, agentId, { dbClient = db } = {}) {
   const result = await dbClient.query(
     "DELETE FROM agent_budgets WHERE id = $1 AND agent_id = $2 RETURNING id",
@@ -111,6 +130,14 @@ async function deleteBudget(budgetId, agentId, { dbClient = db } = {}) {
   return Boolean(result.rows[0]);
 }
 
+/**
+ * Best-effort persistence of the threshold percentage most recently reported.
+ *
+ * @param {string} budgetId - Budget whose alert state should be updated.
+ * @param {number} pct - Percentage recorded for alert deduplication.
+ * @param {Object} [options={}] - Optional database dependency override.
+ * @returns {Promise<void>} Resolves even when the alert-state write fails.
+ */
 async function recordBudgetAlert(budgetId, pct, { dbClient = db } = {}) {
   await dbClient
     .query(
@@ -124,14 +151,22 @@ async function recordBudgetAlert(budgetId, pct, { dbClient = db } = {}) {
     .catch((err) => console.error("Failed to record agent budget alert:", err.message));
 }
 
+// Spend evaluation and enforcement
+
 function bucketFor(pct, softThresholdPct) {
   if (pct >= 100) return "hard";
   if (pct >= softThresholdPct) return "soft";
   return "none";
 }
 
-// Attach current spend + crossing bucket to each budget. Pure read; used by
-// the budget API so the UI can render cap-vs-spend without extra calls.
+/**
+ * Read each budget's matching rolling-window spend, floor its percentage, and
+ * assign its current `none`, `soft`, or `hard` threshold bucket.
+ *
+ * @param {string} agentId - Agent whose budgets should be summarized.
+ * @param {Object} [deps={}] - Optional database and cost-resolver dependencies.
+ * @returns {Promise<Array>} Budgets enriched with their current spend state.
+ */
 async function listBudgetsWithSpend(agentId, deps = {}) {
   const { costResolver = metrics.getAgentCost } = deps;
   const budgets = await listBudgets(agentId, deps);
@@ -145,9 +180,14 @@ async function listBudgetsWithSpend(agentId, deps = {}) {
   return out;
 }
 
-// Evaluate budgets for an agent and enforce the hard cap. Alerts are deduped
-// per bucket (like workspace budgets); the stop action re-fires on every
-// check while the agent is over cap and its runtime is up.
+/**
+ * Evaluate every budget for an agent, best-effort suppress repeated alerts
+ * using persisted bucket state, and re-enforce hard caps while the runtime is live.
+ *
+ * @param {Object} agent - Agent whose spend and runtime state should be checked.
+ * @param {Object} [deps={}] - Optional database, cost, logging, and runtime dependencies.
+ * @returns {Promise<Object>} Enforcement result and all crossed budgets.
+ */
 async function checkAndEnforce(agent, deps = {}) {
   const {
     dbClient = db,
@@ -208,9 +248,15 @@ async function checkAndEnforce(agent, deps = {}) {
   return { enforced, crossings };
 }
 
-// Pause the runtime for a hard crossing. paused_reason is written first so
-// the intent survives a failed stop; status only flips once the stop call
-// succeeded. A failed stop is retried by the next sweep.
+/**
+ * Pause a live runtime for a hard crossing, recording pause intent before the
+ * stop so a failed attempt can be retried by the next sweep.
+ *
+ * @param {Object} agent - Running or warning agent to pause.
+ * @param {Object} crossing - Hard-cap budget and spend details.
+ * @param {Object} [deps={}] - Optional database, logging, and runtime dependencies.
+ * @returns {Promise<boolean>} Whether the runtime was stopped and marked stopped.
+ */
 async function enforcePause(agent, crossing, deps = {}) {
   const {
     dbClient = db,
@@ -256,9 +302,14 @@ async function enforcePause(agent, crossing, deps = {}) {
   return true;
 }
 
-// Clear the budget pause marker (called when an operator manually starts the
-// agent — restarting is an explicit override; the sweep re-pauses on the next
-// cycle if the agent is still over its cap and the cap wasn't raised).
+/**
+ * Best-effort removal of an agent's current pause marker.
+ * A later budget sweep may pause the agent again if it remains over budget.
+ *
+ * @param {string} agentId - Agent whose pause marker should be cleared.
+ * @param {Object} [options={}] - Optional database dependency override.
+ * @returns {Promise<void>} Resolves even when the database write fails.
+ */
 async function clearPausedReason(agentId, { dbClient = db } = {}) {
   await dbClient
     .query("UPDATE agents SET paused_reason = NULL WHERE id = $1 AND paused_reason IS NOT NULL", [
@@ -267,8 +318,13 @@ async function clearPausedReason(agentId, { dbClient = db } = {}) {
     .catch(() => {});
 }
 
-// Periodic re-enforcement over every agent that has a budget and a live-ish
-// runtime. Best-effort by design, like the other background tasks.
+/**
+ * Best-effort sweep that rechecks every budgeted agent with a live-like status.
+ * Per-agent and sweep-level failures are isolated so later agents remain eligible.
+ *
+ * @param {Object} [deps={}] - Optional dependencies forwarded to budget enforcement.
+ * @returns {Promise<void>} Always resolves after the best-effort sweep ends.
+ */
 async function sweepAgentBudgets(deps = {}) {
   const { dbClient = db } = deps;
   try {

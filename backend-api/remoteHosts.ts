@@ -38,6 +38,8 @@ function getSshClientCtor() {
   return sshClientCtor;
 }
 
+// Input normalization and profile serialization
+
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -384,6 +386,14 @@ function sshTargetLabel(profile) {
   return `${user}${profile.sshHost}${port}`;
 }
 
+/**
+ * Convert a remote-host row into its provisioning profile and derived availability state.
+ * Secrets remain masked unless explicitly requested by a trusted internal caller.
+ *
+ * @param {Object} row - Remote-host database row.
+ * @param {Object} [options={}] - Profile serialization options.
+ * @returns {Object|null} Normalized remote-host profile.
+ */
 function rowToProfile(row, { includeSecret = false } = {}) {
   if (!row) return null;
   const id = normalizeHostId(row.id || row.host_id || row.label || "host");
@@ -479,6 +489,15 @@ function maskHost(row) {
   };
 }
 
+/**
+ * Mask a host for a platform-admin listing. A platform-owned host is returned
+ * fully masked like any other; a personal host is reduced to identity and
+ * status fields only, so the operator's network address, credentials, host-key
+ * pin, and probe diagnostics stay private to the owner who registered it.
+ *
+ * @param {Object} row - Remote-host database row.
+ * @returns {Object} Admin-safe host profile.
+ */
 function maskAdminHost(row) {
   const host = maskHost(row);
   if (host.managementScope === "platform") return host;
@@ -513,6 +532,13 @@ function maskAdminHost(row) {
   };
 }
 
+/**
+ * Normalize create or update input, encrypting new SSH credentials and honoring explicit clears.
+ *
+ * @param {Object} [input={}] - Requested remote-host fields.
+ * @param {Object|null} [existing=null] - Existing row whose omitted values should be preserved.
+ * @returns {Object} Database-facing host fields with encrypted credential material.
+ */
 function normalizeHostInput(input = {}, existing = null) {
   const label = normalizeText(input.label ?? existing?.label);
   const id = existing
@@ -597,6 +623,15 @@ function sshHostIdentityChanged(existing, host) {
   );
 }
 
+// Registry persistence
+
+/**
+ * List remote hosts with optional owner scoping and secret inclusion.
+ * A missing registry table is treated as an empty installation during migrations.
+ *
+ * @param {Object} [options={}] - Disabled-row, owner, and secret visibility options.
+ * @returns {Promise<Array>} Normalized host profiles.
+ */
 async function listRemoteHosts(options = {}) {
   const includeDisabled = options.includeDisabled !== false;
   const includeSecret = options.includeSecret === true;
@@ -703,6 +738,14 @@ async function getOwnedHostRow(hostId, expectedOwnerUserId) {
   return row && normalizeManagementScope(row.management_scope) === "user" ? row : null;
 }
 
+/**
+ * Load a secret-bearing remote-host profile for trusted provisioning callers.
+ * This lookup performs no user authorization or availability check and returns
+ * null in hosted mode.
+ *
+ * @param {string} executionTargetId - Target in `remote:<id>` form.
+ * @returns {Promise<Object|null>} Decrypted provisioning profile or `null`.
+ */
 async function getRemoteHostProfile(executionTargetId) {
   if (isPaaSMode()) return null;
   const normalized = normalizeRemoteExecutionTargetId(executionTargetId);
@@ -783,8 +826,12 @@ async function getRemoteHost(hostId) {
   return row ? maskHost(row) : null;
 }
 
-// Masked lookup by execution target ("remote:<id>"), no secret decryption —
-// used by the gateway proxy to learn a remote host's advertised address.
+/**
+ * Load a masked host by execution target for address allowlisting without decrypting credentials.
+ *
+ * @param {string} executionTargetId - Target in `remote:<id>` form.
+ * @returns {Promise<Object|null>} Masked host profile or `null`.
+ */
 async function getRemoteHostByExecutionTarget(executionTargetId) {
   if (isPaaSMode()) return null;
   const normalized = normalizeRemoteExecutionTargetId(executionTargetId);
@@ -841,6 +888,13 @@ async function createRemoteHostLocked(host) {
   return maskHost(result.rows[0]);
 }
 
+/**
+ * Register an owner-scoped remote host under a per-host mutation lock, validating
+ * its runtime addresses and encrypting supplied SSH credentials.
+ *
+ * @param {Object} [input={}] - Remote-host registration fields from a trusted caller.
+ * @returns {Promise<Object>} Persisted masked host profile.
+ */
 async function createRemoteHost(input = {}) {
   assertRemoteHostsSupported();
   const host = normalizeHostInput(input);
@@ -852,6 +906,15 @@ async function createRemoteHost(input = {}) {
   return withRemoteHostMutationLock(host.id, () => createRemoteHostLocked(host));
 }
 
+/**
+ * Register a platform-owned host under its mutation lock. A host id retired by
+ * a prior deletion is never reused, and a requested default replaces any
+ * existing platform default.
+ *
+ * @param {Object} [input={}] - Remote-host registration fields from a trusted caller.
+ * @param {string|null} [createdByUserId=null] - Admin registering the host.
+ * @returns {Promise<Object>} Persisted masked host profile.
+ */
 async function createPlatformRemoteHost(input = {}, createdByUserId = null) {
   assertRemoteHostsSupported();
   const host = normalizeHostInput(input);
@@ -975,6 +1038,15 @@ async function updateRemoteHostLocked(hostId, input = {}, expectedOwnerUserId) {
   return maskHost(result.rows[0]);
 }
 
+/**
+ * Update an owner-scoped host under its mutation lock, invalidating the test
+ * result for connection changes and the SSH pin only for host identity changes.
+ *
+ * @param {string} hostId - Remote host to update.
+ * @param {Object} [input={}] - Replacement and credential-clear fields.
+ * @param {Object} [options={}] - Required expected owner scope.
+ * @returns {Promise<Object>} Updated masked host profile.
+ */
 async function updateRemoteHost(hostId, input = {}, options = {}) {
   assertRemoteHostsSupported();
   const expectedOwnerUserId = requireRemoteHostOwnerUserId(options.expectedOwnerUserId);
@@ -1048,6 +1120,14 @@ async function updatePlatformRemoteHostLocked(hostId, input = {}) {
   return maskHost(result.rows[0]);
 }
 
+/**
+ * Update a platform-owned host under its mutation lock, invalidating the test
+ * result on any connection change and the SSH pin only when host identity changes.
+ *
+ * @param {string} hostId - Platform remote host to update.
+ * @param {Object} [input={}] - Replacement and credential-clear fields.
+ * @returns {Promise<Object>} Updated masked host profile.
+ */
 async function updatePlatformRemoteHost(hostId, input = {}) {
   assertRemoteHostsSupported();
   return withRemoteHostMutationLock(hostId, () => updatePlatformRemoteHostLocked(hostId, input));
@@ -1101,6 +1181,16 @@ async function resetRemoteHostHostKeyPin(hostId, confirmation, options = {}) {
   );
 }
 
+/**
+ * Clear a platform host's pinned SSH key after explicit confirmation, for
+ * recovering an intentionally rebuilt host at the same SSH address. Credentials
+ * and network identity are untouched; clearing the pin also invalidates the
+ * prior test result so use stays fail-closed until a fresh probe re-pins.
+ *
+ * @param {string} hostId - Platform remote host to reset.
+ * @param {string} confirmation - Host label or id, required to confirm the reset.
+ * @returns {Promise<Object>} Updated masked host profile.
+ */
 async function resetPlatformRemoteHostHostKeyPin(hostId, confirmation) {
   assertRemoteHostsSupported();
   return withRemoteHostMutationLock(hostId, async () => {
@@ -1157,6 +1247,14 @@ async function deleteRemoteHostLocked(hostId, expectedOwnerUserId) {
   return maskHost(result.rows[0]);
 }
 
+/**
+ * Delete an owner-scoped host under its mutation lock only when no non-deleted
+ * agent still references its execution target.
+ *
+ * @param {string} hostId - Remote host to delete.
+ * @param {Object} [options={}] - Required expected owner scope.
+ * @returns {Promise<Object>} Deleted masked host profile.
+ */
 async function deleteRemoteHost(hostId, options = {}) {
   const expectedOwnerUserId = requireRemoteHostOwnerUserId(options.expectedOwnerUserId);
   return withRemoteHostMutationLock(hostId, () =>
@@ -1164,6 +1262,15 @@ async function deleteRemoteHost(hostId, options = {}) {
   );
 }
 
+/**
+ * Delete a platform-owned host under its mutation lock, refusing while any
+ * non-deleted agent still references its execution target. The id is
+ * tombstoned so it is never reused by a later registration.
+ *
+ * @param {string} hostId - Platform remote host to delete.
+ * @param {Object} [options={}] - Deleting-admin attribution.
+ * @returns {Promise<Object>} Deleted masked host profile.
+ */
 async function deletePlatformRemoteHost(hostId, options = {}) {
   assertRemoteHostsSupported();
   return withRemoteHostMutationLock(hostId, async () => {
@@ -1199,6 +1306,8 @@ async function deletePlatformRemoteHost(hostId, options = {}) {
   });
 }
 
+// SSH connectivity verification
+
 function buildSshConnectConfig(profile, timeoutMs, { onHostKey } = {}) {
   const config = {
     host: profile.sshHost,
@@ -1230,8 +1339,14 @@ function buildSshConnectConfig(profile, timeoutMs, { onHostKey } = {}) {
   return config;
 }
 
-// Connect over SSH and confirm the Docker daemon is reachable. Resolves to
-// { ok, message } and never rejects so callers can persist the result.
+/**
+ * Probe Docker over SSH while enforcing any pinned host key and capturing a first-use key.
+ * Expected connection and command failures resolve as structured results for persistence.
+ *
+ * @param {Object} profile - Secret-bearing remote-host profile.
+ * @param {Object} [options={}] - Probe timeout options.
+ * @returns {Promise<Object>} Probe status, message, and optional presented host key.
+ */
 function runRemoteDockerProbe(profile, { timeoutMs = DEFAULT_TEST_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     const Client = getSshClientCtor();
@@ -1366,6 +1481,14 @@ async function testRemoteHostLocked(hostId, options = {}) {
   return maskHost(result.rows[0]);
 }
 
+/**
+ * Test an owner-scoped host under its mutation lock, persist the result, and
+ * pin its SSH host key on first success.
+ *
+ * @param {string} hostId - Remote host to test.
+ * @param {Object} [options={}] - Required owner scope and SSH probe options.
+ * @returns {Promise<Object>} Updated masked host profile with the stored result.
+ */
 async function testRemoteHost(hostId, options = {}) {
   assertRemoteHostsSupported();
   const expectedOwnerUserId = requireRemoteHostOwnerUserId(options.expectedOwnerUserId);
@@ -1374,6 +1497,14 @@ async function testRemoteHost(hostId, options = {}) {
   );
 }
 
+/**
+ * Test a platform-owned host under its mutation lock, persist the result, and
+ * pin its SSH host key on first success.
+ *
+ * @param {string} hostId - Platform remote host to test.
+ * @param {Object} [options={}] - SSH probe timeout options.
+ * @returns {Promise<Object>} Updated masked host profile with the stored result.
+ */
 async function testPlatformRemoteHost(hostId, options = {}) {
   assertRemoteHostsSupported();
   return withRemoteHostMutationLock(hostId, async () => {
@@ -1415,7 +1546,9 @@ async function testPlatformRemoteHost(hostId, options = {}) {
   });
 }
 
-// Deploy-path gate mirroring assertKubernetesExecutionTargetAvailable.
+// Workspace grants and deployment eligibility — the deploy-path gate below
+// mirrors assertKubernetesExecutionTargetAvailable.
+
 // Workspace roles (editor and above) that may USE a shared remote host — deploy
 // agents to it and reach them through the gateway. Mirrors WORKSPACE_ROLE_RANK in
 // middleware/ownership.ts (viewer:0, editor:1, admin:2, owner:3). Viewer can see a
@@ -1520,9 +1653,14 @@ async function getAuthorizedRemoteHostRow(userId, hostId) {
   }
 }
 
-// True if the user owns the host OR it's shared into a workspace where they hold an
-// editor+ role. Positive grant check — used to widen the owner-only deploy/reach
-// gates to shared hosts without ever broadening cross-tenant SSRF.
+/**
+ * Check whether a user owns a host or has an editor-or-higher workspace grant to use it.
+ * Missing grant tables fail closed for shared access.
+ *
+ * @param {string} userId - User requesting deployment or gateway reachability.
+ * @param {string} hostId - Remote host being used.
+ * @returns {Promise<boolean>} Whether an explicit qualifying grant exists.
+ */
 async function userCanUseRemoteHost(userId, hostId) {
   if (!userId || !hostId) return false;
   return Boolean(await getAuthorizedRemoteHostRow(userId, hostId));
@@ -1565,9 +1703,13 @@ function isRemoteHostAccessRevokedError(error) {
   return error?.code === "REMOTE_HOST_ACCESS_REVOKED";
 }
 
-// Hosts a user can see: owned (full management) + shared into any workspace they
-// belong to (read-only). Each entry is masked (no secrets) and annotated with the
-// access kind + whether the user may deploy (editor+).
+/**
+ * List masked hosts a user owns or can see through workspace sharing.
+ * Shared entries include whether the user's highest workspace role permits deployment.
+ *
+ * @param {string} userId - User whose accessible hosts should be listed.
+ * @returns {Promise<Array>} Owned and shared profiles annotated with access rights.
+ */
 async function listAccessibleRemoteHosts(userId) {
   if (isPaaSMode()) return [];
   if (!userId) return [];
@@ -1716,6 +1858,15 @@ async function shareRemoteHostLocked(hostId, workspaceId, expectedOwnerUserId) {
   return result.rows[0];
 }
 
+/**
+ * Idempotently share an owner-scoped host after atomically rechecking current
+ * host ownership and workspace membership under the per-host lock.
+ *
+ * @param {string} hostId - Remote host to share.
+ * @param {string} workspaceId - Workspace receiving visibility and role-based use.
+ * @param {string} expectedOwnerUserId - Expected host owner and current workspace member.
+ * @returns {Promise<Object>} Workspace metadata and whether a new grant was inserted.
+ */
 async function shareRemoteHost(hostId, workspaceId, expectedOwnerUserId) {
   const ownerUserId = requireRemoteHostOwnerUserId(expectedOwnerUserId);
   return withRemoteHostMutationLock(hostId, () =>
@@ -1767,6 +1918,15 @@ async function listRemoteHostShares(hostId, options = {}) {
   }
 }
 
+/**
+ * Normalize a requested grant list, accepting raw id strings or objects
+ * carrying the id under any of `keys`.
+ *
+ * @param {Array|undefined|null} value - Requested grant entries; `undefined`/`null` means none.
+ * @param {string} fieldName - Field name used in validation error messages.
+ * @param {Array<string>} keys - Object keys checked, in order, for the id.
+ * @returns {Array<string>} Deduplicated, lowercased grant ids.
+ */
 function normalizeGrantIds(value, fieldName, keys) {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -1835,6 +1995,14 @@ async function readPlatformRemoteHostAccess(queryable, host) {
   };
 }
 
+/**
+ * Read a platform host's current access grants from a consistent snapshot,
+ * alongside the access version callers must echo back to
+ * `replacePlatformRemoteHostAccess`.
+ *
+ * @param {string} hostId - Platform remote host to read.
+ * @returns {Promise<Object>} Access version, `availableToAll`, and granted users/groups/workspaces.
+ */
 async function listPlatformRemoteHostAccess(hostId) {
   const id = normalizeHostId(hostId);
   const client = await db.connect();
@@ -1879,6 +2047,17 @@ async function validateGrantIds(client, table, ids, fieldName) {
   throw error;
 }
 
+/**
+ * Replace a platform host's entire set of access grants under optimistic
+ * concurrency; this is a full replace, not a merge. Fails with a
+ * version-conflict 409 when `expectedVersion` no longer matches the persisted
+ * access version. All referenced users, groups, and workspaces must already exist.
+ *
+ * @param {string} hostId - Platform remote host whose access should be replaced.
+ * @param {Object} [input={}] - Complete desired grants and `availableToAll` flag.
+ * @param {string|null} [createdByUserId=null] - Admin performing the replacement.
+ * @returns {Promise<Object>} Updated access version and granted users/groups/workspaces.
+ */
 async function replacePlatformRemoteHostAccess(hostId, input = {}, createdByUserId = null) {
   assertRemoteHostsSupported();
   const id = normalizeHostId(hostId);
@@ -1974,6 +2153,14 @@ async function replacePlatformRemoteHostAccess(hostId, input = {}, createdByUser
   });
 }
 
+/**
+ * Validate a remote-docker target before deployment and return its secret-bearing profile.
+ * When an owner id is supplied, unowned and ungranted hosts are reported as unknown.
+ *
+ * @param {Object} [runtimeFields={}] - Runtime selection containing the remote execution target.
+ * @param {Object} [options={}] - Optional owner scope for cross-tenant authorization.
+ * @returns {Promise<Object|null>} Available provisioning profile, or `null` for other targets.
+ */
 async function assertRemoteHostExecutionTargetAvailable(runtimeFields = {}, options = {}) {
   if (!isRemoteDockerTarget(runtimeFields.deploy_target ?? runtimeFields.deployTarget)) {
     return null;

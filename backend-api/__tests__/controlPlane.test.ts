@@ -1504,11 +1504,6 @@ describe("Hermes dashboard embed", () => {
     expect(htmlRes.headers["set-cookie"]).toEqual(
       expect.arrayContaining([expect.stringContaining("__nora_hermes_embed_agent-1=")]),
     );
-    expect(htmlRes.headers["set-cookie"]).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("__nora_hermes_dashboard_token_agent-1=dash-session"),
-      ]),
-    );
     expect(htmlRes.headers["content-security-policy"]).toContain(
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     );
@@ -1564,9 +1559,10 @@ describe("Hermes dashboard embed", () => {
     // proxy boundary, and the upstream image may be operator-supplied.
     const envCall = global.fetch.mock.calls[3];
     expect(envCall[0]).toBe("http://10.0.0.40:9119/api/env");
-    expect(envCall[1].headers).toEqual(
-      expect.objectContaining({ "X-Hermes-Session-Token": "dash-session" }),
-    );
+    // Upstream returned 200 directly (no 401/redirect), so no server-side login
+    // fired and no dashboard session was stored — the proxy forwards neither a
+    // session-token header nor the client's Authorization header.
+    expect(envCall[1].headers).not.toHaveProperty("X-Hermes-Session-Token");
     expect(envCall[1].headers).not.toHaveProperty("Authorization");
   });
 
@@ -1633,11 +1629,146 @@ describe("Hermes dashboard embed", () => {
     expect(configCall[0]).toBe("http://10.0.0.41:9119/api/config");
     expect(configCall[1].method).toBe("PUT");
     expect(configCall[1].headers["Content-Type"]).toBe("application/json");
-    expect(configCall[1].headers).toEqual(
-      expect.objectContaining({ "X-Hermes-Session-Token": "dash-session" }),
-    );
+    // Upstream returned 200 directly, so no server-side login fired and no
+    // session was stored — neither a session-token nor the client's
+    // Authorization header is forwarded upstream.
+    expect(configCall[1].headers).not.toHaveProperty("X-Hermes-Session-Token");
     expect(configCall[1].headers).not.toHaveProperty("Authorization");
     expect(configCall[1].body).toBe(JSON.stringify({ config: { model: "gpt-5.5" } }));
+  });
+
+  it("logs in server-side and relays the session cookie when the dashboard is unauthenticated", async () => {
+    const {
+      deriveHermesDashboardBasicAuth,
+    } = require("../../agent-runtime/lib/hermesDashboardAuth");
+    const expectedCreds = deriveHermesDashboardBasicAuth("test-seed");
+
+    // Single embed request → single agent DB lookup. gateway_token is the login
+    // seed; ENCRYPTION_KEY is unset in this test env so decrypt() passes it
+    // through unchanged.
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          host: "10.0.0.42",
+          runtime_host: "10.0.0.42",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "docker",
+          status: "running",
+          gateway_token: "test-seed",
+        },
+      ],
+    });
+
+    global.fetch
+      // 1) initial upstream GET → unauthenticated redirect to the login page.
+      .mockResolvedValueOnce({
+        status: 302,
+        ok: false,
+        headers: new Headers({ location: "/login?next=%2F" }),
+        text: async () => "",
+      })
+      // 2) server-side login POST → 200 setting the Hermes session cookies.
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        headers: {
+          get: () => null,
+          getSetCookie: () => [
+            "hermes_session_at=AT; Path=/; HttpOnly",
+            "hermes_session_rt=RT; Path=/; HttpOnly",
+            "hermes_session_provider=basic; Path=/",
+          ],
+        },
+        text: async () => "{}",
+      })
+      // 3) retry upstream GET → now authenticated, returns the dashboard HTML.
+      .mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        headers: new Headers({ "content-type": "text/html; charset=utf-8" }),
+        text: async () => "<html><head></head><body>ok</body></html>",
+      });
+
+    const res = await request(app)
+      .get(`/agents/agent-3/hermes-ui/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test")
+      .set("Accept", "text/html");
+
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+
+    // Call #2 is the login POST: JSON body carrying the derived basic-auth creds.
+    const loginCall = global.fetch.mock.calls[1];
+    expect(loginCall[0]).toContain(":9119/auth/password-login");
+    expect(loginCall[1].method).toBe("POST");
+    expect(loginCall[1].headers["Content-Type"]).toBe("application/json");
+    const sent = JSON.parse(loginCall[1].body);
+    expect(sent).toMatchObject({ provider: "basic", username: "nora", next: "/" });
+    expect(sent.username).toBe(expectedCreds.username);
+    expect(sent.password).toBe(expectedCreds.password);
+
+    // Call #3 is the retry, carrying the freshly established session as Cookie.
+    const retryCall = global.fetch.mock.calls[2];
+    expect(retryCall[1].headers.Cookie).toContain("hermes_session_at=AT");
+    expect(retryCall[1].headers.Cookie).toContain("hermes_session_rt=RT");
+
+    // The established session is persisted in the Nora-managed HttpOnly cookie.
+    expect(res.headers["set-cookie"]).toEqual(
+      expect.arrayContaining([expect.stringContaining("__nora_hermes_dashboard_token_agent-3=")]),
+    );
+  });
+
+  it("relays a rewritten Location when server-side login fails", async () => {
+    // Single embed request → single agent DB lookup.
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          host: "10.0.0.43",
+          runtime_host: "10.0.0.43",
+          runtime_port: 8642,
+          runtime_family: "hermes",
+          backend_type: "docker",
+          status: "running",
+          gateway_token: "test-seed",
+        },
+      ],
+    });
+
+    global.fetch
+      // 1) initial upstream GET → unauthenticated redirect to the login page.
+      .mockResolvedValueOnce({
+        status: 302,
+        ok: false,
+        headers: new Headers({ location: "/login?next=%2F" }),
+        text: async () => "",
+      })
+      // 2) server-side login POST → fails (401) and sets no cookie.
+      .mockResolvedValueOnce({
+        status: 401,
+        ok: false,
+        headers: {
+          get: () => null,
+          getSetCookie: () => [],
+        },
+        text: async () => "",
+      });
+
+    const res = await request(app)
+      .get(`/agents/agent-4/hermes-ui/embed?token=${encodeURIComponent(token)}`)
+      .set("Host", "nora.test")
+      .set("Accept", "text/html");
+
+    // Login was attempted once; because it returned no session there is no 3rd
+    // (retry) upstream call — the original 302 is relayed as-is.
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    const loginCall = global.fetch.mock.calls[1];
+    expect(loginCall[0]).toContain("/auth/password-login");
+
+    expect(res.status).toBe(302);
+    // The upstream Location is rewritten onto the embed base path so the iframe
+    // navigates within the proxied dashboard instead of the control-plane origin.
+    expect(res.headers.location).toBe("/api/agents/agent-4/hermes-ui/embed/login?next=%2F");
   });
 
   it("rejects embed requests for stopped Hermes agents", async () => {

@@ -1,4 +1,7 @@
 // @ts-nocheck
+// Stores per-agent environment overrides encrypted at rest. Decryption is
+// opt-in for callers that explicitly request it.
+
 const db = require("./db");
 const { decrypt, encrypt, ensureEncryptionConfigured } = require("./crypto");
 
@@ -16,6 +19,13 @@ function normalizeOverrideValue(rawValue) {
   return value ? value : null;
 }
 
+/**
+ * Normalize an override map into non-empty environment keys and string values,
+ * dropping invalid entries before persistence or migration export.
+ *
+ * @param {Object} [rawEntries={}] - Candidate environment override map.
+ * @returns {Object} Normalized key/value map.
+ */
 function normalizeOverrideEntries(rawEntries = {}) {
   const entries = Object.entries(rawEntries || {})
     .map(([key, value]) => [normalizeOverrideKey(key), normalizeOverrideValue(value)])
@@ -24,6 +34,13 @@ function normalizeOverrideEntries(rawEntries = {}) {
   return Object.fromEntries(entries);
 }
 
+/**
+ * List encrypted overrides for an agent, decrypting values only when explicitly requested.
+ *
+ * @param {string} agentId - Agent whose overrides should be loaded.
+ * @param {Object} [options={}] - Whether stored values should be decrypted.
+ * @returns {Promise<Object>} Environment override map.
+ */
 async function listAgentSecretOverrides(agentId, { decryptValues = false } = {}) {
   const result = await db.query(
     `SELECT env_key, env_value
@@ -43,6 +60,14 @@ async function getAgentSecretEnvVars(agentId) {
   return listAgentSecretOverrides(agentId, { decryptValues: true });
 }
 
+/**
+ * Replace all overrides by deleting stored rows and sequentially inserting
+ * normalized encrypted values; a failure can leave a partial replacement.
+ *
+ * @param {string} agentId - Agent whose overrides should be replaced.
+ * @param {Object} [rawEntries={}] - Plaintext overrides to normalize and encrypt.
+ * @returns {Promise<Object>} Normalized plaintext map supplied by the caller.
+ */
 async function replaceAgentSecretOverrides(agentId, rawEntries = {}) {
   const normalized = normalizeOverrideEntries(rawEntries);
 

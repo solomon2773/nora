@@ -17,6 +17,8 @@ async function loadAgent(req, res) {
   return agent;
 }
 
+// ─── Runtime status ───────────────────────────────────────────────
+
 router.get("/:id/nemoclaw/status", async (req, res, next) => {
   try {
     const agent = await loadAgent(req, res);
@@ -34,6 +36,8 @@ router.get("/:id/nemoclaw/status", async (req, res, next) => {
     next(e);
   }
 });
+
+// ─── Policy ──────────────────────────────────────────────────────
 
 router.get("/:id/nemoclaw/policy", async (req, res, next) => {
   try {
@@ -74,6 +78,8 @@ router.post("/:id/nemoclaw/policy", async (req, res, next) => {
     next(e);
   }
 });
+
+// ─── Approval workflow ───────────────────────────────────────────
 
 router.get("/:id/nemoclaw/approvals", async (req, res, next) => {
   try {

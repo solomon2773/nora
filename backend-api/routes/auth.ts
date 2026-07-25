@@ -223,6 +223,13 @@ function getSignupBotProtectionToken(body = {}) {
   return String(body.botProtectionToken || body.turnstileToken || body.recaptchaToken || "").trim();
 }
 
+/**
+ * Verify the configured signup challenge server-side, failing closed for
+ * missing tokens, provider errors, and unreachable verification services.
+ *
+ * @param {Object} req - Signup request containing the challenge token and client IP.
+ * @returns {Promise<void>}
+ */
 async function verifySignupBotProtection(req) {
   const config = getSignupBotProtectionConfig();
   if (!config.enabled) return;
@@ -282,6 +289,13 @@ function validatePassword(pw) {
 
 const LEGACY_SESSION_CLAIMS = new Set(["id", "email", "role", "iat", "exp"]);
 
+/**
+ * Confirm a signed token matches the narrow historical browser-session claim
+ * set before allowing it to be promoted into an HttpOnly cookie.
+ *
+ * @param {Object} payload - Verified JWT payload candidate.
+ * @returns {boolean} Whether the payload is a legacy Nora browser session.
+ */
 function isLegacySessionPayload(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
 
@@ -303,6 +317,13 @@ function isLegacySessionPayload(payload) {
   );
 }
 
+/**
+ * Serialize user creation behind a transaction-scoped advisory lock so only
+ * one concurrent signup can claim the first-user administrator role.
+ *
+ * @param {Function} work - User-creation callback receiving the locked client.
+ * @returns {Promise} Callback result after commit.
+ */
 async function withUserCreationLock(work) {
   const client = await db.connect();
 

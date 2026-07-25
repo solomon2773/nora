@@ -23,15 +23,15 @@ const {
   getStandardDockerPackageSpec,
 } = require("../../../agent-runtime/lib/agentImages");
 const { getNemoClawDefaultModel } = require("../../../agent-runtime/lib/nemoclawDefaults");
-const {
-  buildContainerBootstrap,
-  shellSingleQuote,
-} = require("../../../agent-runtime/lib/containerCommand");
+const { buildContainerBootstrap } = require("../../../agent-runtime/lib/containerCommand");
 const {
   HERMES_MANAGED_ENV_ENV,
   HERMES_MODEL_CONFIG_ENV,
   buildHermesRuntimeConfigBootstrapCommand,
 } = require("../../../agent-runtime/lib/hermesRuntimeBootstrap");
+const {
+  deriveHermesDashboardBasicAuth,
+} = require("../../../agent-runtime/lib/hermesDashboardAuth");
 const {
   buildTelemetry,
   buildUnavailableTelemetry,
@@ -43,7 +43,6 @@ const HERMES_RUNTIME_PORT = 8642;
 const HERMES_HOME = "/opt/data";
 const HERMES_WORKSPACE = `${HERMES_HOME}/workspace`;
 const HERMES_DASHBOARD_LOG = `${HERMES_HOME}/hermes-dashboard.log`;
-const HERMES_ENTRYPOINT = "/init";
 const HERMES_BIN = "/opt/hermes/.venv/bin/hermes";
 const HERMES_INIT_CAPABILITIES = Object.freeze([
   "CHOWN",
@@ -311,19 +310,21 @@ function defaultDeployNameForRuntime(runtimeFamily, id, name) {
 }
 
 function buildHermesStartCommand() {
-  const hermesRuntimeCommand = [
+  // The Hermes pod launches args-only (no `command:` override), so the image
+  // ENTRYPOINT — /init, s6-overlay running as PID 1 — stays intact and
+  // supervises this script directly. Do NOT re-exec /init here: a second s6
+  // init launched as a non-PID-1 child fatals with "s6-overlay-suexec: can
+  // only run as pid 1" and exits the container before the gateway can bind
+  // the runtime port for the startup probe (#297). Returning the runtime
+  // command directly lets the image's PID-1 /init supervise it naturally.
+  return [
     "set -eu",
     buildKubernetesManagedEnvApplyCommand(),
     buildHermesRuntimeConfigBootstrapCommand(),
     `HERMES_BIN="${HERMES_BIN}"`,
     '[ -x "$HERMES_BIN" ] || HERMES_BIN="$(command -v hermes)"',
-    `nohup "$HERMES_BIN" dashboard --host 0.0.0.0 --insecure --no-open >> ${HERMES_DASHBOARD_LOG} 2>&1 &`,
+    `nohup "$HERMES_BIN" dashboard --host 0.0.0.0 --no-open >> ${HERMES_DASHBOARD_LOG} 2>&1 &`,
     'exec "$HERMES_BIN" gateway run',
-  ].join("\n");
-
-  return [
-    "set -eu",
-    `exec ${HERMES_ENTRYPOINT} bash -lc ${shellSingleQuote(hermesRuntimeCommand)}`,
   ].join("\n");
 }
 
@@ -1914,6 +1915,7 @@ class K8sBackend extends ProvisionerBackend {
     const namespace = this._namespaceForRuntimeFamily("hermes");
     const imgName = image || getHermesDockerAgentImage();
     const apiServerKey = config.gatewayToken || crypto.randomBytes(32).toString("hex");
+    const dashboardAuth = deriveHermesDashboardBasicAuth(apiServerKey);
 
     await this._ensureNamespace(namespace);
     const policyStatus = await this._reconcileNetworkPolicies({
@@ -1948,6 +1950,11 @@ class K8sBackend extends ProvisionerBackend {
       API_SERVER_HOST: "0.0.0.0",
       API_SERVER_PORT: String(HERMES_RUNTIME_PORT),
       API_SERVER_KEY: apiServerKey,
+      // Hermes fail-closed dashboard auth (basic-auth provider); the embed proxy
+      // re-derives the same credential from API_SERVER_KEY to log in.
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: dashboardAuth.username,
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: dashboardAuth.password,
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: dashboardAuth.secret,
       GATEWAY_HEALTH_URL: `http://127.0.0.1:${HERMES_RUNTIME_PORT}`,
       MESSAGING_CWD: HERMES_WORKSPACE,
       TERMINAL_CWD: HERMES_WORKSPACE,

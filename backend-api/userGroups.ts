@@ -29,6 +29,13 @@ function normalizeGroupName(value) {
   return name;
 }
 
+/**
+ * Normalize member ids, accepting either raw id strings or objects with a
+ * `userId`, `user_id`, or `id` key; input order and duplicates are not preserved.
+ *
+ * @param {Array} value - Requested member entries.
+ * @returns {Array<string>} Deduplicated, lowercased member ids.
+ */
 function normalizeUserIds(value) {
   if (!Array.isArray(value)) {
     throw createHttpError("users must be an array");
@@ -88,6 +95,16 @@ async function listUserGroups() {
   return result.rows.map(mapGroup);
 }
 
+/**
+ * Load a group summary, optionally locking its row for an in-progress
+ * membership replacement. Locked reads report `memberCount: 0` — callers that
+ * need the count use the unlocked path instead.
+ *
+ * @param {string} groupId - User group id.
+ * @param {Object} [queryable=db] - Pooled client or transaction to query through.
+ * @param {Object} [options={}] - `forUpdate` locks the row via `FOR UPDATE`.
+ * @returns {Promise<Object>} Group summary, or `undefined` when not found.
+ */
 async function getUserGroup(groupId, queryable = db, { forUpdate = false } = {}) {
   const id = normalizeGroupId(groupId);
   const result = forUpdate
@@ -113,6 +130,14 @@ async function getUserGroup(groupId, queryable = db, { forUpdate = false } = {})
   return mapGroup(result.rows[0]);
 }
 
+/**
+ * Create a user group, rejecting a duplicate name with a structured 409
+ * instead of the raw unique-constraint error.
+ *
+ * @param {Object} [input={}] - Requested group name.
+ * @param {string|null} [createdByUserId=null] - Creating admin, if any.
+ * @returns {Promise<Object>} Created group summary.
+ */
 async function createUserGroup(input = {}, createdByUserId = null) {
   const name = normalizeGroupName(input.name);
   try {
@@ -128,6 +153,14 @@ async function createUserGroup(input = {}, createdByUserId = null) {
   }
 }
 
+/**
+ * Rename a user group, rejecting a duplicate name with a structured 409
+ * instead of the raw unique-constraint error.
+ *
+ * @param {string} groupId - User group to rename.
+ * @param {Object} [input={}] - Requested new name.
+ * @returns {Promise<Object>} Updated group summary.
+ */
 async function updateUserGroup(groupId, input = {}) {
   const id = normalizeGroupId(groupId);
   const name = normalizeGroupName(input.name);
@@ -156,6 +189,14 @@ async function updateUserGroup(groupId, input = {}) {
   }
 }
 
+/**
+ * Delete a user group. This cascades at the database level to its membership
+ * rows and to any Remote Host access grants made through the group, silently
+ * revoking that access.
+ *
+ * @param {string} groupId - User group to delete.
+ * @returns {Promise<Object>} Deleted group summary.
+ */
 async function deleteUserGroup(groupId) {
   const id = normalizeGroupId(groupId);
   const result = await db.query(
@@ -185,6 +226,13 @@ async function readUserGroupMembers(queryable, group) {
   };
 }
 
+/**
+ * List a group's members from a consistent snapshot, alongside the membership
+ * version callers must echo back to `replaceUserGroupMembers`.
+ *
+ * @param {string} groupId - User group to list.
+ * @returns {Promise<Object>} Membership version and member list.
+ */
 async function listUserGroupMembers(groupId) {
   const id = normalizeGroupId(groupId);
   const client = await db.connect();
@@ -218,6 +266,17 @@ function normalizeExpectedVersion(value) {
   return version;
 }
 
+/**
+ * Replace a group's entire membership under optimistic concurrency; this is a
+ * full replace, not a merge. Fails with a version-conflict 409 when
+ * `expectedVersion` no longer matches the persisted `membersVersion`.
+ *
+ * @param {string} groupId - User group whose membership should be replaced.
+ * @param {Array} users - Complete desired membership list.
+ * @param {number} expectedVersion - Membership version the caller last read.
+ * @param {string|null} [createdByUserId=null] - Admin performing the replacement.
+ * @returns {Promise<Object>} Updated membership version and member list.
+ */
 async function replaceUserGroupMembers(groupId, users, expectedVersion, createdByUserId = null) {
   const id = normalizeGroupId(groupId);
   const userIds = normalizeUserIds(users);

@@ -12,6 +12,8 @@ const { getAdapter, listAdapterTypes } = require("./adapters");
 const REDACTED_SECRET = "[REDACTED]";
 const SECRET_CONFIG_KEY_RE = /(token|secret|password|webhook_url|smtp_pass|auth_token)/i;
 
+// Channel config security
+
 function parseConfig(config) {
   return typeof config === "string" ? JSON.parse(config) : config || {};
 }
@@ -51,6 +53,13 @@ function getSensitiveChannelKeys(type) {
   );
 }
 
+/**
+ * Encrypt top-level adapter-declared or secret-like config fields before persistence.
+ *
+ * @param {string} type - Registered channel adapter type.
+ * @param {Object} [config={}] - Plain channel configuration.
+ * @returns {Object} Secured config and whether sensitive material was present.
+ */
 function protectChannelConfig(type, config = {}) {
   const parsed = parseConfig(config);
   const sensitiveKeys = getSensitiveChannelKeys(type);
@@ -69,6 +78,13 @@ function protectChannelConfig(type, config = {}) {
   return { secured, hasSensitiveMaterial };
 }
 
+/**
+ * Decrypt stored channel credentials for trusted adapter and migration use.
+ *
+ * @param {string} type - Registered channel adapter type.
+ * @param {Object} [config={}] - Persisted channel configuration.
+ * @returns {Object} Configuration with top-level credential values revealed.
+ */
 function revealChannelConfig(type, config = {}) {
   const parsed = parseConfig(config);
   const sensitiveKeys = getSensitiveChannelKeys(type);
@@ -115,6 +131,12 @@ function stripChannelSecrets(type, config = {}) {
   return { config: stripped, removedSensitive };
 }
 
+/**
+ * Remove channel credentials from a clone and disable it when reconnection is required.
+ *
+ * @param {Object} [channel={}] - Channel row to make portable.
+ * @returns {Object} Clone-safe channel configuration.
+ */
 function buildCloneableChannel(channel = {}) {
   const { config, removedSensitive } = stripChannelSecrets(channel.type, channel.config);
 
@@ -152,6 +174,17 @@ async function listChannels(agentId) {
   return result.rows.map(sanitizeChannel);
 }
 
+/**
+ * Require a registered adapter type, encrypt credential fields, and persist a redacted response.
+ *
+ * Adapter configuration verification is not performed during creation.
+ *
+ * @param {string} agentId - Agent that owns the channel.
+ * @param {string} type - Registered adapter type.
+ * @param {string} name - Display name.
+ * @param {Object} [config={}] - Plain adapter configuration.
+ * @returns {Promise<Object>} Persisted channel with credentials redacted.
+ */
 async function createChannel(agentId, type, name, config = {}) {
   // Verify the adapter type exists
   getAdapter(type);
@@ -166,6 +199,14 @@ async function createChannel(agentId, type, name, config = {}) {
   return sanitizeChannel(result.rows[0]);
 }
 
+/**
+ * Apply an owner-scoped channel update while preserving redacted credential placeholders.
+ *
+ * @param {string} channelId - Channel identifier.
+ * @param {string} agentId - Owning agent identifier.
+ * @param {Object} updates - Supported name, config, or enabled changes.
+ * @returns {Promise<Object>} Updated channel with credentials redacted.
+ */
 async function updateChannel(channelId, agentId, updates) {
   const existingResult = await db.query("SELECT * FROM channels WHERE id = $1 AND agent_id = $2", [
     channelId,
@@ -220,6 +261,14 @@ async function deleteChannel(channelId, agentId) {
 
 // ── Messaging ────────────────────────────────────────────
 
+/**
+ * Deliver through the configured adapter and audit only successful outbound messages.
+ *
+ * @param {string} channelId - Enabled channel identifier.
+ * @param {string} content - Message body.
+ * @param {Object} [metadata={}] - Adapter options and audit metadata.
+ * @returns {Promise<Object>} Adapter delivery result.
+ */
 async function sendMessage(channelId, content, metadata = {}) {
   const chResult = await db.query("SELECT * FROM channels WHERE id = $1", [channelId]);
   const channel = hydrateChannel(chResult.rows[0]);
@@ -259,6 +308,13 @@ async function getMessages(channelId, agentId, limit = 50) {
 
 // ── Testing ──────────────────────────────────────────────
 
+/**
+ * Verify channel configuration, then attempt a real test delivery.
+ *
+ * @param {string} channelId - Channel to test.
+ * @param {string} agentId - Owning agent identifier.
+ * @returns {Promise<Object>} Success or non-throwing delivery failure result.
+ */
 async function testChannel(channelId, agentId) {
   const chResult = await db.query("SELECT * FROM channels WHERE id = $1 AND agent_id = $2", [
     channelId,
@@ -292,6 +348,17 @@ async function testChannel(channelId, agentId) {
 
 // ── Inbound Webhooks ─────────────────────────────────────
 
+/**
+ * Format and audit a public channel webhook, then forward it to a reachable agent runtime.
+ *
+ * Runtime network failures become retryable 503 errors after the inbound audit row is written.
+ * Adapter webhook signatures are not authenticated by this function.
+ *
+ * @param {string} channelId - Target channel identifier.
+ * @param {Object} payload - Provider webhook payload.
+ * @param {Object} headers - Request headers, currently unused by adapter formatting.
+ * @returns {Promise<Object>} Receipt acknowledgement.
+ */
 async function handleInboundWebhook(channelId, payload, headers) {
   const chResult = await db.query("SELECT * FROM channels WHERE id = $1", [channelId]);
   const channel = hydrateChannel(chResult.rows[0]);

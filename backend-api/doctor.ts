@@ -217,6 +217,13 @@ async function checkGatewayExposure(dbClient) {
   }
 }
 
+/**
+ * Run independent control-plane health checks in parallel and reduce them to
+ * the worst overall status without allowing one check to abort the report.
+ *
+ * @param {Object} [deps={}] - Injectable database, queue, cluster, environment, and clock.
+ * @returns {Promise<Object>} Timestamped doctor report and individual checks.
+ */
 async function runDoctor(deps = {}) {
   const {
     dbClient = db,
@@ -245,6 +252,13 @@ async function runDoctor(deps = {}) {
 
 // Small TTL cache so a CLI loop / panel refresh doesn't hammer the queue + DB.
 let cached = null;
+/**
+ * Return a briefly cached doctor report unless a fresh run is requested.
+ *
+ * @param {Object} [options={}] - Whether to bypass the report cache.
+ * @param {Object} [deps={}] - Dependencies forwarded to the doctor checks.
+ * @returns {Promise<Object>} Cached or newly generated doctor report.
+ */
 async function getDoctorReport({ fresh = false } = {}, deps = {}) {
   const at = deps.now || Date.now();
   if (!fresh && cached && at - cached.at < CACHE_TTL_MS) return cached.report;

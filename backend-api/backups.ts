@@ -54,6 +54,8 @@ const REMOTE_HOST_AUTH_RECHECK_MS = Math.max(
   Number.parseInt(process.env.REMOTE_HOST_AUTH_RECHECK_MS || "1000", 10) || 1000,
 );
 
+// Shared normalization and serialization
+
 function createHttpError(message, statusCode = 400, code = null, options = {}) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -101,6 +103,13 @@ function normalizeFrequency(value, fallback = "daily") {
   return BACKUP_SCHEDULE_FREQUENCIES.has(normalized) ? normalized : fallback;
 }
 
+/**
+ * Compute the first hourly, daily, or weekly backup occurrence after a UTC timestamp.
+ *
+ * @param {Object} [schedule={}] - Frequency and UTC schedule fields.
+ * @param {Date} [from=new Date()] - Exclusive starting point.
+ * @returns {Date} Next scheduled run.
+ */
 function computeNextRunAt(schedule = {}, from = new Date()) {
   const frequency = normalizeFrequency(schedule.frequency, "daily");
   const hour = clampInteger(parseInteger(schedule.hour_utc ?? schedule.hourUtc, 2), 0, 23);
@@ -183,6 +192,8 @@ function serializeBackup(row = {}) {
   };
 }
 
+// Encryption and local storage
+
 function requireBackupEncryptionKey() {
   const rawKey = String(process.env.NORA_BACKUP_ENCRYPTION_KEY || "")
     .split("#")[0]
@@ -198,6 +209,12 @@ function requireBackupEncryptionKey() {
   return Buffer.from(rawKey, "hex");
 }
 
+/**
+ * Encrypt an archive with the configured AES-256-GCM key and Nora framing metadata.
+ *
+ * @param {Buffer} buffer - Plain backup archive.
+ * @returns {Buffer} Framed encrypted bytes suitable for managed storage.
+ */
 function encryptBackupBuffer(buffer) {
   const key = requireBackupEncryptionKey();
   const iv = crypto.randomBytes(16);
@@ -211,6 +228,12 @@ function encryptBackupBuffer(buffer) {
   return Buffer.concat([header, encrypted]);
 }
 
+/**
+ * Authenticate and decrypt an archive in Nora's managed backup format.
+ *
+ * @param {Buffer} buffer - Framed encrypted backup bytes.
+ * @returns {Buffer} Plain backup archive.
+ */
 function decryptBackupBuffer(buffer) {
   const text = buffer.toString("utf8", 0, Math.min(buffer.length, 256));
   if (!text.startsWith(`${BACKUP_ENCRYPTION_MAGIC}\n`)) {
@@ -267,6 +290,8 @@ async function deleteLocalObject(storageKey, config = {}, { signal } = {}) {
     if (error.code !== "ENOENT") throw error;
   }
 }
+
+// S3-compatible storage
 
 function hmac(key, value, encoding = null) {
   const digest = crypto.createHmac("sha256", key).update(value, "utf8");
@@ -367,6 +392,8 @@ async function s3Request(method, storageKey, body = null, rawConfig = {}, { sign
   if (method === "GET") return Buffer.from(await response.arrayBuffer());
   return null;
 }
+
+// SSH/SFTP storage
 
 function sshRemoteObjectPath(config = {}, storageKey = "") {
   const base = path.posix.normalize(
@@ -534,6 +561,8 @@ async function deleteSshObject(storageKey, config = {}, { signal } = {}) {
   return withSftp(config, (sftp) => sftpUnlink(sftp, remotePath), { signal });
 }
 
+// Storage backend selection
+
 async function backupStorageConfig() {
   return getBackupStorageConfig();
 }
@@ -552,6 +581,12 @@ function backupStorageConfigSnapshot(config = {}) {
   };
 }
 
+/**
+ * Rehydrate a backup's captured storage location with the current secret credentials.
+ *
+ * @param {Object} [backup={}] - Backup row with backend and non-secret config snapshot.
+ * @returns {Promise<Object>} Storage config capable of reading or deleting the object.
+ */
 async function backupStorageConfigForBackup(backup = {}) {
   const config = await backupStorageConfig();
   const snapshot = normalizeJson(backup.storage_config, {});
@@ -596,6 +631,8 @@ async function deleteStorageObject(storageKey, config = null, { signal } = {}) {
   return deleteLocalObject(storageKey, resolved, { signal });
 }
 
+// Backup records and schedules
+
 async function loadOwnedAgent(agentId, userId) {
   const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
     agentId,
@@ -604,6 +641,13 @@ async function loadOwnedAgent(agentId, userId) {
   return result.rows[0] || null;
 }
 
+/**
+ * Load a backup with optional owner and agent constraints, excluding soft-deleted rows by default.
+ *
+ * @param {string} backupId - Backup identifier.
+ * @param {Object} [options={}] - Optional ownership, agent, and deletion filters.
+ * @returns {Promise<Object|null>} Matching backup row.
+ */
 async function loadBackup(
   backupId,
   { userId = null, agentId = null, includeDeleted = false } = {},
@@ -639,6 +683,14 @@ function expiresAtForSubscription(subscription = {}) {
   return new Date(Date.now() + days * 86400000);
 }
 
+/**
+ * Validate ownership, entitlement, and encryption before creating a queued agent backup.
+ *
+ * This function persists the backup record but leaves queue submission to its caller.
+ *
+ * @param {Object} input - Owner, agent, actor, and optional backup name.
+ * @returns {Promise<Object>} Serialized queued backup.
+ */
 async function createAgentBackup({ userId, agentId, actorId = userId, name = "" } = {}) {
   const agent = await loadOwnedAgent(agentId, userId);
   if (!agent) throw createHttpError("Agent not found", 404);
@@ -701,6 +753,14 @@ async function createAgentBackup({ userId, agentId, actorId = userId, name = "" 
   return serializeBackup(result.rows[0]);
 }
 
+/**
+ * Create a queued installation backup using the currently selected storage backend.
+ *
+ * Authorization and queue submission remain the caller's responsibility.
+ *
+ * @param {Object} input - Actor and optional backup name.
+ * @returns {Promise<Object>} Serialized queued backup.
+ */
 async function createInstallationBackup({ actorId, name = "" } = {}) {
   requireBackupEncryptionKey();
   const storageConfig = await backupStorageConfig();
@@ -802,6 +862,14 @@ async function getAgentBackupSchedule(userId, agentId) {
   };
 }
 
+/**
+ * Upsert an agent backup schedule after enforcing ownership and managed-backup entitlement.
+ *
+ * @param {string} userId - Agent owner.
+ * @param {string} agentId - Scheduled agent.
+ * @param {Object} [input={}] - Enabled state and UTC cadence fields.
+ * @returns {Promise<Object>} Updated schedule and entitlement.
+ */
 async function updateAgentBackupSchedule(userId, agentId, input = {}) {
   const agent = await loadOwnedAgent(agentId, userId);
   if (!agent) throw createHttpError("Agent not found", 404);
@@ -864,6 +932,12 @@ async function updateAgentBackupSchedule(userId, agentId, input = {}) {
   };
 }
 
+/**
+ * Mirror installation backup settings into the scheduler row without needlessly shifting its run.
+ *
+ * @param {string|null} [actorId=null] - Actor recorded when the row is first created.
+ * @returns {Promise<Object>} Serialized installation schedule.
+ */
 async function syncInstallationScheduleFromSettings(actorId = null) {
   const settings = await getBackupSettings();
   const enabled = settings.installationScheduleEnabled === true;
@@ -909,6 +983,12 @@ async function syncInstallationScheduleFromSettings(actorId = null) {
   return serializeSchedule(result.rows[0]);
 }
 
+/**
+ * Claim due schedules, create their backup records, and enqueue each job independently.
+ *
+ * @param {Object} [options={}] - Maximum number of due rows to inspect.
+ * @returns {Promise<Object[]>} Per-schedule queued or failed outcomes.
+ */
 async function processDueSchedules({ limit = 20 } = {}) {
   await syncInstallationScheduleFromSettings();
   const due = await db.query(
@@ -977,6 +1057,14 @@ async function processDueSchedules({ limit = 20 } = {}) {
   return results;
 }
 
+// Archive construction and job execution
+
+/**
+ * Derive a storage key only for allowlisted backup kinds.
+ *
+ * @param {Object} backup - Backup row with an ID and kind.
+ * @returns {string} Backend-neutral encrypted object key.
+ */
 function storageKeyForBackup(backup) {
   if (!BACKUP_KINDS.has(backup?.kind)) {
     throw createHttpError(`Invalid backup kind: ${backup?.kind}`, 500);
@@ -1006,6 +1094,14 @@ async function updateBackupRunning(backupId) {
   );
 }
 
+/**
+ * Encrypt, upload, and finalize a running backup while retaining cleanup metadata on failure.
+ *
+ * @param {Object} backup - Running backup row.
+ * @param {Buffer} archiveBuffer - Plain archive bytes.
+ * @param {Object} [options={}] - Summary, warnings, and cancellation signal.
+ * @returns {Promise<Object>} Serialized completed backup.
+ */
 async function completeBackup(backup, archiveBuffer, { summary = {}, warnings = [], signal } = {}) {
   throwIfAborted(signal, "backup completion");
   await enforceBackupStorageCapacity(backup, archiveBuffer);
@@ -1231,6 +1327,13 @@ async function captureAgentArchive(
   );
 }
 
+/**
+ * Build a portable agent migration bundle for later encrypted storage.
+ *
+ * @param {Object} backup - Agent backup row.
+ * @param {Object} [options={}] - Cancellation and capture-authorization options.
+ * @returns {Promise<Object>} Plain bundle, summary, and migration warnings.
+ */
 async function buildAgentBackupArchive(backup, { signal, authorizationRecheckMs } = {}) {
   throwIfAborted(signal, "agent archive build");
   const result = await db.query("SELECT * FROM agents WHERE id = $1 AND user_id = $2", [
@@ -1257,6 +1360,14 @@ async function buildAgentBackupArchive(backup, { signal, authorizationRecheckMs 
   };
 }
 
+/**
+ * Stream `pg_dump` through gzip with cancellation while buffering stderr without a size cap.
+ *
+ * Only the failure detail surfaced from that buffer is truncated.
+ *
+ * @param {Object} [options={}] - Optional cancellation signal.
+ * @returns {Promise<Buffer>} Compressed database dump.
+ */
 async function buildPostgresDump({ signal } = {}) {
   throwIfAborted(signal, "pg_dump");
   const dumpConfig = buildPostgresCliConfig(process.env);
@@ -1384,6 +1495,13 @@ async function packInstallationArchive({ manifest, databaseDump, agentArchives }
   return gzipAsync(tarBuffer);
 }
 
+/**
+ * Build an installation archive, retaining per-agent capture failures as warnings.
+ *
+ * @param {Object} backup - Installation backup row.
+ * @param {Object} [options={}] - Dump builder, cancellation, and authorization options.
+ * @returns {Promise<Object>} Plain installation archive, summary, and warnings.
+ */
 async function buildInstallationBackupArchive(
   backup,
   {
@@ -1461,6 +1579,16 @@ async function buildInstallationBackupArchive(
   };
 }
 
+/**
+ * Run a queued or failed backup through archive creation, upload, and status transitions.
+ *
+ * Backups in any other status are returned unchanged. Failures after the running transition mark
+ * the row failed; transition failures escape without that marking attempt.
+ *
+ * @param {string} backupId - Backup identifier.
+ * @param {Object} [options={}] - Optional cancellation signal.
+ * @returns {Promise<Object>} Serialized current or completed backup.
+ */
 async function runBackupJob(backupId, { signal } = {}) {
   const backup = await loadBackup(backupId);
   if (!backup) throw createHttpError("Backup not found", 404);
@@ -1485,6 +1613,14 @@ async function runBackupJob(backupId, { signal } = {}) {
   }
 }
 
+// Download, deletion, and restore
+
+/**
+ * Read and decrypt a ready backup using its captured storage location.
+ *
+ * @param {Object} backup - Ready backup row.
+ * @returns {Promise<Buffer>} Plain archive bytes.
+ */
 async function readBackupArchive(backup) {
   if (!READY_STATUSES.has(backup.status)) {
     throw createHttpError("Backup is not ready", 409);
@@ -1499,6 +1635,12 @@ async function readBackupArchive(backup) {
   return decryptBackupBuffer(encrypted);
 }
 
+/**
+ * Load a backup under caller-supplied tenant constraints and return its decrypted download.
+ *
+ * @param {Object} input - Backup ID plus tenant filters or a caller-authorized admin override.
+ * @returns {Promise<Object>} Serialized backup, plain archive buffer, and filename.
+ */
 async function getBackupDownload({
   backupId,
   userId = null,
@@ -1522,6 +1664,12 @@ async function getBackupDownload({
   };
 }
 
+/**
+ * Delete a backup's storage object before soft-deleting its database row.
+ *
+ * @param {Object} input - Backup ID plus tenant filters or a caller-authorized admin override.
+ * @returns {Promise<Object>} Success result after both operations complete.
+ */
 async function deleteBackup({ backupId, userId = null, agentId = null, isAdmin = false } = {}) {
   const backup = await loadBackup(backupId, {
     userId: isAdmin ? null : userId,
@@ -1540,6 +1688,12 @@ async function deleteBackup({ backupId, userId = null, agentId = null, isAdmin =
   return { success: true };
 }
 
+/**
+ * Convert an owned agent backup into an encrypted migration draft for copy restore.
+ *
+ * @param {Object} input - Backup, owner, and optional source-agent identifiers.
+ * @returns {Promise<Object>} Migration preview and deployment defaults for a new agent.
+ */
 async function createRestoreDraft({ backupId, userId, agentId = null }) {
   const backup = await loadBackup(backupId, { userId, agentId });
   if (!backup || backup.kind !== "agent") throw createHttpError("Backup not found", 404);
@@ -1754,6 +1908,14 @@ async function compensateRestoreFailure(
   }
 }
 
+/**
+ * Destructively restore an agent backup under the per-agent provision lock.
+ * Failures after confirmed cleanup invoke compensation to cancel deployment
+ * work and fence durable status.
+ *
+ * @param {Object} input - Backup, target agent, confirmation name, and actor.
+ * @returns {Promise<Object>} Serialized agent queued for redeployment.
+ */
 async function restoreBackupInPlace({ backupId, targetAgentId, confirmAgentName, actor } = {}) {
   const backup = await loadBackup(backupId);
   if (!backup || backup.kind !== "agent") throw createHttpError("Backup not found", 404);
@@ -2024,15 +2186,14 @@ async function restoreBackupInPlace({ backupId, targetAgentId, confirmAgentName,
   }
 }
 
+/**
+ * Remove expired objects and failed objects left in storage for over 24 hours.
+ *
+ * Rows are soft-deleted only after storage succeeds; failures remain for a later retry.
+ *
+ * @returns {Promise<Object>} Counts of scanned and deleted backups.
+ */
 async function pruneExpiredBackups() {
-  // Garbage collects two classes of rows:
-  //   1. Expired backups (past expires_at) — flip to 'deleted' once the
-  //      storage object is gone.
-  //   2. Orphaned 'failed' rows that wrote a storage key before the failure
-  //      — keeps S3/SSH/local from accumulating zombie objects when the
-  //      final completeBackup UPDATE didn't land.
-  // If storage delete fails, we leave the row alone and retry next pass
-  // rather than marking it deleted with the bytes still on disk.
   const result = await db.query(
     `SELECT *
        FROM backups

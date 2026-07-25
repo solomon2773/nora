@@ -14,6 +14,15 @@ const {
 } = require("./gatewayProxy");
 const { joinHttpUrl } = require("../agent-runtime/lib/agentEndpoints");
 
+/**
+ * Probe an adopted runtime through its SSRF-safe, agent-allowlisted endpoint.
+ * Any completed HTTP response indicates liveness; resolution, timeout, and
+ * transport failures return `{ running: false }` rather than throwing.
+ *
+ * @param {Object} agent - External agent endpoint configuration.
+ * @param {Object} options - Fetch implementation and timeout overrides.
+ * @returns {Promise<Object>} External runtime liveness result.
+ */
 async function probeExternalAgentHealth(agent, { fetchImpl, timeoutMs = 5000 } = {}) {
   const doFetch = fetchImpl || globalThis.fetch;
 

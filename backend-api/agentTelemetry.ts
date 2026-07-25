@@ -1,4 +1,7 @@
 // @ts-nocheck
+// Normalizes live telemetry across runtime backends, derives rates from stored
+// counters, persists samples, and builds the current/history API responses.
+
 const db = require("./db");
 const containerManager = require("./containerManager");
 const { buildAgentRuntimeFields, isNemoClawSandbox } = require("./agentRuntimeFields");
@@ -18,6 +21,12 @@ const {
   toFiniteNumber,
 } = require(telemetryModulePath);
 
+/**
+ * Prefer the API-local telemetry adapter while retaining the worker path as a
+ * compatibility fallback for older deployment layouts.
+ *
+ * @returns {string} Resolvable telemetry adapter module path.
+ */
 function resolveTelemetryModulePath() {
   const localPath = path.resolve(__dirname, "backends", "telemetry");
   const workerPath = path.resolve(__dirname, "../workers/provisioner/backends/telemetry");
@@ -52,6 +61,8 @@ const TOTAL_TO_RATE_KEYS = {
   disk_read_mb: "disk_read_rate_mbps",
   disk_write_mb: "disk_write_rate_mbps",
 };
+
+// Capability and sample normalization
 
 function sampleFieldSql(alias = "") {
   const prefix = alias ? `${alias}.` : "";
@@ -177,6 +188,14 @@ function parseTimestamp(value) {
   return date.getTime();
 }
 
+/**
+ * Derive per-second network and disk rates from cumulative counters, retaining
+ * a prior rate for sub-second samples and treating counter resets as zero.
+ *
+ * @param {Object} currentSample - Latest normalized telemetry sample.
+ * @param {Object} previousSample - Previously stored sample, when available.
+ * @returns {Object} Current sample enriched with derived rates.
+ */
 function deriveLiveRates(currentSample, previousSample) {
   const current = { ...currentSample };
   const currentTime = parseTimestamp(current.recorded_at);
@@ -238,6 +257,8 @@ function integerOrZero(value) {
   return toFiniteInteger(value) ?? 0;
 }
 
+// Live and stored telemetry
+
 function buildFallbackTelemetry(agent, error = null) {
   const runtimeFields = buildAgentRuntimeFields(agent);
   const capabilities = defaultCapabilitiesForBackend(runtimeFields.backend_type);
@@ -253,6 +274,13 @@ function buildFallbackTelemetry(agent, error = null) {
   return telemetry;
 }
 
+/**
+ * Fetch normalized runtime telemetry without rejecting for an absent or
+ * unreachable container; failures become an unavailable telemetry response.
+ *
+ * @param {Object} agent - Agent whose runtime should be inspected.
+ * @returns {Promise<Object>} Normalized live or fallback telemetry.
+ */
 async function fetchLiveTelemetry(agent) {
   if (!agent?.container_id) {
     return buildFallbackTelemetry(agent, "No container assigned");
@@ -279,6 +307,15 @@ async function getLatestStoredSample(agentId) {
   return result.rows[0] ? normalizeHistorySample(result.rows[0]) : null;
 }
 
+/**
+ * Load telemetry history at raw resolution for short windows and progressively
+ * aggregate longer windows to keep response sizes bounded.
+ *
+ * @param {string} agentId - Agent whose samples should be loaded.
+ * @param {Date|string} fromTime - Inclusive history start.
+ * @param {Date|string} toTime - Inclusive history end.
+ * @returns {Promise<Array>} Chronological normalized samples.
+ */
 async function getHistorySamples(agentId, fromTime, toTime) {
   const bucketSeconds = historyBucketSeconds(fromTime, toTime);
 
@@ -349,6 +386,14 @@ function appendOrReplaceCurrentSample(samples, currentSample) {
   return samples;
 }
 
+/**
+ * Persist a normalized sample after deriving rates from the latest stored
+ * counters; missing numeric metrics are stored as zero for the database schema.
+ *
+ * @param {string} agentId - Agent that owns the sample.
+ * @param {Object} telemetry - Normalized telemetry containing the current sample.
+ * @returns {Promise<Object>} Enriched sample written to storage.
+ */
 async function persistTelemetrySample(agentId, telemetry) {
   const current = normalizeCurrentSample(telemetry.current);
   const previous = await getLatestStoredSample(agentId);
@@ -392,6 +437,13 @@ async function persistTelemetrySample(agentId, telemetry) {
   return enriched;
 }
 
+/**
+ * Collect and persist one sample only when the runtime is live and exposes at
+ * least one supported metric family.
+ *
+ * @param {Object} agent - Agent to sample.
+ * @returns {Promise<Object|null>} Stored sample, or `null` when collection is unavailable.
+ */
 async function collectAgentTelemetrySample(agent) {
   const telemetry = await fetchLiveTelemetry(agent);
 
@@ -414,6 +466,14 @@ async function fetchJson(url, headers = {}) {
   return response.json();
 }
 
+// API response composition
+
+/**
+ * Build a partial NemoClaw runtime summary from independent best-effort probes.
+ *
+ * @param {Object} agent - Agent whose NemoClaw state should be inspected.
+ * @returns {Promise<Object|null>} Sandbox summary, or `null` for other sandboxes.
+ */
 async function loadNemoSummary(agent) {
   if (!isNemoClawSandbox(agent)) {
     return null;
@@ -468,6 +528,14 @@ async function loadNemoSummary(agent) {
   return summary;
 }
 
+/**
+ * Build the current telemetry response by merging the live-or-fallback sample
+ * with stored counters, capability masking, replica state, and optional NemoClaw details.
+ *
+ * @param {Object} agent - Agent whose telemetry should be returned.
+ * @param {Object|null} [liveTelemetry=null] - Optional pre-fetched telemetry.
+ * @returns {Promise<Object>} Current stats response.
+ */
 async function buildAgentStatsResponse(agent, liveTelemetry = null) {
   const telemetry = liveTelemetry
     ? normalizeTelemetry(liveTelemetry, agent)
@@ -503,6 +571,15 @@ async function buildAgentStatsResponse(agent, liveTelemetry = null) {
   return response;
 }
 
+/**
+ * Build a bounded history response, appending an eligible live-or-fallback
+ * sample or replacing the final sample when timestamps are within one second.
+ *
+ * @param {Object} agent - Agent whose telemetry history should be returned.
+ * @param {Date|string} fromTime - Inclusive history start.
+ * @param {Date|string} toTime - Inclusive history end.
+ * @returns {Promise<Object>} Capability-aware telemetry history response.
+ */
 async function buildAgentHistoryResponse(agent, fromTime, toTime) {
   const telemetry = await fetchLiveTelemetry(agent);
   const latestStored = await getLatestStoredSample(agent.id);

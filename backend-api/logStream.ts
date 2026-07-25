@@ -47,12 +47,15 @@ function publicAuthorizationError(error) {
 }
 
 /**
- * Attach the live-log WebSocket server to an existing HTTP server.
+ * Attach a viewer-authorized live-log WebSocket endpoint to an HTTP server.
  * Clients connect to  ws://<host>/ws/logs/<agentId> (cookie-authenticated)
  * or the legacy  ws://<host>/ws/logs/<agentId>?token=<jwt>  form.
  *
  * Uses containerManager for multi-backend support (Docker, K8s, Proxmox).
  * Reconciles live container status before deciding to stream.
+ *
+ * @param {Object} server - HTTP server receiving the upgrade handler.
+ * @returns {Object} Attached WebSocket server.
  */
 function attachLogStream(server) {
   const wss = new WebSocketServer({ noServer: true });

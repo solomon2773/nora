@@ -7,6 +7,8 @@ const DEFAULT_EVENT_LIMIT = 20;
 const DEFAULT_AUDIT_PAGE_LIMIT = 30;
 const MAX_AUDIT_PAGE_LIMIT = 100;
 
+// ── Event filtering and ownership scope ─────────────────────────
+
 function normalizePositiveInteger(
   value,
   defaultValue,
@@ -76,6 +78,15 @@ function joinWhereClauses(clauses = []) {
   return normalized.length ? `WHERE ${normalized.join(" AND ")}` : "";
 }
 
+/**
+ * Build the SQL boundary for events attributable to a user directly or through
+ * an owned/workspace-accessible agent. Optional agent filtering stays inside
+ * that same user scope; values are always returned as query parameters.
+ *
+ * @param {string} userId - User whose event visibility is being enforced.
+ * @param {Object} options - Agent filter, table alias, and parameter offset.
+ * @returns {Object} Parameterized WHERE clause and values.
+ */
 function buildUserEventScopeClause(
   userId,
   { agentId = null, workspaceId = null, tableAlias = "e", startIndex = 1 } = {},
@@ -227,6 +238,16 @@ async function queryUserEvents(userId, options = {}, { limit = null, offset = 0 
   return result.rows;
 }
 
+// ── Monitoring summaries and event reads ────────────────────────
+
+/**
+ * Return agent and deployment counts for either one user's accessible fleet or
+ * the platform. User-scoped queue counts are status-derived; platform queue
+ * lookup failures fall back to zeros.
+ *
+ * @param {Object|string} options - Optional user scope, or a legacy user ID.
+ * @returns {Promise<Object>} Monitoring counters and queue summary.
+ */
 async function getMetrics(options = {}) {
   const normalizedOptions = typeof options === "string" ? { userId: options } : options || {};
   const userId =
@@ -353,6 +374,14 @@ async function getUserRecentEvents(userId, options = {}) {
   });
 }
 
+/**
+ * Page events through the user/agent ownership boundary and expose event types
+ * available anywhere in that same scope, independent of the active filters.
+ *
+ * @param {string} userId - User whose visibility is enforced.
+ * @param {Object} options - Filters, agent scope, page, and limit.
+ * @returns {Promise<Object>} Scoped page, counts, and available event types.
+ */
 async function getUserEventsPage(userId, options = {}) {
   const limit = normalizePositiveInteger(options.limit, DEFAULT_AUDIT_PAGE_LIMIT, {
     min: 10,
@@ -443,10 +472,27 @@ async function getAuditEventsPage(options = {}) {
   };
 }
 
+/**
+ * Export all platform events matching the filters without applying user scope.
+ * Authorization must therefore be enforced by the caller.
+ *
+ * @param {Object} filters - Search, type, and date filters.
+ * @returns {Promise<Array>} Matching events ordered newest first.
+ */
 async function exportEvents(filters = {}) {
   return queryEvents(normalizeEventFilters(filters));
 }
 
+/**
+ * Persist an enriched audit event, then trigger alert evaluation asynchronously.
+ * Persistence errors propagate; alert loading and delivery failures never undo
+ * the recorded event.
+ *
+ * @param {string} type - Event type used for audit and alert matching.
+ * @param {string} message - Human-readable event message.
+ * @param {Object} metadata - Event context enriched with source metadata.
+ * @returns {Promise<void>}
+ */
 async function logEvent(type, message, metadata = {}) {
   const enrichedMetadata = ensureAuditSourceMetadata(metadata);
   await db.query("INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)", [

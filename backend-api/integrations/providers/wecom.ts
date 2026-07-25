@@ -159,6 +159,14 @@ function parseAccountsJson(value: unknown): Record<string, any>[] {
   }
 }
 
+/**
+ * Expand dotted input and canonicalize WeCom accounts, policies, advanced settings, and status.
+ *
+ * Malformed additional-account or per-group allowlist JSON is rejected rather than discarded.
+ *
+ * @param {Object} [rawConfig={}] - Nested or dotted WeCom configuration.
+ * @returns {Object} Canonical saved configuration.
+ */
 export function normalizeWecomConfigInput(rawConfig: Record<string, unknown> = {}): WecomConfig {
   const next = expandDottedInput(rawConfig);
   const mode = stringValue(next.mode || "bot") || "bot";
@@ -195,6 +203,12 @@ export function normalizeWecomConfigInput(rawConfig: Record<string, unknown> = {
   };
 }
 
+/**
+ * Convert canonical account and group maps back to editable JSON text fields for the UI.
+ *
+ * @param {Object} [rawConfig={}] - Saved WeCom configuration.
+ * @returns {Object} Display-ready configuration.
+ */
 export function normalizeWecomDisplayConfig(rawConfig: Record<string, unknown> = {}): WecomConfig {
   const normalized = normalizeWecomConfigInput(rawConfig);
   return {
@@ -266,6 +280,12 @@ export const wecomProvider: Provider = {
     };
   },
 
+  /**
+   * Remove account credentials while retaining topology, policies, and activation status for sync.
+   *
+   * @param {Object} [config={}] - Decrypted WeCom configuration.
+   * @returns {Object} Runtime manifest metadata without bot or agent secrets.
+   */
   sanitizeForSync(config: Record<string, unknown> = {}) {
     const normalized = normalizeWecomConfigInput(config);
     return {

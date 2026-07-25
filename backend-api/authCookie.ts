@@ -38,12 +38,14 @@ function readAuthCookie(req) {
   return cookies[AUTH_COOKIE_NAME] || null;
 }
 
-// Extract the session token from a WebSocket upgrade request. Prefers the
-// HttpOnly cookie (automatically attached by the browser on same-origin
-// upgrades), falls back to `?token=` for legacy clients that haven't migrated
-// yet. The `?token=` path is retained for backward compatibility only — new
-// code should rely on the cookie so the JWT never appears in access logs,
-// browser history, or DevTools network panels.
+/**
+ * Extract a WebSocket session token, preferring the HttpOnly cookie over the
+ * legacy query parameter that can appear in logs and browser history.
+ *
+ * @param {Object} request - WebSocket upgrade request.
+ * @param {Object|null} searchParams - Parsed upgrade URL search parameters.
+ * @returns {string|null} Session token when present.
+ */
 function extractSessionTokenFromUpgrade(request, searchParams) {
   const cookieToken = readAuthCookie(request);
   if (cookieToken) return cookieToken;
@@ -51,6 +53,15 @@ function extractSessionTokenFromUpgrade(request, searchParams) {
   return queryToken || null;
 }
 
+/**
+ * Set the primary seven-day HttpOnly session cookie, enabling `Secure` for
+ * HTTPS requests or when explicitly forced by configuration.
+ *
+ * @param {Object} res - Express response.
+ * @param {string} token - Signed session JWT.
+ * @param {Object} req - Express request used to determine transport security.
+ * @returns {void}
+ */
 function setAuthCookie(res, token, req) {
   // NORA_FORCE_SECURE_COOKIES=1 forces Secure regardless of inbound scheme,
   // for operators behind always-on TLS who don't want to rely on
@@ -68,6 +79,13 @@ function setAuthCookie(res, token, req) {
   });
 }
 
+/**
+ * Clear the session cookie with the same transport attributes used when setting it.
+ *
+ * @param {Object} res - Express response.
+ * @param {Object} req - Express request used to determine transport security.
+ * @returns {void}
+ */
 function clearAuthCookie(res, req) {
   // NORA_FORCE_SECURE_COOKIES=1 forces Secure regardless of inbound scheme,
   // for operators behind always-on TLS who don't want to rely on

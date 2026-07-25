@@ -19,10 +19,17 @@ export interface OAuthStatesRepository {
     redirectPath: string;
     expiresAt: Date;
   }): Promise<void>;
+  /** Read a matching state with agent ownership metadata; deletion remains a separate operation. */
   consume(input: { state: string; provider: string }): Promise<OAuthStateRow | null>;
   delete(state: string): Promise<void>;
 }
 
+/**
+ * Create persistence operations for short-lived provider-agnostic OAuth state.
+ *
+ * @param {Object} db - Database client exposing `query`.
+ * @returns {Object} OAuth state persistence operations.
+ */
 export function createOAuthStatesRepository(db: DbLike): OAuthStatesRepository {
   return {
     async insert(row) {

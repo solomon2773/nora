@@ -55,6 +55,14 @@ function buildSourceLabel(kind, account, service, explicitLabel) {
   return service ? `System · ${service}` : "System";
 }
 
+/**
+ * Build canonical account, request, or system provenance from an Express
+ * request and optional source overrides.
+ *
+ * @param {Object|null} req - Express request when the event originated over HTTP.
+ * @param {Object} [source={}] - Explicit provenance fields that override request values.
+ * @returns {Object} Compacted audit-source metadata.
+ */
 function buildSourceMetadata(req, source = {}) {
   const sourceObject =
     source && typeof source === "object" && !Array.isArray(source)
@@ -108,6 +116,13 @@ function buildSourceMetadata(req, source = {}) {
   });
 }
 
+/**
+ * Resolve canonical source metadata from an event's source, legacy actor, or
+ * system fallback representation.
+ *
+ * @param {Object} [metadata={}] - Stored event metadata.
+ * @returns {Object} Canonical audit-source metadata.
+ */
 function resolveAuditSource(metadata = {}) {
   if (metadata?.source) {
     return buildSourceMetadata(null, metadata.source);
@@ -124,6 +139,13 @@ function resolveAuditSource(metadata = {}) {
   return buildSourceMetadata(null, {});
 }
 
+/**
+ * Preserve event metadata while ensuring every event contains canonical provenance.
+ *
+ * @param {*} [metadata={}] - Event metadata candidate.
+ * @param {Object|null} [req=null] - Optional Express request supplying provenance.
+ * @returns {Object} Metadata with a normalized `source` field.
+ */
 function ensureAuditSourceMetadata(metadata = {}, req = null) {
   const base =
     metadata && typeof metadata === "object" && !Array.isArray(metadata)
