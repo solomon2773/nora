@@ -146,6 +146,21 @@ These variables control which nginx configuration is mounted, the listening port
 | `NORA_PUBLIC_URL`           | No       | —                       | Optional explicit public origin used by emails, OAuth callbacks, and audit links when it differs from `NEXTAUTH_URL`.                                                                                                  |
 | `NORA_FORCE_SECURE_COOKIES` | No       | —                       | When set to `1`, forces the `Secure` flag on session cookies regardless of inbound scheme. Set for always-on-TLS public deployments behind a proxy/CDN that may strip `X-Forwarded-Proto`; leave empty for local HTTP. |
 
+## API request rate limits
+
+App-wide per-IP abuse protection sits in front of every route: a generous global budget for all
+traffic plus a tighter budget for state-changing methods (POST/PUT/PATCH/DELETE). Overrides must be
+positive integers; invalid values fall back to the secure defaults below. Raise them only where many
+requests legitimately share one source IP — for example the Playwright E2E suite, which drives the
+whole API from a single localhost address and otherwise self-throttles.
+
+| Variable                       | Required | Default  | Description                                                              |
+| ------------------------------ | -------- | -------- | ------------------------------------------------------------------------ |
+| `GLOBAL_RATE_LIMIT_MAX`        | No       | `1000`   | All requests allowed per IP within the global window.                    |
+| `GLOBAL_RATE_LIMIT_WINDOW_MS`  | No       | `900000` | Global rate-limit window in milliseconds (15 minutes).                   |
+| `MUTATION_RATE_LIMIT_MAX`      | No       | `60`     | State-changing requests (POST/PUT/PATCH/DELETE) allowed per IP/window.   |
+| `MUTATION_RATE_LIMIT_WINDOW_MS`| No       | `60000`  | Mutation rate-limit window in milliseconds (1 minute).                   |
+
 ## Login abuse protection
 
 Password and OAuth login share one per-IP rate-limit budget. Overrides must be positive integers;
@@ -349,7 +364,7 @@ Proxmox is an opt-in experimental LXC target for standard OpenClaw and prepared 
 | `PROXMOX_NODE_MAJOR`                       | No                  | `24`                                                       | Minimum Node.js major installed in stock OpenClaw templates.                                                                                                                                                                                                                                                      |
 | `PROXMOX_OPENCLAW_PACKAGE`                 | No                  | `openclaw@2026.6.11`                                       | Package spec installed for OpenClaw. Override only after validating Gateway and activation compatibility.                                                                                                                                                                                                         |
 | `PROXMOX_HERMES_BIN`                       | No                  | `/opt/hermes/.venv/bin/hermes`                             | Hermes executable in the prepared template.                                                                                                                                                                                                                                                                       |
-| `PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD` | No                  | `false`                                                    | Publishes the unauthenticated Hermes dashboard on `0.0.0.0`; leave false unless separately protected.                                                                                                                                                                                                             |
+| `PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD` | No                  | `false`                                                    | Binds the Hermes dashboard to `0.0.0.0` instead of `127.0.0.1`. The dashboard now always requires authentication (Hermes basic-auth provider; Nora injects a per-agent credential), so this controls only the bind address — not authentication. Leave false unless the port is separately protected.              |
 
 ## NemoClaw / NVIDIA
 

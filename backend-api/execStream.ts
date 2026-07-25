@@ -56,18 +56,15 @@ try {
   console.warn("dockerode not available — interactive terminal will be unavailable");
 }
 
+// The JSON wire protocol accepts input/resize messages and emits
+// output/system/error messages.
+
 /**
- * Attach interactive terminal WebSocket server to an HTTP server.
- * Clients connect to: ws://<host>/ws/exec/<agentId>?token=<jwt>
+ * Attach an editor-authorized terminal WebSocket endpoint, selecting full
+ * Docker TTY support or the limited exec stream exposed by another backend.
  *
- * Protocol (JSON messages from client):
- *   { type: "input",  data: "<keystrokes>" }
- *   { type: "resize", cols: 80, rows: 24 }
- *
- * Protocol (JSON messages to client):
- *   { type: "output", data: "<terminal output>" }
- *   { type: "system", message: "..." }
- *   { type: "error",  message: "..." }
+ * @param {Object} server - HTTP server receiving the upgrade handler.
+ * @returns {Object} Attached WebSocket server.
  */
 function attachExecStream(server) {
   const wss = new WebSocketServer({ noServer: true });

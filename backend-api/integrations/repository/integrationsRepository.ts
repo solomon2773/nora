@@ -63,6 +63,14 @@ export interface IntegrationsRepository {
   }): Promise<IntegrationRow | null>;
 }
 
+/**
+ * Create the SQL-only integration repository used beneath encryption and provider services.
+ *
+ * Callers must pass already-encrypted credential values; returned rows remain untransformed.
+ *
+ * @param {Object} db - Database client exposing `query`.
+ * @returns {Object} Raw integration persistence operations.
+ */
 export function createIntegrationsRepository(db: DbLike): IntegrationsRepository {
   return {
     async upsertCatalogItem(item) {

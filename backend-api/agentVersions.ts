@@ -3,9 +3,9 @@
 // the agent's template_payload at a point in time; rollback restores a prior
 // row and triggers the existing redeploy path.
 //
-// Version numbers are assigned monotonically per agent inside a transaction
-// so concurrent writes can't collide on the UNIQUE(agent_id, version_number)
-// constraint.
+// Version numbers are selected per agent inside a transaction. The database's
+// UNIQUE(agent_id, version_number) constraint remains the final guard against
+// concurrent writers choosing the same next number.
 
 const db = require("./db");
 
@@ -32,6 +32,16 @@ function serializeVersion(row) {
   };
 }
 
+// Version persistence
+
+/**
+ * Persist the next numbered configuration snapshot for an agent in a transaction.
+ *
+ * @param {string} agentId - Agent whose configuration is being versioned.
+ * @param {Object} config - Template payload snapshot to preserve.
+ * @param {Object} [options={}] - Creator, message, and source metadata.
+ * @returns {Promise<Object>} Persisted version record.
+ */
 async function recordVersion(
   agentId,
   config,
@@ -65,9 +75,14 @@ async function recordVersion(
   }
 }
 
-// Best-effort version recording. Wraps recordVersion so a failure here
-// (e.g., transient DB issue) never blocks the actual agent mutation that
-// triggered it. Callers should NOT await this in critical paths.
+/**
+ * Record a version without allowing persistence failure to reject the caller.
+ *
+ * @param {string} agentId - Agent whose configuration is being versioned.
+ * @param {Object} config - Template payload snapshot to preserve.
+ * @param {Object} [options={}] - Creator, message, and source metadata.
+ * @returns {Promise<Object|null>} Persisted version, or `null` when recording fails.
+ */
 function recordVersionBestEffort(agentId, config, options = {}) {
   return Promise.resolve(recordVersion(agentId, config, options)).catch((err) => {
     console.error(`Failed to record agent version for ${agentId}:`, err.message);
@@ -75,6 +90,15 @@ function recordVersionBestEffort(agentId, config, options = {}) {
   });
 }
 
+// Version queries
+
+/**
+ * List an agent's newest versions first, clamping the requested limit to 1–200.
+ *
+ * @param {string} agentId - Agent whose version history should be returned.
+ * @param {Object} [options={}] - Optional result limit.
+ * @returns {Promise<Array>} Serialized version records.
+ */
 async function listVersions(agentId, { limit = 50 } = {}) {
   const result = await db.query(
     `SELECT id, agent_id, version_number, config, created_by, message, source, created_at
@@ -87,6 +111,13 @@ async function listVersions(agentId, { limit = 50 } = {}) {
   return result.rows.map(serializeVersion);
 }
 
+/**
+ * Load a version only when it belongs to the requested agent.
+ *
+ * @param {string} agentId - Agent expected to own the version.
+ * @param {string} versionId - Version to retrieve.
+ * @returns {Promise<Object|null>} Serialized version, or `null` when absent or out of scope.
+ */
 async function getVersion(agentId, versionId) {
   const result = await db.query(
     `SELECT id, agent_id, version_number, config, created_by, message, source, created_at

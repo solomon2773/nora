@@ -25,6 +25,12 @@ const WEBHOOK_CUSTOM_HEADER_ALLOWLIST = new Set([
   "user-agent",
 ]);
 
+/**
+ * Retain only explicitly allowlisted string headers for generic outbound webhooks.
+ *
+ * @param {Object} customHeaders - User-configured header map.
+ * @returns {Object} Safe headers that cannot override routing or bearer credentials.
+ */
 function filterWebhookHeaders(customHeaders) {
   const filtered = {};
   if (!customHeaders || typeof customHeaders !== "object") return filtered;
@@ -142,6 +148,14 @@ const email = {
     { key: "to_address", label: "Default To Address", type: "email", required: false },
   ],
 
+  /**
+   * Send SMTP mail while reporting delivery failures through the adapter result.
+   *
+   * @param {Object} channel - Channel containing decrypted SMTP configuration.
+   * @param {string} message - Plain-text message body.
+   * @param {Object} [opts={}] - Optional recipient and subject overrides.
+   * @returns {Promise<Object>} Delivery status without throwing SMTP failures.
+   */
   async send(channel, message, opts = {}) {
     // Lightweight SMTP using nodemailer (if available) — or log
     try {
@@ -417,6 +431,12 @@ const telegram = {
     return { delivered: true };
   },
 
+  /**
+   * Validate a Telegram token, failing open as valid when the network request throws.
+   *
+   * @param {Object} config - Telegram channel configuration.
+   * @returns {Promise<Object>} Validation result and optional bot username.
+   */
   async verify(config) {
     if (!config.bot_token) return { valid: false, error: "Bot Token required" };
     // Optionally call getMe to verify the token

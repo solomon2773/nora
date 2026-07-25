@@ -102,6 +102,14 @@ function buildCatalogListing(listing, snapshot = null, templatePayload = null, o
   };
 }
 
+/**
+ * Build authenticated catalog detail, including full template payload only for
+ * the single-listing endpoint that explicitly requests content.
+ *
+ * @param {Object} listing - Published community listing.
+ * @param {Object} [options={}] - Content and source-hub URL options.
+ * @returns {Promise<Object>} Public catalog summary or detail.
+ */
 async function buildCatalogDetail(listing, { includeContent = false, sourceHubUrl = "" } = {}) {
   const snapshot = listing?.snapshot_id ? await snapshots.getSnapshot(listing.snapshot_id) : null;
   const templatePayload = snapshot
@@ -117,6 +125,8 @@ async function buildCatalogDetail(listing, { includeContent = false, sourceHubUr
     template: summarizeTemplatePayload(templatePayload, { includeContent: true }),
   };
 }
+
+// API-key-authenticated catalog and submission routes
 
 router.get("/catalog", requireAgentHubApiKey, async (req, res, next) => {
   try {

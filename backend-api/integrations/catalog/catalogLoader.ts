@@ -38,6 +38,11 @@ let catalogCache: CatalogItem[] | null = null;
 
 const CATALOG_PATH = path.join(__dirname, "..", "catalog", "catalog.json");
 
+/**
+ * Load and cache the static integration catalog, falling back to an empty list on file errors.
+ *
+ * @returns {Array} Cached catalog entries.
+ */
 export function loadCatalog(): CatalogItem[] {
   if (catalogCache) return catalogCache;
   try {
@@ -53,6 +58,12 @@ export function clearCatalogCache(): void {
   catalogCache = null;
 }
 
+/**
+ * Best-effort upsert every static catalog item without aborting on individual row failures.
+ *
+ * @param {Object} repo - Catalog persistence boundary.
+ * @returns {Promise<void>}
+ */
 export async function seedCatalog(repo: IntegrationsRepository): Promise<void> {
   clearCatalogCache();
   const catalog = loadCatalog();
@@ -76,6 +87,12 @@ export async function seedCatalog(repo: IntegrationsRepository): Promise<void> {
   console.log(`Integration catalog seeded: ${catalog.length} items`);
 }
 
+/**
+ * Resolve schema metadata from a database row, then fall back to the matching static entry.
+ *
+ * @param {Object} [row={}] - Integration or catalog row.
+ * @returns {Object} Parsed schema, or an empty object when unavailable or malformed.
+ */
 export function resolveCatalogSchema(row: Record<string, any> = {}): Record<string, any> {
   const rawSchema =
     row.config_schema ??
@@ -124,6 +141,13 @@ export function hydrateRow(row: Record<string, any> = {}): HydratedCatalogRow {
   };
 }
 
+/**
+ * Read enabled catalog rows and fall back to static entries when persistence is unavailable.
+ *
+ * @param {Object} repo - Catalog persistence boundary.
+ * @param {string|null} [category] - Optional category filter.
+ * @returns {Promise<Object[]>} Hydrated database rows or static catalog entries.
+ */
 export async function getCatalog(
   repo: IntegrationsRepository,
   category?: string | null,
@@ -138,6 +162,15 @@ export async function getCatalog(
   }
 }
 
+/**
+ * Load one database catalog entry without filtering its enabled flag.
+ *
+ * Query failure falls back to the matching static catalog item.
+ *
+ * @param {Object} repo - Catalog persistence boundary.
+ * @param {string} catalogId - Provider catalog identifier.
+ * @returns {Promise<Object|null>} Hydrated or static catalog entry.
+ */
 export async function getCatalogItem(
   repo: IntegrationsRepository,
   catalogId: string,
@@ -150,6 +183,12 @@ export async function getCatalogItem(
   }
 }
 
+/**
+ * Combine catalog-declared password fields with conservative secret-name heuristics.
+ *
+ * @param {string} provider - Provider catalog identifier.
+ * @returns {Set<string>} Config keys and paths that require secret handling.
+ */
 export function getSensitiveConfigKeys(provider: string): Set<string> {
   const catalogItem = loadCatalog().find((item) => item.id === provider);
   const schemaKeys = new Set<string>(

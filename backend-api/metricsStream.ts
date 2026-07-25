@@ -8,6 +8,13 @@ const { assertRemoteHostAgentUse, isRemoteHostAccessRevokedError } = require("./
 
 const STREAM_INTERVAL_MS = 5000;
 
+/**
+ * Attach a viewer-authorized metrics WebSocket endpoint that rechecks access
+ * and publishes a current agent snapshot every five seconds.
+ *
+ * @param {Object} server - HTTP server receiving the upgrade handler.
+ * @returns {Object} Attached WebSocket server.
+ */
 function attachMetricsStream(server) {
   const wss = new WebSocketServer({ noServer: true });
 

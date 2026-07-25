@@ -25,6 +25,13 @@ function textFile(filePath, content) {
   };
 }
 
+/**
+ * Normalize manifest-declared extra files while rejecting traversal, reserved
+ * manifest names, duplicate entries, and core files loaded separately.
+ *
+ * @param {Array} [value=[]] - Manifest file paths.
+ * @returns {Array} Safe unique relative paths.
+ */
 function normalizeManifestFileList(value = []) {
   const files = [];
   const seen = new Set();
@@ -85,6 +92,12 @@ function buildSnapshotConfig(templateKey, payload, defaults = {}) {
   };
 }
 
+/**
+ * Load on-disk starter manifests and declared files, skipping directories
+ * without a manifest or template key; malformed JSON and read errors propagate.
+ *
+ * @returns {Array} Built-in starter template definitions.
+ */
 function loadTemplatesFromDisk() {
   const entries = fs.readdirSync(TEMPLATES_DIR, { withFileTypes: true });
   const templates = [];

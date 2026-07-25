@@ -79,6 +79,13 @@ function normalizeInstalledSkillsLockfile(parsed) {
     .filter((entry) => entry.slug && entry.version);
 }
 
+/**
+ * Require an OpenClaw agent with recorded running/warning status and a container
+ * ID; this check does not probe the runtime.
+ *
+ * @param {Object|null} agent - Agent selected for a ClawHub operation.
+ * @returns {void}
+ */
 function validateClawhubMutableAgent(agent) {
   if (!agent) {
     const error = new Error("agent_not_found");
@@ -141,9 +148,18 @@ function sendClawhubMutationError(res, error) {
   });
 }
 
+/**
+ * Load an agent authorized for the current session or scoped API key request.
+ *
+ * @param {Object} req - Request carrying session or API-key authorization context.
+ * @param {string} agentId - Agent to load.
+ * @returns {Promise<Object|null>} Request-accessible agent row, or `null`.
+ */
 async function loadOwnedAgent(req, agentId) {
   return findAgentForRequest(req, agentId);
 }
+
+// Public registry queries
 
 router.get("/skills", async (req, res) => {
   try {
@@ -190,6 +206,8 @@ router.get("/skills/:slug", async (req, res) => {
     sendClawhubError(res, error);
   }
 });
+
+// Authorized agent skill state and mutations
 
 router.get("/agents/:agentId/skills", async (req, res) => {
   try {
@@ -344,6 +362,8 @@ router.post("/agents/:agentId/skills/:slug/delete", async (req, res) => {
     return sendClawhubMutationError(res, error);
   }
 });
+
+// Request-scoped asynchronous job status
 
 router.get("/jobs/:jobId", requireScope("agents:read"), async (req, res) => {
   const jobId = typeof req.params.jobId === "string" ? req.params.jobId.trim() : "";

@@ -72,6 +72,22 @@ function removeSavedSkillEntry(entries = [], slug, author = "") {
   });
 }
 
+/**
+ * Merge Nora's saved ClawHub entries, the runtime lockfile view, and any
+ * in-flight jobs into one operator-facing skill list.
+ *
+ * The returned rows intentionally preserve drift instead of hiding it:
+ * `healthy` means saved+installed match, `missing_runtime` means Nora expects
+ * the skill but the runtime lacks it, and `orphaned_runtime` means the runtime
+ * has a skill Nora is not currently tracking. Pending install/delete jobs win
+ * over those steady-state statuses so the UI can show transitional state.
+ *
+ * @param {Array<object>} [savedSkills=[]] Saved ClawHub entries from `agents.clawhub_skills`.
+ * @param {Array<object>} [installedSkills=[]] Runtime lockfile entries currently installed.
+ * @param {Array<object>} [pendingJobs=[]] In-flight ClawHub jobs keyed by slug.
+ * @returns {Array<object>} Sorted merged skill rows with stable metadata plus a
+ * derived `status` describing healthy, drifted, or pending state.
+ */
 function mergeClawhubSkillState(savedSkills = [], installedSkills = [], pendingJobs = []) {
   const normalizedSaved = normalizeSavedSkillEntries(savedSkills);
   const normalizedInstalled = normalizeInstalledSkillEntries(installedSkills);

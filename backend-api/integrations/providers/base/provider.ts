@@ -13,6 +13,11 @@ import type {
 } from "../../types/provider";
 import type { IntegrationRow } from "../../types/integration";
 
+/**
+ * Shared provider identity contract; concrete strategies must test credentials and map runtime env.
+ *
+ * Refresh and sync sanitization remain opt-in capabilities for providers that need them.
+ */
 export abstract class BaseProvider implements Provider {
   readonly id: string;
   readonly authType: ProviderAuthType;

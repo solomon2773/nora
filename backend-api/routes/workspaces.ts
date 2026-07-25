@@ -258,6 +258,14 @@ function stripTrailingSlash(value) {
   return value.slice(0, end);
 }
 
+/**
+ * Build an invitation acceptance URL from the configured public base or a
+ * length-capped request Origin, falling back to a relative path when both are absent.
+ *
+ * @param {Object} req - Invitation request.
+ * @param {string} rawToken - Raw invitation token.
+ * @returns {string} Absolute or relative invitation acceptance URL.
+ */
 function buildAcceptUrl(req, rawToken) {
   // Prefer NEXTAUTH_URL (the canonical public URL). Fall back to the request
   // origin so local dev still produces a usable link without env config. Cap
@@ -269,6 +277,14 @@ function buildAcceptUrl(req, rawToken) {
   return `${base}/app/invitations/accept?token=${encodeURIComponent(rawToken)}`;
 }
 
+/**
+ * Attempt invitation delivery when SMTP is configured, returning delivery
+ * status without invalidating the already-created invitation on mail failure.
+ *
+ * @param {Object} req - Authenticated invitation request.
+ * @param {Object} invitation - Persisted invitation containing its one-time token.
+ * @returns {Promise<Object>} Delivery status and optional message id or error.
+ */
 async function maybeSendInvitationEmail(req, invitation) {
   if (!invitation || !invitation.token) return { sent: false, error: "no_token" };
   let configured = false;

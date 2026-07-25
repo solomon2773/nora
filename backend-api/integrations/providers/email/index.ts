@@ -42,6 +42,14 @@ function setNested(target: Record<string, any>, path: string, value: unknown) {
   cursor[parts[0]] = value;
 }
 
+/**
+ * Expand dotted input, apply provider defaults, and canonicalize current Email config sections.
+ *
+ * Legacy polling, initial-sync, and mailbox-scope fields are intentionally removed.
+ *
+ * @param {Object} [rawConfig={}] - Partial nested or dotted Email configuration.
+ * @returns {Object} Canonical IMAP, SMTP, cron, auth, and verification config.
+ */
 export function normalizeEmailConfigInput(rawConfig: Record<string, unknown> = {}): EmailConfig {
   const next: Record<string, any> = {};
 

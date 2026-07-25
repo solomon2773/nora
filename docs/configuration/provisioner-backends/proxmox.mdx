@@ -149,7 +149,7 @@ The template must include:
 - an executable Hermes installation at `PROXMOX_HERMES_BIN` or on `PATH`;
 - network access required by the configured model and integrations.
 
-Nora creates the runtime directories, writes managed environment state with restricted permissions, and runs the service as `hermes`. Setting `PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD=true` changes the dashboard bind from `127.0.0.1` to `0.0.0.0`; leave it false unless you have a separate authenticated network boundary.
+Nora creates the runtime directories, writes managed environment state with restricted permissions, and runs the service as `hermes`. The Hermes dashboard now always requires authentication: Nora injects a per-agent basic-auth credential into the runtime and its embed proxy signs in on the operator's behalf, so the dashboard is reached only through Nora's authenticated proxy. Setting `PROXMOX_HERMES_ENABLE_INSECURE_DASHBOARD=true` changes only the dashboard bind from `127.0.0.1` to `0.0.0.0` (it no longer disables authentication); leave it false unless you have a separate trusted network boundary.
 
 Before publishing the template, instantiate a disposable LXC from it and validate the exact binary
 path plus the unprivileged runtime account. Replace `9000` and the provider hostname with your test

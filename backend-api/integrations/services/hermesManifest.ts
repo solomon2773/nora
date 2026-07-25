@@ -37,6 +37,11 @@ function buildHermesIntegrationContextMarkdown(integrations = []) {
   ].join("\n");
 }
 
+/**
+ * Generate the Hermes-side inspection tool that exposes only redacted integration config.
+ *
+ * @returns {string} Python command-line tool source.
+ */
 function buildHermesIntegrationToolScript() {
   return `#!/usr/bin/env python3
 import json
@@ -217,6 +222,14 @@ if __name__ == "__main__":
 `;
 }
 
+/**
+ * Build an idempotent shell install for split integration manifests, skill docs, and tooling.
+ *
+ * Secret-bearing detail files are written mode 0600 after legacy manifest locations are removed.
+ *
+ * @param {Object[]} [integrations=[]] - Decrypted runtime sync entries.
+ * @returns {string} Shell command that projects integrations into a Hermes workspace.
+ */
 function buildHermesIntegrationInstallCommand(integrations = []) {
   const syncedIntegrations = Array.isArray(integrations) ? integrations : [];
   const manifest = buildSplitIntegrationManifest(syncedIntegrations);

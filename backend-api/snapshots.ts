@@ -1,7 +1,9 @@
 // @ts-nocheck
-// agent snapshot registry backed by PostgreSQL
+// Agent snapshot registry backed by PostgreSQL.
 
 const db = require("./db");
+
+// ─── Normalization ────────────────────────────────────────────────
 
 function stringifyConfig(config = {}) {
   return typeof config === "string" ? config : JSON.stringify(config || {});
@@ -19,6 +21,18 @@ function normalizeSnapshotOptions(options = {}) {
   };
 }
 
+// ─── Snapshot operations ─────────────────────────────────────────
+
+/**
+ * Persist a snapshot after normalizing its template and built-in metadata.
+ *
+ * @param {string|null} agentId - Optional source agent.
+ * @param {string} name - Snapshot display name.
+ * @param {string} description - Snapshot description.
+ * @param {Object|string} config - Configuration stored with the snapshot.
+ * @param {Object} options - Snapshot kind and template identity.
+ * @returns {Promise<Object>} Created snapshot row.
+ */
 async function createSnapshot(agentId, name, description, config = {}, options = {}) {
   const normalized = normalizeSnapshotOptions(options);
   const result = await db.query(
@@ -57,6 +71,13 @@ async function getSnapshotByTemplateKey(templateKey) {
   return result.rows[0] || null;
 }
 
+/**
+ * Select by template key, then update or create a snapshot. This upsert is
+ * non-atomic, so concurrent callers can create duplicate template records.
+ *
+ * @param {Object} input - Snapshot content, ownership, and template metadata.
+ * @returns {Promise<Object>} Persisted snapshot row.
+ */
 async function upsertSnapshot({
   agentId = null,
   name,
@@ -97,6 +118,13 @@ async function upsertSnapshot({
   return createSnapshot(agentId, name, description, config, normalized);
 }
 
+/**
+ * Apply a partial snapshot update while preserving omitted fields.
+ *
+ * @param {string} id - Snapshot identifier.
+ * @param {Object} input - Fields to replace.
+ * @returns {Promise<Object|null>} Updated row, or `null` when absent.
+ */
 async function updateSnapshot(
   id,
   { agentId, name, description, config, kind, templateKey, builtIn } = {},

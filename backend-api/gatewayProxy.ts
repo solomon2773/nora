@@ -63,6 +63,15 @@ const EXTERNAL_GATEWAY_TOKEN_MAX_LENGTH = 4096;
 // allowlist of ranges.
 const GATEWAY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 
+// ─── SSRF-safe endpoint resolution ──────────────────────────────
+
+/**
+ * Validate an agent-derived host and port before any proxy resolution or connection.
+ *
+ * @param {Object} addr - Address resolved from persisted agent fields.
+ * @param {string} [label="agent gateway"] - Endpoint label used in validation errors.
+ * @returns {Object} Trimmed host and validated numeric port.
+ */
 function assertSafeAgentAddress(addr, label = "agent gateway") {
   if (!addr || typeof addr !== "object") {
     throw new Error(`${label} address is missing`);
@@ -196,6 +205,12 @@ async function allowedRemoteHostsForAgent(agent) {
 //    mode the endpoint is forced to a public IP at registration (no RFC1918
 //    pivot); selfhosted may adopt RFC1918 runtimes on the operator's own network.
 //  - docker / other: none — falls through to the RFC1918/loopback floor.
+/**
+ * Resolve agent-scoped host exceptions without weakening the hard blocked-address floor.
+ *
+ * @param {Object} agent - Agent whose deployment target defines trusted endpoint hosts.
+ * @returns {Promise<Set>} Lowercase hostnames or addresses trusted for this agent only.
+ */
 async function allowedGatewayHostsForAgent(agent) {
   const target = normalizeDeployTargetName(agent?.deploy_target);
   if (remoteHosts.isRemoteDockerAgent(agent)) return allowedRemoteHostsForAgent(agent);
@@ -236,6 +251,15 @@ function isAllowedGatewayIP(address, hostname, extraAllowedHosts) {
   return false;
 }
 
+/**
+ * Resolve a gateway hostname to an allowed IP so callers can pin the eventual connection.
+ *
+ * @param {string} host - Hostname or IP to validate and resolve.
+ * @param {string} [label="agent gateway"] - Endpoint label used in errors.
+ * @param {Set} [extraAllowedHosts] - Agent-scoped host exceptions.
+ * @param {Object} [options={}] - Resolution constraints such as hosted-mode public-only access.
+ * @returns {Promise<string>} Allowed concrete IP address.
+ */
 async function resolveGatewayHostForProxy(
   host,
   label = "agent gateway",
@@ -300,6 +324,15 @@ function normalizeProxyPath(gatewayPath) {
   return cleanPath;
 }
 
+/**
+ * Build an SSRF-safe HTTP target using a validated port, path, query, and DNS-pinned IP.
+ * The returned Host header preserves the validated operator-configured hostname for ingress routing.
+ *
+ * @param {Object} agent - Agent whose gateway should be reached.
+ * @param {string} [gatewayPath=""] - Gateway-relative path to proxy.
+ * @param {string} [search=""] - Query string to validate, including a leading `?`.
+ * @returns {Promise<Object>} Pinned target URL and safe upstream Host header.
+ */
 async function resolveSafeGatewayHttpTarget(agent, gatewayPath = "", search = "") {
   const addr = assertSafeAgentAddress(resolveGatewayAddress(agent));
   if (!isAllowedGatewayPort(addr.port)) {
@@ -337,6 +370,12 @@ async function resolveSafeGatewayHttpTarget(agent, gatewayPath = "", search = ""
 // connects to it — the Hermes equivalent of resolveSafeGatewayHttpTarget, which
 // closes the SSRF gap where the embed proxy reached runtime_host unchecked.
 // Returns the resolved (allowlisted) host + port; throws if disallowed.
+/**
+ * Resolve an agent's Hermes dashboard to an SSRF-safe, DNS-pinned target.
+ *
+ * @param {Object} agent - Hermes agent whose dashboard should be reached.
+ * @returns {Promise<Object>} Allowed concrete host and validated dashboard port.
+ */
 async function resolveSafeHermesDashboardTarget(agent) {
   const address = resolveHermesDashboardAddress(agent);
   if (!address) {
@@ -378,6 +417,14 @@ async function resolveSafeHermesDashboardTarget(agent) {
 // re-resolve it later and trust whatever it then points at (incl. loopback/RFC1918)
 // because the hostname sits in the allowlist. Pinning the IP closes that window
 // (re-adopt if a runtime's address legitimately changes). Throws if disallowed.
+/**
+ * Validate and pin an externally adopted runtime endpoint before it is stored.
+ * Hosted mode additionally rejects private-network addresses.
+ *
+ * @param {Object} address - Operator-supplied runtime host and port.
+ * @param {Object} [options={}] - Registration environment options.
+ * @returns {Promise<Object>} Resolved IP and validated port safe to persist.
+ */
 async function assertExternalEndpointReachable(address, { paas = false } = {}) {
   const addr = assertSafeAgentAddress(address, "external runtime");
   if (addr.port !== HERMES_DASHBOARD_PORT && !isAllowedGatewayPort(addr.port)) {
@@ -448,6 +495,12 @@ function base64UrlEncode(buf) {
   return buf.toString("base64").replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
 }
 
+/**
+ * Derive a deterministic Ed25519 gateway device identity from an agent's secret token.
+ *
+ * @param {string} gatewayToken - Decrypted gateway token used as key material.
+ * @returns {Object} Device id, public key, and in-memory private key.
+ */
 function deriveDeviceIdentity(gatewayToken) {
   // This is a protocol identity derivation, not password storage. It must stay
   // byte-for-byte aligned with agent-runtime/lib/runtimeBootstrap.ts and
@@ -504,6 +557,9 @@ function buildConnectDevice(identity, role, scopes, nonce) {
 
 // ─── WS-RPC Connection Pool ─────────────────────────────────────
 
+/**
+ * Maintain one authenticated gateway socket with RPC correlation, reconnects, and circuit breaking.
+ */
 class GatewayConnection {
   constructor(
     host,
@@ -552,7 +608,12 @@ class GatewayConnection {
     this._circuitThreshold = 3; // failures before opening circuit
   }
 
-  /** Open WS, complete challenge-response handshake, resolve when ready. */
+  /**
+   * Open the gateway WebSocket and complete its authorized challenge-response
+   * handshake.
+   *
+   * @returns {Promise<Object>} This connection after the gateway is ready.
+   */
   connect() {
     if (this._retired) {
       return Promise.reject(this._retireError || new Error("Gateway connection retired"));
@@ -760,7 +821,14 @@ class GatewayConnection {
     });
   }
 
-  /** Send an RPC call and await the response. */
+  /**
+   * Send an authorized gateway RPC call and await its response.
+   *
+   * @param {string} method - Gateway RPC method.
+   * @param {Object} [params={}] - RPC request parameters.
+   * @param {number} [timeout] - Response timeout in milliseconds.
+   * @returns {Promise<Object>} Gateway response envelope.
+   */
   async call(method, params = {}, timeout = CALL_TIMEOUT) {
     await this._assertAuthorized();
     return new Promise((resolve, reject) => {
@@ -848,7 +916,13 @@ class GatewayConnection {
     this.pending.clear();
   }
 
-  /** Subscribe to gateway events. */
+  /**
+   * Subscribe a callback to one gateway event name.
+   *
+   * @param {string} event - Gateway event name.
+   * @param {Function} callback - Event callback to register.
+   * @returns {void}
+   */
   on(event, callback) {
     if (!this.eventListeners.has(event)) this.eventListeners.set(event, new Set());
     this.eventListeners.get(event).add(callback);
@@ -858,6 +932,14 @@ class GatewayConnection {
     this.eventListeners.get(event)?.delete(callback);
   }
 
+  /**
+   * Register a callback for this connection's retirement. Fires immediately
+   * with the retirement error if the connection is already retired, otherwise
+   * queues the callback for when `retire()` runs.
+   *
+   * @param {Function} callback - Invoked with the retirement error.
+   * @returns {void}
+   */
   onRetire(callback) {
     if (typeof callback !== "function") return;
     if (this._retired) {
@@ -971,7 +1053,13 @@ class GatewayConnection {
     return entry;
   }
 
-  /** Acquire one pooled session-message subscription reference. */
+  /**
+   * Acquire one pooled session-message subscription reference.
+   *
+   * @param {string} key - Requested session subscription key.
+   * @param {number} [timeout] - Subscription RPC timeout in milliseconds.
+   * @returns {Promise<boolean>} Whether the upstream subscription is active.
+   */
   acquireSessionMessageSubscription(key, timeout = SESSION_MESSAGE_SUBSCRIBE_TIMEOUT) {
     const target = this._sessionMessageSubscriptionTarget(key);
     const { requestedKey } = target;
@@ -1008,7 +1096,14 @@ class GatewayConnection {
     });
   }
 
-  /** Release one reference and unsubscribe after the final stream leaves. */
+  /**
+   * Release one reference and best-effort unsubscribe after the final stream
+   * leaves.
+   *
+   * @param {string} key - Requested session subscription key.
+   * @param {number} [timeout] - Unsubscribe RPC timeout in milliseconds.
+   * @returns {Promise<boolean>} Whether the final pooled reference was released.
+   */
   releaseSessionMessageSubscription(key, timeout = SESSION_MESSAGE_SUBSCRIBE_TIMEOUT) {
     const requestedKey = String(key || "").trim();
     if (!requestedKey) return Promise.resolve(false);
@@ -1159,7 +1254,13 @@ class GatewayConnection {
     }
   }
 
-  /** Permanently retire a pooled connection and suppress delayed reconnects. */
+  /**
+   * Permanently retire a pooled connection, reject pending work, and suppress
+   * reconnects.
+   *
+   * @param {Error|null} [error=null] - Failure exposed to pending connection consumers.
+   * @returns {void}
+   */
   retire(error = null) {
     if (this._retired) return;
     this._retired = true;
@@ -1240,6 +1341,14 @@ function retireConflictingConnections(key, agent, addr) {
   }
 }
 
+/**
+ * Get or establish a pooled gateway connection after applying current Remote
+ * Docker authorization, port, host, and SSRF checks. Remote grants are checked
+ * before pool reuse and while an authorized socket remains open.
+ *
+ * @param {Object} agent - Agent whose OpenClaw gateway should be connected.
+ * @returns {Promise<Object>} Connected gateway RPC transport.
+ */
 async function getConnection(agent) {
   // Check before a pooled connection can be reused. PLATFORM_MODE is normally
   // process-static, but this keeps the hosted-mode contract fail closed even
@@ -1375,6 +1484,13 @@ async function getConnection(agent) {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
+/**
+ * Load an agent for a gateway request and enforce exact owner matching.
+ *
+ * @param {string} agentId - Requested agent id.
+ * @param {string} userId - Authenticated owner id.
+ * @returns {Promise<Object|null>} Owner-scoped agent or `null` without existence disclosure.
+ */
 async function resolveAgent(agentId, userId) {
   const result = await db.query(
     `SELECT id, name, status, container_id, host, backend_type, gateway_token,
@@ -1388,7 +1504,15 @@ async function resolveAgent(agentId, userId) {
   return agent;
 }
 
-/** Make an RPC call to an agent's gateway, return the result or throw. */
+/**
+ * Call an agent's gateway through the validated connection pool and unwrap its result.
+ *
+ * @param {Object} agent - Agent whose gateway should receive the call.
+ * @param {string} method - Gateway RPC method.
+ * @param {Object} [params={}] - RPC parameters.
+ * @param {number} [timeout] - Optional call timeout in milliseconds.
+ * @returns {Promise} Gateway result or payload.
+ */
 async function rpcCall(agent, method, params = {}, timeout) {
   const conn = await getConnection(agent);
   const msg = await conn.call(method, params, timeout);
@@ -1433,6 +1557,13 @@ function positiveTimeout(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+/**
+ * Build authenticated OpenClaw gateway routes with API-key workspace binding,
+ * including chat, RPC, and SSRF-safe UI proxying.
+ *
+ * @param {Object} [options={}] - Optional route timeout overrides.
+ * @returns {Object} Express router for gateway control-plane operations.
+ */
 function createGatewayRouter(options = {}) {
   const router = require("express").Router();
   const chatTimeoutMs = positiveTimeout(options.chatTimeoutMs, CHAT_TIMEOUT);
@@ -2285,8 +2416,8 @@ function createGatewayRouter(options = {}) {
 }
 
 // ─── WebSocket Relay ─────────────────────────────────────────────
-// Clients connect to: ws://<host>/ws/gateway/<agentId>?token=<jwt>
-// The server performs the Gateway handshake, then relays bidirectionally.
+// Clients connect to /ws/gateway/<agentId> with an agent-bound HttpOnly embed
+// cookie. The server performs the Gateway handshake, then relays bidirectionally.
 
 function parseCookieHeader(cookieHeader) {
   if (!cookieHeader) return {};
@@ -2308,6 +2439,13 @@ function parseCookieHeader(cookieHeader) {
     }, {});
 }
 
+/**
+ * Attach the authenticated gateway WebSocket upgrade and bidirectional relay to an HTTP server.
+ * Upgrade requests require an agent-bound embed cookie before owner and endpoint validation.
+ *
+ * @param {Object} server - HTTP server that owns upgrade handling.
+ * @returns {Object} WebSocket server handling accepted gateway relay connections.
+ */
 function attachGatewayWS(server) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -2693,8 +2831,13 @@ function attachGatewayWS(server) {
   return wss;
 }
 
-/** Evict a cached gateway connection so the next request creates a fresh one.
- *  Called after authSync restarts an agent container. */
+/**
+ * Evict matching cached gateway connections so a restarted runtime is resolved afresh.
+ *
+ * @param {Object|string} target - Agent-like target or gateway host to evict.
+ * @param {Error|null} [error=null] - Optional reason propagated to retired connections.
+ * @returns {void}
+ */
 function evictConnection(target, error = null) {
   const address =
     typeof target === "string" ? { host: target } : resolveGatewayAddress(target || {});

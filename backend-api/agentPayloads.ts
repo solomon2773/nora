@@ -44,8 +44,18 @@ const REMOTE_HOST_AUTH_RECHECK_MS = Math.max(
   Number.parseInt(process.env.REMOTE_HOST_AUTH_RECHECK_MS || "1000", 10) || 1000,
 );
 
+// Payload encoding and normalization
+
 function encodeContentBase64(value) {
   return Buffer.from(String(value || ""), "utf8").toString("base64");
+}
+
+function decodeContentBase64(value) {
+  try {
+    return Buffer.from(String(value || ""), "base64").toString("utf8");
+  } catch {
+    return "";
+  }
 }
 
 function decodeMaybeString(value) {
@@ -120,6 +130,13 @@ function normalizeWiringBlueprint(wiring = {}) {
   };
 }
 
+/**
+ * Normalize arbitrary stored or user-supplied template payload data into Nora's
+ * canonical template payload shape.
+ *
+ * @param {Object} [rawPayload={}] - Template payload candidate from the DB, runtime export, or request body.
+ * @returns {Object} Normalized payload with stable `files`, `memoryFiles`, `wiring`, and `metadata` fields.
+ */
 function normalizeTemplatePayload(rawPayload = {}) {
   const payload = decodeMaybeString(rawPayload);
   return {
@@ -143,13 +160,11 @@ function stripInternalTemplateMetadata(rawPayload = {}) {
   return { ...payload, metadata };
 }
 
-function decodeContentBase64(value) {
-  try {
-    return Buffer.from(String(value || ""), "base64").toString("utf8");
-  } catch {
-    return "";
-  }
+function createEmptyTemplatePayload(metadata = {}) {
+  return normalizeTemplatePayload({ metadata });
 }
+
+// Core template files
 
 function buildCoreFileDefaultContent(filePath, context = {}) {
   const name = String(context.name || "OpenClaw Agent").trim() || "OpenClaw Agent";
@@ -237,6 +252,14 @@ Track durable facts, preferences, operating constraints, and open loops here.`.t
   }
 }
 
+/**
+ * Ensure a template payload contains Nora's required core OpenClaw files,
+ * backfilling missing entries from aliases or generated defaults.
+ *
+ * @param {Object} [rawPayload={}] - Template payload to validate and repair.
+ * @param {Object} [context={}] - Template metadata used when generating default file content.
+ * @returns {Object} Normalized payload that includes the required core files.
+ */
 function ensureCoreTemplateFiles(rawPayload = {}, context = {}) {
   const payload = normalizeTemplatePayload(rawPayload);
   const fileByPath = new Map(payload.files.map((entry) => [entry.path, entry]));
@@ -279,6 +302,16 @@ function ensureCoreTemplateFiles(rawPayload = {}, context = {}) {
   });
 }
 
+// Payload summaries, edits, and clone modes
+
+/**
+ * Build a UI-friendly summary of a template payload, including core-file
+ * presence, previews, and file counts.
+ *
+ * @param {Object} [rawPayload={}] - Template payload to summarize.
+ * @param {Object} [options={}] - Summary options such as whether to include full decoded content.
+ * @returns {Object} Summary object describing the payload and its files.
+ */
 function summarizeTemplatePayload(rawPayload = {}, options = {}) {
   const includeContent = options.includeContent === true;
   const payload = ensureCoreTemplateFiles(rawPayload, options.context || {});
@@ -367,10 +400,14 @@ function applyTemplateFileEdits(rawPayload = {}, nextFiles = null, context = {})
   );
 }
 
-function createEmptyTemplatePayload(metadata = {}) {
-  return normalizeTemplatePayload({ metadata });
-}
-
+/**
+ * Trim a template payload down to the data allowed for the requested clone mode.
+ *
+ * @param {Object} rawPayload - Template payload being prepared for cloning or export.
+ * @param {string} [cloneMode="files_only"] - `files_only` keeps files,
+ *   `files_plus_memory` adds memory, and `full_clone` also includes wiring.
+ * @returns {Object} Payload filtered to the files, memory, and wiring allowed by that mode.
+ */
 function cloneTemplatePayloadForMode(rawPayload, cloneMode = "files_only") {
   const payload = stripInternalTemplateMetadata(rawPayload);
   const normalizedMode = CLONE_MODES.has(cloneMode) ? cloneMode : "files_only";
@@ -381,6 +418,8 @@ function cloneTemplatePayloadForMode(rawPayload, cloneMode = "files_only") {
     wiring: normalizedMode === "full_clone" ? payload.wiring : { channels: [], integrations: [] },
   };
 }
+
+// Agent and container naming
 
 function stripAsciiControlCharacters(value) {
   return Array.from(value)
@@ -431,6 +470,14 @@ function buildContainerName(name, runtimeSelection = {}) {
   return `${prefix}-${slug || "agent"}-${suffix}`;
 }
 
+/**
+ * Pick the container/deployment name Nora should persist for a new or updated
+ * agent, preserving explicit names while regenerating stale auto-names when the
+ * runtime family changes.
+ *
+ * @param {Object} [options={}] - Requested, current, and runtime-derived naming inputs.
+ * @returns {string} Container name Nora should save for the agent.
+ */
 function resolveContainerName({
   requestedName,
   currentName,
@@ -466,6 +513,8 @@ function serializeAgent(agent) {
     ...buildAgentRuntimeFields(rest),
   };
 }
+
+// Runtime template export
 
 function isCaptureAuthorizationError(error) {
   const code = String(error?.code || "");
@@ -731,6 +780,17 @@ process.stdout.write(JSON.stringify(result));
   return normalizeTemplatePayload(execResult.stdout || "{}");
 }
 
+/**
+ * Export a template payload from a live agent runtime, falling back to the
+ * stored payload for ordinary runtime failures while propagating authorization
+ * and cancellation failures.
+ *
+ * @param {Object} agent - Agent row whose template content should be exported.
+ * @param {string} [cloneMode="files_only"] - `files_only` keeps files,
+ *   `files_plus_memory` adds memory, and `full_clone` also includes wiring.
+ * @param {Object} [options={}] - Optional capture abort signal.
+ * @returns {Promise<Object>} Exported payload normalized to the requested clone mode.
+ */
 async function exportTemplatePayloadFromAgent(agent, cloneMode = "files_only", { signal } = {}) {
   const includeMemory = cloneMode !== "files_only";
 
@@ -760,6 +820,15 @@ async function exportTemplatePayloadFromAgent(agent, cloneMode = "files_only", {
   }
 }
 
+// Template wiring
+
+/**
+ * Read the integrations and channels that should travel with a full template
+ * clone of an agent.
+ *
+ * @param {string} agentId - Agent whose cloneable wiring should be loaded.
+ * @returns {Promise<Object>} Wiring blueprint containing cloneable integrations and channels.
+ */
 async function buildAgentWiringBlueprint(agentId) {
   const [integrationRows, channelRows] = await Promise.all([
     db.query(
@@ -778,6 +847,16 @@ async function buildAgentWiringBlueprint(agentId) {
   };
 }
 
+/**
+ * Build the reusable template payload Nora should expose for an agent,
+ * optionally attaching runtime memory and cloneable wiring.
+ *
+ * @param {Object} agent - Agent row to export as a reusable template.
+ * @param {string} [cloneMode="files_only"] - `files_only` keeps files,
+ *   `files_plus_memory` adds memory, and `full_clone` also includes wiring.
+ * @param {Object} [options={}] - Capture authorization and abort options.
+ * @returns {Promise<Object>} Normalized template payload ready for duplication or publishing.
+ */
 async function buildTemplatePayloadFromAgent(agent, cloneMode = "files_only", options = {}) {
   const basePayload = await withRemoteHostCaptureAuthorization(agent, options, (signal) =>
     exportTemplatePayloadFromAgent(agent, cloneMode, { signal }),
@@ -797,6 +876,13 @@ async function buildTemplatePayloadFromAgent(agent, cloneMode = "files_only", op
   });
 }
 
+/**
+ * Persist the wiring portion of a template payload onto a newly created agent.
+ *
+ * @param {string} agentId - Agent receiving the cloned integrations and channels.
+ * @param {Object} [rawPayload={}] - Template payload whose wiring section should be materialized.
+ * @returns {Promise<void>} Resolves after the cloneable integrations and channels are inserted.
+ */
 async function materializeTemplateWiring(agentId, rawPayload = {}) {
   const payload = normalizeTemplatePayload(rawPayload);
   const wiring = normalizeWiringBlueprint(payload.wiring);
@@ -830,6 +916,16 @@ async function materializeTemplateWiring(agentId, rawPayload = {}) {
   }
 }
 
+// Stored template snapshots
+
+/**
+ * Extract a normalized template payload from a saved template snapshot, filling
+ * in required core files and source metadata.
+ *
+ * @param {Object} snapshot - Stored starter/community template snapshot.
+ * @param {Object} [options={}] - Extraction options such as whether to force bootstrap inclusion.
+ * @returns {Object} Template payload ready for previewing or instantiating.
+ */
 function extractTemplatePayloadFromSnapshot(snapshot, options = {}) {
   const config = decodeMaybeString(snapshot?.config);
   const builtIn = config?.builtIn === true || snapshot?.built_in === true;
@@ -845,6 +941,12 @@ function extractTemplatePayloadFromSnapshot(snapshot, options = {}) {
   });
 }
 
+/**
+ * Read the default runtime/deployment settings embedded in a template snapshot.
+ *
+ * @param {Object} snapshot - Stored template snapshot whose defaults should be parsed.
+ * @returns {Object} Normalized backend, sizing, and image defaults for new agents.
+ */
 function extractTemplateDefaultsFromSnapshot(snapshot) {
   const config = decodeMaybeString(snapshot?.config);
   const defaults = config.defaults && typeof config.defaults === "object" ? config.defaults : {};

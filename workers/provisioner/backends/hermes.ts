@@ -9,19 +9,18 @@ const {
 } = require("./telemetry");
 const { getHermesDockerAgentImage } = require("../../../agent-runtime/lib/agentImages");
 const { HERMES_DASHBOARD_PORT } = require("../../../agent-runtime/lib/contracts");
-const {
-  buildContainerBootstrap,
-  shellSingleQuote,
-} = require("../../../agent-runtime/lib/containerCommand");
+const { buildContainerBootstrap } = require("../../../agent-runtime/lib/containerCommand");
 const {
   buildHermesRuntimeConfigBootstrapCommand,
 } = require("../../../agent-runtime/lib/hermesRuntimeBootstrap");
+const {
+  deriveHermesDashboardBasicAuth,
+} = require("../../../agent-runtime/lib/hermesDashboardAuth");
 
 const HERMES_RUNTIME_PORT = 8642;
 const HERMES_HOME = "/opt/data";
 const HERMES_WORKSPACE = `${HERMES_HOME}/workspace`;
 const HERMES_DASHBOARD_LOG = `${HERMES_HOME}/hermes-dashboard.log`;
-const HERMES_ENTRYPOINT = "/init";
 const HERMES_BIN = "/opt/hermes/.venv/bin/hermes";
 const DEFAULT_AGENT_PIDS_LIMIT = 512;
 // The official Hermes image starts s6 as root, repairs mounted-state
@@ -48,21 +47,20 @@ function isMutableImageReference(imgName) {
 }
 
 function buildHermesStartCommand() {
-  const hermesRuntimeCommand = [
+  // This runs as the container CMD, supervised directly by the image's PID-1
+  // /init (s6-overlay). Do NOT re-exec /init here: a second s6 init launched as
+  // a non-PID-1 child fatals with "s6-overlay-suexec: can only run as pid 1"
+  // and exits the container within seconds, before the gateway can bind
+  // port 8642 for the readiness probe (#297). Returning the runtime command
+  // directly lets the image's PID-1 /init supervise it naturally.
+  return [
     "set -eu",
     "if [ -r /opt/nora-managed-env/apply.sh ]; then . /opt/nora-managed-env/apply.sh; fi",
     buildHermesRuntimeConfigBootstrapCommand(),
     `HERMES_BIN="${HERMES_BIN}"`,
     '[ -x "$HERMES_BIN" ] || HERMES_BIN="$(command -v hermes)"',
-    `nohup "$HERMES_BIN" dashboard --host 0.0.0.0 --insecure --no-open >> ${HERMES_DASHBOARD_LOG} 2>&1 &`,
+    `nohup "$HERMES_BIN" dashboard --host 0.0.0.0 --no-open >> ${HERMES_DASHBOARD_LOG} 2>&1 &`,
     'exec "$HERMES_BIN" gateway run',
-  ].join("\n");
-
-  return [
-    "set -eu",
-    // Bootstrap the mounted Hermes home once, then fork dashboard and gateway
-    // from that initialized session so first-run file seeding cannot race.
-    `exec ${HERMES_ENTRYPOINT} bash -lc ${shellSingleQuote(hermesRuntimeCommand)}`,
   ].join("\n");
 }
 
@@ -162,11 +160,25 @@ class HermesBackend extends DockerBackend {
     await this._pullImage(imgName);
   }
 
-  // Host port mapping for the Hermes container. Local Hermes publishes nothing
-  // (reached via the container IP on the shared compose network); the remote
-  // variant overrides this to publish the dashboard port on the remote host.
-  _hermesPortBindings() {
-    return undefined;
+  // Host port mapping for the Hermes container. Local Hermes publishes the
+  // runtime API (8642) and dashboard (9119) on the host interface named by
+  // DOCKER_AGENT_BIND_IP (default loopback) so external desktop clients can
+  // connect. The remote variant overrides this to bind 0.0.0.0 on the remote
+  // host. Ports the caller did not allocate are simply omitted.
+  _hermesPortBindings(config = {}) {
+    const hostIp = this._publishedPortHostIp(config);
+    const bindings = {};
+    const runtimePort = Number(config?.gatewayHostPort);
+    if (Number.isInteger(runtimePort) && runtimePort >= 1 && runtimePort <= 65535) {
+      bindings[`${HERMES_RUNTIME_PORT}/tcp`] = [{ HostIp: hostIp, HostPort: String(runtimePort) }];
+    }
+    const dashboardPort = Number(config?.dashboardHostPort);
+    if (Number.isInteger(dashboardPort) && dashboardPort >= 1 && dashboardPort <= 65535) {
+      bindings[`${HERMES_DASHBOARD_PORT}/tcp`] = [
+        { HostIp: hostIp, HostPort: String(dashboardPort) },
+      ];
+    }
+    return Object.keys(bindings).length ? bindings : undefined;
   }
 
   async create(config) {
@@ -207,12 +219,27 @@ class HermesBackend extends DockerBackend {
     }
 
     const apiServerKey = crypto.randomBytes(32).toString("hex");
+    const dashboardAuth = deriveHermesDashboardBasicAuth(apiServerKey);
     const envArray = Object.entries({
       HERMES_HOME,
       HOME: `${HERMES_HOME}/home`,
       API_SERVER_ENABLED: "true",
       API_SERVER_HOST: "0.0.0.0",
       API_SERVER_PORT: String(HERMES_RUNTIME_PORT),
+      // Bake the gateway API key into the container environment so the
+      // s6-supervised gateway service — which reads /run/s6/container_environment,
+      // not the sourced managed-env file — inherits it on every boot, including
+      // auth-reconcile restarts. Without this the gateway refuses to start with
+      // "Refusing to start: API_SERVER_KEY is required" (#297).
+      API_SERVER_KEY: apiServerKey,
+      // Hermes fail-closed dashboard auth (basic-auth provider). Baked into the
+      // container env so the s6-supervised dashboard reads it from
+      // /run/s6/container_environment on every boot. The backend-api embed proxy
+      // re-derives the identical credential from API_SERVER_KEY to log in on the
+      // operator's behalf.
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: dashboardAuth.username,
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: dashboardAuth.password,
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: dashboardAuth.secret,
       GATEWAY_HEALTH_URL: `http://127.0.0.1:${HERMES_RUNTIME_PORT}`,
       MESSAGING_CWD: HERMES_WORKSPACE,
       TERMINAL_CWD: HERMES_WORKSPACE,
@@ -246,9 +273,9 @@ class HermesBackend extends DockerBackend {
           SecurityOpt: ["no-new-privileges:true"],
           PidsLimit: DEFAULT_AGENT_PIDS_LIMIT,
           Dns: ["8.8.8.8", "8.8.4.4", "1.1.1.1"],
-          // Local Hermes is reached via the container IP on the shared compose
-          // network (no host publish). The remote variant overrides this to
-          // publish the dashboard port on the remote host.
+          // Local Hermes publishes the runtime + dashboard ports to
+          // DOCKER_AGENT_BIND_IP (see _hermesPortBindings above) in addition to
+          // being reachable via the container IP on the shared compose network.
           PortBindings: this._hermesPortBindings(config),
         },
         NetworkingConfig: composeNetwork

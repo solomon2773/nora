@@ -394,6 +394,8 @@ const HERMES_CHANNEL_DEFINITIONS = Object.freeze({
 
 const HERMES_CHANNEL_TYPES = Object.freeze(Object.keys(HERMES_CHANNEL_DEFINITIONS));
 
+// Persisted runtime state
+
 function decodeMaybeJson(value, fallback = {}) {
   if (!value) return fallback;
   if (typeof value === "string") {
@@ -477,6 +479,13 @@ function normalizeHermesChannelStateList(rawChannels = []) {
     .filter(Boolean);
 }
 
+/**
+ * Load normalized Hermes model and channel state for internal runtime projection.
+ * Password fields are decrypted; a missing row produces an empty state.
+ *
+ * @param {string} agentId - Agent whose durable Hermes state should be loaded.
+ * @returns {Promise<Object>} Plaintext model and channel configuration.
+ */
 async function getPersistedHermesState(agentId) {
   const result = await db.query(
     `SELECT model_config, channel_configs
@@ -509,6 +518,13 @@ async function getPersistedHermesState(agentId) {
   };
 }
 
+/**
+ * Replace an agent's durable Hermes state after normalizing and encrypting channel secrets.
+ *
+ * @param {string} agentId - Agent whose state should be replaced.
+ * @param {Object} [state={}] - Model and channel configuration to persist.
+ * @returns {Promise<Object>} Normalized plaintext state that was stored.
+ */
 async function replacePersistedHermesState(agentId, state = {}) {
   const normalizedModelConfig = normalizeHermesModelConfig(state.modelConfig || {});
   const normalizedChannels = normalizeHermesChannelStateList(state.channels || []);
@@ -568,6 +584,12 @@ async function deletePersistedHermesChannelState(agentId, type) {
   });
 }
 
+/**
+ * Convert a live Hermes snapshot into the durable state used during migration or reprovisioning.
+ *
+ * @param {Object} [snapshot={}] - Runtime snapshot containing model and channel environment data.
+ * @returns {Object} Normalized state with channel entries that contain at least one value.
+ */
 function snapshotToPersistedHermesState(snapshot = {}) {
   return {
     modelConfig: normalizeHermesModelConfig(snapshot?.modelConfig || {}),
@@ -588,6 +610,14 @@ function humanizeHermesChannelType(value) {
     .join(" ");
 }
 
+// Runtime helper execution and configuration
+
+/**
+ * Wrap a Python helper script for execution from Hermes's install root and virtual environment.
+ *
+ * @param {string} script - Python source to execute inside the runtime.
+ * @returns {string} Shell command that decodes and executes the script.
+ */
 function buildHermesPythonCommand(script) {
   const encoded = Buffer.from(String(script || ""), "utf8").toString("base64");
   return [
@@ -644,6 +674,12 @@ def repair_surrogates(value):
     return value
 `;
 
+/**
+ * Repair invalid Unicode surrogate fragments in an agent's on-disk Hermes configuration.
+ *
+ * @param {Object} agent - Hermes agent whose configuration should be inspected and repaired.
+ * @returns {Promise<Object>} Repair result reported by the runtime helper.
+ */
 async function repairHermesAgentConfig(agent) {
   const script = `
 import json
@@ -672,6 +708,14 @@ print(json.dumps({
   return runHermesPythonJson(agent, script, { timeout: 30000 });
 }
 
+/**
+ * Persist Hermes model selection through the backend-appropriate configuration path.
+ * No explicit restart is requested here, but a Kubernetes env patch may trigger a rollout.
+ *
+ * @param {Object} agent - Hermes agent receiving the model configuration.
+ * @param {Object} [modelConfig={}] - Provider, model, endpoint, and optional API-key settings.
+ * @returns {Promise<Object>} Runtime helper or Kubernetes environment update result.
+ */
 async function persistHermesModelConfig(agent, modelConfig = {}) {
   if (
     typeof containerManager.isKubernetesAgent === "function" &&
@@ -756,6 +800,16 @@ print(json.dumps({
   return runHermesPythonJson(agent, script, { timeout: 30000 });
 }
 
+/**
+ * Replay durable Hermes model and channel state into a provisioned runtime. When
+ * requested, an explicit restart occurs only after every write succeeds; Kubernetes
+ * patches may already trigger rollouts, and earlier writes are not rolled back on failure.
+ *
+ * @param {Object} agent - Provisioned Hermes agent receiving the persisted state.
+ * @param {Object|null} [persistedState=null] - Preloaded state, or `null` to load it from storage.
+ * @param {Object} [options={}] - Runtime-application options.
+ * @returns {Promise<Object>} Normalized replayed state and whether the runtime was mutated.
+ */
 async function applyPersistedHermesState(agent, persistedState = null, { restart = true } = {}) {
   const state = persistedState || (await getPersistedHermesState(agent.id));
   const modelConfig = normalizeHermesModelConfig(state?.modelConfig || {});
@@ -785,6 +839,8 @@ async function applyPersistedHermesState(agent, persistedState = null, { restart
     mutated,
   };
 }
+
+// Channel catalog and runtime projection
 
 function serializeHermesChannelCatalog() {
   return HERMES_CHANNEL_TYPES.map((type) => {
@@ -890,6 +946,14 @@ function serializeUnknownHermesChannel(type, snapshot) {
   };
 }
 
+/**
+ * Normalize editable channel fields, preserve redacted passwords, and enforce required values.
+ *
+ * @param {Object} definition - Supported Hermes channel definition.
+ * @param {Object} [inputConfig={}] - Requested channel values.
+ * @param {Object} [existingEnv={}] - Current runtime values used for redacted secrets.
+ * @returns {Object} Complete normalized channel environment values.
+ */
 function normalizeHermesChannelInput(definition, inputConfig = {}, existingEnv = {}) {
   const normalized = {};
 
@@ -930,6 +994,13 @@ function definitionForChannelType(type) {
   );
 }
 
+/**
+ * Read live Hermes gateway, channel, job, and model state from inside the runtime.
+ * The snapshot includes unredacted environment values and is for trusted internal callers.
+ *
+ * @param {Object} agent - Running Hermes agent to inspect.
+ * @returns {Promise<Object>} Live runtime snapshot.
+ */
 async function readHermesRuntimeSnapshot(agent) {
   const definitions = serializeHermesChannelCatalog().map((entry) => ({
     type: entry.type,
@@ -994,6 +1065,12 @@ print(json.dumps({
   return runHermesPythonJson(agent, script, { timeout: 30000 });
 }
 
+/**
+ * Restart Hermes and require its runtime endpoint to become ready again.
+ *
+ * @param {Object} agent - Hermes agent to restart and probe.
+ * @returns {Promise<void>} Resolves when the runtime recovers.
+ */
 async function restartHermesRuntime(agent) {
   const lifecycleResult = await containerManager.restart(agent);
   await containerManager.persistLifecycleRuntimeAddress(db, agent, lifecycleResult);
@@ -1027,8 +1104,11 @@ async function restartHermesRuntime(agent) {
 }
 
 /**
- * Env vars for every channel persisted in hermes_runtime_state for an agent.
- * Callers persist DB state first, then project this into the runtime.
+ * Build non-empty runtime environment values for every channel in durable Hermes state.
+ * The returned object contains decrypted secrets and must remain internal.
+ *
+ * @param {string} agentId - Agent whose channel environment should be built.
+ * @returns {Promise<Object>} Plaintext environment variables for runtime projection.
  */
 async function buildHermesChannelEnvForAgent(agentId) {
   const state = await getPersistedHermesState(agentId);
@@ -1135,6 +1215,14 @@ function buildHermesGatewaySummary(snapshot) {
   };
 }
 
+// Public channel operations
+
+/**
+ * List editable known channels and read-only runtime-discovered channels with secrets redacted.
+ *
+ * @param {Object} agent - Running Hermes agent to inspect.
+ * @returns {Promise<Object>} Channel catalog, runtime status, and gateway summary.
+ */
 async function listHermesChannels(agent) {
   const snapshot = await readHermesRuntimeSnapshot(agent);
   const knownChannels = HERMES_CHANNEL_TYPES.map((type) =>
@@ -1173,6 +1261,17 @@ async function listHermesChannels(agent) {
   };
 }
 
+/**
+ * Validate and durably save a Hermes channel, project it into the runtime, then restart Hermes.
+ * Redacted password values retain their current live value; `create` rejects existing channels.
+ * Runtime failures do not roll back the durable state written first.
+ *
+ * @param {Object} agent - Hermes agent whose channel should be saved.
+ * @param {string} type - Supported channel type.
+ * @param {Object} [inputConfig={}] - Requested channel configuration.
+ * @param {Object} [options={}] - Save options, including create-only behavior.
+ * @returns {Promise<Object>} Refreshed channel listing and saved channel.
+ */
 async function saveHermesChannel(agent, type, inputConfig = {}, { create = false } = {}) {
   const definition = definitionForChannelType(type);
   if (!definition) {
@@ -1205,6 +1304,14 @@ async function saveHermesChannel(agent, type, inputConfig = {}, { create = false
   };
 }
 
+/**
+ * Remove a channel from durable state and runtime configuration, then restart Hermes.
+ * Runtime failures do not restore the durable state deleted first.
+ *
+ * @param {Object} agent - Hermes agent whose channel should be removed.
+ * @param {string} type - Supported channel type.
+ * @returns {Promise<Object>} Refreshed channel listing after deletion.
+ */
 async function deleteHermesChannel(agent, type) {
   const definition = definitionForChannelType(type);
   if (!definition) {
@@ -1219,6 +1326,13 @@ async function deleteHermesChannel(agent, type) {
   return listHermesChannels(agent);
 }
 
+/**
+ * Evaluate Hermes's latest reported channel status without sending a test message.
+ *
+ * @param {Object} agent - Hermes agent whose channel state should be checked.
+ * @param {string} type - Channel type to evaluate.
+ * @returns {Promise<Object>} Success or failure derived from runtime status and discovery.
+ */
 async function testHermesChannel(agent, type) {
   const payload = await listHermesChannels(agent);
   const channel = payload.channels.find((entry) => entry.type === type);

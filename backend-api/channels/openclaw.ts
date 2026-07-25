@@ -456,6 +456,8 @@ const OPENCLAW_CHANNEL_SETUP_DEFINITIONS = Object.freeze({
 const SECRET_LIKE_PATH_RE = /(^|\.)(token|secret|password|credential|auth|key)(\.|$)/i;
 const MAX_SCHEMA_FIELD_DEPTH = 3;
 
+// Shared config and gateway helpers
+
 function createHttpError(statusCode, message) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -470,6 +472,13 @@ function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
+/**
+ * Recursively redact string values whose config path appears credential-bearing.
+ *
+ * @param {*} value - Configuration value to sanitize.
+ * @param {string} [path=""] - Current dotted path during recursion.
+ * @returns {*} Cloned value with sensitive strings replaced.
+ */
 function redactSensitiveConfig(value, path = "") {
   if (Array.isArray(value)) {
     return value.map((entry, index) =>
@@ -516,12 +525,19 @@ function restoreRedactedConfigValue(nextValue, currentValue) {
   return nextValue;
 }
 
-// Reject `__proto__`, `constructor`, and `prototype` so a JSON payload can't
+// Ignore `__proto__`, `constructor`, and `prototype` so a JSON payload can't
 // reach Object.prototype through this merge — JSON.parse exposes `__proto__`
 // as an own property, and our config patches flow from DB rows that
 // originated as user input.
 const FORBIDDEN_MERGE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
+/**
+ * Merge nested channel config while replacing arrays and ignoring prototype-pollution keys.
+ *
+ * @param {*} target - Existing configuration value.
+ * @param {*} patch - User-supplied patch value.
+ * @returns {*} Merged clone.
+ */
 function deepMerge(target, patch) {
   if (!isPlainObject(patch)) {
     return Array.isArray(patch) ? cloneJson(patch) : patch;
@@ -593,6 +609,14 @@ function serializeTypeMeta(channelId, meta = {}, extras = {}) {
   };
 }
 
+/**
+ * Require an OpenClaw agent whose recorded status permits channel gateway operations.
+ *
+ * This checks stored agent state; it does not probe whether the gateway is currently reachable.
+ *
+ * @param {Object} agent - Agent runtime record.
+ * @returns {void}
+ */
 function assertOpenClawAgentReady(agent) {
   if (resolveAgentRuntimeFamily(agent) !== "openclaw") {
     throw createHttpError(409, "This agent does not use the OpenClaw runtime.");
@@ -630,6 +654,15 @@ function toGatewayError(error, fallbackMessage) {
   return createHttpError(502, message);
 }
 
+/**
+ * Call an OpenClaw gateway method after readiness checks and normalize gateway failures.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @param {string} method - Gateway RPC method.
+ * @param {Object} [params={}] - RPC parameters.
+ * @param {number} [timeout] - Optional RPC timeout in milliseconds.
+ * @returns {Promise<Object>} Gateway result.
+ */
 async function callGateway(agent, method, params = {}, timeout) {
   assertOpenClawAgentReady(agent);
   try {
@@ -657,6 +690,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// QR and CLI login orchestration
+
+/**
+ * Build the container command that enables or installs a QR provider and attempts a gateway restart.
+ *
+ * @param {string} channelId - Supported QR channel identifier.
+ * @returns {string} Shell command with package fallback and a default heap cap only when absent.
+ */
 function buildOpenClawPluginEnableCommand(channelId) {
   const provider = OPENCLAW_QR_LOGIN_PROVIDERS[channelId];
   if (!provider) return "";
@@ -802,6 +843,15 @@ async function startLoginViaGateway(agent, options = {}) {
   });
 }
 
+/**
+ * Retry QR login while a restarted gateway or newly enabled provider becomes available.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @param {string} channelId - Channel used for labels and provider errors.
+ * @param {Object} [options={}] - Gateway login options.
+ * @param {Object} [retryOptions={}] - Provider-unavailable retry policy.
+ * @returns {Promise<Object>} Gateway login payload.
+ */
 async function startLoginWithGatewayRetry(
   agent,
   channelId,
@@ -844,6 +894,15 @@ function cliLoginStateDir(channelId) {
   return `${OPENCLAW_CLI_LOGIN_STATE_ROOT}/${channelId}`;
 }
 
+/**
+ * Build a background CLI login command that persists output and status for polling.
+ *
+ * Persisted output is unbounded; start and status responses return only its bounded tail.
+ *
+ * @param {string} channelId - Allowlisted CLI-login channel.
+ * @param {Object} [options={}] - Optional account selection.
+ * @returns {string} Shell command that starts the login helper.
+ */
 function buildOpenClawCliLoginStartCommand(channelId, options = {}) {
   assertSupportedCliLoginChannel(channelId);
   const { shellSingleQuote } = require("../../agent-runtime/lib/containerCommand");
@@ -986,6 +1045,8 @@ async function waitOpenClawCliChannelLogin(agent, channelId) {
   );
   return serializeCliLoginResult(channelId, output);
 }
+
+// Channel discovery and schema projection
 
 function getConfigChannels(snapshot = {}) {
   return isPlainObject(snapshot?.config?.channels) ? snapshot.config.channels : {};
@@ -1379,6 +1440,16 @@ function buildFieldDefinition(basePath, child, lookup) {
   };
 }
 
+/**
+ * Walk the gateway schema into editable fields while flagging unsupported complex shapes.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @param {string} basePath - Channel config root used for relative field keys.
+ * @param {Object} lookup - Current schema lookup node.
+ * @param {number} [depth=0] - Current recursion depth.
+ * @param {Object|null} [state=null] - Shared field collection state.
+ * @returns {Promise<Object>} Collected fields and complex-shape indicator.
+ */
 async function collectConfigFields(agent, basePath, lookup, depth = 0, state = null) {
   const nextState = state || { fields: [], hasComplexFields: false };
   const children = Array.isArray(lookup?.children) ? lookup.children : [];
@@ -1549,6 +1620,14 @@ async function ensureKnownChannel(agent, channelId) {
   return snapshot;
 }
 
+/**
+ * Merge runtime status, persisted config, built-in defaults, and optional schema channel types.
+ *
+ * Schema discovery is best-effort so an older or restarting gateway can still return known types.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @returns {Promise<Object>} Unified channel list and available type metadata.
+ */
 async function listOpenClawChannels(agent) {
   const { status, configSnapshot } = await readChannelSnapshot(agent);
   const typeMetaById = buildTypeMetaById(status);
@@ -1581,6 +1660,13 @@ async function listOpenClawChannels(agent) {
   };
 }
 
+/**
+ * Resolve one channel's setup fields from maintained docs or the live gateway schema.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @param {string} channelId - Normalized channel identifier.
+ * @returns {Promise<Object>} Channel type metadata and editable field definitions.
+ */
 async function getOpenClawChannelType(agent, channelId) {
   channelId = requireSafeChannelId(channelId);
   const { status, schemaEntries } = await ensureKnownChannel(agent, channelId);
@@ -1618,9 +1704,18 @@ async function getOpenClawChannelType(agent, channelId) {
   });
 }
 
-// Best-effort by design: the runtime write above already succeeded, so a DB
-// hiccup must not fail the save — it only means this channel won't reseed on
-// the next redeploy (and the next successful save repairs that).
+// Channel config persistence and actions
+
+/**
+ * Best-effort persist an encrypted runtime patch so provisioning can reseed it after redeploy.
+ *
+ * Database failures are logged but do not fail the already successful runtime save.
+ *
+ * @param {string} agentId - Agent receiving the channel patch.
+ * @param {string} channelId - Channel identifier.
+ * @param {Object} patch - Applied OpenClaw config patch.
+ * @returns {Promise<void>}
+ */
 async function persistOpenClawChannelState(agentId, channelId, patch) {
   if (!agentId || !channelId || !isPlainObject(patch)) return;
   try {
@@ -1639,6 +1734,17 @@ async function persistOpenClawChannelState(agentId, channelId, patch) {
   }
 }
 
+/**
+ * Merge and write channel config with optimistic hashes and transient gateway retries.
+ *
+ * A successful runtime write is returned even when durable reseed persistence later fails.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @param {string} channelId - Known channel identifier.
+ * @param {Object} [input={}] - Config and enabled-state changes.
+ * @param {Object} [options={}] - Create-mode marker.
+ * @returns {Promise<Object>} Save result and any requested restart metadata.
+ */
 async function saveOpenClawChannel(agent, channelId, input = {}, { create = false } = {}) {
   channelId = requireSafeChannelId(channelId);
   let lastError = null;
@@ -1690,6 +1796,14 @@ async function saveOpenClawChannel(agent, channelId, input = {}, { create = fals
   throw lastError || createHttpError(502, "OpenClaw channel save did not become available.");
 }
 
+/**
+ * Connect a channel through CLI login, config-only setup, or config followed by QR login.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @param {string} channelId - Channel to connect.
+ * @param {Object} [options={}] - Setup and login options.
+ * @returns {Promise<Object>} Connection, restart, and optional login status.
+ */
 async function connectOpenClawChannel(agent, channelId, options = {}) {
   channelId = requireSafeChannelId(channelId);
   if (OPENCLAW_CLI_LOGIN_CHANNELS.has(channelId)) {
@@ -1736,6 +1850,15 @@ async function connectOpenClawChannel(agent, channelId, options = {}) {
   };
 }
 
+/**
+ * Start an allowlisted login flow, enabling a missing web provider when necessary.
+ *
+ * @param {Object} agent - Ready OpenClaw agent.
+ * @param {string} channelId - QR or CLI-login channel.
+ * @param {Object} [options={}] - Login options.
+ * @param {Object} [retryOptions={}] - Retry behavior after a config restart.
+ * @returns {Promise<Object>} Initial login status or pairing payload.
+ */
 async function startOpenClawChannelLogin(agent, channelId, options = {}, retryOptions = {}) {
   requireSupportedQrChannel(channelId);
   if (OPENCLAW_CLI_LOGIN_CHANNELS.has(channelId)) {

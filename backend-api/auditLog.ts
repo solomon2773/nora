@@ -3,10 +3,20 @@ const monitoring = require("./monitoring");
 const { buildAgentRuntimeFields } = require("./agentRuntimeFields");
 const { ensureAuditSourceMetadata, readRequestHeader, readRequestIp } = require("./auditSource");
 
+// Metadata normalization and request provenance
+
 function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
 
+/**
+ * Recursively normalize audit values for JSON storage, dropping empty fields
+ * and bounding nested input to prevent unbounded metadata traversal.
+ *
+ * @param {*} value - Audit value to normalize.
+ * @param {number} [depth=0] - Current recursion depth.
+ * @returns {*} JSON-safe normalized value, or `undefined` when empty.
+ */
 function normalizeAuditValue(value, depth = 0) {
   if (value == null || value === "") return undefined;
   if (depth > 8) return "[max-depth]";
@@ -53,6 +63,13 @@ function normalizeAuditValue(value, depth = 0) {
   return value;
 }
 
+/**
+ * Build normalized actor, request, and source metadata for an audit event.
+ *
+ * @param {Object|null} req - Express request associated with the event.
+ * @param {Object} [context={}] - Resource, result, and source-specific context.
+ * @returns {Object} JSON-safe audit metadata.
+ */
 function buildAuditMetadata(req, context = {}) {
   const { source, ...restContext } = context || {};
   return (
@@ -106,6 +123,8 @@ function buildErrorMetadata(error, context = {}) {
           },
   });
 }
+
+// Resource context builders
 
 function buildAgentContext(agent = {}, overrides = {}) {
   const runtimeFields = buildAgentRuntimeFields({
@@ -247,6 +266,15 @@ function buildReportContext(report = {}, overrides = {}) {
   });
 }
 
+// Failure audit middleware
+
+/**
+ * Build middleware that records failed mutating responses after completion,
+ * without delaying or replacing the original response path.
+ *
+ * @param {string} routeArea - Audit event namespace for the mounted router.
+ * @returns {Function} Express middleware that logs 4xx and 5xx mutations best-effort.
+ */
 function createMutationFailureAuditMiddleware(routeArea) {
   return function auditMutationFailures(req, res, next) {
     if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {

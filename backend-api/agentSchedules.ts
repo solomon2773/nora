@@ -22,13 +22,23 @@ const MIN_INTERVAL_SECONDS = (() => {
   return Number.isFinite(n) && n >= 1 ? n : 60;
 })();
 
+// Schedule parsing and validation
+
 function httpError(message, statusCode = 400) {
   const err = new Error(message);
   err.statusCode = statusCode;
   return err;
 }
 
-/** Next fire after `fromDate` for a cron in a timezone. Throws on a bad cron. */
+/**
+ * Compute the first cron occurrence after a given time in the requested timezone.
+ *
+ * @param {string} cron - Cron expression to evaluate.
+ * @param {string} [timezone="UTC"] - IANA timezone used by the expression.
+ * @param {Date} [fromDate=new Date()] - Exclusive starting point for the search.
+ * @returns {Date} Next scheduled occurrence.
+ * @throws {Error} Parser error when the expression or timezone is invalid.
+ */
 function computeNextRun(cron, timezone = "UTC", fromDate = new Date()) {
   const it = CronExpressionParser.parse(String(cron), {
     tz: timezone || "UTC",
@@ -37,7 +47,14 @@ function computeNextRun(cron, timezone = "UTC", fromDate = new Date()) {
   return it.next().toDate();
 }
 
-/** Validate the cron parses and doesn't fire more often than the min interval. */
+/**
+ * Validate a cron expression and reject when its next two occurrences are
+ * closer than Nora's configured minimum run interval.
+ *
+ * @param {string} cron - Cron expression to validate.
+ * @param {string} [timezone="UTC"] - IANA timezone used by the expression.
+ * @throws {Error} Error with status code 400 when parsing or cadence validation fails.
+ */
 function validateCron(cron, timezone = "UTC") {
   let it;
   try {
@@ -55,6 +72,13 @@ function validateCron(cron, timezone = "UTC") {
   }
 }
 
+/**
+ * Normalize supplied schedule fields using create or partial-update validation rules.
+ *
+ * @param {Object} [input={}] - Requested schedule fields.
+ * @param {Object} [options={}] - Set `partial` for update semantics.
+ * @returns {Object} Normalized database-facing fields that were supplied.
+ */
 function normalizeInput(input = {}, { partial = false } = {}) {
   const out = {};
   const has = (k) => Object.prototype.hasOwnProperty.call(input, k);
@@ -99,6 +123,8 @@ function normalizeInput(input = {}, { partial = false } = {}) {
   return out;
 }
 
+// Schedule persistence
+
 function serializeSchedule(row) {
   if (!row) return null;
   return {
@@ -135,6 +161,15 @@ async function getSchedule(agentId, scheduleId) {
   return serializeSchedule(result.rows[0]);
 }
 
+/**
+ * Validate and create a schedule, defaulting it to enabled and computing its
+ * first run; explicitly disabled schedules start without a next run.
+ *
+ * @param {string} agentId - Agent that owns the schedule.
+ * @param {string} createdBy - User recorded as the schedule creator.
+ * @param {Object} [input={}] - Requested schedule configuration.
+ * @returns {Promise<Object>} Persisted schedule.
+ */
 async function createSchedule(agentId, createdBy, input = {}) {
   const fields = normalizeInput(input, { partial: false });
   validateCron(fields.cron, fields.timezone);
@@ -160,6 +195,15 @@ async function createSchedule(agentId, createdBy, input = {}) {
   return serializeSchedule(result.rows[0]);
 }
 
+/**
+ * Apply an agent-scoped partial update, recomputing the next run when cron,
+ * timezone, or enabled state changes and clearing it when disabled.
+ *
+ * @param {string} agentId - Agent that owns the schedule.
+ * @param {string} scheduleId - Schedule to update.
+ * @param {Object} [input={}] - Schedule fields to change.
+ * @returns {Promise<Object|null>} Updated schedule, or `null` when it does not exist.
+ */
 async function updateSchedule(agentId, scheduleId, input = {}) {
   const existing = await getSchedule(agentId, scheduleId);
   if (!existing) return null;
@@ -201,6 +245,13 @@ async function updateSchedule(agentId, scheduleId, input = {}) {
   return serializeSchedule(result.rows[0]);
 }
 
+/**
+ * Delete an agent-scoped schedule definition without cancelling runs already enqueued.
+ *
+ * @param {string} agentId - Agent that owns the schedule.
+ * @param {string} scheduleId - Schedule definition to delete.
+ * @returns {Promise<boolean>} Whether a matching schedule was deleted.
+ */
 async function deleteSchedule(agentId, scheduleId) {
   const result = await db.query(
     "DELETE FROM agent_schedules WHERE id = $1 AND agent_id = $2 RETURNING id",
@@ -209,7 +260,16 @@ async function deleteSchedule(agentId, scheduleId) {
   return result.rows.length > 0;
 }
 
-/** Record the outcome of a run (called by the worker after executing). */
+// Due-run coordination
+
+/**
+ * Record the latest attempt status reported by the scheduled-run worker,
+ * truncating status text to 200 characters.
+ *
+ * @param {string} scheduleId - Schedule whose run was attempted.
+ * @param {string} status - Bounded outcome text to persist.
+ * @returns {Promise<void>} Resolves after the schedule is updated.
+ */
 async function markRun(scheduleId, status) {
   await db.query(
     "UPDATE agent_schedules SET last_run_at = NOW(), last_status = $2, updated_at = NOW() WHERE id = $1",
@@ -220,8 +280,12 @@ async function markRun(scheduleId, status) {
 /**
  * Claim due schedules and enqueue each run. Replica-safe: rows are claimed with
  * FOR UPDATE SKIP LOCKED inside a transaction and their next_run_at is bumped
- * before commit, so concurrent sweepers never double-fire. Enqueue happens AFTER
- * commit so a rollback can't leave an orphaned job. Returns the number enqueued.
+ * before commit to avoid concurrent double claims. Invalid crons are disabled.
+ * Enqueue happens after commit, and failed enqueues are best-effort reset for a
+ * later sweep rather than being counted as successful.
+ *
+ * @param {Object} [options={}] - Database, enqueue callback, batch size, and clock overrides.
+ * @returns {Promise<number>} Number of claimed schedules successfully enqueued.
  */
 async function sweepDueSchedules({
   dbClient = db,

@@ -3,6 +3,14 @@ function isGatewayAvailableStatus(status) {
   return ["running", "warning"].includes(status);
 }
 
+/**
+ * Reconcile a stored agent status with whether its runtime is currently live,
+ * while preserving deployment states that are still in progress.
+ *
+ * @param {string} currentStatus - Status currently stored for the agent.
+ * @param {boolean} liveRunning - Whether the runtime reports itself as running.
+ * @returns {string} Status Nora should persist after reconciliation.
+ */
 function reconcileAgentStatus(currentStatus, liveRunning) {
   if (currentStatus === "queued" || currentStatus === "deploying") {
     return currentStatus;

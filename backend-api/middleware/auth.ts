@@ -2,11 +2,20 @@
 const jwt = require("jsonwebtoken");
 const { readAuthCookie } = require("../authCookie");
 
+// Session and API-key authentication
+
 function headerValues(value) {
   const values = Array.isArray(value) ? value : value == null ? [] : [value];
   return values.map((entry) => String(entry).trim()).filter(Boolean);
 }
 
+/**
+ * Parse explicit Bearer and API-key headers, rejecting malformed or conflicting credentials.
+ * Cookie fallback is intentionally handled only after this result is accepted.
+ *
+ * @param {Object} req - Express request.
+ * @returns {Object} Parsed token and source, or a fail-closed error code.
+ */
 function extractExplicitAuth(req) {
   const hasAuthorization = Object.prototype.hasOwnProperty.call(req.headers || {}, "authorization");
   const authorizationValues = headerValues(req.headers?.authorization);
@@ -59,10 +68,15 @@ function tryDecodeSession(token) {
   }
 }
 
-// Auth middleware: accepts a session JWT (cookie or Bearer) or a Nora API key.
-// API keys are recognized by the "nora_" prefix. When an API key authenticates a
-// request, req.user is populated from the key's issuing user and req.apiKey holds
-// the key metadata + scopes for downstream scope checks.
+/**
+ * Authenticate an HS256 session or workspace API key and attach its actor,
+ * key metadata, scopes, and workspace binding for downstream authorization.
+ *
+ * @param {Object} req - Express request to authenticate.
+ * @param {Object} res - Express response used for authentication failures.
+ * @param {Function} next - Continuation invoked for valid credentials.
+ * @returns {Promise} Resolves after authentication or an error response.
+ */
 async function authenticateToken(req, res, next) {
   const explicit = extractExplicitAuth(req);
   if (explicit.error === "conflicting_auth") {
@@ -122,6 +136,17 @@ async function authenticateToken(req, res, next) {
   return res.status(401).json({ error: "Authentication required" });
 }
 
+// Authorization guards
+
+/**
+ * Require the authenticated actor's platform role to be `admin`. This does not
+ * exclude API keys; combine it with `requireSession` for session-only surfaces.
+ *
+ * @param {Object} req - Authenticated Express request.
+ * @param {Object} res - Express response.
+ * @param {Function} next - Continuation invoked for platform admins.
+ * @returns {void}
+ */
 function requireAdmin(req, res, next) {
   if (req.user.role !== "admin") {
     return res.status(403).json({ error: "Admin access required" });
@@ -129,9 +154,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Route-level scope guard. Use after authenticateToken when a route is callable
-// by API keys: rejects keys without the required scope; session-authenticated
-// requests pass through (their authorization is already enforced by role guards).
+/**
+ * Build a route guard that enforces one scope for API keys while allowing
+ * session-authenticated requests to continue to their role guards.
+ *
+ * @param {string} requiredScope - Scope required from API-key callers.
+ * @returns {Function} Express authorization middleware.
+ */
 function requireScope(requiredScope) {
   return (req, res, next) => {
     if (!req.apiKey) return next();
@@ -146,11 +175,14 @@ function requireScope(requiredScope) {
   };
 }
 
-// Method-based scope guard. Routers mount this at the top level; the actual
-// scope is picked from the request method. Either side can be null to mean
-// "this method is not callable by API keys" — useful for keeping destructive
-// or membership-management operations behind session auth even after a key
-// authenticates.
+/**
+ * Build a method-aware API-key guard; a null read or write scope makes that
+ * method class session-only while session callers continue normally.
+ *
+ * @param {string|null} readScope - Scope for GET, HEAD, and OPTIONS requests.
+ * @param {string|null} writeScope - Scope for all mutating methods.
+ * @returns {Function} Express authorization middleware.
+ */
 function scopeByMethod(readScope, writeScope) {
   return (req, res, next) => {
     if (!req.apiKey) return next();
@@ -173,9 +205,14 @@ function scopeByMethod(readScope, writeScope) {
   };
 }
 
-// Hard session-only guard. Used on mounting points (e.g. /workspaces/:id/api-keys)
-// where API-key authentication should never be allowed even if a token is
-// presented — issuing more API keys with an existing key is a footgun.
+/**
+ * Reject API-key-authenticated requests from a session-only route.
+ *
+ * @param {Object} req - Authenticated Express request.
+ * @param {Object} res - Express response.
+ * @param {Function} next - Continuation invoked for session callers.
+ * @returns {void}
+ */
 function requireSession(req, res, next) {
   if (req.apiKey) {
     return res.status(403).json({

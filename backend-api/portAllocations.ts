@@ -9,7 +9,8 @@
 // atomically as the lowest free port in the range, scoped per host:
 //   - host_key "local"      → the local Docker host (all local docker agents).
 //   - host_key "remote:<id>" → a specific registered remote host.
-// Allocation is idempotent per (agent, host) so redeploys keep the same port.
+// Allocation is idempotent per (agent, host, purpose) so redeploys keep the
+// same port while separate runtime surfaces receive distinct reservations.
 
 const db = require("./db");
 
@@ -27,6 +28,8 @@ const GATEWAY_PORT_PURPOSE = "gateway";
 const RUNTIME_PORT_PURPOSE = "runtime";
 const DASHBOARD_PORT_PURPOSE = "dashboard";
 
+// ── Normalization and range validation ──────────────────────────
+
 function normalizeHostKey(value) {
   const key = String(value || "")
     .trim()
@@ -41,6 +44,13 @@ function normalizePurpose(value) {
   return purpose || GATEWAY_PORT_PURPOSE;
 }
 
+/**
+ * Resolve the configured allocation range inside the proxy's fixed 19000-19999
+ * security envelope, rejecting invalid or reversed bounds.
+ *
+ * @param {Object} options - Explicit bounds or environment override.
+ * @returns {Object} Validated minimum and maximum ports.
+ */
 function resolveGatewayPortRange({ rangeMin, rangeMax, env = process.env } = {}) {
   const parseBoundary = (value, fallback, label) => {
     if (value == null || String(value).trim() === "") return fallback;
@@ -89,6 +99,16 @@ function noFreePortError(hostKey, rangeMin, rangeMax) {
   return error;
 }
 
+// ── Allocation operations ───────────────────────────────────────
+
+/**
+ * Read one of an agent's allocations without selecting a purpose. A missing
+ * pre-migration table is treated as no allocation for rolling-upgrade
+ * compatibility.
+ *
+ * @param {string} agentId - Agent whose reservation is requested.
+ * @returns {Promise<Object|null>} Host/port allocation, or null when absent.
+ */
 async function getGatewayPortAllocation(agentId) {
   if (!agentId) return null;
   try {
@@ -103,9 +123,13 @@ async function getGatewayPortAllocation(agentId) {
   }
 }
 
-// Reserve (or reuse) a published gateway port for an agent on a given host.
-// Returns the port number. Throws (statusCode 503) when the host's range is
-// exhausted.
+/**
+ * Reserve or reuse the lowest available host port for an agent and purpose.
+ * Unique-constraint races retry; exhausted ranges fail with HTTP-style 503.
+ *
+ * @param {Object} options - Host, agent, purpose, range, and occupied ports.
+ * @returns {Promise<number>} Persisted port reservation.
+ */
 async function allocateGatewayPort({
   hostKey,
   agentId,
@@ -174,11 +198,14 @@ async function allocateGatewayPort({
   throw error;
 }
 
-// Move an existing reservation to another free port while preserving the same
-// allocation row. Used only after the local Docker host reports that the
-// reserved port is occupied outside Nora's allocation table. The UPDATE and
-// host-wide UNIQUE constraint keep the persisted reservation synchronized with
-// the port handed to the next adapter.create() attempt.
+/**
+ * Compare-and-swap an occupied reservation to another free port while preserving
+ * its row. Concurrent same-agent moves are accepted after a refreshed lookup.
+ *
+ * @param {Object} options - Reservation identity, prior port, range, and occupied
+ * ports.
+ * @returns {Promise<number>} Replacement port reservation.
+ */
 async function reallocateGatewayPort({
   hostKey,
   agentId,
@@ -272,7 +299,13 @@ async function reallocateGatewayPort({
   throw error;
 }
 
-// Release every allocation an agent holds (called on destroy). Idempotent.
+/**
+ * Idempotently release every purpose allocation held by an agent. A missing
+ * pre-migration table is ignored for rolling-upgrade compatibility.
+ *
+ * @param {string} agentId - Agent whose reservations should be released.
+ * @returns {Promise<void>}
+ */
 async function releaseGatewayPort(agentId) {
   if (!agentId) return;
   try {

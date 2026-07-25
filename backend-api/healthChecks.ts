@@ -5,6 +5,15 @@ const {
   gatewayUrl,
 } = require("../agent-runtime/lib/contracts");
 
+/**
+ * Retry an HTTP probe until an accepted status is returned or attempts run out.
+ * Timeouts, transport errors, and rejected statuses are reported in the result
+ * instead of being thrown.
+ *
+ * @param {string} url - Endpoint to probe.
+ * @param {Object} options - Retry, timeout, accepted-status, and fetch overrides.
+ * @returns {Promise<Object>} Structured readiness result with the last failure.
+ */
 async function waitForHttpReady(url, options = {}) {
   const {
     attempts = 15,
@@ -61,6 +70,15 @@ async function waitForHttpReady(url, options = {}) {
   };
 }
 
+/**
+ * Probe an agent runtime and, optionally, its published gateway endpoint.
+ * Gateway 401/403 responses count as ready because they prove the service is
+ * listening; published ports default to GATEWAY_HOST or host.docker.internal.
+ *
+ * @param {Object} target - Runtime and gateway host/port configuration.
+ * @param {Object} options - Per-probe overrides passed to waitForHttpReady.
+ * @returns {Promise<Object>} Combined runtime and gateway readiness result.
+ */
 async function waitForAgentReadiness(
   {
     host,
