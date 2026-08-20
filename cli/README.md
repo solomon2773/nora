@@ -45,6 +45,7 @@ nora agents rollback <id> <vid>  # restore a prior version
 
 nora monitoring metrics          # current metrics
 nora monitoring events --limit 50
+nora monitoring events --type agent_deleted --search backup --from 2026-08-01 --to 2026-08-20
 nora monitoring tail --interval 5000
 
 nora doctor                      # control-plane health check (needs an admin API key)

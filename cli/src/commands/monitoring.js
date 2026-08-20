@@ -7,7 +7,13 @@ async function metrics() {
 
 async function events(args, flags) {
   const limit = flags.limit ? Number(flags.limit) : 20;
-  const data = await api.get("/api/monitoring/events", { query: { limit } });
+  const query = { limit };
+  if (flags.search) query.search = flags.search;
+  if (flags.type) query.type = flags.type;
+  if (flags.from) query.from = flags.from;
+  if (flags.to) query.to = flags.to;
+
+  const data = await api.get("/api/monitoring/events", { query });
   const rows = Array.isArray(data) ? data : data.events || [];
   if (rows.length === 0) {
     console.log("(no events)");
@@ -45,7 +51,11 @@ module.exports = {
   describe: "Read monitoring metrics and the event stream",
   subcommands: {
     metrics: { run: metrics, describe: "Print current monitoring metrics" },
-    events: { run: events, describe: "Print recent events (--limit N)" },
+    events: {
+      run: events,
+      describe:
+        "Print recent events (--limit N, --search str, --type type, --from YYYY-MM-DD, --to YYYY-MM-DD)",
+    },
     tail: { run: tail, describe: "Stream new events (--interval ms, default 5000)" },
   },
 };
