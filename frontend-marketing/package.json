@@ -14,14 +14,14 @@
     "@tailwindcss/postcss": "^4.2.2",
     "autoprefixer": "^10.5.0",
     "clsx": "^2.1.0",
-    "lucide-react": "^1.8.0",
-    "next": "^16.2.6",
-    "png-to-ico": "^3.0.1",
+    "lucide-react": "^1.33.0",
+    "next": "^16.3.1",
+    "png-to-ico": "^3.0.2",
     "postcss": "^8.5.23",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "sharp": "^0.35.3",
-    "tailwind-merge": "^3.5.0",
+    "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.2.2"
   },
   "overrides": {
@@ -30,9 +30,9 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "tsx": "^4.23.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   }
 }
