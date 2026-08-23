@@ -29,6 +29,6 @@
     "@playwright/test": "^1.59.1",
     "@types/node": "^25.6.0",
     "tsx": "^4.23.0",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }
