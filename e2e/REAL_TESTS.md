@@ -4,6 +4,10 @@ These specs run the real lifecycle — deploy, chat against a real LLM, connect
 real integrations, send real messages through real channels — and verify the
 security fixes shipped in integrations.ts / channels/adapters.ts.
 
+For the hand-run release check — clean-host install, the upgrade path, and the
+destructive backup/restore and migration flows that need a human deciding when
+to pull the plug — see [MANUAL_E2E.md](MANUAL_E2E.md).
+
 ## Files
 
 - `specs/real-deploy-matrix.spec.ts` — §3 test-plan L1-L10 across the
