@@ -139,12 +139,25 @@ if [[ -z "${NORA_K8S_LOAD_BALANCER_SOURCE_RANGES:-}" ]]; then
     docker inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' \
       "${COMPOSE_PROJECT_NAME}-backend-api-1"
   )"
+  # The provisioner is the process that actually probes an agent for readiness,
+  # so its address has to be trusted too. Without it the NetworkPolicy bundle —
+  # default-deny-ingress plus trusted-ingress built from exactly these CIDRs —
+  # drops the worker's packets, and the symptom is a TCP *timeout* rather than a
+  # refusal, which reads like broken node-port routing instead of a policy deny.
+  WORKER_CONTAINER_IP="$(
+    docker inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' \
+      "${COMPOSE_PROJECT_NAME}-worker-provisioner-1"
+  )"
   TRUSTED_INGRESS_CIDRS=()
   if [[ -n "$BACKEND_CONTAINER_IP" ]]; then
     TRUSTED_INGRESS_CIDRS+=("${BACKEND_CONTAINER_IP}/32")
   fi
+  if [[ -n "$WORKER_CONTAINER_IP" ]] && [[ "$WORKER_CONTAINER_IP" != "$BACKEND_CONTAINER_IP" ]]; then
+    TRUSTED_INGRESS_CIDRS+=("${WORKER_CONTAINER_IP}/32")
+  fi
   if [[ "$NORA_K8S_RUNTIME_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
-    [[ "$NORA_K8S_RUNTIME_HOST" != "$BACKEND_CONTAINER_IP" ]]; then
+    [[ "$NORA_K8S_RUNTIME_HOST" != "$BACKEND_CONTAINER_IP" ]] && \
+    [[ "$NORA_K8S_RUNTIME_HOST" != "$WORKER_CONTAINER_IP" ]]; then
     TRUSTED_INGRESS_CIDRS+=("${NORA_K8S_RUNTIME_HOST}/32")
   fi
   export NORA_K8S_LOAD_BALANCER_SOURCE_RANGES="$(
