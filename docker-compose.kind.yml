@@ -23,6 +23,15 @@ services:
   worker-provisioner:
     environment:
       OPENCLAW_STANDARD_IMAGE: ${OPENCLAW_STANDARD_IMAGE:-}
+      # A cold first boot on a small CI runner outlasts the default ~210s
+      # readiness budget. When it expires the provisioning job fails, the
+      # deployment is torn down, and the retry restarts the cold start from
+      # scratch — so the agent never converges no matter how long the smoke
+      # waits. Widening the budget lets the first attempt succeed.
+      NORA_RUNTIME_READY_ATTEMPTS: ${NORA_RUNTIME_READY_ATTEMPTS:-}
+      NORA_RUNTIME_READY_INTERVAL_MS: ${NORA_RUNTIME_READY_INTERVAL_MS:-}
+      NORA_GATEWAY_READY_ATTEMPTS: ${NORA_GATEWAY_READY_ATTEMPTS:-}
+      NORA_GATEWAY_READY_INTERVAL_MS: ${NORA_GATEWAY_READY_INTERVAL_MS:-}
     networks:
       - default
       - kind

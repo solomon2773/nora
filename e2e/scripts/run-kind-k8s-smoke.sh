@@ -115,6 +115,16 @@ echo "Loading ${AGENT_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
 # the Deployment).
 export OPENCLAW_STANDARD_IMAGE="$AGENT_IMAGE"
 
+# Widen the provisioner's readiness budget for this run. Even with the image
+# prebuilt, a first boot on a small runner can outlast the ~210s default; the
+# job then fails, tears the deployment down, and the retry starts the cold boot
+# over, so the agent never converges. These are forwarded to the worker by
+# docker-compose.kind.yml.
+export NORA_RUNTIME_READY_ATTEMPTS="${NORA_RUNTIME_READY_ATTEMPTS:-60}"
+export NORA_RUNTIME_READY_INTERVAL_MS="${NORA_RUNTIME_READY_INTERVAL_MS:-5000}"
+export NORA_GATEWAY_READY_ATTEMPTS="${NORA_GATEWAY_READY_ATTEMPTS:-60}"
+export NORA_GATEWAY_READY_INTERVAL_MS="${NORA_GATEWAY_READY_INTERVAL_MS:-10000}"
+
 if [[ -z "${NORA_K8S_RUNTIME_HOST:-}" ]]; then
   export NORA_K8S_RUNTIME_HOST="$(
     docker inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' "$KIND_CONTROL_PLANE_HOST"

@@ -5,6 +5,17 @@ const {
   gatewayUrl,
 } = require("../../agent-runtime/lib/contracts");
 
+// Readiness budgets are env-tunable so slow environments can widen them without
+// changing the defaults everyone else gets. A cold first boot on a small CI
+// runner can take longer than the default ~210s combined budget, and when the
+// budget expires the provisioning job fails, tears the deployment down, and the
+// retry restarts the cold start from zero — so the agent never converges.
+// Defaults below are unchanged.
+function readinessEnvInt(name, fallback) {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 async function waitForHttpReady(url, options = {}) {
   const {
     attempts = 15,
@@ -80,9 +91,9 @@ async function waitForAgentReadiness(
   const runtime = await waitForHttpReady(
     gatewayUrl(resolvedRuntimeHost, resolvedRuntimePort, "/health"),
     {
-      attempts: 12,
-      intervalMs: 5000,
-      timeoutMs: 5000,
+      attempts: readinessEnvInt("NORA_RUNTIME_READY_ATTEMPTS", 12),
+      intervalMs: readinessEnvInt("NORA_RUNTIME_READY_INTERVAL_MS", 5000),
+      timeoutMs: readinessEnvInt("NORA_RUNTIME_READY_TIMEOUT_MS", 5000),
       acceptStatuses: [200],
       ...(typeof options.beforeAttempt === "function"
         ? { beforeAttempt: options.beforeAttempt }
@@ -107,9 +118,9 @@ async function waitForAgentReadiness(
       : gatewayHostPort || gatewayPort || OPENCLAW_GATEWAY_PORT;
 
     gateway = await waitForHttpReady(gatewayUrl(resolvedGatewayHost, resolvedGatewayPort, "/"), {
-      attempts: 15,
-      intervalMs: 10000,
-      timeoutMs: 5000,
+      attempts: readinessEnvInt("NORA_GATEWAY_READY_ATTEMPTS", 15),
+      intervalMs: readinessEnvInt("NORA_GATEWAY_READY_INTERVAL_MS", 10000),
+      timeoutMs: readinessEnvInt("NORA_GATEWAY_READY_TIMEOUT_MS", 5000),
       acceptStatuses: [200, 401, 403],
       ...(typeof options.beforeAttempt === "function"
         ? { beforeAttempt: options.beforeAttempt }
