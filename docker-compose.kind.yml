@@ -2,12 +2,27 @@ services:
   postgres:
     ports: !reset []
 
+  # OPENCLAW_STANDARD_IMAGE passthrough. The Kubernetes agent-image default is a
+  # bare node:24-slim (agent-runtime/lib/agentImages.ts), which forces the
+  # runtime bootstrap into its install-from-npm slow path — 5+ minutes to first
+  # readiness, far longer than the provisioner's readiness check tolerates, so
+  # agents sit in `deploying` and the smoke times out. The kind smoke builds
+  # Dockerfile.openclaw-agent (openclaw + tsx baked in, ~30s to ready) and loads
+  # it into the node, then points both services at it through these vars.
+  #
+  # Both are needed: backend-api resolves the image when it creates the agent
+  # row, worker-provisioner when it builds the Deployment. Unset resolves to an
+  # empty string, which is falsy, so the normal default still applies.
   backend-api:
+    environment:
+      OPENCLAW_STANDARD_IMAGE: ${OPENCLAW_STANDARD_IMAGE:-}
     networks:
       - default
       - kind
 
   worker-provisioner:
+    environment:
+      OPENCLAW_STANDARD_IMAGE: ${OPENCLAW_STANDARD_IMAGE:-}
     networks:
       - default
       - kind

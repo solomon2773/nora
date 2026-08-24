@@ -85,6 +85,36 @@ fi
 "$KUBECTL_BIN" rollout status daemonset/calico-node -n kube-system --timeout=300s >/dev/null
 "$KUBECTL_BIN" rollout status deployment/calico-kube-controllers -n kube-system --timeout=300s >/dev/null
 
+# Build the OpenClaw agent image and load it into the node.
+#
+# Kubernetes' agent-image default is a bare node:24-slim (see
+# agent-runtime/lib/agentImages.ts) — unlike Docker, which defaults to the
+# prebuilt nora-openclaw-agent:local. A bare Node image sends the runtime
+# bootstrap down its install-from-npm path, which Dockerfile.openclaw-agent
+# documents as 5+ minutes to first readiness versus ~30s with openclaw and tsx
+# baked in. The provisioner's readiness check gives up long before that, so
+# every agent stalls in `deploying`, the Service never gets endpoints (an
+# unready pod is not an endpoint), and the smoke times out looking like a
+# node-port routing problem when it is really a cold-start one.
+#
+# kind load puts the image on the node so the pod resolves it without a
+# registry; the tag is not :latest, so the default IfNotPresent pull policy
+# uses it rather than trying to fetch.
+AGENT_IMAGE="${NORA_K8S_SMOKE_AGENT_IMAGE:-nora-openclaw-agent:local}"
+if [[ "${NORA_K8S_SMOKE_BUILD_AGENT_IMAGE:-true}" == "true" ]]; then
+  echo "Building ${AGENT_IMAGE} for the kind smoke."
+  docker build \
+    -f "$ROOT_DIR/agent-runtime/Dockerfile.openclaw-agent" \
+    -t "$AGENT_IMAGE" \
+    "$ROOT_DIR/agent-runtime/"
+fi
+echo "Loading ${AGENT_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
+"$KIND_BIN" load docker-image "$AGENT_IMAGE" --name "$KIND_CLUSTER_NAME"
+# Consumed by docker-compose.kind.yml, which forwards it to backend-api (image
+# chosen when the agent row is created) and worker-provisioner (image used in
+# the Deployment).
+export OPENCLAW_STANDARD_IMAGE="$AGENT_IMAGE"
+
 if [[ -z "${NORA_K8S_RUNTIME_HOST:-}" ]]; then
   export NORA_K8S_RUNTIME_HOST="$(
     docker inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' "$KIND_CONTROL_PLANE_HOST"
