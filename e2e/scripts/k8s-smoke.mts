@@ -209,6 +209,33 @@ function parseServiceAnnotations() {
   return parsed;
 }
 
+// Seed the built-in zero-key demo provider.
+//
+// The smoke never configured an LLM provider, so provisioning failed every
+// attempt with "LLM provider state was removed while the runtime was
+// provisioning" and the agent finished `stopped`. The demo provider is the one
+// path that needs no credential, which is what makes it right for CI — the run
+// stays free of real keys.
+async function ensureDemoLlmProvider(token) {
+  const existing = await api("/llm-providers", { token, expectOk: false });
+  if (
+    existing.response.ok &&
+    Array.isArray(existing.body) &&
+    existing.body.some((entry) => entry?.provider === "demo")
+  ) {
+    return;
+  }
+  const created = await api("/llm-providers", {
+    method: "POST",
+    token,
+    body: { provider: "demo", isDefault: true },
+    expectOk: false,
+  });
+  if (!created.response.ok && created.response.status !== 409) {
+    throw new Error(`Failed to register the demo LLM provider: ${created.response.status}`);
+  }
+}
+
 async function registerKubernetesCluster(token) {
   const body = {
     id: K8S_CLUSTER_ID,
@@ -515,6 +542,7 @@ async function main() {
     });
     token = login.body.token;
 
+    await ensureDemoLlmProvider(token);
     await registerKubernetesCluster(token);
     await testKubernetesCluster(token);
 
