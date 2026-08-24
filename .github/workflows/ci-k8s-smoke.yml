@@ -75,6 +75,34 @@ jobs:
       - name: Run Kind Kubernetes smoke
         run: npm run smoke:k8s-kind
         working-directory: e2e
+      # Runs on success too: when this job is red the interesting question is
+      # usually "could the worker reach the node port at all", and that answer
+      # is worth having in the log either way.
+      - name: Probe kind routing from the worker container
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          CP=nora-kind-control-plane
+          KIND_IP="$(docker inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' "$CP")"
+          echo "== kind control-plane IP: ${KIND_IP}"
+          echo "== networks attached to worker-provisioner =="
+          docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} ip={{$v.IPAddress}}{{"\n"}}{{end}}' nora-kind-worker-provisioner-1
+          echo "== NORA_K8S_* env inside the worker =="
+          docker exec nora-kind-worker-provisioner-1 sh -lc 'env | grep -E "^NORA_K8S_" | sort'
+          echo "== can the worker open the runtime node port? =="
+          docker exec nora-kind-worker-provisioner-1 sh -lc "
+            for target in ${KIND_IP}:30909 ${KIND_IP}:31879; do
+              echo \"-- \$target\"
+              (exec 3<>/dev/tcp/\${target%%:*}/\${target##*:}) 2>&1 && echo '   tcp OPEN' || echo '   tcp CLOSED/unreachable'
+            done"
+          echo "== services and endpoints =="
+          export KUBECONFIG=/tmp/nora-kind.kubeconfig
+          /tmp/nora-tools/kubectl get svc -A -o wide
+          /tmp/nora-tools/kubectl get endpoints -A
+          echo "== node port listeners inside the kind node =="
+          docker exec "$CP" sh -lc 'ss -lntp 2>/dev/null | grep -E "30909|31879" || echo "(no listener on 30909/31879)"'
+          exit 0
       - name: Capture diagnostics
         if: failure()
         continue-on-error: true
@@ -82,6 +110,8 @@ jobs:
           set +e
           mkdir -p k8s-smoke-artifacts
           export KUBECONFIG=/tmp/nora-kind.kubeconfig
+          /tmp/nora-tools/kubectl get svc -A -o wide > k8s-smoke-artifacts/services.txt 2>&1
+          /tmp/nora-tools/kubectl get endpoints -A > k8s-smoke-artifacts/endpoints.txt 2>&1
           /tmp/nora-tools/kubectl get pods -A -o wide > k8s-smoke-artifacts/pods.txt 2>&1
           /tmp/nora-tools/kubectl get events -A --sort-by=.lastTimestamp > k8s-smoke-artifacts/events.txt 2>&1
           /tmp/nora-tools/kubectl describe nodes > k8s-smoke-artifacts/nodes.txt 2>&1
