@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "bullmq": "^6.1.2",
+    "bullmq": "^6.2.0",
     "ioredis": "^6.0.0",
     "tsx": "^4.23.12"
   },

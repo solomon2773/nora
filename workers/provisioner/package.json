@@ -12,7 +12,7 @@
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
     "axios": "^1.19.0",
-    "bullmq": "^6.1.2",
+    "bullmq": "^6.2.0",
     "dockerode": "5.0.1",
     "ioredis": "^6.0.0",
     "pg": "^8.23.0",
