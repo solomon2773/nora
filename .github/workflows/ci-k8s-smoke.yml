@@ -90,12 +90,35 @@ jobs:
           docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} ip={{$v.IPAddress}}{{"\n"}}{{end}}' nora-kind-worker-provisioner-1
           echo "== NORA_K8S_* env inside the worker =="
           docker exec nora-kind-worker-provisioner-1 sh -lc 'env | grep -E "^NORA_K8S_" | sort'
-          echo "== can the worker open the runtime node port? =="
-          docker exec nora-kind-worker-provisioner-1 sh -lc "
-            for target in ${KIND_IP}:30909 ${KIND_IP}:31879; do
-              echo \"-- \$target\"
-              (exec 3<>/dev/tcp/\${target%%:*}/\${target##*:}) 2>&1 && echo '   tcp OPEN' || echo '   tcp CLOSED/unreachable'
-            done"
+          echo "== can the worker reach the node ports? =="
+          # Use node, not /dev/tcp: the worker image's sh is not bash, so the
+          # earlier /dev/tcp probe reported "unreachable" for every target
+          # regardless of the truth.
+          docker exec nora-kind-worker-provisioner-1 node -e "
+            const net = require('net');
+            const http = require('http');
+            const host = '${KIND_IP}';
+            const check = (port) => new Promise((resolve) => {
+              const s = net.connect({ host, port, timeout: 5000 });
+              s.on('connect', () => { s.destroy(); resolve('tcp OPEN'); });
+              s.on('timeout', () => { s.destroy(); resolve('tcp TIMEOUT'); });
+              s.on('error', (e) => resolve('tcp ERROR ' + e.code));
+            });
+            const get = (port, path) => new Promise((resolve) => {
+              const r = http.get({ host, port, path, timeout: 5000 }, (res) => {
+                res.resume(); resolve('HTTP ' + res.statusCode);
+              });
+              r.on('timeout', () => { r.destroy(); resolve('HTTP TIMEOUT'); });
+              r.on('error', (e) => resolve('HTTP ERROR ' + e.code));
+            });
+            (async () => {
+              console.log('  runtime 30909 ->', await check(30909), '|', await get(30909, '/health'));
+              console.log('  gateway 31879 ->', await check(31879), '|', await get(31879, '/'));
+            })();
+          "
+          echo "== what the control plane recorded for this cluster =="
+          docker exec nora-kind-postgres-1 psql -U nora -d nora -At -c \
+            "select id, exposure_mode, runtime_host, runtime_node_port, gateway_node_port from kubernetes_clusters" 2>&1 | head -5
           echo "== services and endpoints =="
           export KUBECONFIG=/tmp/nora-kind.kubeconfig
           /tmp/nora-tools/kubectl get svc -A -o wide
