@@ -188,6 +188,30 @@ function safeHostname(name, fallback) {
   );
 }
 
+// How long pod selection waits for a rollout to produce a serving pod before
+// giving up. Recreate has a real window with no pod at all, and failing
+// instantly there turns a normal rollout into a provisioning failure.
+const K8S_POD_SELECTION_WAIT_MS = Number.parseInt(
+  process.env.NORA_K8S_POD_SELECTION_WAIT_MS || "30000",
+  10,
+);
+const K8S_POD_SELECTION_INTERVAL_MS = Number.parseInt(
+  process.env.NORA_K8S_POD_SELECTION_INTERVAL_MS || "1000",
+  10,
+);
+
+// A deleted pod keeps reporting phase Running until its containers exit, so
+// deletionTimestamp is the only reliable signal that it is on the way out.
+function isPodTerminating(pod) {
+  return Boolean(pod?.metadata?.deletionTimestamp);
+}
+
+function isPodReady(pod) {
+  return (pod?.status?.conditions || []).some(
+    (condition) => condition?.type === "Ready" && condition?.status === "True",
+  );
+}
+
 function podSecurityContext() {
   return {
     seccompProfile: { type: "RuntimeDefault" },
@@ -3043,23 +3067,64 @@ class K8sBackend extends ProvisionerBackend {
     return Number.isFinite(parsed) ? parsed : 1;
   }
 
-  async _findRunningPod(deployName, namespace = this._namespaceForDeployName(deployName)) {
+  /**
+   * Pick a pod that can actually serve an exec or a log stream.
+   *
+   * `phase === "Running"` alone is not enough, and getting this wrong is subtle:
+   * a pod that has been deleted keeps reporting phase Running until its
+   * containers actually exit, so a terminating pod looks identical to a healthy
+   * one. Staging managed env updates the Deployment, and with strategy Recreate
+   * that starts a rollout — so an exec issued right afterwards could land in the
+   * container being torn down. The tracked-command wrapper then dies mid-write,
+   * leaving no pid state, and cleanup reports the confusing
+   * "Provisioner command cleanup exited without confirmation (exit 70)" rather
+   * than anything about a rollout.
+   *
+   * Terminating pods are therefore skipped outright, and Ready pods are
+   * preferred over merely-Running ones. Because the race is a rollout, this also
+   * waits briefly rather than failing instantly: during Recreate there is a real
+   * window with no serving pod at all, and returning null there surfaces as
+   * "Container exec unavailable".
+   *
+   * @param {string} deployName - Deployment whose pod is wanted.
+   * @param {string} [namespace] - Namespace to search.
+   * @param {Object} [options={}] - Wait budget for a rollout in progress.
+   * @returns {Promise<Object|null>} A serving pod, or null if none appeared.
+   */
+  async _findRunningPod(
+    deployName,
+    namespace = this._namespaceForDeployName(deployName),
+    { waitMs = K8S_POD_SELECTION_WAIT_MS, intervalMs = K8S_POD_SELECTION_INTERVAL_MS } = {},
+  ) {
     const agentId = this._agentIdFromDeployName(deployName);
     const selectors = [
       `nora.deployment.name=${deployName}`,
       `nora.agent.id=${agentId}`,
       `openclaw.agent.id=${agentId}`,
     ];
-    for (const labelSelector of selectors) {
-      const pods = await this.coreApi.listNamespacedPod({
-        namespace,
-        labelSelector,
-      });
-      const podItems = pods?.items || pods?.body?.items || [];
-      const runningPod = podItems.find((p) => p.status?.phase === "Running");
-      if (runningPod) return runningPod;
+    const deadline = Date.now() + Math.max(0, waitMs);
+
+    for (;;) {
+      let fallback = null;
+      for (const labelSelector of selectors) {
+        const pods = await this.coreApi.listNamespacedPod({
+          namespace,
+          labelSelector,
+        });
+        const podItems = pods?.items || pods?.body?.items || [];
+        const serving = podItems.filter(
+          (pod) => pod?.status?.phase === "Running" && !isPodTerminating(pod),
+        );
+        const ready = serving.find((pod) => isPodReady(pod));
+        if (ready) return ready;
+        if (!fallback && serving.length > 0) fallback = serving[0];
+      }
+      // A Running-but-not-Ready pod is still worth using once the wait is spent:
+      // exec does not require readiness, and some callers run before the runtime
+      // has bound its port.
+      if (Date.now() >= deadline) return fallback;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
-    return null;
   }
 
   /**
