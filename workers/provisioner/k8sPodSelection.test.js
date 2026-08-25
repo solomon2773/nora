@@ -64,12 +64,18 @@ test("picks the live pod when a terminating one is listed alongside it", async (
   assert.equal(pod.metadata.name, "live");
 });
 
-test("still returns a running-but-unready pod once the wait is spent", async () => {
-  // exec does not require readiness — some callers run before the runtime has
-  // bound its port — so an unready pod is better than failing outright.
+test("returns a running-but-unready pod immediately rather than waiting", async () => {
+  // exec does not require readiness — callers routinely run before the runtime
+  // has bound its port — so holding out for Ready would stall normal work. A
+  // long wait here is what broke the kubernetes telemetry tests.
   const backend = backendWithPods([makePod("starting", { ready: false })]);
-  const pod = await backend._findRunningPod("deploy-1", "openclaw-agents", NO_WAIT);
+  const started = Date.now();
+  const pod = await backend._findRunningPod("deploy-1", "openclaw-agents", {
+    waitMs: 30000,
+    intervalMs: 1000,
+  });
   assert.equal(pod.metadata.name, "starting");
+  assert.ok(Date.now() - started < 1000, "should not have waited for readiness");
 });
 
 test("ignores pods that are not Running at all", async () => {

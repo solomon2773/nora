@@ -3105,24 +3105,27 @@ class K8sBackend extends ProvisionerBackend {
     const deadline = Date.now() + Math.max(0, waitMs);
 
     for (;;) {
-      let fallback = null;
+      let serving = null;
       for (const labelSelector of selectors) {
         const pods = await this.coreApi.listNamespacedPod({
           namespace,
           labelSelector,
         });
         const podItems = pods?.items || pods?.body?.items || [];
-        const serving = podItems.filter(
+        const candidates = podItems.filter(
           (pod) => pod?.status?.phase === "Running" && !isPodTerminating(pod),
         );
-        const ready = serving.find((pod) => isPodReady(pod));
+        const ready = candidates.find((pod) => isPodReady(pod));
+        // Ready wins, but a Running-but-unready pod is returned immediately
+        // rather than waited on: exec does not require readiness, and callers
+        // routinely run before the runtime has bound its port. The wait below
+        // exists for the Recreate window where there is no serving pod at all,
+        // not to hold out for readiness.
         if (ready) return ready;
-        if (!fallback && serving.length > 0) fallback = serving[0];
+        if (!serving && candidates.length > 0) serving = candidates[0];
       }
-      // A Running-but-not-Ready pod is still worth using once the wait is spent:
-      // exec does not require readiness, and some callers run before the runtime
-      // has bound its port.
-      if (Date.now() >= deadline) return fallback;
+      if (serving) return serving;
+      if (Date.now() >= deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
   }
