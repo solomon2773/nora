@@ -80,6 +80,38 @@ jobs:
             echo "NORA_API_KEY_HASH_SECRET=$(openssl rand -hex 32)"
           } >> .env.ci-k8s
           bash scripts/materialize-compose-secrets.sh .env.ci-k8s
+      # Follow agent pod logs from the moment each pod appears.
+      #
+      # A failing provisioning job destroys the deployment, so by the time the
+      # diagnostics step runs there is nothing left to read — every attempt to
+      # capture the agent container's own output after the fact has come back
+      # empty. Following them live is the only way to keep the one piece of
+      # evidence that says why a runtime never bound its port.
+      - name: Start agent log collector
+        run: |
+          mkdir -p k8s-smoke-artifacts/podlogs
+          cat > /tmp/collect-agent-logs.sh <<'COLLECT'
+          #!/usr/bin/env bash
+          export KUBECONFIG=/tmp/nora-kind.kubeconfig
+          KUBECTL=/tmp/nora-tools/kubectl
+          seen=""
+          while true; do
+            for ns in openclaw-agents hermes-agents; do
+              for pod in $("$KUBECTL" -n "$ns" get pods -o name 2>/dev/null); do
+                key="${ns}${pod}"
+                case " $seen " in *" $key "*) continue ;; esac
+                seen="$seen $key"
+                safe="$(echo "$key" | tr '/' '-')"
+                "$KUBECTL" -n "$ns" logs -f "$pod" --all-containers \
+                  > "k8s-smoke-artifacts/podlogs/${safe}.log" 2>&1 &
+              done
+            done
+            sleep 2
+          done
+          COLLECT
+          chmod +x /tmp/collect-agent-logs.sh
+          nohup /tmp/collect-agent-logs.sh >/dev/null 2>&1 &
+          echo "collector started (pid $!)"
       - name: Run Kind Kubernetes smoke
         run: npm run smoke:k8s-kind
         working-directory: e2e
