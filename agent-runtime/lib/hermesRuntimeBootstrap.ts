@@ -101,7 +101,14 @@ function buildHermesRuntimeConfigBootstrapCommand() {
     // the hook's own guard sees it and skips generation. This runs before
     // `hermes gateway run` in every backend that starts Hermes, so the gateway
     // always loads the reconciled file.
+    // Never fatal. The whole block runs under `set -eu`, so any failure here —
+    // most plausibly a write to $HERMES_HOME on a cluster that strips
+    // DAC_OVERRIDE — would abort the bootstrap before `hermes gateway run` and
+    // leave an agent that never binds its port and prints nothing at all. A key
+    // that could not be reconciled is worth a warning and a degraded auth path;
+    // it is not worth refusing to start the runtime.
     'if [ -n "${API_SERVER_KEY:-}" ]; then',
+    "  reconcile_gateway_key() {",
     '  key_tmp="$(mktemp)"',
     '  if [ -f "$HERMES_DATA_DIR/.env" ]; then',
     // grep -v exits 1 when every line matches; that must not abort under `set -e`.
@@ -115,6 +122,8 @@ function buildHermesRuntimeConfigBootstrapCommand() {
     '  mv "$key_tmp" "$HERMES_DATA_DIR/.env"',
     '  chown hermes:hermes "$HERMES_DATA_DIR/.env" 2>/dev/null || true',
     '  chmod 0600 "$HERMES_DATA_DIR/.env"',
+    "  }",
+    '  reconcile_gateway_key || echo "nora: could not reconcile API_SERVER_KEY into $HERMES_DATA_DIR/.env; the gateway may reject control-plane calls" >&2',
     "fi",
     `if [ "\${${HERMES_MODEL_CONFIG_ENV}+x}" = x ]; then`,
     '  HERMES_ROOT="/opt/hermes"',
