@@ -28,6 +28,11 @@ name: CI Kubernetes Smoke
 # goes green.
 on:
   workflow_dispatch:
+    inputs:
+      runtime_families:
+        description: "Runtime families to exercise (comma-separated), e.g. hermes"
+        required: false
+        default: "openclaw,hermes"
 
 permissions:
   contents: read
@@ -39,6 +44,9 @@ jobs:
     timeout-minutes: 45
     env:
       NORA_ENV_FILE: .env.ci-k8s
+      # Scoping to one family halves the run and isolates a family-specific
+      # failure instead of waiting through the other one first.
+      K8S_SMOKE_RUNTIME_FAMILIES: ${{ inputs.runtime_families || 'openclaw,hermes' }}
       # The smoke script's EXIT trap tears down compose and deletes the kind
       # cluster. On a failure that destroys exactly the state worth looking at
       # before the diagnostics step can read it. The runner is ephemeral, so
@@ -136,6 +144,21 @@ jobs:
           /tmp/nora-tools/kubectl get svc -A -o wide > k8s-smoke-artifacts/services.txt 2>&1
           /tmp/nora-tools/kubectl get endpoints -A > k8s-smoke-artifacts/endpoints.txt 2>&1
           /tmp/nora-tools/kubectl get pods -A -o wide > k8s-smoke-artifacts/pods.txt 2>&1
+          # Agent container logs. A startup probe that reports "connection
+          # refused" only says the port is not bound; the container's own output
+          # says why. Both current and previous, since a failing job deletes the
+          # deployment and the interesting pod is usually the dead one.
+          for ns in openclaw-agents hermes-agents; do
+            for pod in $(/tmp/nora-tools/kubectl -n "$ns" get pods -o name 2>/dev/null); do
+              safe="$(echo "${ns}-${pod}" | tr '/' '-')"
+              /tmp/nora-tools/kubectl -n "$ns" logs "$pod" --all-containers --tail=300 \
+                > "k8s-smoke-artifacts/${safe}.log" 2>&1
+              /tmp/nora-tools/kubectl -n "$ns" logs "$pod" --all-containers --tail=300 --previous \
+                > "k8s-smoke-artifacts/${safe}.previous.log" 2>&1
+              /tmp/nora-tools/kubectl -n "$ns" describe "$pod" \
+                > "k8s-smoke-artifacts/${safe}.describe.txt" 2>&1
+            done
+          done
           /tmp/nora-tools/kubectl get events -A --sort-by=.lastTimestamp > k8s-smoke-artifacts/events.txt 2>&1
           /tmp/nora-tools/kubectl describe nodes > k8s-smoke-artifacts/nodes.txt 2>&1
           docker ps -a > k8s-smoke-artifacts/docker-ps.txt 2>&1
