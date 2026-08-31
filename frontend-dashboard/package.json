@@ -18,9 +18,9 @@
     "@xterm/xterm": "^6.0.0",
     "autoprefixer": "^10.5.0",
     "clsx": "^2.1.0",
-    "lucide-react": "^1.33.0",
-    "next": "^16.3.1",
-    "postcss": "^8.5.23",
+    "lucide-react": "^1.35.0",
+    "next": "^16.3.3",
+    "postcss": "^8.5.26",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
@@ -31,12 +31,12 @@
   },
   "overrides": {
     "postcss": "$postcss",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.0",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4",
+    "@types/react-dom": "^19.2.5",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   }
