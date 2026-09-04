@@ -192,8 +192,15 @@ function attachLogStream(server) {
         const live = await containerManager.status(agent);
         isRunning = live.running;
         if (isRunning && agent.status !== "running") {
-          // Fix stale DB status
-          await db.query("UPDATE agents SET status = 'running' WHERE id = $1", [agent.id]);
+          // Fix stale DB status.
+          // Never clobber a mid-deployment agent. The provisioner's readiness
+          // writes are guarded on status='deploying'; stealing that status makes
+          // finalization match zero rows, which the worker reads as "agent
+          // deleted" and acts on by destroying the runtime it just built.
+          await db.query(
+            "UPDATE agents SET status = 'running' WHERE id = $1 AND status <> 'deploying'",
+            [agent.id],
+          );
         }
       } catch {
         // Can't reach container runtime — trust DB status
