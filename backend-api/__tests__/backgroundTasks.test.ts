@@ -66,10 +66,11 @@ describe("background tasks", () => {
 
     await reconcileBackgroundAgentStatuses();
 
-    expect(mockDb.query).toHaveBeenNthCalledWith(2, "UPDATE agents SET status = $1 WHERE id = $2", [
-      "stopped",
-      "agent-err-1",
-    ]);
+    expect(mockDb.query).toHaveBeenNthCalledWith(
+      2,
+      "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
+      ["stopped", "agent-err-1", "warning"],
+    );
   });
 
   it.each([
@@ -170,8 +171,8 @@ describe("background tasks", () => {
       expect(healthProbe).toHaveBeenCalledWith(expect.objectContaining({ id: "ext-1" }));
       expect(mockDb.query).toHaveBeenNthCalledWith(
         2,
-        "UPDATE agents SET status = $1 WHERE id = $2",
-        ["running", "ext-1"],
+        "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
+        ["running", "ext-1", "stopped"],
       );
     });
 
@@ -186,8 +187,8 @@ describe("background tasks", () => {
 
       expect(mockDb.query).toHaveBeenNthCalledWith(
         2,
-        "UPDATE agents SET status = $1 WHERE id = $2",
-        ["stopped", "ext-2"],
+        "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
+        ["stopped", "ext-2", "running"],
       );
     });
 
@@ -202,8 +203,8 @@ describe("background tasks", () => {
 
       expect(mockDb.query).toHaveBeenNthCalledWith(
         2,
-        "UPDATE agents SET status = $1 WHERE id = $2",
-        ["stopped", "ext-3"],
+        "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
+        ["stopped", "ext-3", "running"],
       );
     });
 
@@ -216,6 +217,74 @@ describe("background tasks", () => {
       await reconcileExternalAgentStatuses({ healthProbe });
 
       expect(mockDb.query).toHaveBeenCalledTimes(1); // only the SELECT
+    });
+  });
+  describe("concurrent-deploy safety (status CAS)", () => {
+    it("guards the container reconcile UPDATE with the status it observed", async () => {
+      mockDb.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-race-1",
+            container_id: "nora-hermes-agent-race-1",
+            backend_type: "docker",
+            runtime_family: "hermes",
+            status: "running",
+          },
+        ],
+      });
+      mockDb.query.mockResolvedValueOnce({ rows: [] });
+      mockContainerManager.status.mockResolvedValueOnce({ running: false });
+
+      await reconcileBackgroundAgentStatuses();
+
+      // The row may have moved to 'deploying' between the snapshot SELECT and
+      // this write. Without the status predicate the sweep silently clobbers
+      // the deploy lifecycle, which makes the provisioner destroy the agent's
+      // data volume as an "orphan".
+      expect(mockDb.query).toHaveBeenNthCalledWith(
+        2,
+        "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
+        ["stopped", "agent-race-1", "running"],
+      );
+    });
+
+    it("guards the reconcile UPDATE on the probe-failure branch too", async () => {
+      mockDb.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: "agent-race-2",
+            container_id: "runtime-2",
+            backend_type: "docker",
+            status: "running",
+          },
+        ],
+      });
+      mockDb.query.mockResolvedValueOnce({ rows: [] });
+      mockContainerManager.status.mockRejectedValueOnce(new Error("docker unreachable"));
+
+      await reconcileBackgroundAgentStatuses();
+
+      expect(mockDb.query).toHaveBeenNthCalledWith(
+        2,
+        "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
+        ["stopped", "agent-race-2", "running"],
+      );
+    });
+
+    it("guards the external reconcile UPDATE with the status it observed", async () => {
+      mockDb.query.mockResolvedValueOnce({
+        rows: [{ id: "ext-race", status: "stopped", deploy_target: "external" }],
+      });
+      mockDb.query.mockResolvedValueOnce({ rows: [] });
+      const healthProbe = jest.fn().mockResolvedValue({ running: true });
+
+      await reconcileExternalAgentStatuses({ healthProbe });
+
+      expect(mockDb.query).toHaveBeenNthCalledWith(
+        2,
+        "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
+        ["running", "ext-race", "stopped"],
+      );
     });
   });
 });

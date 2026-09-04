@@ -494,7 +494,13 @@ async function reconcileAdminAgent(agent) {
     const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live.running));
 
     if (reconciledStatus !== agent.status) {
-      await db.query("UPDATE agents SET status = $1 WHERE id = $2", [reconciledStatus, agent.id]);
+      // Guarded on the observed status so this read-path reconcile cannot
+      // clobber a deploy that started while the liveness probe was in flight.
+      await db.query("UPDATE agents SET status = $1 WHERE id = $2 AND status = $3", [
+        reconciledStatus,
+        agent.id,
+        agent.status,
+      ]);
       agent.status = reconciledStatus;
     }
   } catch {

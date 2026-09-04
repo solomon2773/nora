@@ -839,9 +839,14 @@ router.get(
         runtimeStatus = live;
         const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live.running));
         if (reconciledStatus !== agent.status) {
-          await db.query("UPDATE agents SET status = $1 WHERE id = $2", [
+          // Guarded on the status this request observed: the row can enter the
+          // deploy lifecycle while the liveness probe above is in flight, and an
+          // unguarded write would clobber 'deploying' out from under the
+          // provisioner's compare-and-swap.
+          await db.query("UPDATE agents SET status = $1 WHERE id = $2 AND status = $3", [
             reconciledStatus,
             agent.id,
+            agent.status,
           ]);
           agent.status = reconciledStatus;
         }

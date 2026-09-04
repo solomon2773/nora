@@ -22,6 +22,33 @@ function shouldPreserveStatusAfterRemoteHostError(error) {
 }
 
 /**
+ * Write a reconciled status, conditioned on the status this sweep actually
+ * observed.
+ *
+ * The sweep snapshots agents in one SELECT and then probes each runtime in
+ * turn, so a row can enter the deploy lifecycle ('queued'/'deploying') while
+ * the loop is still working through earlier agents. `reconcileAgentStatus`
+ * refuses to touch those states, but it only ever sees the snapshot value — so
+ * an unguarded write happily lands on a row that has since started deploying.
+ * That clobbers 'deploying', the provisioner's compare-and-swap then misses,
+ * and the deploy tears down the runtime it just built, taking the agent's data
+ * volume with it. The status predicate makes the write a no-op instead.
+ *
+ * @param {Object} dbClient - Database client used for the write.
+ * @param {Object} agent - Snapshot row, carrying the observed status.
+ * @param {string} reconciledStatus - Status implied by the liveness probe.
+ * @returns {Promise<void>}
+ */
+async function writeReconciledStatus(dbClient, agent, reconciledStatus) {
+  if (reconciledStatus === agent.status) return;
+  await dbClient.query("UPDATE agents SET status = $1 WHERE id = $2 AND status = $3", [
+    reconciledStatus,
+    agent.id,
+    agent.status,
+  ]);
+}
+
+/**
  * Collect telemetry for running container-backed agents and prune samples older
  * than seven days. Individual and task-level failures are intentionally ignored.
  *
@@ -83,25 +110,17 @@ async function reconcileBackgroundAgentStatuses({
       if (PROVIDER_AUTH_STATUS_HOLD_REASONS.has(agent.paused_reason)) continue;
       try {
         const live = await statusResolver(agent);
-        const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live?.running));
-        if (reconciledStatus !== agent.status) {
-          await dbClient.query("UPDATE agents SET status = $1 WHERE id = $2", [
-            reconciledStatus,
-            agent.id,
-          ]);
-        }
+        await writeReconciledStatus(
+          dbClient,
+          agent,
+          reconcileAgentStatus(agent.status, Boolean(live?.running)),
+        );
       } catch (error) {
         // Authorization/retest failures mean Nora cannot prove live state, not
         // that the container stopped. Preserve durable status until an
         // authorized and trusted check can run again.
         if (shouldPreserveStatusAfterRemoteHostError(error)) continue;
-        const reconciledStatus = reconcileAgentStatus(agent.status, false);
-        if (reconciledStatus !== agent.status) {
-          await dbClient.query("UPDATE agents SET status = $1 WHERE id = $2", [
-            reconciledStatus,
-            agent.id,
-          ]);
-        }
+        await writeReconciledStatus(dbClient, agent, reconcileAgentStatus(agent.status, false));
       }
     }
   } catch {
@@ -136,13 +155,11 @@ async function reconcileExternalAgentStatuses({
       } catch {
         live = { running: false };
       }
-      const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live?.running));
-      if (reconciledStatus !== agent.status) {
-        await dbClient.query("UPDATE agents SET status = $1 WHERE id = $2", [
-          reconciledStatus,
-          agent.id,
-        ]);
-      }
+      await writeReconciledStatus(
+        dbClient,
+        agent,
+        reconcileAgentStatus(agent.status, Boolean(live?.running)),
+      );
     }
   } catch {
     // Reconciliation is best-effort only.
