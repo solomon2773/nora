@@ -698,7 +698,9 @@ class K8sBackend extends ProvisionerBackend {
     try {
       parsed = JSON.parse(raw);
     } catch (error) {
-      throw new Error(`Kubernetes service annotations must be valid JSON: ${error.message}`);
+      throw new Error(`Kubernetes service annotations must be valid JSON: ${error.message}`, {
+        cause: error,
+      });
     }
 
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -2420,12 +2422,31 @@ class K8sBackend extends ProvisionerBackend {
     });
   }
 
+  /**
+   * Delete an agent's Deployment and the resources created alongside it.
+   *
+   * @param {string} containerId - Deployment name to delete.
+   * @param {Object} [options]
+   * @param {boolean} [options.preserveState=true] - Keep the state
+   * PersistentVolumeClaim. The redeploy path relies on this because it recreates
+   * the Deployment against the same claim; deleting it there discards the
+   * agent's durable state on what the operator asked to be an in-place
+   * replacement. It defaults to preserving so an omitted flag leaks a claim
+   * rather than destroying data; only an explicit `preserveState: false` — a
+   * real delete — removes it.
+   * @returns {Promise<void>} Resolves once deletion finishes.
+   */
   async destroy(containerId, options = {}) {
     const deployName = containerId;
     if (!deployName) return;
 
+    const preserveState = options?.preserveState !== false;
     const namespaces = this._candidateNamespacesForDestroy(deployName, options);
-    console.log(`[k8s] Destroying deployment ${deployName} in ${namespaces.join(", ")}`);
+    console.log(
+      `[k8s] Destroying deployment ${deployName} in ${namespaces.join(", ")}${
+        preserveState ? " (keeping state claim for runtime replacement)" : ""
+      }`,
+    );
 
     let deletedAny = false;
     for (const namespace of namespaces) {
@@ -2435,7 +2456,9 @@ class K8sBackend extends ProvisionerBackend {
       const deletedSecret = await this._deleteEnvSecretIfExists(deployName, namespace);
       // Deployment deletion above is Foreground, so no pod holds the claim by
       // the time this runs.
-      const deletedStateClaim = await this._deleteStateVolumeClaimIfExists(deployName, namespace);
+      const deletedStateClaim = preserveState
+        ? false
+        : await this._deleteStateVolumeClaimIfExists(deployName, namespace);
       deletedAny =
         deletedAny ||
         deletedDeployment ||

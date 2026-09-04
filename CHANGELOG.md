@@ -4,6 +4,107 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
+## [v1.19.0](https://github.com/solomon2773/nora/releases/tag/v1.19.0) — 2026-09-01
+
+Redeploy data-integrity release. Redeploying an agent could delete the durable state it was supposed
+to preserve — under concurrency for Hermes, and on every redeploy for OpenClaw on Docker and for
+Kubernetes. Upgrade before your next redeploy.
+
+### Fixed
+
+- **A failed redeploy no longer deletes the agent's data.** Durable agent state is keyed by agent id,
+  not container id, so the cleanup that removed a failed replacement runtime was also removing the
+  state of the agent it was replacing — and the queued retry then rebuilt the runtime against an
+  empty volume, leaving an agent that looked healthy with none of its configuration. Deployment
+  cleanup now preserves state for any agent that still exists; removing it belongs solely to agent
+  deletion, which already runs under the same per-agent provision lock. That also protects an agent
+  whose runtime a newer deployment has already taken over.
+- **OpenClaw on Docker keeps `/root/.openclaw` across a redeploy**, and **Kubernetes keeps its state
+  claim**. `preserveState` was implemented only in the Hermes adapter, so the redeploy path's request
+  to preserve was a silent no-op for both — every OpenClaw Docker redeploy discarded the agent's
+  state root, and every Kubernetes redeploy deleted its PersistentVolumeClaim.
+- **A failed container create no longer removes volumes it did not create.** `create()` now cleans up
+  only the volumes it brought into existence, so a transient failure during a replacement cannot
+  erase state that predates it.
+- **A slow Hermes restart no longer destroys a healthy runtime.** Reapplying saved model
+  configuration and channels restarts Hermes and waits for its runtime API; a container slow to come
+  back — several concurrent redeploys contending for one host — used to fail the whole deployment.
+  The reseed is now warn-only, matching the OpenClaw channel reseed beside it, and the agent is left
+  in `warning` with an `agent_deployed_degraded` event naming what did not apply. A runtime that is
+  genuinely unreachable still fails through the readiness barrier as before.
+
+### Changed
+
+- **Backend adapters preserve durable state by default.** `preserveState` previously had to be passed
+  to keep data, so any caller that omitted it deleted an agent's volumes. Omitting it now leaks a
+  volume — recoverable — instead of destroying configuration, which is not; only an explicit
+  `preserveState: false` removes state. `containerManager.destroy` still defaults to removing state,
+  so deleting an agent is unchanged. The requirement is now documented on `ProvisionerBackend.destroy`
+  and in the backend adapter README so a new adapter cannot drop it silently.
+
+## [v1.18.0](https://github.com/solomon2773/nora/releases/tag/v1.18.0) — 2026-08-27
+
+Reliability and supply-chain hardening release: agents that previously needed manual repair now come
+up working (Hermes gateway auth, remote-docker connection details), stranded database locks no longer
+wedge deploys and provider saves, backups stay restorable after their agent is deleted, and the
+installer stops building runtimes you declined. Dependency, secret, and code scanning are now wired
+end to end.
+
+### Added
+
+- **Account-level backups**: a backup now outlives the agent it came from. New account routes
+  (`GET /backups`, `GET /backups/{id}/download`, `DELETE /backups/{id}`,
+  `POST /backups/{id}/restore`) list every backup you own, report whether the source agent still
+  exists, and restore an orphaned backup into a new agent. The service layer already supported
+  agent-less backups — only the routing was missing.
+- **Runtime opt-out during setup**: `setup.sh` and `setup.ps1` now ask whether you want OpenClaw
+  rather than assuming it, carry forward the runtime families already recorded in `.env` on re-runs
+  (previously they were pinned off, silently discarding earlier choices), only offer NemoClaw when
+  OpenClaw is enabled, and skip building images for runtimes you declined.
+- **CLI JSON output**: the `agents` and `monitoring` commands can emit JSON for scripting and
+  automation. Thanks to @har5h1tha.
+- **Dependabot configuration**: `.github/dependabot.yml` covers all eleven npm manifests plus GitHub
+  Actions. Two workflows already delegated remediation to Dependabot, but no configuration existed
+  for it to act on.
+
+### Fixed
+
+- **Hermes agents no longer 401 out of the box**: the runtime bootstrap reconciles `API_SERVER_KEY`
+  into the Hermes environment before the gateway starts, so a freshly deployed agent is reachable
+  without hand-editing it. Reconciliation is best-effort and can never stop the runtime from
+  starting.
+- **Stranded advisory locks no longer wedge deploys and provider saves**: PostgreSQL advisory-lock
+  acquisitions now run under an explicit `lock_timeout` and surface a clean timeout instead of
+  blocking forever, and long-held locks are released by a hold watchdog. Applied to LLM provider
+  saves, agent routes, the provisioner worker, and dedicated-session deployment locks.
+- **Agent migration drafts no longer erase their own id**: the draft preview stopped emitting a null
+  `id` that overwrote the real row value.
+- **remote-docker agents report a reachable host**: gateway and runtime endpoints now point at the
+  registered host rather than the Docker daemon's internal view of itself.
+- **Agent runtime consoles resolve through workspace membership**, so workspace members can reach
+  the consoles they are entitled to. Thanks to @MichaelAtram.
+- Embeds with no resolved role are denied instead of being treated as owner.
+- Closed the request-forgery gaps CodeQL flagged in the dashboards, pinning the validated origin
+  instead of returning a bare path.
+- Admin form fields announce their label instead of label plus hint to screen readers.
+
+### Security
+
+- **Repo-wide secret scanning** runs in the blocking `Security gate` alongside the existing config
+  linter, matching provider credential formats and Nora's own secret keys by assignment — with no
+  generic entropy heuristics, so it stays quiet enough to be trusted.
+- **CodeQL coverage widened to every shipped package**, including `cli/` and `mcp-server/`, which
+  were previously unscanned.
+- Pinned `sanitize-html` to 2.17.5 (2.17.6+ pulls an ESM-only `htmlparser2` that Jest cannot load)
+  and made the `postcss` override self-referencing so installs stop failing.
+
+### Infrastructure
+
+- The Kubernetes Kind smoke test runs in CI as a dispatch-only job and reports what it found, and it
+  validates `@kubernetes/client-node` 2 compatibility.
+- The Playwright runner image is derived from the installed package, so the runner and library can no
+  longer drift apart.
+
 ## [v1.17.0](https://github.com/solomon2773/nora/releases/tag/v1.17.0) — 2026-08-08
 
 Hermes feature release: a complete skills pipeline (browse the Skills Hub, curate an instance

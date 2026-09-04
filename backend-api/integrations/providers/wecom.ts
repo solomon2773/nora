@@ -155,7 +155,7 @@ function parseAccountsJson(value: unknown): Record<string, any>[] {
     return parsed as Record<string, any>[];
   } catch (error) {
     if (error instanceof Error && shapeErrors.has(error.message)) throw error;
-    throw new Error("Additional Accounts JSON must be valid JSON.");
+    throw new Error("Additional Accounts JSON must be valid JSON.", { cause: error });
   }
 }
 

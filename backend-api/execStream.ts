@@ -178,8 +178,19 @@ function attachExecStream(server) {
         const live = await containerManager.status(agent);
         isRunning = live.running;
         if (isRunning && agent.status !== "running") {
-          await db.query("UPDATE agents SET status = 'running' WHERE id = $1", [agent.id]);
-          agent.status = "running";
+          // Never clobber a mid-deployment agent. The provisioner's readiness
+          // writes are guarded on status='deploying'; stealing that status makes
+          // finalization match zero rows, which the worker reads as "agent
+          // deleted" and acts on by destroying the runtime it just built.
+          const promoted = await db.query(
+            "UPDATE agents SET status = 'running' WHERE id = $1 AND status <> 'deploying' RETURNING id",
+            [agent.id],
+          );
+          // Only mirror the write in memory when a row actually changed, so the
+          // in-memory agent cannot diverge from the database.
+          if (promoted?.rows?.length) {
+            agent.status = "running";
+          }
         }
       } catch {
         // trust DB status

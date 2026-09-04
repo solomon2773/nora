@@ -584,3 +584,68 @@ test("deleted or replaced runtimes cannot be finalized", async () => {
     false,
   );
 });
+
+// #406: a session-level advisory lock is released automatically when its
+// connection drops, so a crashed worker frees it. What it does not survive is a
+// live worker whose guarded work never returns — the session sits idle while
+// still holding the lock, deployments retry PROVISION_LOCK_BUSY until they DLQ,
+// and provider saves queue behind it until the proxy 504s. The watchdog ends
+// that connection so Postgres releases the lock.
+test("releases an abandoned lock by ending its session", async () => {
+  let ended = false;
+  const client = {
+    connect: async () => {},
+    query: async () => ({ rows: [{ locked: true }] }),
+    end: async () => {
+      ended = true;
+    },
+  };
+  const timeouts = [];
+
+  await acquireDedicatedSessionLock({
+    createClient: () => client,
+    acquire: (c) => c.query("SELECT pg_try_advisory_lock($1) AS locked", ["1"]),
+    release: (c) => c.query("SELECT pg_advisory_unlock($1)", ["1"]),
+    isAcquired: (result) => Boolean(result.rows[0]?.locked),
+    maxHoldMs: 10,
+    onHoldTimeout: (budgetMs) => timeouts.push(budgetMs),
+  });
+
+  // Deliberately never call release(): this models the guarded operation
+  // hanging, which is the condition that stranded the lock.
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  assert.equal(ended, true, "the lock session should have been closed");
+  assert.deepEqual(timeouts, [10], "the abandoned hold should be reported once");
+});
+
+test("leaves the session alone when the guarded work completes", async () => {
+  let ended = 0;
+  let unlocked = 0;
+  const client = {
+    connect: async () => {},
+    query: async (sql) => {
+      if (String(sql).includes("pg_advisory_unlock")) unlocked += 1;
+      return { rows: [{ locked: true }] };
+    },
+    end: async () => {
+      ended += 1;
+    },
+  };
+
+  const lock = await acquireDedicatedSessionLock({
+    createClient: () => client,
+    acquire: (c) => c.query("SELECT pg_try_advisory_lock($1) AS locked", ["1"]),
+    release: (c) => c.query("SELECT pg_advisory_unlock($1)", ["1"]),
+    isAcquired: (result) => Boolean(result.rows[0]?.locked),
+    maxHoldMs: 50,
+  });
+  await lock.release();
+
+  // Wait past the budget: a cancelled watchdog must not fire afterwards and
+  // close a session the next caller is already using.
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.equal(unlocked, 1, "the lock should be released normally");
+  assert.equal(ended, 1, "the session should close exactly once");
+});

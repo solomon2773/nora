@@ -279,7 +279,9 @@ export default function MetricsTab({ agentId, backendConfig = null }) {
       const legacy = localStorage.getItem("token");
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const qs = legacy ? `?token=${encodeURIComponent(legacy)}` : "";
-      socket = new WebSocket(`${protocol}//${window.location.host}/api/ws/metrics/${agentId}${qs}`);
+      socket = new WebSocket(
+        `${protocol}//${window.location.host}/api/ws/metrics/${encodeURIComponent(String(agentId))}${qs}`,
+      );
 
       socket.onopen = () => {
         if (!cancelled) {

@@ -44,6 +44,14 @@ export default [
       ...tsPlugin.configs.recommended.rules,
       "no-undef": "off",
       "no-unused-vars": "off",
+      // New in @eslint/js 10's recommended set. Every hit in this repo is a
+      // deliberate default initializer — `let status = "ok"` / `let port = null`
+      // ahead of a try/catch or branch that overwrites it on all current paths.
+      // The rule is technically right that the initial value is never read
+      // today, but removing those defaults makes the code strictly more fragile:
+      // the next early return or new branch silently yields `undefined` instead
+      // of a sane fallback. Keeping the defaults is the safer contract.
+      "no-useless-assignment": "off",
       "@typescript-eslint/ban-ts-comment": "off",
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-require-imports": "off",

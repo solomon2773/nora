@@ -50,9 +50,10 @@ The installer script is the fastest path to a running Nora instance. It handles 
     3. Generate or preserve secrets for JWTs, AES encryption, managed backups, Agent Hub keys, and the database
     4. Choose platform mode: **self-hosted** (operator-defined resource limits) or **PaaS** (Stripe billing)
     5. Choose whether to keep the GA **Docker** backend enabled and whether to opt into the experimental **Proxmox LXC** target. Kubernetes clusters are registered after setup in **Admin -> Kubernetes**. Proxmox stays disabled by default and requires secure API/SSH configuration plus the real-host smoke test.
-    6. Choose access mode: **local only** (`http://localhost:8080`), **public domain behind a proxy**, or **public domain with TLS at Nginx**
-    7. Optionally create a bootstrap admin account
-    8. Start the stack; after login, add your LLM provider key in **Settings**
+    6. Choose which runtime families to enable: **OpenClaw** (on by default) and **Hermes** (opt-in). Either can be declined, and only the enabled ones have their agent images built — declining OpenClaw skips building `nora-openclaw-agent:local` entirely. **NemoClaw** is a sandbox profile for OpenClaw agents, so it is only offered when OpenClaw is enabled. Declining every runtime family falls back to OpenClaw, since an install with none cannot deploy an agent.
+    7. Choose access mode: **local only** (`http://localhost:8080`), **public domain behind a proxy**, or **public domain with TLS at Nginx**
+    8. Optionally create a bootstrap admin account
+    9. Start the stack; after login, add your LLM provider key in **Settings**
 
     When the installer finishes, it writes `.env` and starts the stack with `docker compose up -d`.
     On macOS, Linux, and WSL the file is restricted to mode `0600`. On Windows, setup removes

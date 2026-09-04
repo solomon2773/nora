@@ -13,7 +13,19 @@ const { decrypt } = require("./crypto");
 const integrations = require("./integrations");
 const { resolveAgentRuntimeFamily } = require("./agentRuntimeFields");
 const { scopeByMethod } = require("./middleware/auth");
-const { findAgentForRequest, requireApiKeyAgentScope } = require("./middleware/ownership");
+const {
+  buildAccessibleAgentQuery,
+  findAccessibleAgentForRequest,
+  requireApiKeyAgentScope,
+  roleSatisfies,
+} = require("./middleware/ownership");
+
+// The OpenClaw gateway — REST routes, the control-UI embed, and the relay
+// WebSocket — is an operate-the-agent capability end to end: it carries chat,
+// exec, restart, and the runtime password. There is no read-only slice worth
+// carving out, so the whole surface takes one bar. Workspace viewers are
+// unaffected; this path was owner-only before, so `editor` only widens access.
+const GATEWAY_MIN_WORKSPACE_ROLE = "editor";
 const remoteHosts = require("./remoteHosts");
 const { PRIVATE_IP_RE } = require("./networkSafety");
 const { normalizeDeployTargetName } = require("../agent-runtime/lib/backendCatalog");
@@ -281,7 +293,9 @@ async function resolveGatewayHostForProxy(
   try {
     addresses = await dns.lookup(normalizedHost, { all: true, verbatim: true });
   } catch (error) {
-    throw new Error(`${label} host could not be resolved (${error.code || error.message})`);
+    throw new Error(`${label} host could not be resolved (${error.code || error.message})`, {
+      cause: error,
+    });
   }
 
   const firstAllowed = addresses.find(
@@ -1484,23 +1498,44 @@ async function getConnection(agent) {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
+const GATEWAY_RELAY_AGENT_COLUMNS = [
+  "id",
+  "name",
+  "status",
+  "container_id",
+  "host",
+  "backend_type",
+  "gateway_token",
+  "gateway_host_port",
+  "gateway_host",
+  "gateway_port",
+  "runtime_host",
+  "runtime_port",
+  "runtime_family",
+  "deploy_target",
+  "execution_target_id",
+  "user_id",
+];
+
 /**
- * Load an agent for a gateway request and enforce exact owner matching.
+ * Load an agent for the gateway relay and enforce the minimum role.
+ *
+ * The relay is a live chat/terminal channel onto the runtime, so it takes the
+ * same `editor` bar as the rest of the OpenClaw gateway surface: the agent's
+ * owner, or a member of a sharing workspace who can operate it. Role is
+ * re-resolved per connection because the embed cookie carries none of its own.
  *
  * @param {string} agentId - Requested agent id.
- * @param {string} userId - Authenticated owner id.
- * @returns {Promise<Object|null>} Owner-scoped agent or `null` without existence disclosure.
+ * @param {string} userId - Authenticated user id.
+ * @returns {Promise<Object|null>} Authorized agent or `null` without existence disclosure.
  */
 async function resolveAgent(agentId, userId) {
-  const result = await db.query(
-    `SELECT id, name, status, container_id, host, backend_type, gateway_token,
-            gateway_host_port, gateway_host, gateway_port, runtime_host,
-            runtime_port, runtime_family, deploy_target, execution_target_id, user_id
-       FROM agents WHERE id = $1`,
-    [agentId],
-  );
+  const result = await db.query(buildAccessibleAgentQuery(GATEWAY_RELAY_AGENT_COLUMNS), [
+    agentId,
+    userId,
+  ]);
   const agent = result.rows[0];
-  if (!agent || agent.user_id !== userId) return null;
+  if (!agent || !roleSatisfies(agent.effective_role, GATEWAY_MIN_WORKSPACE_ROLE)) return null;
   return agent;
 }
 
@@ -1643,7 +1678,11 @@ function createGatewayRouter(options = {}) {
   // gateway eventually starts successfully.
   router.use("/agents/:agentId/gateway", async (req, res, next) => {
     try {
-      const agent = await findAgentForRequest(req, req.params.agentId);
+      const agent = await findAccessibleAgentForRequest(
+        req,
+        req.params.agentId,
+        GATEWAY_MIN_WORKSPACE_ROLE,
+      );
       if (!agent) return res.status(404).json({ error: "Agent not found" });
       if (resolveAgentRuntimeFamily(agent) !== "openclaw") {
         return res.status(409).json({

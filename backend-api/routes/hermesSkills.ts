@@ -11,7 +11,7 @@ const {
 const { runContainerCommand } = require("../authSync");
 const { requireScope, scopeByMethod } = require("../middleware/auth");
 const {
-  findAgentForRequest,
+  findAccessibleAgentForRequest,
   isRemoteDockerAgent,
   requireApiKeyAgentScope,
 } = require("../middleware/ownership");
@@ -174,12 +174,22 @@ function sendSkillNameValidationError(res, name, action) {
 /**
  * Load an agent authorized for the current session or scoped API key request.
  *
+ * The Skills panel is one sub-tab of the Hermes WebUI, so it resolves access the
+ * same way its siblings do (routes/agents.ts → loadHermesUiAgent): the agent's
+ * owner, or a member of a workspace the agent is shared into who meets the
+ * route's minimum role. Reads take `viewer`, mutations take `editor`. An
+ * insufficient role resolves to no agent, which the callers surface as
+ * `agent_not_found` — matching the sibling routes rather than advertising the
+ * role gap. API-key requests keep their exact workspace binding via
+ * findAccessibleAgentForRequest's key branch.
+ *
  * @param {Object} req - Request carrying session or API-key authorization context.
  * @param {string} agentId - Agent to load.
+ * @param {string} [requiredRole="viewer"] - Minimum workspace role.
  * @returns {Promise<Object|null>} Request-accessible agent row, or `null`.
  */
-async function loadOwnedAgent(req, agentId) {
-  return findAgentForRequest(req, agentId);
+async function loadAccessibleAgent(req, agentId, requiredRole = "viewer") {
+  return findAccessibleAgentForRequest(req, agentId, requiredRole);
 }
 
 /**
@@ -255,7 +265,7 @@ router.get("/skills/detail", async (req, res) => {
 
 router.get("/agents/:agentId/skills", async (req, res) => {
   try {
-    const agent = await loadOwnedAgent(req, req.params.agentId);
+    const agent = await loadAccessibleAgent(req, req.params.agentId);
     validateHermesMutableAgent(agent);
     const { output } = await runContainerCommand(agent, HERMES_SKILLS_LOCK_READ_COMMAND);
     const decoded = Buffer.from(
@@ -280,7 +290,7 @@ router.get("/agents/:agentId/skills", async (req, res) => {
 
 router.post("/agents/:agentId/skills/install", async (req, res) => {
   try {
-    const agent = await loadOwnedAgent(req, req.params.agentId);
+    const agent = await loadAccessibleAgent(req, req.params.agentId, "editor");
     validateHermesMutableAgent(agent);
     const ref = typeof req.body?.ref === "string" ? req.body.ref.trim() : "";
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
@@ -343,7 +353,7 @@ router.post("/agents/:agentId/skills/install", async (req, res) => {
 
 router.post("/agents/:agentId/skills/delete", async (req, res) => {
   try {
-    const agent = await loadOwnedAgent(req, req.params.agentId);
+    const agent = await loadAccessibleAgent(req, req.params.agentId, "editor");
     validateHermesMutableAgent(agent);
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
     if (sendSkillNameValidationError(res, name, "removed")) {
@@ -404,7 +414,7 @@ router.get("/jobs/:jobId", requireScope("agents:read"), async (req, res) => {
 
   let agent;
   try {
-    agent = await loadOwnedAgent(req, status.agentId);
+    agent = await loadAccessibleAgent(req, status.agentId);
   } catch (error) {
     if (error?.statusCode === 403 || error?.code === "session_required") {
       return res.status(404).json({ error: "job_not_found" });

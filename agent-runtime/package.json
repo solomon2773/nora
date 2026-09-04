@@ -15,12 +15,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "tsx": "^4.21.0",
-    "sanitize-html": "^2.17.5"
+    "tsx": "^4.23.12",
+    "sanitize-html": "2.17.5"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
+    "@types/node": "^26.2.0",
     "typescript": "^6.0.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }

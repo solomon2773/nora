@@ -1,0 +1,110 @@
+# Remediation half of the dependency-security loop.
+#
+# Detection already exists: GitHub Dependabot alerts are enabled repo-wide and
+# `.github/workflows/dependency-audit.yml` sweeps every package daily. What was
+# missing is anything that opens fix PRs on a predictable cadence — Dependabot
+# *security* updates alone declined the transitive npm bumps this repo needed
+# (js-yaml, nanoid, brace-expansion), even though a plain lockfile refresh
+# resolved them. Scheduled *version* updates close that gap by keeping parents
+# current instead of waiting for an advisory to force the issue.
+#
+# Every npm manifest in the repo is listed. When a new service is added, add its
+# directory here too, or it silently drops out of dependency maintenance.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /admin-dashboard
+      - /agent-runtime
+      - /backend-api
+      - /cli
+      - /e2e
+      - /frontend-dashboard
+      - /frontend-marketing
+      - /mcp-server
+      - /workers/backup
+      - /workers/provisioner
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    # sanitize-html 2.17.6+ depends on htmlparser2 v12, which is pure ESM with no
+    # CommonJS build. backend-api's Jest suite loads sanitize-html through
+    # agent-runtime's getSanitizeHtml(), and Jest's CJS sandbox cannot parse it —
+    # so any bump past 2.17.5 red-lines the suite. 2.17.5 already carries the
+    # GHSA-vccv-cmxp-4j9h fix, so holding here costs no security coverage.
+    #
+    # The exact "2.17.5" pin in package.json stops npm from drifting, but it does
+    # NOT stop Dependabot: a version update rewrites the manifest itself, and
+    # 2.17.5 -> 2.17.7 is a legitimate patch bump. This is the only place the
+    # constraint can be expressed. Lift both together once Jest can transform ESM
+    # dependencies, or once sanitize-html ships a CommonJS build again.
+    ignore:
+      - dependency-name: sanitize-html
+        versions: [">=2.17.6"]
+      # TypeScript 7 is blocked on two independent toolchain gaps, in different
+      # packages, so it cannot land anywhere useful yet:
+      #   - ts-jest caps its typescript peer at ">=4.3 <7" in every published
+      #     version including the latest (29.4.12), so `npm ci` in backend-api
+      #     fails ERESOLVE outright.
+      #   - Next.js 16 crashes during `next build` under TS 7 ("The id argument
+      #     must be of type string"), taking out all three dashboards.
+      # The five remaining packages would compile, but all nine share
+      # tsconfig.base.json — running two compiler majors against one shared
+      # config invites divergence for no benefit. Hold the whole monorepo on 6
+      # and lift this once ts-jest and Next.js both support 7.
+      - dependency-name: typescript
+        versions: [">=7"]
+      # @kubernetes/client-node 2.0.0 cannot be validated with what we have, and
+      # the Kubernetes adapter is a GA deploy target — the wrong place to land an
+      # unverified major.
+      #
+      # The surface checks are reassuring: all 29 API methods and 8 constructors
+      # we call exist in 2.0.0, arity is unchanged from 1.4.0, and k8s.ts already
+      # reads results defensively (`res?.body || res`), so a body-unwrapping
+      # change would not break it. But none of that exercises auth, error shapes,
+      # or the Exec/Log streaming paths, which are where this library has broken
+      # across majors.
+      #
+      # Nothing else covers it either: workers/provisioner/backends/k8s.ts is
+      # @ts-nocheck so typecheck offers no protection, the unit suites mock the
+      # client entirely, and no CI workflow runs e2e's kind smoke. Lift this
+      # after `cd e2e && npm run smoke:k8s-kind` passes against 2.x, or after a
+      # deploy/exec/logs check on a real cluster.
+      - dependency-name: "@kubernetes/client-node"
+        versions: [">=2"]
+    # Minor and patch updates land as one grouped PR per directory; majors stay
+    # individual so a breaking bump is reviewed on its own.
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+
+  # Actions are SHA-pinned across every workflow, so they never drift on their
+  # own — without this they stay frozen at whatever SHA was first pinned.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies

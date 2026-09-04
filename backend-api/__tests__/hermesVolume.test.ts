@@ -19,10 +19,16 @@ function mockBackend() {
 }
 
 describe("HermesBackend.destroy volume handling", () => {
-  it("removes the home volume on a true delete (no preserveState)", async () => {
+  it("removes the home volume on a true delete", async () => {
+    const { backend, removedVolumes } = mockBackend();
+    await backend.destroy("cid", { agentId: "123", preserveState: false });
+    expect(removedVolumes).toContain("nora_hermes_home_123");
+  });
+
+  it("keeps the home volume when the caller omits preserveState", async () => {
     const { backend, removedVolumes } = mockBackend();
     await backend.destroy("cid", { agentId: "123" });
-    expect(removedVolumes).toContain("nora_hermes_home_123");
+    expect(removedVolumes).not.toContain("nora_hermes_home_123");
   });
 
   it("keeps the home volume on a redeploy (preserveState)", async () => {

@@ -295,6 +295,65 @@ describe("Hermes exact bootstrap replacement", () => {
     expect(command).toContain('config.pop("model", None)');
   });
 
+  // Executed rather than string-matched: #340 was a shell-semantics bug, and an
+  // assertion on the command text would have passed against the broken version.
+  describe("gateway key reconciliation (#340)", () => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const path = require("node:path");
+    const { execFileSync } = require("node:child_process");
+
+    function runBootstrap(existingEnvFile, apiServerKey) {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nora-hermes-key-"));
+      if (existingEnvFile !== null) {
+        fs.writeFileSync(path.join(home, ".env"), existingEnvFile);
+      }
+      const script = path.join(home, "bootstrap.sh");
+      fs.writeFileSync(script, buildHermesRuntimeConfigBootstrapCommand());
+      // Both managed-state vars stay unset so their blocks are skipped and only
+      // the key reconciliation runs.
+      const env = { PATH: process.env.PATH, HERMES_HOME: home, API_SERVER_KEY: apiServerKey };
+      execFileSync("sh", ["-eu", script], { env, stdio: "pipe" });
+      const contents = fs.readFileSync(path.join(home, ".env"), "utf8");
+      fs.rmSync(home, { recursive: true, force: true });
+      return contents;
+    }
+
+    it("replaces a key the Hermes image generated behind Nora's back", () => {
+      const result = runBootstrap(
+        "OTHER=keepme\nAPI_SERVER_KEY=hook-generated-competitor\nTRAILING=alsokeep\n",
+        "nora-issued-key",
+      );
+      expect(result).toContain("API_SERVER_KEY=nora-issued-key");
+      expect(result).not.toContain("hook-generated-competitor");
+      // Unrelated runtime settings must survive the rewrite.
+      expect(result).toContain("OTHER=keepme");
+      expect(result).toContain("TRAILING=alsokeep");
+    });
+
+    it("seeds the key on a fresh volume so the image never generates one", () => {
+      expect(runBootstrap(null, "nora-issued-key")).toContain("API_SERVER_KEY=nora-issued-key");
+    });
+
+    it("preserves the Nora-managed block while reconciling", () => {
+      const result = runBootstrap(
+        'API_SERVER_KEY=stale\n# >>> NORA MANAGED ENV >>>\nFOO="bar"\n# <<< NORA MANAGED ENV <<<\n',
+        "nora-issued-key",
+      );
+      expect(result).toContain("# >>> NORA MANAGED ENV >>>");
+      expect(result).toContain('FOO="bar"');
+      expect(result).toContain("API_SERVER_KEY=nora-issued-key");
+      expect(result).not.toContain("API_SERVER_KEY=stale");
+    });
+
+    it("handles an .env whose final line has no trailing newline", () => {
+      const result = runBootstrap("OTHER=keepme\nAPI_SERVER_KEY=stale", "nora-issued-key");
+      expect(result).toContain("OTHER=keepme");
+      expect(result).toMatch(/API_SERVER_KEY=nora-issued-key\n?$/);
+      expect(result).not.toContain("stale");
+    });
+  });
+
   it("installs a durable login prelude for existing Hermes containers", async () => {
     const backend = Object.create(HermesBackend.prototype);
     const container = {};

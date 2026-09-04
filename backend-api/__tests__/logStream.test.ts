@@ -587,4 +587,86 @@ describe("log stream websocket auth", () => {
     expect(mockAssertRemoteHostAgentUse).toHaveBeenCalledTimes(3);
     expect(mockContainerManager.logs).toHaveBeenCalledTimes(1);
   });
+  // ── Provisioning race guard ───────────────────────────────────────────────
+  // A live container observed while the agent is still status='deploying' must
+  // NOT be promoted to 'running'. The provisioner's own writes are guarded on
+  // status='deploying', so clobbering it makes readiness finalization match zero
+  // rows, which the worker reads as "agent deleted" and destroys the new runtime.
+  function stubAgentDb(dbRow) {
+    mockDb.query.mockImplementation((sql) => {
+      if (/UPDATE\s+agents/i.test(sql) && /status\s*=\s*'running'/.test(sql)) {
+        // Emulate Postgres row matching for the promotion UPDATE.
+        const excludesDeploying = /status\s*<>\s*'deploying'/.test(sql);
+        if (excludesDeploying && dbRow.status === "deploying") {
+          return Promise.resolve({ rows: [], rowCount: 0 });
+        }
+        dbRow.status = "running";
+        return Promise.resolve({ rows: [{ id: dbRow.id }], rowCount: 1 });
+      }
+      // Authorization SELECT — hand the handler its own copy so that in-memory
+      // state and database state stay independently observable.
+      return Promise.resolve({ rows: [{ ...dbRow }] });
+    });
+  }
+
+  function promotionQueries() {
+    return mockDb.query.mock.calls.filter(
+      ([sql]) => /UPDATE\s+agents/i.test(sql) && /status\s*=\s*'running'/.test(sql),
+    );
+  }
+
+  it("does not promote a deploying agent whose container is already live", async () => {
+    const dbRow = {
+      id: "agent-deploying",
+      name: "Deploying Agent",
+      status: "deploying",
+      container_id: "hermes-agent-deploying",
+      backend_type: "k8s",
+      deploy_target: "k8s",
+      user_id: "owner-1",
+    };
+    stubAgentDb(dbRow);
+    mockContainerManager.status.mockResolvedValue({ running: true });
+    mockContainerManager.logs.mockResolvedValue(new PassThrough());
+
+    const ws = openLogStream("agent-deploying", { id: "admin-1", role: "admin" });
+    await flushAsyncWork();
+
+    const promotions = promotionQueries();
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0][0]).toMatch(/status\s*<>\s*'deploying'/);
+
+    // The UPDATE matched no rows: the provisioner still owns this agent.
+    expect(dbRow.status).toBe("deploying");
+    expect(dbRow.container_id).toBe("hermes-agent-deploying");
+
+    ws.close();
+  });
+
+  it.each(["stopped", "warning", "error"])(
+    "still corrects a stale '%s' status when the container is observed live",
+    async (staleStatus) => {
+      const dbRow = {
+        id: `agent-stale-${staleStatus}`,
+        name: "Stale Agent",
+        status: staleStatus,
+        container_id: `hermes-agent-stale-${staleStatus}`,
+        backend_type: "k8s",
+        deploy_target: "k8s",
+        user_id: "owner-1",
+      };
+      stubAgentDb(dbRow);
+      mockContainerManager.status.mockResolvedValue({ running: true });
+      mockContainerManager.logs.mockResolvedValue(new PassThrough());
+
+      const ws = openLogStream(`agent-stale-${staleStatus}`, { id: "admin-1", role: "admin" });
+      await flushAsyncWork();
+
+      expect(promotionQueries()).toHaveLength(1);
+      expect(dbRow.status).toBe("running");
+      expect(mockContainerManager.logs).toHaveBeenCalledTimes(1);
+
+      ws.close();
+    },
+  );
 });

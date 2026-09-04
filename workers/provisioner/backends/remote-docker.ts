@@ -128,6 +128,24 @@ class RemoteDockerBackend extends DockerBackend {
       Number(result.runtimeHostPort) || Number(config.runtimeHostPort) || null;
     return {
       ...result,
+      // The parent derives `host` from the container's networks as reported by
+      // the Docker daemon that created it — correct only when that daemon is
+      // the worker's own. On a remote host it is an address the control plane
+      // cannot reach: either "localhost", or an IP on the remote machine's
+      // private Docker network.
+      //
+      // Leaving it wrong is not inert. The worker's localhost-recovery path
+      // reacts to host === "localhost" by inspecting /var/run/docker.sock —
+      // the wrong machine — and, when that fails, falls back to the container
+      // *name*, which only the remote daemon's embedded DNS can resolve. Any
+      // consumer that then reads `host` is pointed at a name that never
+      // resolves, and OpenClaw agents sit in `deploying` until their attempts
+      // are exhausted (#408).
+      //
+      // Falls back to the parent's value if the profile somehow carries neither
+      // a gateway host nor an SSH host, rather than replacing a wrong address
+      // with an empty one.
+      ...(gatewayHost ? { host: gatewayHost } : {}),
       gatewayHost,
       gatewayPort: result.gatewayHostPort || null,
       runtimeHost: gatewayHost,

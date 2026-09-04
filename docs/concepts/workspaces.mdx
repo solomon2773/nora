@@ -53,6 +53,15 @@ Workspace roles apply to assigned agents:
 | `admin`  | Manage members, invitations, budgets, alert rules, API keys, and remove agent assignments. |
 | `owner`  | Full workspace control, including deleting the workspace.                                  |
 
+Embedded runtime consoles follow the same rule. A Hermes agent's **Hermes WebUI → Official
+Dashboard** tab loads for every member of a sharing workspace, and mutating requests made through it
+require `editor` or above, exactly like the native chat, cron, and channel panels.
+
+An OpenClaw agent's gateway — its control UI, gateway API routes, and the chat/terminal
+WebSocket — requires `editor` or above in full. That surface carries live agent control and the
+runtime's own gateway credential, so it has no read-only mode: a `viewer` can see a shared OpenClaw
+agent and its metrics, but not open its console.
+
 Removing an agent from a workspace only removes the assignment. The agent continues running and remains available to its direct owner and any other workspace where it is assigned.
 
 ## Sharing a Remote Docker host

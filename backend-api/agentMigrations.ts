@@ -198,7 +198,9 @@ function buildDraftPreview(manifest = {}) {
     : [];
 
   return {
-    id: manifest.id || null,
+    // Deliberately no `id` here. A draft's identity is the persisted row id,
+    // and nothing ever sets manifest.id — it was always null, so spreading this
+    // over a caller's real id silently erased it (#339).
     name: manifest.name || "Imported Agent",
     runtimeFamily:
       String(manifest.runtimeFamily || "")
@@ -1388,10 +1390,12 @@ async function createMigrationDraft({
     ...row,
     manifest: normalizedManifest,
     preview: {
+      // Spread first, then the row-derived fields, so the persisted identity
+      // always wins no matter what the preview builder grows later.
+      ...buildDraftPreview(normalizedManifest),
       id: row.id,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
-      ...buildDraftPreview(normalizedManifest),
     },
   };
 }
@@ -1468,10 +1472,10 @@ async function getOwnedMigrationDraft(draftId, userId) {
     ...row,
     manifest,
     preview: {
+      ...buildDraftPreview(manifest),
       id: row.id,
       createdAt: row.created_at,
       expiresAt: row.expires_at,
-      ...buildDraftPreview(manifest),
     },
   };
 }

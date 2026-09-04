@@ -186,6 +186,61 @@ describe("buildRemoteDockerOptions", () => {
   });
 });
 
+// #408: create() overrode gatewayHost, gatewayPort, runtimeHost and runtimePort
+// for the remote host but left `host` as whatever the parent derived from the
+// container's networks — which describes the REMOTE daemon's view and is
+// unreachable from the control plane. The worker's localhost-recovery path then
+// inspected the local Docker socket, failed, and fell back to the container
+// name, which only the remote daemon's DNS resolves, so OpenClaw agents sat in
+// `deploying` until their attempts ran out.
+describe("RemoteDockerBackend.create endpoint overrides (#408)", () => {
+  // super.create resolves through RemoteDockerBackend.prototype's prototype, so
+  // stubbing DockerBackend.prototype.create is enough — no real daemon, and no
+  // need to satisfy the constructor's SSH validation.
+  function callCreate(parentResult, profileOverrides = {}) {
+    const spy = jest.spyOn(DockerBackend.prototype, "create").mockResolvedValue(parentResult);
+    const self = { profile: keyProfile(profileOverrides) };
+    return RemoteDockerBackend.prototype.create.call(self, {}).finally(() => spy.mockRestore());
+  }
+
+  const PARENT = {
+    containerId: "nora-agent-1",
+    containerName: "nora-agent-1",
+    host: "localhost",
+    gatewayToken: "token",
+    gatewayHostPort: "31890",
+    gatewayHost: "localhost",
+    gatewayPort: 18789,
+    runtimeHostPort: "31891",
+  };
+
+  it("points host at the registered remote host rather than the daemon's view", async () => {
+    const result = await callCreate(PARENT);
+    expect(result.host).toBe("laptop.tail-scale.ts.net");
+    // The parent's value must not survive: "localhost" is what triggers the
+    // worker's local-socket recovery path on the wrong machine.
+    expect(result.host).not.toBe("localhost");
+  });
+
+  it("keeps host consistent with the other overridden endpoint fields", async () => {
+    const result = await callCreate(PARENT);
+    expect(result.host).toBe(result.gatewayHost);
+    expect(result.host).toBe(result.runtimeHost);
+  });
+
+  it("falls back to the SSH host when no gateway host is configured", async () => {
+    const result = await callCreate(PARENT, { gatewayHost: "" });
+    expect(result.host).toBe("100.64.0.5");
+  });
+
+  it("keeps the parent host rather than emptying it when the profile has neither", async () => {
+    // Replacing a wrong address with an empty one would be a regression, not a
+    // fix — downstream code treats a falsy host very differently.
+    const result = await callCreate(PARENT, { gatewayHost: "", sshHost: "" });
+    expect(result.host).toBe("localhost");
+  });
+});
+
 describe("RemoteDockerBackend construction", () => {
   it("rejects a profile without a remote: execution target", () => {
     expect(() => new RemoteDockerBackend(keyProfile({ executionTargetId: "docker" }))).toThrow(

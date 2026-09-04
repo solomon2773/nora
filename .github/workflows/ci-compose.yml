@@ -39,10 +39,10 @@ jobs:
       run:
         working-directory: backend-api
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -77,10 +77,10 @@ jobs:
     env:
       TEST_POSTGRES_URL: postgres://nora:nora-test-password@127.0.0.1:5432/nora_migration_test
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -99,10 +99,10 @@ jobs:
       run:
         working-directory: agent-runtime
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -117,10 +117,10 @@ jobs:
       run:
         working-directory: frontend-dashboard
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -135,10 +135,10 @@ jobs:
       run:
         working-directory: workers/provisioner
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -153,10 +153,10 @@ jobs:
       run:
         working-directory: workers/backup
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -171,10 +171,10 @@ jobs:
       run:
         working-directory: mcp-server
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -208,7 +208,7 @@ jobs:
             dockerfile: workers/backup/Dockerfile.prod
             image: nora-worker-backup:ci
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: docker build --file ${{ matrix.dockerfile }} --tag ${{ matrix.image }} .
@@ -228,18 +228,30 @@ jobs:
       COMPOSE_PROJECT_NAME: nora-e2e-ci
       NORA_ENV_FILE: .env.test
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: e2e/package-lock.json
       - run: npm ci
         working-directory: e2e
+      # The runner image ships browsers built for one exact Playwright version,
+      # so a hardcoded tag silently drifts the moment @playwright/test is bumped
+      # and every spec dies with "Executable doesn't exist at /ms-playwright/...".
+      # Deriving the tag from the installed package keeps them in lockstep.
+      - name: Resolve Playwright runner image
+        id: playwright-image
+        working-directory: e2e
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('@playwright/test/package.json').version")"
+          echo "image=mcr.microsoft.com/playwright:v${version}-noble" >> "$GITHUB_OUTPUT"
+          echo "Using Playwright runner image for @playwright/test ${version}"
       - name: Pull Playwright runner image
-        run: docker pull mcr.microsoft.com/playwright:v1.59.1-noble
+        run: docker pull "${{ steps.playwright-image.outputs.image }}"
       - name: Start compose stack
         run: docker compose -f docker-compose.e2e.yml up -d --build
       - name: Wait for Nora stack
@@ -261,7 +273,7 @@ jobs:
             -e CI \
             -v "${{ github.workspace }}:/work" \
             -w /work/e2e \
-            mcr.microsoft.com/playwright:v1.59.1-noble \
+            "${{ steps.playwright-image.outputs.image }}" \
             npx playwright test
       - name: Capture compose diagnostics
         if: failure()

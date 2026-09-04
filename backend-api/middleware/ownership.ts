@@ -236,6 +236,54 @@ async function findAccessibleAgentForRequest(req, agentId, requiredRole = "viewe
 }
 
 /**
+ * Build the `agents` SELECT used by lookups that cannot call findAccessibleAgent
+ * because they need a narrow, pinned column projection instead of `SELECT *` —
+ * the embed and gateway proxies, whose SSRF allowlist authorizes against an
+ * exact field list (see embedAgentColumns.ts).
+ *
+ * The statement resolves the same access model findAccessibleAgent implements —
+ * the agent's owner, or a member of any workspace the agent is shared into — and
+ * exposes the caller's highest role as `effective_role` so the caller can apply
+ * its own minimum-role rule. Rows reachable by neither route are filtered out,
+ * so a caller that ignores `effective_role` still gets owner-or-member scoping.
+ *
+ * Bind exactly `[agentId, userId]`. `user_id` in the projection stays the
+ * *owner*, never the caller — the remote-host grant check depends on that.
+ *
+ * @param {string[]} columns - Agent columns to select; identifiers only.
+ * @returns {string} Parameterized SELECT statement.
+ */
+function buildAccessibleAgentQuery(columns) {
+  for (const column of columns) {
+    // These lists are module constants, never request input, but interpolating
+    // them into SQL is only safe while that stays true.
+    if (typeof column !== "string" || !/^[a-z_]+$/.test(column)) {
+      throw new Error(`Unsafe agent column: ${String(column)}`);
+    }
+  }
+  return `SELECT ${columns.map((column) => `a.${column}`).join(", ")},
+            CASE WHEN a.user_id = $2 THEN 'owner' ELSE shared.role END AS effective_role
+       FROM agents a
+       LEFT JOIN LATERAL (
+         SELECT m.role
+           FROM workspace_agents wa
+           JOIN workspace_members m
+             ON m.workspace_id = wa.workspace_id AND m.user_id = $2
+          WHERE wa.agent_id = a.id
+          ORDER BY
+            CASE m.role
+              WHEN 'owner' THEN 0
+              WHEN 'admin' THEN 1
+              WHEN 'editor' THEN 2
+              WHEN 'viewer' THEN 3
+            END
+          LIMIT 1
+       ) shared ON TRUE
+      WHERE a.id = $1
+        AND (a.user_id = $2 OR shared.role IS NOT NULL)`;
+}
+
+/**
  * Resolve an agent through direct ownership or any sharing workspace where the
  * user meets the requested role, attaching the effective role on success.
  *
@@ -447,6 +495,7 @@ module.exports = {
   requireApiKeyAgentPathScope,
   findOwnedAgent,
   findAgentForRequest,
+  buildAccessibleAgentQuery,
   findAccessibleAgent,
   findAccessibleAgentForRequest,
   findAccessibleAgentForActor,

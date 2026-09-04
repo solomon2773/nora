@@ -382,8 +382,15 @@ test("self-hosted platform admin manages Remote Hosts without exposing stored se
       gatewayHost: "gateway.internal",
     });
 
+  // count() does not auto-wait. Guarding the click on it meant that if the tab
+  // bar had not rendered yet — the previous step awaits an API response, not the
+  // UI — the click was silently skipped and the assertions below ran against the
+  // Overview tab, where "SSH private key" exists only as a paragraph and no form
+  // field is present. That produced a confusing "element(s) not found" pointing
+  // at the field rather than at the missed tab switch. The tab is rendered
+  // unconditionally, so click() and let it auto-wait.
   const configTab = page.getByRole("button", { name: /host configuration|configuration/i });
-  if ((await configTab.count()) > 0) await configTab.first().click();
+  await configTab.first().click();
   await expect(page.getByLabel(/^SSH private key/i)).toHaveValue("");
   await expect(page.getByLabel(/^Key passphrase/i)).toHaveValue("");
   await expect(

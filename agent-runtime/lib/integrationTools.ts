@@ -57,6 +57,14 @@ function loadModuleFromKnownRoots(moduleName, extraPaths = []) {
   return require(require.resolve(moduleName, { paths: searchPaths }));
 }
 
+// sanitize-html is pinned to an exact 2.17.5 in BOTH agent-runtime and
+// backend-api, and the two must stay in lockstep. 2.17.5 is the first release
+// carrying the GHSA-vccv-cmxp-4j9h fix, and the last one before sanitize-html
+// moved to htmlparser2 v12, which is pure ESM with no CommonJS build. The
+// resolution order below means backend-api's Jest suite can end up loading
+// either copy depending on whether agent-runtime/node_modules exists, so a
+// range that lets one side drift to >=2.17.6 breaks those tests wherever the
+// ESM copy wins. Relax the pin only once Jest can transform ESM dependencies.
 function getSanitizeHtml() {
   if (!sanitizeHtmlLib) {
     sanitizeHtmlLib = loadModuleFromKnownRoots("sanitize-html", [

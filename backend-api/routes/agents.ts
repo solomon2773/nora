@@ -103,6 +103,11 @@ const {
 const { releaseGatewayPort } = require("../portAllocations");
 const { buildPostgresConfig } = require("../lib/connectionConfig");
 const {
+  advisoryLockBusyError,
+  advisoryLockClientOptions,
+  isAdvisoryLockTimeout,
+} = require("../lib/advisoryLocks");
+const {
   acquireAgentProvisionLock,
   buildReplacementDeploymentJob,
   enqueueReplacementDeployment: enqueueReplacementDeploymentWithLock,
@@ -226,7 +231,16 @@ function createDemoActivationLockClient() {
     ...process.env,
     DB_APPLICATION_NAME: "nora-backend-demo-activation",
   });
-  return new Client(clientConfig);
+  // Bounded lock waits: the activation lock is acquired with a blocking
+  // pg_advisory_lock, so without this a stuck holder makes demo activation hang
+  // rather than fail (#406).
+  return new Client({
+    ...clientConfig,
+    options: advisoryLockClientOptions(
+      process.env.DEMO_ACTIVATION_LOCK_TIMEOUT_MS,
+      clientConfig.options,
+    ),
+  });
 }
 
 function demoActivationJobId(agentId) {
@@ -825,9 +839,14 @@ router.get(
         runtimeStatus = live;
         const reconciledStatus = reconcileAgentStatus(agent.status, Boolean(live.running));
         if (reconciledStatus !== agent.status) {
-          await db.query("UPDATE agents SET status = $1 WHERE id = $2", [
+          // Guarded on the status this request observed: the row can enter the
+          // deploy lifecycle while the liveness probe above is in flight, and an
+          // unguarded write would clobber 'deploying' out from under the
+          // provisioner's compare-and-swap.
+          await db.query("UPDATE agents SET status = $1 WHERE id = $2 AND status = $3", [
             reconciledStatus,
             agent.id,
+            agent.status,
           ]);
           agent.status = reconciledStatus;
         }
@@ -1924,7 +1943,16 @@ router.post("/activate-demo", requireSession, async (req, res) => {
     client = createDemoActivationLockClient();
     await client.connect();
     connected = true;
-    await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+    try {
+      await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+    } catch (error) {
+      if (isAdvisoryLockTimeout(error)) {
+        throw advisoryLockBusyError("Demo activation is already in progress. Retry in a moment.", {
+          code: "DEMO_ACTIVATION_LOCK_BUSY",
+        });
+      }
+      throw error;
+    }
     lockHeld = true;
 
     // Validate the hard-coded local-Docker demo target before returning or

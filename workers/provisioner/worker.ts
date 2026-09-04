@@ -8,6 +8,11 @@ const {
   buildPostgresConfig,
   createRedisClient,
 } = require("../../backend-api/lib/connectionConfig");
+const {
+  advisoryLockBusyError,
+  advisoryLockClientOptions,
+  isAdvisoryLockTimeout,
+} = require("../../backend-api/lib/advisoryLocks");
 const { getDefaultAgentImage } = require("../../agent-runtime/lib/agentImages");
 const { NEMOCLAW_DEFAULT_MODEL } = require("../../agent-runtime/lib/nemoclawDefaults");
 const {
@@ -151,7 +156,16 @@ function createProvisionerLockClient(scope) {
     ...process.env,
     DB_APPLICATION_NAME: `nora-worker-provisioner-${scope}`,
   });
-  return new Client(clientConfig);
+  // Bound every lock wait on these dedicated lock sessions. The provider
+  // mutation lock acquires with a blocking pg_advisory_lock, so without this a
+  // stuck holder makes the worker wait forever behind it (#406).
+  return new Client({
+    ...clientConfig,
+    options: advisoryLockClientOptions(
+      process.env.PROVISIONER_LOCK_TIMEOUT_MS,
+      clientConfig.options,
+    ),
+  });
 }
 
 // Hash any agent ID (uuid string or integer) to a signed 64-bit BigInt suitable
@@ -178,9 +192,29 @@ function advisoryLockKeyForAgent(agentId) {
  * to the pg client's session: a worker crash drops the connection and the
  * lock is released by Postgres automatically.
  */
+// Ceiling on how long one job may hold a per-agent provision lock. Set above
+// the deployment job timeout so it never interrupts a provision that is merely
+// slow — it exists for the case where the guarded work never returns at all and
+// the lock would otherwise be held until the process restarts (#406).
+function agentProvisionMaxHoldMs() {
+  const configured = Number.parseInt(process.env.PROVISION_LOCK_MAX_HOLD_MS, 10);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  const jobTimeout = Number.parseInt(
+    process.env.DEPLOYMENT_JOB_TIMEOUT_MS || process.env.PROVISION_TIMEOUT_MS,
+    10,
+  );
+  const base = Number.isFinite(jobTimeout) && jobTimeout > 0 ? jobTimeout : 900000;
+  return base + 300000;
+}
+
 async function acquireAgentProvisionLock(agentId) {
   const lockKey = advisoryLockKeyForAgent(agentId);
   return acquireDedicatedSessionLock({
+    maxHoldMs: agentProvisionMaxHoldMs(),
+    onHoldTimeout: (budgetMs) =>
+      console.error(
+        `[provisioner] Provision lock for agent ${agentId} exceeded ${budgetMs}ms and is being released by closing its session. The guarded provisioning work never completed; the job will fail and retry.`,
+      ),
     createClient: () => createProvisionerLockClient("agent-lock"),
     acquire: (client) =>
       client.query("SELECT pg_try_advisory_lock($1) AS locked", [lockKey.toString()]),
@@ -207,8 +241,19 @@ async function withProviderMutationLock(userId, operation) {
   const lockKey = providerMutationLockKey(userId);
   const lock = await acquireDedicatedSessionLock({
     createClient: () => createProvisionerLockClient("provider-mutation-lock"),
-    acquire: (client) =>
-      client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]),
+    acquire: async (client) => {
+      try {
+        return await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+      } catch (error) {
+        if (isAdvisoryLockTimeout(error)) {
+          throw advisoryLockBusyError(
+            `Provider state for user ${userId} is locked by another operation`,
+            { code: "PROVIDER_MUTATION_LOCK_BUSY" },
+          );
+        }
+        throw error;
+      }
+    },
     release: (client) =>
       client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey]),
     onReleaseError: (error) =>
@@ -413,6 +458,43 @@ async function allocateAvailableLocalDockerGatewayPort({
   throw error;
 }
 
+/**
+ * Park a deployed agent in `warning` when its runtime came up but a post-start
+ * configuration step did not complete.
+ *
+ * The runtime is healthy and must be kept: tearing it down would cost the
+ * operator a working agent over a reseed that a retry can finish. The status and
+ * the recorded event are what tell them the agent is up but not fully wired.
+ *
+ * @param {Object} [params={}] - Database handle, agent, runtime, and reason.
+ * @returns {Promise<boolean>} True when the agent row was moved to `warning`.
+ */
+async function markDeploymentDegraded({ queryable = db, agentId, containerId, reason } = {}) {
+  try {
+    const updated = await queryable.query(
+      `UPDATE agents
+          SET status = 'warning'
+        WHERE id = $1
+          AND status = 'running'
+          AND container_id IS NOT DISTINCT FROM $2
+        RETURNING id`,
+      [agentId, containerId],
+    );
+    if (!updated.rows[0]) return false;
+    await queryable.query("INSERT INTO events(type, message, metadata) VALUES($1, $2, $3)", [
+      "agent_deployed_degraded",
+      reason,
+      JSON.stringify({ agentId, containerId }),
+    ]);
+    return true;
+  } catch (error) {
+    console.error(
+      `[provisioner] Could not record degraded deployment state for agent ${agentId}: ${error.message}`,
+    );
+    return false;
+  }
+}
+
 async function persistProvisioningFailure({
   queryable = db,
   job,
@@ -529,6 +611,36 @@ async function failDeploymentForUnresolvedRuntime({
   throw unresolvedError;
 }
 
+/**
+ * Decide whether a deployment cleanup may remove the agent's durable state.
+ *
+ * Durable state (Docker named volumes, the k8s state claim) is keyed by agent
+ * id, not by container id. A cleanup that removes it therefore destroys the
+ * data of whatever runtime that agent owns right now — the runtime this job was
+ * replacing on a redeploy, or a newer deployment that already superseded this
+ * one. Only a genuine agent delete may remove that state, and `destroyAgent` in
+ * the control plane owns it, under the same per-agent provision lock.
+ *
+ * So cleanup keeps state for any agent row that still exists and removes it only
+ * for an agent that is gone. An unreachable database resolves to preserving:
+ * leaking a volume is recoverable, deleting an operator's configuration is not.
+ *
+ * @param {Object} [params={}] - Database handle and the agent being cleaned up.
+ * @returns {Promise<boolean>} True when the backend must keep durable state.
+ */
+async function shouldPreserveDurableState({ queryable = db, agentId } = {}) {
+  if (agentId == null) return true;
+  try {
+    const existing = await queryable.query("SELECT id FROM agents WHERE id = $1", [agentId]);
+    return Boolean(existing.rows[0]);
+  } catch (error) {
+    console.warn(
+      `[provisioner] Could not confirm whether agent ${agentId} still exists; keeping its durable state: ${error.message}`,
+    );
+    return true;
+  }
+}
+
 async function cleanupProvisionedRuntimeAfterFailure({
   queryable = db,
   provisioner,
@@ -536,6 +648,7 @@ async function cleanupProvisionedRuntimeAfterFailure({
   containerId,
   destroyAllowed = true,
   persistIdentity = true,
+  preserveState = true,
 } = {}) {
   if (!containerId) {
     return { destroyed: false, reason: "no-runtime", retrySafe: true };
@@ -567,7 +680,7 @@ async function cleanupProvisionedRuntimeAfterFailure({
   }
 
   try {
-    await provisioner.destroy(containerId, { agentId });
+    await provisioner.destroy(containerId, { agentId, preserveState });
   } catch (error) {
     console.error(
       `[provisioner] Failed to clean runtime ${containerId} for agent ${agentId}: ${error.message}`,
@@ -633,6 +746,7 @@ async function reconcileProvisioningFailureRuntime({
     containerId: unresolvedContainerId,
     destroyAllowed: runtimeIdentity?.destroyAllowed !== false,
     persistIdentity: runtimeIdentity?.persistIdentity !== false,
+    preserveState: await shouldPreserveDurableState({ queryable, agentId }),
   });
   return { ...cleanup, containerId: unresolvedContainerId };
 }
@@ -649,6 +763,10 @@ async function cleanupCanceledProvisionedRuntime({
     provisioner,
     agentId,
     containerId,
+    // A canceled deployment means the agent was deleted *or* a newer deployment
+    // took over its runtime identity. Only the first may drop durable state, and
+    // a surviving row tells the two apart.
+    preserveState: await shouldPreserveDurableState({ queryable, agentId }),
   });
   if (!cleanup.retrySafe) {
     const error = buildUnresolvedRuntimeError({
@@ -4460,6 +4578,10 @@ const worker = new Worker(
         Math.max(60000, jobTimeout - 60000),
       );
 
+      // Set when the runtime came up but a post-start configuration step did
+      // not. The deployment still completes — the runtime exists and is healthy
+      // — but the agent is parked in `warning` with the reason recorded.
+      let degradedReason = null;
       let containerId,
         host,
         gatewayToken,
@@ -4791,31 +4913,47 @@ const worker = new Worker(
             hasMeaningfulHermesModelConfig(persistedHermesState?.modelConfig) ||
             (persistedHermesState?.channels || []).length > 0
           ) {
-            await applyPersistedHermesState(
-              {
-                id,
-                user_id: ownerUserId,
-                container_id: containerId,
-                container_name: containerName || container_name || null,
-                image: resolvedImage,
-                backend_type: resolvedBackend,
-                runtime_family: "hermes",
-                deploy_target: resolvedRuntimeFields.deploy_target,
-                execution_target_id: resolvedRuntimeFields.execution_target_id,
-                sandbox_profile: resolvedRuntimeFields.sandbox_profile,
-                sandbox_type: resolvedRuntimeFields.sandbox_type,
-                host,
-                runtime_host: runtimeHost,
-                runtime_port: runtimePort,
-                gateway_host_port: gatewayHostPort,
-                gateway_host: gatewayHost,
-                gateway_port: gatewayPort,
-                gateway_token: gatewayToken,
-                dashboard_port: dashboardPort,
-              },
-              persistedHermesState,
-              { restart: true },
-            );
+            // Reseeding model config and channels restarts Hermes and waits for
+            // its runtime API to answer. A container that is slow to come back —
+            // three concurrent redeploys contending for one host, say — used to
+            // throw from here into the provisioning failure path, which tore the
+            // runtime down. The runtime itself is fine at this point, so treat a
+            // failed reseed the way the OpenClaw channel reseed below already
+            // does: keep the runtime, degrade the agent, and say what is missing.
+            try {
+              await applyPersistedHermesState(
+                {
+                  id,
+                  user_id: ownerUserId,
+                  container_id: containerId,
+                  container_name: containerName || container_name || null,
+                  image: resolvedImage,
+                  backend_type: resolvedBackend,
+                  runtime_family: "hermes",
+                  deploy_target: resolvedRuntimeFields.deploy_target,
+                  execution_target_id: resolvedRuntimeFields.execution_target_id,
+                  sandbox_profile: resolvedRuntimeFields.sandbox_profile,
+                  sandbox_type: resolvedRuntimeFields.sandbox_type,
+                  host,
+                  runtime_host: runtimeHost,
+                  runtime_port: runtimePort,
+                  gateway_host_port: gatewayHostPort,
+                  gateway_host: gatewayHost,
+                  gateway_port: gatewayPort,
+                  gateway_token: gatewayToken,
+                  dashboard_port: dashboardPort,
+                },
+                persistedHermesState,
+                { restart: true },
+              );
+            } catch (e) {
+              throwIfRemoteAuthorizationFailure(e);
+              console.warn(
+                `[provisioner] Failed to reapply persisted Hermes configuration for agent ${id}:`,
+                e.message,
+              );
+              degradedReason = `Hermes started, but its saved model configuration and channels could not be reapplied: ${e.message}`;
+            }
           }
         }
       } catch (err) {
@@ -5035,6 +5173,15 @@ const worker = new Worker(
             );
           }
           console.log(`Agent ${id} deployed: containerId=${containerId} host=${host}`);
+          if (degradedReason) {
+            await markDeploymentDegraded({
+              queryable: db,
+              agentId: id,
+              containerId,
+              reason: degradedReason,
+            });
+            console.warn(`[provisioner] Agent ${id} deployed degraded: ${degradedReason}`);
+          }
         }
 
         // Reseed persisted channel config before skills/integrations so a
@@ -5502,6 +5649,7 @@ module.exports = {
   isRemoteAuthorizationFailure,
   isFinalDeploymentAttempt,
   loadBackend,
+  markDeploymentDegraded,
   normalizeProvisionerDeployTarget,
   normalizeProvisionerExecutionTargetId,
   persistProvisionedRuntimeIdentity,
@@ -5512,6 +5660,7 @@ module.exports = {
   resolveCanonicalDeploymentOwnerUserId,
   runRuntimeCommand,
   runProvisionerExecCommand,
+  shouldPreserveDurableState,
   seedHermesArchiveForDeployment,
   materializeHermesTemplatePayload,
   toUnrecoverableRuntimeSelectionError,

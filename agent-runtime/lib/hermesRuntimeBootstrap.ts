@@ -84,6 +84,38 @@ function buildHermesRuntimeConfigBootstrapCommand() {
     '  chown hermes:hermes "$HERMES_DATA_DIR/.env" 2>/dev/null || true',
     '  chmod 0600 "$HERMES_DATA_DIR/.env"',
     "fi",
+    // Reconcile the gateway key with the container environment (#340).
+    //
+    // Nora hands the runtime its API_SERVER_KEY as a container env var, but the
+    // Hermes image's docker/stage2-hook.sh generates its own key into
+    // $HERMES_HOME/.env whenever it does not already find one there. It checks
+    // only the file, never the environment, so it treats Nora's key as absent
+    // and writes a competing one. The gateway loads .env at startup and that
+    // value wins, so every control-plane call into the runtime 401s with
+    // "Invalid gateway API key (API_SERVER_KEY)".
+    //
+    // $HERMES_HOME is a persistent volume, so the mismatch survives restarts
+    // and redeploys — which is why even freshly deployed agents were broken.
+    // Writing our key here fixes both directions: an existing competing value
+    // is replaced, and a fresh agent gets the key seeded before first start so
+    // the hook's own guard sees it and skips generation. This runs before
+    // `hermes gateway run` in every backend that starts Hermes, so the gateway
+    // always loads the reconciled file.
+    'if [ -n "${API_SERVER_KEY:-}" ]; then',
+    '  key_tmp="$(mktemp)"',
+    '  if [ -f "$HERMES_DATA_DIR/.env" ]; then',
+    // grep -v exits 1 when every line matches; that must not abort under `set -e`.
+    '    grep -v \'^API_SERVER_KEY=\' "$HERMES_DATA_DIR/.env" > "$key_tmp" || true',
+    "  else",
+    '    : > "$key_tmp"',
+    "  fi",
+    `  printf 'API_SERVER_KEY=%s\\n' "$API_SERVER_KEY" >> "$key_tmp"`,
+    '  chown hermes:hermes "$key_tmp" 2>/dev/null || true',
+    '  chmod 0600 "$key_tmp"',
+    '  mv "$key_tmp" "$HERMES_DATA_DIR/.env"',
+    '  chown hermes:hermes "$HERMES_DATA_DIR/.env" 2>/dev/null || true',
+    '  chmod 0600 "$HERMES_DATA_DIR/.env"',
+    "fi",
     `if [ "\${${HERMES_MODEL_CONFIG_ENV}+x}" = x ]; then`,
     '  HERMES_ROOT="/opt/hermes"',
     '  HERMES_PYTHON="$HERMES_ROOT/.venv/bin/python"',

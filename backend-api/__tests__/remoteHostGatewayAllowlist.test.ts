@@ -419,7 +419,9 @@ describe("hosted-mode Remote Docker gateway shutdown", () => {
       status: "running",
       gateway_token: "legacy-gateway-token",
     };
-    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    // The relay's access lookup resolves the caller's role alongside the row;
+    // these fixtures connect as the agent's own owner.
+    mockDbQuery.mockResolvedValue({ rows: [{ ...agent, effective_role: "owner" }] });
     const server = { on: jest.fn() };
     const wss = attachGatewayWS(server);
     const ws = { send: jest.fn(), close: jest.fn() };
@@ -451,7 +453,9 @@ describe("remote-host gateway relay grant revocation", () => {
       gatewayHost: PUBLIC_IP,
       sshHost: PUBLIC_IP,
     };
-    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    // The relay's access lookup resolves the caller's role alongside the row;
+    // these fixtures connect as the agent's own owner.
+    mockDbQuery.mockResolvedValue({ rows: [{ ...agent, effective_role: "owner" }] });
     mockAssertRemoteHostAgentUse.mockImplementationOnce(() => authorization);
 
     const server = { on: jest.fn() };
@@ -483,7 +487,9 @@ describe("remote-host gateway relay grant revocation", () => {
       sshHost: PUBLIC_IP,
     };
 
-    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    // The relay's access lookup resolves the caller's role alongside the row;
+    // these fixtures connect as the agent's own owner.
+    mockDbQuery.mockResolvedValue({ rows: [{ ...agent, effective_role: "owner" }] });
     mockGetRemoteHostByExecutionTarget.mockResolvedValue(host);
     mockUserCanUseRemoteHost.mockImplementation(async () => grantActive);
 
@@ -538,7 +544,9 @@ describe("remote-host gateway relay grant revocation", () => {
       sshHost: PUBLIC_IP,
     };
 
-    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    // The relay's access lookup resolves the caller's role alongside the row;
+    // these fixtures connect as the agent's own owner.
+    mockDbQuery.mockResolvedValue({ rows: [{ ...agent, effective_role: "owner" }] });
     mockGetRemoteHostByExecutionTarget.mockResolvedValue(host);
     mockUserCanUseRemoteHost.mockImplementation(async () => grantActive);
 
@@ -626,7 +634,9 @@ describe("remote-host gateway relay grant revocation", () => {
       status: "running",
       gateway_token: "legacy-gateway-token",
     };
-    mockDbQuery.mockResolvedValue({ rows: [agent] });
+    // The relay's access lookup resolves the caller's role alongside the row;
+    // these fixtures connect as the agent's own owner.
+    mockDbQuery.mockResolvedValue({ rows: [{ ...agent, effective_role: "owner" }] });
     mockGetRemoteHostByExecutionTarget.mockResolvedValue({
       id: "my-vps",
       ownerUserId: agent.user_id,
@@ -650,6 +660,73 @@ describe("remote-host gateway relay grant revocation", () => {
     });
     expect(JSON.stringify(clientWs.sent)).not.toContain(internalError.message);
     expect(clientWs.closed).toBe(true);
+  });
+});
+
+// The relay carries chat and exec, so it takes the same `editor` bar as the
+// rest of the OpenClaw gateway surface. The embed cookie that authenticates the
+// upgrade carries no role of its own, so the role is re-resolved per connection
+// and a demotion takes effect on the next connect rather than at token expiry.
+describe("gateway relay workspace roles", () => {
+  const SHARED_AGENT = {
+    id: "agent-shared-ws",
+    user_id: "agent-owner",
+    status: "running",
+    host: "10.0.0.60",
+    gateway_host: "10.0.0.60",
+    gateway_port: 18789,
+    gateway_token: "gateway-token",
+    deploy_target: "docker",
+    runtime_family: "openclaw",
+  };
+
+  function mockRelayLookup(memberships) {
+    mockDbQuery.mockImplementation(async (sql, params = []) => {
+      const text = String(sql);
+      if (!/FROM agents/i.test(text)) return { rows: [] };
+      const isOwner = params[1] === SHARED_AGENT.user_id;
+      if (/user_id\s*=\s*\$2/.test(text) && !/workspace_members/i.test(text)) {
+        return { rows: isOwner ? [{ ...SHARED_AGENT, effective_role: "owner" }] : [] };
+      }
+      if (isOwner) return { rows: [{ ...SHARED_AGENT, effective_role: "owner" }] };
+      const role = memberships[params[1]];
+      return { rows: role ? [{ ...SHARED_AGENT, effective_role: role }] : [] };
+    });
+  }
+
+  it("refuses the relay for a read-only workspace viewer", async () => {
+    mockRelayLookup({ "member-1": "viewer" });
+    const wss = attachGatewayWS({ on: jest.fn() });
+    const clientWs = createClientWebSocket();
+
+    await wss.handlers.connection(clientWs, {}, SHARED_AGENT.id, { id: "member-1" });
+
+    expect(clientWs.sent).toContainEqual({ type: "error", message: "Agent not found" });
+    expect(mockGatewaySockets).toHaveLength(0);
+  });
+
+  it("refuses the relay for a user with no membership in any sharing workspace", async () => {
+    mockRelayLookup({ "member-1": "editor" });
+    const wss = attachGatewayWS({ on: jest.fn() });
+    const clientWs = createClientWebSocket();
+
+    await wss.handlers.connection(clientWs, {}, SHARED_AGENT.id, { id: "stranger" });
+
+    expect(clientWs.sent).toContainEqual({ type: "error", message: "Agent not found" });
+    expect(mockGatewaySockets).toHaveLength(0);
+  });
+
+  it("opens the relay for a workspace editor who does not own the agent", async () => {
+    mockRelayLookup({ "member-1": "editor" });
+    const wss = attachGatewayWS({ on: jest.fn() });
+    const clientWs = createClientWebSocket();
+
+    await wss.handlers.connection(clientWs, {}, SHARED_AGENT.id, { id: "member-1" });
+
+    expect(clientWs.sent).not.toContainEqual(
+      expect.objectContaining({ message: "Agent not found" }),
+    );
+    expect(mockGatewaySockets).toHaveLength(1);
   });
 });
 

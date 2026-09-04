@@ -31,14 +31,28 @@ function Field({
   children: ReactNode;
   wide?: boolean;
 }) {
+  // The <label> deliberately wraps ONLY the label text. It used to wrap the hint
+  // and the control too, which made the control's accessible name the whole
+  // subtree — "SSH private key Secrets are encrypted at rest. Leave blank to
+  // preserve the encrypted value. A key is stored." rather than "SSH private
+  // key". That is a real a11y defect (a screen reader announces the entire hint
+  // as the field's name) and it made every getByLabel() lookup depend on hint
+  // wording. Keeping the name equal to the label is both correct and stable.
   return (
-    <label htmlFor={id} className={wide ? "md:col-span-2" : ""}>
-      <span className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500">
+    <div className={wide ? "md:col-span-2" : ""}>
+      <label
+        htmlFor={id}
+        className="block text-[11px] font-black uppercase tracking-[0.16em] text-slate-500"
+      >
         {label}
-      </span>
-      {hint ? <span className="mt-1 block text-xs font-medium text-slate-500">{hint}</span> : null}
+      </label>
+      {hint ? (
+        <span id={`${id}-hint`} className="mt-1 block text-xs font-medium text-slate-500">
+          {hint}
+        </span>
+      ) : null}
       <span className="mt-2 block">{children}</span>
-    </label>
+    </div>
   );
 }
 

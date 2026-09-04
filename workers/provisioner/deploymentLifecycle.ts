@@ -1,5 +1,6 @@
 // @ts-nocheck
 const crypto = require("crypto");
+const { startAdvisoryLockHoldWatchdog } = require("../../backend-api/lib/advisoryLocks.ts");
 
 function normalizeProviderConfig(config) {
   if (typeof config !== "string") return config ?? null;
@@ -82,6 +83,14 @@ async function acquireDedicatedSessionLock({
   busyError = () => new Error("PostgreSQL advisory lock is already held"),
   onReleaseError,
   onCloseError,
+  // Ceiling on how long the lock may stay held. Session-level advisory locks
+  // are released automatically when the connection drops, so a crashed worker
+  // frees them — but a live worker whose guarded work never returns holds the
+  // lock while its session sits idle, and everything else queues behind it
+  // forever (#406). The watchdog ends that connection so Postgres releases the
+  // lock, which is the same path a crash takes.
+  maxHoldMs,
+  onHoldTimeout,
 } = {}) {
   if (typeof createClient !== "function") {
     throw new Error("createClient is required");
@@ -114,11 +123,17 @@ async function acquireDedicatedSessionLock({
     throw error;
   }
 
+  const cancelHoldWatchdog = startAdvisoryLockHoldWatchdog(client, {
+    maxHoldMs,
+    onTimeout: onHoldTimeout,
+  });
+
   let released = false;
   return {
     release: async () => {
       if (released) return;
       released = true;
+      cancelHoldWatchdog();
       try {
         await release(client);
       } catch (error) {

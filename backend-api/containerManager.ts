@@ -505,10 +505,11 @@ module.exports = {
    *
    * @param {Object} agent - Agent whose runtime should be destroyed.
    * @param {Object} [options]
-   * @param {boolean} [options.preserveState=false] - Keep the agent's persistent
-   * state volume across the destroy (used by the redeploy path, which recreates
-   * the runtime and must not lose /opt/data). A plain delete leaves this false so
-   * the backend removes the volume.
+   * @param {boolean} [options.preserveState=false] - Keep the agent's durable
+   * state (named volumes, the Kubernetes state claim) across the destroy. The
+   * redeploy path sets this because it recreates the runtime against that same
+   * state. A plain delete leaves it false, which is what tells the backend to
+   * remove the state — adapters preserve by default.
    * @returns {Promise<void>} Resolves once the backend reports the runtime destroyed.
    */
   async destroy(agent, { preserveState = false } = {}) {

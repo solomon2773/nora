@@ -387,10 +387,12 @@ class HermesBackend extends DockerBackend {
     // Let the base backend remove the container (its OpenClaw-named volume
     // cleanup is a harmless no-op for Hermes).
     const result = await super.destroy(containerId, opts);
-    const { agentId, preserveState } = opts;
+    const { agentId } = opts;
     // Keep the home volume on a redeploy (preserveState) so data survives the
-    // destroy→create replacement; remove it only on a true delete.
-    if (agentId && !preserveState) {
+    // destroy→create replacement; remove it only on a true delete. Preserving is
+    // the default so an omitted flag leaks a volume instead of destroying the
+    // agent's /opt/data.
+    if (agentId && opts.preserveState === false) {
       const homeVolumeName = `nora_hermes_home_${agentId}`;
       try {
         await this.docker.getVolume(homeVolumeName).remove({ force: true });

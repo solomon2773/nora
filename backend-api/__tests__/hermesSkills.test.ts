@@ -480,6 +480,132 @@ describe("hermes skills routes", () => {
     });
   });
 
+  // The Skills panel lives inside the Hermes WebUI tab, whose sibling routes
+  // (/agents/:id/hermes-ui and its chat/cron/channel endpoints) authorize
+  // through workspace membership. These pin the Skills routes to the same
+  // model: a member who can see and operate a shared agent must not hit a bare
+  // 404 here just because someone else owns the agent row.
+  describe("workspace-shared agents", () => {
+    const OWNER_ID = "agent-owner";
+    const SHARED_AGENT = {
+      id: "agent-shared",
+      user_id: OWNER_ID,
+      status: "running",
+      container_id: "container-shared",
+      backend_type: "docker",
+      runtime_family: "hermes",
+      deploy_target: "docker",
+      sandbox_profile: "standard",
+      hermes_skills: [],
+    };
+
+    // Faithful stand-in for the `agents` lookup: an owner-scoped statement
+    // (`AND user_id = $2`) really does filter non-owners out, so a lookup that
+    // never consults workspace_members cannot pass these tests by accident.
+    function mockSharedAgentLookup(memberships) {
+      db.query.mockImplementation(async (sql, params = []) => {
+        const text = String(sql);
+        if (text.includes("workspace_members")) {
+          const role = memberships[params[1]];
+          return { rows: role ? [{ role }] : [] };
+        }
+        if (!text.includes("FROM agents")) return { rows: [] };
+        if (params[0] !== SHARED_AGENT.id) return { rows: [] };
+        if (/user_id\s*=\s*\$2/.test(text) && params[1] !== OWNER_ID) return { rows: [] };
+        return { rows: [SHARED_AGENT] };
+      });
+    }
+
+    function sessionReq(userId, body = {}) {
+      return { params: { agentId: SHARED_AGENT.id }, user: { id: userId }, body };
+    }
+
+    it("lists skills for a workspace viewer who does not own the agent", async () => {
+      mockSharedAgentLookup({ "member-1": "viewer" });
+      runContainerCommand.mockResolvedValueOnce({ output: EMPTY_LOCK_B64 });
+      hermesSkillsQueue.getJobs.mockResolvedValueOnce([]);
+
+      const res = createMockRes();
+      await getRouteHandler("/agents/:agentId/skills")(sessionReq("member-1"), res);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ skills: [] });
+    });
+
+    it("installs a skill for a workspace editor who does not own the agent", async () => {
+      mockSharedAgentLookup({ "member-1": "editor" });
+      findInFlightHermesSkillJob.mockResolvedValueOnce(null);
+      addHermesSkillJob.mockResolvedValueOnce({ id: "job-1" });
+
+      const res = createMockRes();
+      await getRouteHandler("/agents/:agentId/skills/install", "post")(
+        sessionReq("member-1", { ref: "official/security/1password", name: "1password" }),
+        res,
+      );
+
+      expect(res.statusCode).toBe(202);
+      expect(addHermesSkillJob).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: SHARED_AGENT.id, name: "1password" }),
+      );
+    });
+
+    // Mirrors loadHermesUiAgent: an insufficient role resolves to no agent, so
+    // the mutation reports agent_not_found rather than leaking the role gap.
+    it("refuses installs from a read-only workspace viewer", async () => {
+      mockSharedAgentLookup({ "member-1": "viewer" });
+
+      const res = createMockRes();
+      await getRouteHandler("/agents/:agentId/skills/install", "post")(
+        sessionReq("member-1", { ref: "official/security/1password", name: "1password" }),
+        res,
+      );
+
+      expect(res.statusCode).toBe(404);
+      expect(addHermesSkillJob).not.toHaveBeenCalled();
+    });
+
+    it("refuses deletes from a read-only workspace viewer", async () => {
+      mockSharedAgentLookup({ "member-1": "viewer" });
+
+      const res = createMockRes();
+      await getRouteHandler("/agents/:agentId/skills/delete", "post")(
+        sessionReq("member-1", { name: "1password" }),
+        res,
+      );
+
+      expect(res.statusCode).toBe(404);
+      expect(addHermesSkillJob).not.toHaveBeenCalled();
+    });
+
+    it("hides the agent from a user with no membership in any sharing workspace", async () => {
+      mockSharedAgentLookup({ "member-1": "editor" });
+
+      const res = createMockRes();
+      await getRouteHandler("/agents/:agentId/skills")(sessionReq("stranger"), res);
+
+      expect(res.statusCode).toBe(404);
+      expect(runContainerCommand).not.toHaveBeenCalled();
+    });
+
+    it("scopes job polling to a workspace member's access", async () => {
+      mockSharedAgentLookup({ "member-1": "viewer" });
+      getHermesSkillJobStatus.mockResolvedValueOnce({
+        agentId: SHARED_AGENT.id,
+        status: "completed",
+        operation: "install",
+      });
+
+      const res = createMockRes();
+      await getRouteHandler("/jobs/:jobId")(
+        { params: { jobId: "job-1" }, user: { id: "member-1" } },
+        res,
+      );
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toMatchObject({ agentId: SHARED_AGENT.id, status: "completed" });
+    });
+  });
+
   it("returns unsupported_runtime for non-hermes agents", async () => {
     const handler = getRouteHandler("/agents/:agentId/skills/install", "post");
     db.query.mockResolvedValueOnce({

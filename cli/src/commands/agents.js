@@ -1,8 +1,14 @@
 const api = require("../client");
 const table = require("../table");
 
-async function list() {
+async function list(args, flags) {
   const rows = await api.get("/api/agents");
+
+  if (flags.json) {
+    console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
+
   table(rows, [
     { header: "ID", value: (r) => r.id },
     { header: "NAME", value: (r) => r.name },

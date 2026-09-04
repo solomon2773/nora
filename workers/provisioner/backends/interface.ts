@@ -22,8 +22,19 @@ class ProvisionerBackend {
 
   /**
    * Destroy a running agent.
+   * Implementations that own durable per-agent state (named volumes, a
+   * PersistentVolumeClaim) MUST honor `options.preserveState`. Redeploy destroys
+   * the previous runtime and recreates it against that same state, which is keyed
+   * by agent id rather than container id — ignoring the flag turns "replace this
+   * runtime" into "delete this operator's data".
+   *
    * @param {string} containerId
    * @param {Object} [options]
+   * @param {string} [options.agentId] - Agent that owns the runtime and its state.
+   * @param {boolean} [options.preserveState=true] - Keep durable agent state;
+   * remove only the runtime itself. Preserving is the default so an adapter
+   * caller that omits the flag leaks state rather than destroying it; a real
+   * delete passes `false` explicitly.
    * @returns {Promise<void>}
    */
   async destroy(containerId, options = {}) {

@@ -1,0 +1,97 @@
+name: CI Kubernetes Smoke
+
+# Kubernetes is a GA deploy target with no integration coverage in CI: the
+# adapter (workers/provisioner/backends/k8s.ts) is @ts-nocheck so typecheck
+# contributes nothing, and the unit suites mock @kubernetes/client-node
+# entirely, so a green test run only proves the mocks still match themselves.
+# That gap is what made the client-node 2.x bump unverifiable (#381, #384).
+#
+# e2e/scripts/run-kind-k8s-smoke.sh already does the real thing — kind cluster,
+# Calico, a real backend-api and worker-provisioner, then deploys agents through
+# the adapter. It just was never wired into CI. This runs it.
+#
+# Not attached to the blocking Security gate: it stands up a cluster and is
+# slower and more environment-sensitive than the unit jobs. It runs on changes
+# that can actually break Kubernetes, on a schedule, and on demand.
+
+# STATUS: not yet green on a stock GitHub runner, so this is dispatch-only for
+# now. It reaches Kubernetes fine — cluster registration, namespace, deployment
+# and service all succeed and the agent pod reaches 1/1 Running — then stalls on
+# "Initial runtime readiness failed (timeout after 5000ms)", an HTTP probe from
+# the worker-provisioner container to the agent runtime through the kind
+# node-port. Five BullMQ retries across ten minutes never connect, and the pod's
+# own in-cluster readiness probe passes, so this is the compose-network-to-kind
+# routing rather than slowness. Wiring that up is the remaining work.
+#
+# Left off pull_request and schedule deliberately: a check that always fails
+# teaches people to ignore it. Promote it to those triggers once a dispatch run
+# goes green.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kind-smoke:
+    name: Kind smoke (OpenClaw + Hermes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NORA_ENV_FILE: .env.ci-k8s
+      # The smoke script's EXIT trap tears down compose and deletes the kind
+      # cluster. On a failure that destroys exactly the state worth looking at
+      # before the diagnostics step can read it. The runner is ephemeral, so
+      # keeping the environment costs nothing here and makes failures debuggable.
+      KEEP_ENV: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - run: npm ci
+        working-directory: e2e
+      # docker-compose.yml binds six secret FILES out of .secrets/compose, which
+      # is gitignored and normally produced by setup.sh. Without them the stack
+      # dies before Kubernetes is ever reached ("bind source path does not
+      # exist: .secrets/compose/DB_PASSWORD"). .env.test supplies JWT_SECRET,
+      # ENCRYPTION_KEY and DB_PASSWORD but leaves the other three empty, and the
+      # materializer refuses to write an empty secret, so generate those here.
+      # Throwaway values for a throwaway cluster on an ephemeral runner.
+      - name: Materialize compose secrets
+        run: |
+          set -euo pipefail
+          cp .env.test .env.ci-k8s
+          {
+            echo "NORA_BACKUP_ENCRYPTION_KEY=$(openssl rand -hex 32)"
+            echo "NORA_AGENT_HUB_API_KEY_HASH_SECRET=$(openssl rand -hex 32)"
+            echo "NORA_API_KEY_HASH_SECRET=$(openssl rand -hex 32)"
+          } >> .env.ci-k8s
+          bash scripts/materialize-compose-secrets.sh .env.ci-k8s
+      - name: Run Kind Kubernetes smoke
+        run: npm run smoke:k8s-kind
+        working-directory: e2e
+      - name: Capture diagnostics
+        if: failure()
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p k8s-smoke-artifacts
+          export KUBECONFIG=/tmp/nora-kind.kubeconfig
+          /tmp/nora-tools/kubectl get pods -A -o wide > k8s-smoke-artifacts/pods.txt 2>&1
+          /tmp/nora-tools/kubectl get events -A --sort-by=.lastTimestamp > k8s-smoke-artifacts/events.txt 2>&1
+          /tmp/nora-tools/kubectl describe nodes > k8s-smoke-artifacts/nodes.txt 2>&1
+          docker ps -a > k8s-smoke-artifacts/docker-ps.txt 2>&1
+          docker logs nora-kind-backend-api-1 > k8s-smoke-artifacts/backend-api.log 2>&1
+          docker logs nora-kind-worker-provisioner-1 > k8s-smoke-artifacts/worker-provisioner.log 2>&1
+          exit 0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: k8s-smoke-diagnostics
+          path: k8s-smoke-artifacts
+          retention-days: 7

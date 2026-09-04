@@ -816,6 +816,46 @@ async function listAgentBackups(userId, agentId) {
   };
 }
 
+/**
+ * List every agent backup a user owns, including backups whose source agent has
+ * been deleted.
+ *
+ * listAgentBackups() resolves the agent first and 404s when it is gone, which
+ * made backups unreachable in exactly the disaster-recovery case the feature
+ * exists for (#338). This resolves by owner instead, and LEFT JOINs agents so
+ * callers can tell an orphaned backup from a live one rather than guessing.
+ *
+ * @param {string} userId - Backup owner.
+ * @returns {Promise<Object>} Owned agent backups, entitlement, and usage.
+ */
+async function listUserBackups(userId) {
+  const [rows, subscription, usage] = await Promise.all([
+    db.query(
+      `SELECT b.*, a.name AS agent_name, (a.id IS NOT NULL) AS agent_exists
+         FROM backups b
+         LEFT JOIN agents a ON a.id = b.agent_id AND a.user_id = b.user_id
+        WHERE b.user_id = $1
+          AND b.kind = 'agent'
+          AND b.status <> 'deleted'
+        ORDER BY b.created_at DESC`,
+      [userId],
+    ),
+    billing.getSubscription(userId),
+    billing.getBackupUsage(userId, {}),
+  ]);
+  return {
+    backups: rows.rows.map((row) => ({
+      ...serializeBackup(row),
+      agent_name: row.agent_name || null,
+      // Restoring an orphaned backup provisions a fresh agent; the UI needs to
+      // say so rather than implying it restores into something still running.
+      agent_exists: row.agent_exists === true,
+    })),
+    entitlement: subscription,
+    usage,
+  };
+}
+
 async function listAdminBackups() {
   const result = await db.query(
     `SELECT b.*, u.email AS owner_email, a.name AS agent_name
@@ -2243,6 +2283,7 @@ module.exports = {
   getBackupDownload,
   listAdminBackups,
   listAgentBackups,
+  listUserBackups,
   processDueSchedules,
   pruneExpiredBackups,
   runBackupJob,

@@ -1,7 +1,11 @@
 const api = require("../client");
 
-async function metrics() {
+async function metrics(args, flags) {
   const data = await api.get("/api/monitoring/metrics");
+  if (flags.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
   console.log(JSON.stringify(data, null, 2));
 }
 
@@ -15,6 +19,11 @@ async function events(args, flags) {
 
   const data = await api.get("/api/monitoring/events", { query });
   const rows = Array.isArray(data) ? data : data.events || [];
+
+  if (flags.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
   if (rows.length === 0) {
     console.log("(no events)");
     return;

@@ -65,6 +65,11 @@ const COMPLETE_ROUTERS = [
   { name: "integrations", router: () => require("../routes/integrations"), mount: "" },
   { name: "channels", router: () => require("../routes/channels"), mount: "/agents" },
   { name: "backups", router: () => require("../routes/backups"), mount: "/agents" },
+  {
+    name: "accountBackups",
+    router: () => require("../routes/accountBackups"),
+    mount: "/backups",
+  },
   { name: "agentHub", router: () => require("../routes/agentHub"), mount: "/agent-hub" },
   {
     name: "agentHubPublic",

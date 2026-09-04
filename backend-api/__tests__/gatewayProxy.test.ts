@@ -555,6 +555,84 @@ describe("gateway proxy control-plane routes", () => {
     expect(mockDb.query.mock.calls[1][1]).toEqual(["ws-A", "agent-1"]);
   });
 
+  // Browser sessions were owner-only here, so a workspace member who could see
+  // and manage a shared OpenClaw agent still got a bare 404 from every gateway
+  // route. The whole surface now takes `editor` — it carries chat, exec, and
+  // restart, so there is no read-only slice to hand a viewer.
+  describe("workspace-shared agents", () => {
+    const SHARED_AGENT = {
+      id: "agent-1",
+      user_id: "agent-owner",
+      status: "running",
+      host: "10.0.0.10",
+      gateway_token: "gateway-token",
+      gateway_host_port: null,
+      backend_type: "docker",
+      runtime_family: "openclaw",
+      deploy_target: "docker",
+    };
+
+    // Models the real table semantics rather than a fixed call sequence, so it
+    // answers either access shape: findAccessibleAgent's row-then-membership
+    // pair, or a single statement that joins the membership in. An owner-scoped
+    // `AND user_id = $2` really filters non-owners out, so a lookup that never
+    // consults workspace_members cannot pass these tests by accident.
+    function mockSharedAgentLookup(memberships) {
+      mockDb.query.mockImplementation(async (sql, params = []) => {
+        const text = String(sql);
+        const joinsMembership = /workspace_members/i.test(text);
+        const role = memberships[params[1]];
+        if (!/FROM agents/i.test(text)) {
+          // The standalone membership probe.
+          return { rows: joinsMembership && role ? [{ role }] : [] };
+        }
+        const isOwner = params[1] === SHARED_AGENT.user_id;
+        if (/user_id\s*=\s*\$2/.test(text) && !joinsMembership) {
+          return { rows: isOwner ? [{ ...SHARED_AGENT, effective_role: "owner" }] : [] };
+        }
+        if (joinsMembership) {
+          if (isOwner) return { rows: [{ ...SHARED_AGENT, effective_role: "owner" }] };
+          return { rows: role ? [{ ...SHARED_AGENT, effective_role: role }] : [] };
+        }
+        // Unscoped `SELECT * FROM agents WHERE id = $1`; the caller authorizes
+        // the row it gets back.
+        return { rows: [SHARED_AGENT] };
+      });
+    }
+
+    it.each(["editor", "admin", "owner"])(
+      "serves gateway routes to a workspace %s who does not own the agent",
+      async (role) => {
+        app = buildApp({}, { user: { id: "member-1" } });
+        mockSharedAgentLookup({ "member-1": role });
+
+        const res = await request(app).get("/agents/agent-1/gateway/status");
+
+        expect(res.status).toBe(200);
+      },
+    );
+
+    it("refuses gateway routes for a read-only workspace viewer", async () => {
+      app = buildApp({}, { user: { id: "member-1" } });
+      mockSharedAgentLookup({ "member-1": "viewer" });
+
+      const res = await request(app).get("/agents/agent-1/gateway/status");
+
+      expect(res.status).toBe(404);
+      expect(mockFakeWebSocket.instances).toHaveLength(0);
+    });
+
+    it("refuses gateway routes for a user with no membership in any sharing workspace", async () => {
+      app = buildApp({}, { user: { id: "stranger" } });
+      mockSharedAgentLookup({ "member-1": "editor" });
+
+      const res = await request(app).get("/agents/agent-1/gateway/status");
+
+      expect(res.status).toBe(404);
+      expect(mockFakeWebSocket.instances).toHaveLength(0);
+    });
+  });
+
   it("fails closed when a legacy adopted runtime has a weak gateway token", async () => {
     mockRunningAgent({
       backend_type: "external",

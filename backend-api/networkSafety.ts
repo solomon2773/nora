@@ -93,6 +93,7 @@ async function assertSafeUrlAsync(rawUrl, label = "URL") {
     // anyway, and refusing here gives a cleaner error.
     throw new Error(
       `${label} hostname ${hostname} could not be resolved (${err.code || err.message})`,
+      { cause: err },
     );
   }
 

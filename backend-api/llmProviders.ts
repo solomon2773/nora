@@ -5,6 +5,12 @@ const db = require("./db");
 const { Client } = require("pg");
 const { encrypt, decrypt, ensureEncryptionConfigured } = require("./crypto");
 const { buildPostgresConfig } = require("./lib/connectionConfig");
+const {
+  advisoryLockBusyError,
+  advisoryLockClientOptions,
+  isAdvisoryLockTimeout,
+  startAdvisoryLockHoldWatchdog,
+} = require("./lib/advisoryLocks");
 const { DEMO_PROVIDER_ID, DEMO_MODEL_ID, deriveDemoToken, demoLlmBaseUrl } = require("./demoLlm");
 const { NEMOCLAW_DEFAULT_MODEL } = require("../agent-runtime/lib/nemoclawDefaults");
 const {
@@ -226,6 +232,15 @@ function providerMutationLockKey(userId) {
   return `nora:llm-providers:${String(userId || "")}`;
 }
 
+// Well above any legitimate provider mutation, so the watchdog only fires on
+// work that is genuinely stuck rather than merely slow.
+const PROVIDER_MUTATION_MAX_HOLD_MS = 120000;
+
+function providerMutationMaxHoldMs() {
+  const parsed = Number.parseInt(process.env.PROVIDER_MUTATION_LOCK_MAX_HOLD_MS, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : PROVIDER_MUTATION_MAX_HOLD_MS;
+}
+
 function createProviderMutationClient() {
   const {
     max: _max,
@@ -235,7 +250,13 @@ function createProviderMutationClient() {
     ...process.env,
     DB_APPLICATION_NAME: "nora-backend-provider-mutation",
   });
-  return new Client(clientConfig);
+  return new Client({
+    ...clientConfig,
+    options: advisoryLockClientOptions(
+      process.env.PROVIDER_MUTATION_LOCK_TIMEOUT_MS,
+      clientConfig.options,
+    ),
+  });
 }
 
 async function withProviderStateLock(userId, operation) {
@@ -250,13 +271,41 @@ async function withProviderStateLock(userId, operation) {
   const lockKey = providerMutationLockKey(userId);
   let connected = false;
   let lockHeld = false;
+  let cancelHoldWatchdog = () => {};
   try {
     await client.connect();
     connected = true;
-    await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+    // The wait is bounded by lock_timeout on the connection itself (see
+    // createProviderMutationClient). A bare pg_advisory_lock blocks
+    // indefinitely, so a holder whose work never returns turned this call into a
+    // request that hung past the reverse proxy's timeout and 504'd — sometimes
+    // after the INSERT had committed, so the operator's retry created duplicate
+    // provider rows (#406). Failing fast keeps the outcome unambiguous.
+    try {
+      await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
+    } catch (error) {
+      if (isAdvisoryLockTimeout(error)) {
+        throw advisoryLockBusyError(
+          "Another provider change is in progress for this account. Retry in a moment.",
+          { code: "PROVIDER_MUTATION_LOCK_BUSY" },
+        );
+      }
+      throw error;
+    }
     lockHeld = true;
+    // If the guarded work never settles, the unlock below never runs and every
+    // later caller queues behind this session. Ending the connection releases
+    // the lock the same way a crashed process would.
+    cancelHoldWatchdog = startAdvisoryLockHoldWatchdog(client, {
+      maxHoldMs: providerMutationMaxHoldMs(),
+      onTimeout: (budgetMs) =>
+        console.error(
+          `[llmProviders] Provider mutation lock for user ${userId} exceeded ${budgetMs}ms; releasing it by closing the session. The guarded operation did not finish.`,
+        ),
+    });
     return await operation(client);
   } finally {
+    cancelHoldWatchdog();
     if (lockHeld) {
       await client
         .query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [lockKey])

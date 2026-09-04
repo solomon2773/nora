@@ -23,6 +23,8 @@ jest.mock("dockerode", () =>
 
 const {
   __test,
+  buildDraftPreview,
+  createMigrationDraft,
   buildHermesSeedArchive,
   buildLiveMigrationManifest,
   buildMigrationManifestFromAgent,
@@ -492,4 +494,53 @@ it("safely stops a direct Docker Hermes source when exec termination is unconfir
   expect(captureError).toMatchObject({ code: "DOCKER_EXEC_COMPLETION_UNCONFIRMED" });
   expect(captureError).not.toHaveProperty("cleanupError");
   expect(stop).toHaveBeenCalledWith({ t: 10 });
+});
+
+// #339: every draft response came back with id: null even though Postgres held
+// a real UUID. The preview set id: row.id and then spread buildDraftPreview(),
+// which re-set id from a manifest field nothing ever populates — so the spread
+// silently erased the only handle callers had on the draft. The dashboard gates
+// migrate-deploy on migrationDraft?.id, so restored drafts were undeployable.
+describe("migration draft identity (#339)", () => {
+  it("returns the persisted row id rather than null", async () => {
+    mockDb.query.mockReset().mockResolvedValue({
+      rows: [
+        {
+          id: "11111111-2222-3333-4444-555555555555",
+          created_at: "2026-08-24T00:00:00.000Z",
+          expires_at: "2026-08-25T00:00:00.000Z",
+          status: "ready",
+        },
+      ],
+    });
+
+    const draft = await createMigrationDraft({
+      userId: "user-1",
+      manifest: { name: "Imported Agent", runtimeFamily: "openclaw" },
+    });
+
+    expect(draft.preview.id).toBe("11111111-2222-3333-4444-555555555555");
+    expect(draft.preview.createdAt).toBe("2026-08-24T00:00:00.000Z");
+    expect(draft.preview.expiresAt).toBe("2026-08-25T00:00:00.000Z");
+  });
+
+  it("keeps the row id even when the manifest carries a conflicting one", async () => {
+    mockDb.query.mockReset().mockResolvedValue({
+      rows: [{ id: "row-id-wins", created_at: null, expires_at: null }],
+    });
+
+    const draft = await createMigrationDraft({
+      userId: "user-1",
+      manifest: { id: "manifest-id-loses", name: "Imported Agent" },
+    });
+
+    expect(draft.preview.id).toBe("row-id-wins");
+  });
+
+  it("does not let the preview builder contribute an id at all", () => {
+    // The builder owning an `id` key is what made the spread destructive.
+    expect(buildDraftPreview({ id: "from-manifest", name: "Imported Agent" })).not.toHaveProperty(
+      "id",
+    );
+  });
 });

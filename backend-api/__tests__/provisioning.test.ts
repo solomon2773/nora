@@ -2089,7 +2089,9 @@ describe("docker gateway port allocation (BYOC Phase B)", () => {
     backend.docker.getContainer.mockReturnValue(missingContainer);
     backend.docker.getVolume.mockImplementation(() => ({ remove: removeVolume }));
 
-    await expect(backend.destroy("missing-agent", { agentId: "agent-1" })).resolves.toBeUndefined();
+    await expect(
+      backend.destroy("missing-agent", { agentId: "agent-1", preserveState: false }),
+    ).resolves.toBeUndefined();
 
     expect(missingContainer.stop).not.toHaveBeenCalled();
     expect(missingContainer.remove).not.toHaveBeenCalled();
@@ -2114,7 +2116,9 @@ describe("docker gateway port allocation (BYOC Phase B)", () => {
       remove: jest.fn().mockRejectedValue(notFound),
     }));
 
-    await expect(backend.destroy("missing-agent", { agentId: "agent-1" })).resolves.toBeUndefined();
+    await expect(
+      backend.destroy("missing-agent", { agentId: "agent-1", preserveState: false }),
+    ).resolves.toBeUndefined();
     expect(backend.docker.getVolume).toHaveBeenCalledTimes(2);
   });
 
@@ -2135,12 +2139,47 @@ describe("docker gateway port allocation (BYOC Phase B)", () => {
       remove: volume === "nora_agent_state_agent-1" ? removeState : removeHome,
     }));
 
-    await expect(backend.destroy("missing-agent", { agentId: "agent-1" })).rejects.toMatchObject({
+    await expect(
+      backend.destroy("missing-agent", { agentId: "agent-1", preserveState: false }),
+    ).rejects.toMatchObject({
       code: "DOCKER_VOLUME_CLEANUP_FAILED",
       volumeNames: ["nora_agent_state_agent-1"],
     });
     expect(removeState).toHaveBeenCalledTimes(1);
     expect(removeHome).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves pre-existing volumes alone when a replacement create fails", async () => {
+    const backend = mockDockerBackend();
+    // A redeploy recreates the container against volumes that already hold the
+    // agent's state, so a failed create must not clean them up.
+    backend.docker.getVolume.mockImplementation(() => ({
+      inspect: jest.fn().mockResolvedValue({}),
+      remove: backend._testRemoveVolume,
+    }));
+    backend._testCreatedContainer.start.mockRejectedValueOnce(new Error("no such image"));
+
+    await expect(
+      backend.create({ id: "agent-1", name: "Agent", env: {}, gatewayHostPort: 19500 }),
+    ).rejects.toThrow(/no such image/);
+
+    expect(backend._testCreatedContainer.remove).toHaveBeenCalledWith({ force: true });
+    expect(backend._testRemoveVolume).not.toHaveBeenCalled();
+  });
+
+  it("cleans up volumes it created itself when a first deployment fails", async () => {
+    const backend = mockDockerBackend();
+    backend.docker.getVolume.mockImplementation(() => ({
+      inspect: jest.fn().mockRejectedValue(new Error("no such volume")),
+      remove: backend._testRemoveVolume,
+    }));
+    backend._testCreatedContainer.start.mockRejectedValueOnce(new Error("no such image"));
+
+    await expect(
+      backend.create({ id: "agent-1", name: "Agent", env: {}, gatewayHostPort: 19500 }),
+    ).rejects.toThrow(/no such image/);
+
+    expect(backend._testRemoveVolume).toHaveBeenCalledTimes(2);
   });
 
   it("preserves durable volumes when a bind conflict will be retried", async () => {
@@ -2155,5 +2194,46 @@ describe("docker gateway port allocation (BYOC Phase B)", () => {
 
     expect(backend._testCreatedContainer.remove).toHaveBeenCalledWith({ force: true });
     expect(backend._testRemoveVolume).not.toHaveBeenCalled();
+  });
+});
+
+// A redeploy destroys the Deployment and recreates it against the same state
+// claim. Deleting the claim there discards the agent's durable state on what the
+// operator asked to be an in-place replacement.
+describe("kubernetes destroy state preservation", () => {
+  function stubbedK8sBackend() {
+    const K8sBackend = require("../../workers/provisioner/backends/k8s");
+    const backend = new K8sBackend(k8sProfile());
+    backend._candidateNamespacesForDestroy = jest.fn().mockReturnValue(["nora"]);
+    backend._deleteDeploymentIfExists = jest.fn().mockResolvedValue(true);
+    backend._deleteServiceIfExists = jest.fn().mockResolvedValue(true);
+    backend._deleteBootstrapConfigMapIfExists = jest.fn().mockResolvedValue(true);
+    backend._deleteEnvSecretIfExists = jest.fn().mockResolvedValue(true);
+    backend._deleteStateVolumeClaimIfExists = jest.fn().mockResolvedValue(true);
+    return backend;
+  }
+
+  it("deletes the state claim on a true delete", async () => {
+    const backend = stubbedK8sBackend();
+
+    await backend.destroy("nora-oclaw-nora-qa-123", { preserveState: false });
+
+    expect(backend._deleteStateVolumeClaimIfExists).toHaveBeenCalledWith(
+      "nora-oclaw-nora-qa-123",
+      "nora",
+    );
+  });
+
+  it("keeps the state claim across a redeploy", async () => {
+    const backend = stubbedK8sBackend();
+
+    await backend.destroy("nora-oclaw-nora-qa-123", { preserveState: true });
+
+    expect(backend._deleteStateVolumeClaimIfExists).not.toHaveBeenCalled();
+    expect(backend._deleteDeploymentIfExists).toHaveBeenCalledWith(
+      "nora-oclaw-nora-qa-123",
+      "nora",
+    );
+    expect(backend._deleteServiceIfExists).toHaveBeenCalledWith("nora-oclaw-nora-qa-123", "nora");
   });
 });

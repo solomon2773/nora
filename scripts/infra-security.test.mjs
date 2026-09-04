@@ -627,6 +627,68 @@ test("Helm rejects a local Docker backend when no socket is mounted", () => {
   );
 });
 
+// #409: OpenClaw was forced into ENABLED_RUNTIME_FAMILIES with no way to
+// decline, and its agent image was built unconditionally — so an operator who
+// only wanted Hermes still had to build and enable a runtime they never asked
+// for. NemoClaw, by contrast, had an explicit opt-out, which is the
+// inconsistency the report named.
+test("setup lets both runtime families be declined, in bash and PowerShell", () => {
+  const bashSetup = read("setup.sh");
+  const powershellSetup = read("setup.ps1");
+
+  // The list starts empty and is built from both flags. (OpenClaw still appears
+  // as the no-runtime fallback further down, which is why this checks the
+  // initial declaration rather than asserting the string never occurs — the
+  // executable test below is what pins the actual behaviour.)
+  assert.match(bashSetup, /enabled_runtime_families=\(\)/);
+  assert.match(powershellSetup, /\$enabledRuntimeFamilies = @\(\)/);
+
+  // Both installers ask about OpenClaw, defaulting to keeping it on.
+  assert.match(bashSetup, /Keep OpenClaw runtime family enabled\? \[Y\/n\]/);
+  assert.match(powershellSetup, /Keep OpenClaw runtime family enabled\? \[Y\/n\]/);
+
+  // The agent image build is gated on the family actually being enabled.
+  assert.match(bashSetup, /csv_value_is_enabled "\$\{ENABLED_RUNTIME_FAMILIES:-\}" "openclaw"/);
+  assert.match(
+    powershellSetup,
+    /Test-CommaSeparatedValue -List \$ENABLED_RUNTIME_FAMILIES -Value "openclaw"/,
+  );
+
+  // NemoClaw sandboxes OpenClaw agents, so it must not survive OpenClaw being
+  // off — the contradictory pair should be unreachable, not reconciled later.
+  assert.match(bashSetup, /NemoClaw sandboxes OpenClaw agents/);
+  assert.match(powershellSetup, /NemoClaw sandboxes OpenClaw agents/);
+});
+
+test("setup never writes a runtime-family list that cannot deploy anything", () => {
+  // Executed rather than asserted on source: the guard only matters if it
+  // actually produces a usable list for every combination of answers.
+  const cases = [
+    { openclaw: "true", hermes: "false", expected: "openclaw" },
+    { openclaw: "false", hermes: "true", expected: "hermes" },
+    { openclaw: "true", hermes: "true", expected: "openclaw,hermes" },
+    // Declining both must fall back rather than write an empty list.
+    { openclaw: "false", hermes: "false", expected: "openclaw" },
+  ];
+
+  for (const { openclaw, hermes, expected } of cases) {
+    const stdout = runChecked("bash", [
+      "-c",
+      `set -euo pipefail
+       warn() { :; }
+       OPENCLAW_RUNTIME_ENABLED=${openclaw}
+       HERMES_RUNTIME_ENABLED=${hermes}
+       source <(awk '/^enabled_runtime_families=\\(\\)/,/^ENABLED_RUNTIME_FAMILIES=/' setup.sh)
+       printf '%s' "$ENABLED_RUNTIME_FAMILIES"`,
+    ]);
+    assert.equal(
+      stdout,
+      expected,
+      `openclaw=${openclaw} hermes=${hermes} should yield "${expected}"`,
+    );
+  }
+});
+
 test("setup requires Compose 2.24.4+ and rejects standalone v1", () => {
   const bashSetup = read("setup.sh");
   const powershellSetup = read("setup.ps1");
@@ -1626,7 +1688,7 @@ test("community response automation acknowledges and escalates every public thre
   }
   assert.match(workflow, /^ {2}discussions: write$/m);
   assert.match(workflow, /^ {2}issues: write$/m);
-  assert.match(workflow, /^ {2}pull-requests: read$/m);
+  assert.match(workflow, /^ {2}pull-requests: write$/m);
   assert.match(workflow, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /community-response\.mjs acknowledge/);

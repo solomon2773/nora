@@ -66,7 +66,7 @@ async function fetchGithub(
     } catch (error) {
       if (error?.name === "AbortError") {
         if (attempt + 1 < attempts) continue;
-        throw new Error(`GitHub CodeQL API request timed out for ${url}`);
+        throw new Error(`GitHub CodeQL API request timed out for ${url}`, { cause: error });
       }
       if (attempt + 1 < attempts && error instanceof TypeError) {
         await sleep(Math.min(1000 * 2 ** attempt, 10_000));
@@ -84,7 +84,9 @@ async function responseJson(response) {
   try {
     return await response.json();
   } catch (error) {
-    throw new Error(`GitHub CodeQL API returned invalid JSON: ${error.message}`);
+    throw new Error(`GitHub CodeQL API returned invalid JSON: ${error.message}`, {
+      cause: error,
+    });
   }
 }
 

@@ -147,7 +147,7 @@ export default function AgentTerminal({
     const legacy = localStorage.getItem("token");
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const qs = legacy ? `?token=${encodeURIComponent(legacy)}` : "";
-    const url = `${proto}//${window.location.host}/api/ws/exec/${agentId}${qs}`;
+    const url = `${proto}//${window.location.host}/api/ws/exec/${encodeURIComponent(String(agentId))}${qs}`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

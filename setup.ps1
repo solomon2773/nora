@@ -1663,9 +1663,23 @@ if ($modeAnswer -eq "2") {
 Write-Header "Deploy Backends"
 
 $DOCKER_BACKEND_ENABLED = $true
-$HERMES_RUNTIME_ENABLED = $false
-$NEMOCLAW_SANDBOX_ENABLED = $false
 $PROXMOX_BACKEND_ENABLED = ((Read-EnvValue -EnvPath $ENV_FILE -Name "ENABLED_BACKENDS" -Default "") -split ',') -contains "proxmox"
+
+# Seed the runtime and sandbox choices from the existing install so re-running
+# setup preserves them. These were previously pinned to false regardless of what
+# .env said, so re-running the installer silently dropped Hermes and NemoClaw
+# while Proxmox was remembered (#409).
+$existingRuntimeFamilies = Read-EnvValue -EnvPath $ENV_FILE -Name "ENABLED_RUNTIME_FAMILIES" -Default ""
+$existingSandboxProfiles = Read-EnvValue -EnvPath $ENV_FILE -Name "ENABLED_SANDBOX_PROFILES" -Default ""
+if ($existingRuntimeFamilies) {
+    $OPENCLAW_RUNTIME_ENABLED = Test-CommaSeparatedValue -List $existingRuntimeFamilies -Value "openclaw"
+    $HERMES_RUNTIME_ENABLED = Test-CommaSeparatedValue -List $existingRuntimeFamilies -Value "hermes"
+} else {
+    # Fresh install: OpenClaw is the default runtime family, Hermes is opt-in.
+    $OPENCLAW_RUNTIME_ENABLED = $true
+    $HERMES_RUNTIME_ENABLED = $false
+}
+$NEMOCLAW_SANDBOX_ENABLED = Test-CommaSeparatedValue -List $existingSandboxProfiles -Value "nemoclaw"
 $PROXMOX_API_URL = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_API_URL" -Default ""
 $PROXMOX_TOKEN_ID = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_TOKEN_ID" -Default ""
 $PROXMOX_TOKEN_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "PROXMOX_TOKEN_SECRET" -Default ""
@@ -1720,26 +1734,57 @@ if (($PROXMOX_BACKEND_ENABLED -and $proxmoxBackendAnswer -notmatch '^[Nn]$') -or
     Write-Info "Proxmox target disabled"
 }
 
-$hermesRuntimeAnswer = Read-Host "  Enable Hermes runtime family? [y/N]"
-if ($hermesRuntimeAnswer -match '^[Yy]$') {
+# OpenClaw is prompted like every other runtime rather than assumed. It was
+# previously forced into ENABLED_RUNTIME_FAMILIES with no way to decline, and
+# its agent image was built unconditionally, so a Hermes-only operator still
+# paid for a runtime they never wanted (#409).
+$openclawPrompt = if ($OPENCLAW_RUNTIME_ENABLED) { "  Keep OpenClaw runtime family enabled? [Y/n]" } else { "  Enable OpenClaw runtime family? [y/N]" }
+$openclawRuntimeAnswer = Read-Host $openclawPrompt
+if (($OPENCLAW_RUNTIME_ENABLED -and $openclawRuntimeAnswer -notmatch '^[Nn]$') -or
+    (-not $OPENCLAW_RUNTIME_ENABLED -and $openclawRuntimeAnswer -match '^[Yy]$')) {
+    $OPENCLAW_RUNTIME_ENABLED = $true
+    Write-Ok "OpenClaw runtime family enabled"
+} else {
+    $OPENCLAW_RUNTIME_ENABLED = $false
+    Write-Info "OpenClaw runtime family disabled"
+}
+
+$hermesPrompt = if ($HERMES_RUNTIME_ENABLED) { "  Keep Hermes runtime family enabled? [Y/n]" } else { "  Enable Hermes runtime family? [y/N]" }
+$hermesRuntimeAnswer = Read-Host $hermesPrompt
+if (($HERMES_RUNTIME_ENABLED -and $hermesRuntimeAnswer -notmatch '^[Nn]$') -or
+    (-not $HERMES_RUNTIME_ENABLED -and $hermesRuntimeAnswer -match '^[Yy]$')) {
     $HERMES_RUNTIME_ENABLED = $true
     Write-Ok "Hermes runtime family enabled"
 } else {
+    $HERMES_RUNTIME_ENABLED = $false
     Write-Info "Hermes runtime family disabled"
 }
 
-$nemoclawSandboxAnswer = Read-Host "  Enable NemoClaw sandbox profile? [y/N]"
-if ($nemoclawSandboxAnswer -match '^[Yy]$') {
-    $NEMOCLAW_SANDBOX_ENABLED = $true
-    $nvidiaKey = Read-Host "  NVIDIA API key [optional during setup]"
-    if ($nvidiaKey) {
-        $NVIDIA_API_KEY = $nvidiaKey
-        Write-Ok "NemoClaw sandbox profile enabled with NVIDIA API key"
-    } else {
-        Write-Warn "NemoClaw enabled without NVIDIA_API_KEY — add it to .env later if needed"
+# NemoClaw is a sandbox profile for OpenClaw agents, so it is only offered when
+# OpenClaw is on. Skipping the question makes the contradictory combination
+# unreachable rather than something to reconcile afterwards.
+if (-not $OPENCLAW_RUNTIME_ENABLED) {
+    if ($NEMOCLAW_SANDBOX_ENABLED) {
+        Write-Warn "NemoClaw sandboxes OpenClaw agents; disabling it because OpenClaw is off."
     }
+    $NEMOCLAW_SANDBOX_ENABLED = $false
 } else {
-    Write-Info "NemoClaw sandbox profile disabled"
+    $nemoclawPrompt = if ($NEMOCLAW_SANDBOX_ENABLED) { "  Keep NemoClaw sandbox profile enabled? [Y/n]" } else { "  Enable NemoClaw sandbox profile? [y/N]" }
+    $nemoclawSandboxAnswer = Read-Host $nemoclawPrompt
+    if (($NEMOCLAW_SANDBOX_ENABLED -and $nemoclawSandboxAnswer -notmatch '^[Nn]$') -or
+        (-not $NEMOCLAW_SANDBOX_ENABLED -and $nemoclawSandboxAnswer -match '^[Yy]$')) {
+        $NEMOCLAW_SANDBOX_ENABLED = $true
+        $nvidiaKey = Read-Host "  NVIDIA API key [optional during setup]"
+        if ($nvidiaKey) {
+            $NVIDIA_API_KEY = $nvidiaKey
+            Write-Ok "NemoClaw sandbox profile enabled with NVIDIA API key"
+        } else {
+            Write-Warn "NemoClaw enabled without NVIDIA_API_KEY — add it to .env later if needed"
+        }
+    } else {
+        $NEMOCLAW_SANDBOX_ENABLED = $false
+        Write-Info "NemoClaw sandbox profile disabled"
+    }
 }
 
 $enabledBackends = @()
@@ -1755,8 +1800,18 @@ if ($enabledBackends.Count -eq 0) {
 $ENABLED_BACKENDS = $enabledBackends -join ","
 Write-Ok "Enabled backends: $ENABLED_BACKENDS"
 
-$enabledRuntimeFamilies = @("openclaw")
+$enabledRuntimeFamilies = @()
+if ($OPENCLAW_RUNTIME_ENABLED) { $enabledRuntimeFamilies += "openclaw" }
 if ($HERMES_RUNTIME_ENABLED) { $enabledRuntimeFamilies += "hermes" }
+
+# Mirrors the deploy-backend guard above: an install with no runtime family can
+# never deploy an agent, so fall back rather than write an unusable config.
+if ($enabledRuntimeFamilies.Count -eq 0) {
+    Write-Warn "No runtime families selected — enabling OpenClaw so Nora can deploy agents."
+    $OPENCLAW_RUNTIME_ENABLED = $true
+    $enabledRuntimeFamilies = @("openclaw")
+}
+
 $ENABLED_RUNTIME_FAMILIES = $enabledRuntimeFamilies -join ","
 Write-Ok "Enabled runtime families: $ENABLED_RUNTIME_FAMILIES"
 
@@ -2321,11 +2376,18 @@ if (-not $CAN_START_NORA) {
 
 Write-Host ""
 Assert-NoraHostPortsAvailable -Checks (Get-NoraHostPortChecks -EnvPath $ENV_FILE -NginxHttpPort ([int]$NGINX_HTTP_PORT))
-Write-Info "Building nora-openclaw-agent:local (prebaked openclaw + tsx)..."
-Write-Host ""
-docker build -f agent-runtime/Dockerfile.openclaw-agent -t nora-openclaw-agent:local agent-runtime/
-if ($LASTEXITCODE -ne 0) { Write-Err "Failed to build nora-openclaw-agent:local"; exit 1 }
-Write-Ok "OpenClaw agent image ready"
+# Only build what the install actually runs. This image bakes in openclaw and
+# tsx, so building it for a Hermes-only install spends minutes on a runtime that
+# will never be deployed (#409).
+if (Test-CommaSeparatedValue -List $ENABLED_RUNTIME_FAMILIES -Value "openclaw") {
+    Write-Info "Building nora-openclaw-agent:local (prebaked openclaw + tsx)..."
+    Write-Host ""
+    docker build -f agent-runtime/Dockerfile.openclaw-agent -t nora-openclaw-agent:local agent-runtime/
+    if ($LASTEXITCODE -ne 0) { Write-Err "Failed to build nora-openclaw-agent:local"; exit 1 }
+    Write-Ok "OpenClaw agent image ready"
+} else {
+    Write-Info "OpenClaw runtime family disabled — skipping its agent image build."
+}
 
 # Build Nora's exact local NemoClaw tag. Other refs follow provisioner policy:
 # refresh mutable refs, reuse present immutable refs, and pull any missing ref.

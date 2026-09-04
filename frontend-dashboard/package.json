@@ -18,26 +18,26 @@
     "@xterm/xterm": "^6.0.0",
     "autoprefixer": "^10.5.0",
     "clsx": "^2.1.0",
-    "lucide-react": "^1.8.0",
-    "next": "^16.2.6",
-    "postcss": "^8.5.23",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "lucide-react": "^1.35.0",
+    "next": "^16.3.3",
+    "postcss": "^8.5.26",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
-    "recharts": "^3.8.1",
+    "recharts": "^3.10.1",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^3.5.0",
+    "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.2.2"
   },
   "overrides": {
-    "postcss": "^8.5.23",
-    "sharp": "^0.35.3"
+    "postcss": "$postcss",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "tsx": "^4.23.0",
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3"
   }
 }

@@ -90,7 +90,10 @@ async function createWithDockerPortRetry({
           unavailablePorts: [...rejectedPorts],
         }),
       );
-      if (!nextPort) throw new Error("Docker port retry did not receive a valid replacement port");
+      if (!nextPort)
+        throw new Error("Docker port retry did not receive a valid replacement port", {
+          cause: error,
+        });
 
       if (typeof onRetry === "function") {
         onRetry({

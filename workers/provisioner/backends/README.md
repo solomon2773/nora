@@ -25,7 +25,7 @@ The generated adapter intentionally throws for every required lifecycle, telemet
 Implement these methods from `interface.ts`:
 
 - `create(config)` returns stable `{ containerId, host }` metadata only after the runtime is provisioned.
-- `destroy(containerId, options)` is idempotent and removes target resources without crossing tenant boundaries.
+- `destroy(containerId, options)` is idempotent and removes target resources without crossing tenant boundaries. An adapter that owns durable per-agent state must honor `options.preserveState` and keep that state: redeploy destroys the previous runtime and recreates it against the same volume/claim, which is keyed by agent id, not container id.
 - `status(containerId)` reports accurate run state and uptime when available.
 - `stats(containerId, agent)` returns normalized telemetry or an explicit unavailable-capability map.
 - `stop`, `start`, and `restart` preserve runtime identity and persisted state.

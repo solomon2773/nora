@@ -20,7 +20,7 @@ export default function LogViewer({ agentId, historyRef, maxLines = 1500, classN
     const legacy = localStorage.getItem("token");
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const qs = legacy ? `?token=${encodeURIComponent(legacy)}` : "";
-    const url = `${protocol}//${window.location.host}/api/ws/logs/${agentId}${qs}`;
+    const url = `${protocol}//${window.location.host}/api/ws/logs/${encodeURIComponent(String(agentId))}${qs}`;
 
     const socket = new WebSocket(url);
     socket.onopen = () => setConnected(true);

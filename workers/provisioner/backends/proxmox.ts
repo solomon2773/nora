@@ -713,7 +713,7 @@ class ProxmoxBackend extends ProvisionerBackend {
     try {
       return fs.readFileSync(filePath, "utf8");
     } catch (error) {
-      throw new Error(`${label} could not be read: ${error.message}`);
+      throw new Error(`${label} could not be read: ${error.message}`, { cause: error });
     }
   }
 
