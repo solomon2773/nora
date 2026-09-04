@@ -1716,11 +1716,13 @@ function createGatewayRouter(options = {}) {
         throw new Error("Gateway returned no health or status response");
       }
       // If we got a successful health response and the agent is in 'warning' state,
-      // auto-promote to 'running' — the gateway proved itself healthy.
+      // auto-promote to 'running' — the gateway proved itself healthy. Guarded
+      // on 'warning' so the write is a no-op if the agent entered the deploy
+      // lifecycle (queued/deploying) after the router gate read its status.
       if (health && req.agent.status === "warning") {
-        db.query("UPDATE agents SET status = 'running' WHERE id = $1", [req.agent.id]).catch(
-          () => {},
-        );
+        db.query("UPDATE agents SET status = 'running' WHERE id = $1 AND status = 'warning'", [
+          req.agent.id,
+        ]).catch(() => {});
       }
       res.json({ health, status });
     } catch (err) {

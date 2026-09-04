@@ -632,23 +632,50 @@ describe("GET /agents", () => {
 
 describe("GET /agents/:id", () => {
   it("self-heals warning status to running when the container is still live", async () => {
-    mockDb.query.mockResolvedValueOnce({
-      rows: [
-        {
-          id: "a-warning",
-          name: "Warning Agent",
-          status: "warning",
-          user_id: "user-1",
-          container_id: "container-1",
-          effective_role: "owner",
-        },
-      ],
-    });
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "a-warning",
+            name: "Warning Agent",
+            status: "warning",
+            user_id: "user-1",
+            container_id: "container-1",
+            effective_role: "owner",
+          },
+        ],
+      })
+      // Guarded reconcile UPDATE ... RETURNING id — the CAS succeeds.
+      .mockResolvedValueOnce({ rows: [{ id: "a-warning" }] });
 
     const res = await auth(request(app).get("/agents/a-warning"));
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("status", "running");
+  });
+
+  it("keeps the stored status in the response when the guarded reconcile loses the race", async () => {
+    mockDb.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "a-warning-raced",
+            name: "Raced Warning Agent",
+            status: "warning",
+            user_id: "user-1",
+            container_id: "container-raced",
+            effective_role: "owner",
+          },
+        ],
+      })
+      // The row entered the deploy lifecycle after the SELECT: the guarded
+      // UPDATE matches nothing, so the response must not claim 'running'.
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await auth(request(app).get("/agents/a-warning-raced"));
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("status", "warning");
   });
 
   it("reconciles warning agents to stopped when the container is no longer live", async () => {

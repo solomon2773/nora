@@ -182,8 +182,11 @@ function attachExecStream(server) {
           // writes are guarded on status='deploying'; stealing that status makes
           // finalization match zero rows, which the worker reads as "agent
           // deleted" and acts on by destroying the runtime it just built.
+          // 'queued' matters too: a redeploy queues while the previous
+          // container is still live, and promoting it to 'running' makes the
+          // worker skip the queued job as already-running.
           const promoted = await db.query(
-            "UPDATE agents SET status = 'running' WHERE id = $1 AND status <> 'deploying' RETURNING id",
+            "UPDATE agents SET status = 'running' WHERE id = $1 AND status NOT IN ('deploying', 'queued') RETURNING id",
             [agent.id],
           );
           // Only mirror the write in memory when a row actually changed, so the
