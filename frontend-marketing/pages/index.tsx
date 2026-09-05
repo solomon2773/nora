@@ -20,6 +20,7 @@ import {
 import { useEffect, useState } from "react";
 import LanguageSwitcher from "../components/LanguageSwitcher";
 import SeoHead from "../components/SeoHead";
+import { SignupGate } from "../components/SignupGate";
 import { trackEvent } from "../lib/analytics";
 import { useI18n } from "../lib/i18n";
 
@@ -217,12 +218,14 @@ export default function Home() {
               >
                 {t("Log In")}
               </Link>
-              <Link
-                href={DEMO_SIGNUP_PATH}
-                className="rounded-full bg-brand-gold px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-gold/25 transition-transform hover:-translate-y-0.5"
-              >
-                {t("Try Demo")}
-              </Link>
+              <SignupGate>
+                <Link
+                  href={DEMO_SIGNUP_PATH}
+                  className="rounded-full bg-brand-gold px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-gold/25 transition-transform hover:-translate-y-0.5"
+                >
+                  {t("Try Demo")}
+                </Link>
+              </SignupGate>
             </div>
 
             <button
@@ -280,9 +283,11 @@ export default function Home() {
                 </a>
                 <div className="soft-rule" />
                 <LanguageSwitcher className="w-full justify-between" />
-                <Link href={DEMO_SIGNUP_PATH} onClick={() => setMobileMenuOpen(false)}>
-                  {t("Try the zero-key demo")}
-                </Link>
+                <SignupGate>
+                  <Link href={DEMO_SIGNUP_PATH} onClick={() => setMobileMenuOpen(false)}>
+                    {t("Try the zero-key demo")}
+                  </Link>
+                </SignupGate>
                 <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
                   {t("Log In")}
                 </Link>
@@ -318,13 +323,15 @@ export default function Home() {
               </p>
 
               <div className="mt-10 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                <Link
-                  href={DEMO_SIGNUP_PATH}
-                  onClick={() => trackEvent("Demo CTA", { location: "hero" })}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-gold px-6 py-3 text-base font-black text-brand-ink shadow-lg shadow-brand-gold/25 transition-transform hover:-translate-y-0.5"
-                >
-                  {t("Try the zero-key demo")} <ArrowRight size={18} />
-                </Link>
+                <SignupGate>
+                  <Link
+                    href={DEMO_SIGNUP_PATH}
+                    onClick={() => trackEvent("Demo CTA", { location: "hero" })}
+                    className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-gold px-6 py-3 text-base font-black text-brand-ink shadow-lg shadow-brand-gold/25 transition-transform hover:-translate-y-0.5"
+                  >
+                    {t("Try the zero-key demo")} <ArrowRight size={18} />
+                  </Link>
+                </SignupGate>
                 <a
                   href={STAR_URL}
                   target="_blank"
@@ -602,12 +609,14 @@ export default function Home() {
                 </div>
 
                 <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
-                  <Link
-                    href={DEMO_SIGNUP_PATH}
-                    className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-gold px-6 py-3 text-sm font-black text-brand-ink transition-transform hover:-translate-y-0.5"
-                  >
-                    Try Zero-Key Demo <ArrowRight size={16} />
-                  </Link>
+                  <SignupGate>
+                    <Link
+                      href={DEMO_SIGNUP_PATH}
+                      className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-gold px-6 py-3 text-sm font-black text-brand-ink transition-transform hover:-translate-y-0.5"
+                    >
+                      Try Zero-Key Demo <ArrowRight size={16} />
+                    </Link>
+                  </SignupGate>
                   <a
                     href={QUICKSTART_URL}
                     target="_blank"
@@ -695,9 +704,11 @@ export default function Home() {
               <Link href="/login" className="hover:text-brand-ink">
                 Log In
               </Link>
-              <Link href={DEMO_SIGNUP_PATH} className="hover:text-brand-ink">
-                Try Demo
-              </Link>
+              <SignupGate>
+                <Link href={DEMO_SIGNUP_PATH} className="hover:text-brand-ink">
+                  Try Demo
+                </Link>
+              </SignupGate>
             </div>
           </div>
           <div className="mx-auto mt-8 max-w-7xl text-xs text-slate-600">

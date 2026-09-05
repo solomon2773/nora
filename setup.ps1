@@ -986,13 +986,18 @@ function Read-EnvValue {
     }
 
     $pattern = '^\s*' + [regex]::Escape($Name) + '\s*=(.*)$'
+    $matchedValue = $null
+    $foundMatch = $false
     foreach ($line in Get-Content -LiteralPath $EnvPath) {
         if ($line -match $pattern) {
-            $value = $matches[1].Trim()
-            return ConvertFrom-ComposeEnvLiteral -Value $value
+            $matchedValue = $matches[1].Trim()
+            $foundMatch = $true
         }
     }
 
+    if ($foundMatch) {
+        return ConvertFrom-ComposeEnvLiteral -Value $matchedValue
+    }
     return $Default
 }
 
@@ -1080,6 +1085,7 @@ function Update-SignupProtectionEnv {
     param([string]$EnvPath)
 
     $values = [ordered]@{
+        SIGNUP_ENABLED = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_ENABLED" -Default "true")
         SIGNUP_RATE_LIMIT_BURST_MAX = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RATE_LIMIT_BURST_MAX" -Default "5")
         SIGNUP_RATE_LIMIT_BURST_WINDOW_MS = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" -Default "600000")
         SIGNUP_RATE_LIMIT_DAILY_MAX = (Read-EnvValue -EnvPath $EnvPath -Name "SIGNUP_RATE_LIMIT_DAILY_MAX" -Default "20")
@@ -2049,6 +2055,7 @@ $REDIS_TLS_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_KEY" -Default
 $REDIS_TLS_KEY_FILE = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_KEY_FILE" -Default ""
 $REDIS_TLS_INSECURE_SKIP_VERIFY = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_TLS_INSECURE_SKIP_VERIFY" -Default "false"
 $REDIS_CONNECT_TIMEOUT_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "REDIS_CONNECT_TIMEOUT_MS" -Default "10000"
+$SIGNUP_ENABLED = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_ENABLED" -Default "true"
 $SIGNUP_RATE_LIMIT_BURST_MAX = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RATE_LIMIT_BURST_MAX" -Default "5"
 $SIGNUP_RATE_LIMIT_BURST_WINDOW_MS = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" -Default "600000"
 $SIGNUP_RATE_LIMIT_DAILY_MAX = Read-EnvValue -EnvPath $ENV_FILE -Name "SIGNUP_RATE_LIMIT_DAILY_MAX" -Default "20"
@@ -2144,6 +2151,7 @@ GITHUB_CLIENT_SECRET=$GITHUB_CLIENT_SECRET
 NEXTAUTH_URL=$NEXTAUTH_URL
 
 # ── Public Signup Abuse Protection ──────────────────────────
+SIGNUP_ENABLED=$SIGNUP_ENABLED
 SIGNUP_RATE_LIMIT_BURST_MAX=$SIGNUP_RATE_LIMIT_BURST_MAX
 SIGNUP_RATE_LIMIT_BURST_WINDOW_MS=$SIGNUP_RATE_LIMIT_BURST_WINDOW_MS
 SIGNUP_RATE_LIMIT_DAILY_MAX=$SIGNUP_RATE_LIMIT_DAILY_MAX

@@ -193,12 +193,13 @@ OAuth login is disabled by default. Set `OAUTH_LOGIN_ENABLED=true` along with pr
 | `GITHUB_CLIENT_SECRET` | No       | —       | OAuth App client secret from GitHub Developer Settings.                            |
 | `NEXTAUTH_SECRET`      | No       | —       | Secret used by NextAuth.js for session encryption. Required when OAuth is enabled. |
 
-## Public signup abuse protection
+## Public signup availability and abuse protection
 
-Signup remains public, but Nora bounds signup spikes with dedicated app-level rate limits and a runtime bot challenge. Self-hosted operators may explicitly opt out; hosted PaaS signup fails closed until Turnstile or reCAPTCHA is fully configured.
+Public signup is enabled by default and can be disabled by the operator. When it is enabled, Nora bounds signup spikes with dedicated app-level rate limits and a runtime bot challenge. Self-hosted operators may explicitly opt out of bot protection; hosted PaaS signup fails closed until Turnstile or reCAPTCHA is fully configured.
 
 | Variable                            | Required  | Default    | Description                                                                                                                                              |
 | ----------------------------------- | --------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SIGNUP_ENABLED`                    | No        | `true`     | `false` rejects new password and OAuth registrations and hides public signup actions; existing-account login remains available.                          |
 | `SIGNUP_RATE_LIMIT_BURST_MAX`       | No        | `5`        | Maximum signup attempts per IP within the burst window.                                                                                                  |
 | `SIGNUP_RATE_LIMIT_BURST_WINDOW_MS` | No        | `600000`   | Burst signup window in milliseconds.                                                                                                                     |
 | `SIGNUP_RATE_LIMIT_DAILY_MAX`       | No        | `20`       | Maximum signup attempts per IP within the daily window.                                                                                                  |
@@ -209,13 +210,18 @@ Signup remains public, but Nora bounds signup spikes with dedicated app-level ra
 | `SIGNUP_RECAPTCHA_SITE_KEY`         | No        | —          | Google reCAPTCHA public site key. Required with the reCAPTCHA provider and exposed through bootstrap status.                                             |
 | `SIGNUP_RECAPTCHA_SECRET`           | No        | —          | Google reCAPTCHA verification secret. Required with the reCAPTCHA provider and retained only by the backend.                                             |
 
+`SIGNUP_ENABLED` is trimmed and parsed case-insensitively. A missing or blank value defaults to
+enabled. `true`, `1`, `yes`, and `on` enable registration; `false`, `0`, `no`, and `off` disable
+it. Any other nonempty value fails closed and disables registration at runtime.
+
 The signup page reads this configuration at runtime from `GET /api/auth/bootstrap-status`, so published frontend images do not need provider-specific build arguments. Existing `NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER`, `NEXT_PUBLIC_SIGNUP_TURNSTILE_SITE_KEY`, and `NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY` values remain accepted as deprecated runtime aliases; setup migrates their values into the canonical names above.
 
 <Warning>
   The reference production workflow refuses a `PLATFORM_MODE=paas` deployment unless the selected
-  provider has both its public site key and server secret. This preflight runs before release
-  metadata, secret materialization, image builds, or Compose replacement so a release cannot deploy
-  public signup into a known unavailable state.
+  provider has both its public site key and server secret. The preflight is exempt only when
+  `SIGNUP_ENABLED` is explicitly set to a recognized false value; invalid values do not bypass it.
+  This check runs before release metadata, secret materialization, image builds, or Compose
+  replacement so a release cannot deploy public signup into a known unavailable state.
 </Warning>
 
 ## Release tracking and upgrades

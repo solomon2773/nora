@@ -55,6 +55,16 @@ if [ "$platform_mode" != "paas" ]; then
   exit 0
 fi
 
+signup_enabled="$(read_env_value SIGNUP_ENABLED true)"
+signup_enabled="${signup_enabled#"${signup_enabled%%[![:space:]]*}"}"
+signup_enabled="${signup_enabled%"${signup_enabled##*[![:space:]]}"}"
+signup_enabled="$(printf '%s' "$signup_enabled" | tr '[:upper:]' '[:lower:]')"
+case "$signup_enabled" in
+  false | 0 | no | off)
+    exit 0
+    ;;
+esac
+
 provider="$(read_env_value_with_alias SIGNUP_BOT_PROTECTION_PROVIDER NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER none)"
 provider="$(printf '%s' "$provider" | tr '[:upper:]' '[:lower:]')"
 case "$provider" in

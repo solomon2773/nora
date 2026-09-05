@@ -6,6 +6,26 @@ const ok = (description, schema) => ({
   200: { description, ...(schema ? { content: { "application/json": { schema } } } : {}) },
 });
 
+const signupDisabledResponse = (description) => ({
+  description,
+  content: {
+    "application/json": {
+      schema: {
+        type: "object",
+        required: ["error"],
+        properties: {
+          error: { type: "string" },
+          code: {
+            type: "string",
+            enum: ["SIGNUP_DISABLED"],
+            description: "Stable code returned when registration is disabled by the operator.",
+          },
+        },
+      },
+    },
+  },
+});
+
 const credentialsBody = {
   required: true,
   content: {
@@ -47,15 +67,22 @@ module.exports = {
       tags: ["Auth"],
       summary: "Public runtime authentication bootstrap status",
       description:
-        "Reports self-hosted first-account admin claim state plus safe runtime OAuth, platform-mode, and signup-challenge metadata. Hosted PaaS requires an explicit bootstrap administrator and never exposes public admin claim. Public; never exposes verification secrets.",
+        "Reports self-hosted first-account admin claim state plus safe runtime OAuth, signup availability, platform-mode, and signup-challenge metadata. Hosted PaaS requires an explicit bootstrap administrator and never exposes public admin claim. Public; never exposes verification secrets.",
       security: [],
       responses: ok("Status", {
         type: "object",
-        required: ["needsFirstAdmin", "oauthLoginEnabled", "platformMode", "signupBotProtection"],
+        required: [
+          "needsFirstAdmin",
+          "oauthLoginEnabled",
+          "platformMode",
+          "signupEnabled",
+          "signupBotProtection",
+        ],
         properties: {
           needsFirstAdmin: { type: "boolean" },
           oauthLoginEnabled: { type: "boolean" },
           platformMode: { type: "string", enum: ["selfhosted", "paas"] },
+          signupEnabled: { type: "boolean" },
           signupBotProtection: {
             type: "object",
             required: ["enabled", "provider", "siteKey", "configured", "configurationError"],
@@ -82,7 +109,12 @@ module.exports = {
         "The first registered user becomes platform admin only on an empty self-hosted installation. Hosted PaaS requires a pre-seeded administrator, so public signup creates regular users. Rate-limited and challenge-protected when configured.",
       security: [],
       requestBody: signupBody,
-      responses: ok("Created user"),
+      responses: {
+        ...ok("Created user"),
+        403: signupDisabledResponse(
+          "Registration is disabled by the operator. This status is also used when signup bot-protection verification fails.",
+        ),
+      },
     },
   },
   "/auth/login": {
@@ -99,7 +131,12 @@ module.exports = {
       tags: ["Auth"],
       summary: "Exchange a verified OAuth identity for a Nora session",
       security: [],
-      responses: ok("Token + user"),
+      responses: {
+        ...ok("Token + user"),
+        403: signupDisabledResponse(
+          "OAuth login is disabled, or registration is disabled and a verified identity is not linked to an existing Nora user. Existing linked OAuth users can still authenticate when registration alone is disabled.",
+        ),
+      },
     },
   },
   "/auth/logout": {

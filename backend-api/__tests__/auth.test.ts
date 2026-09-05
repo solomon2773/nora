@@ -162,6 +162,7 @@ beforeEach(() => {
   process.env.OAUTH_LOGIN_ENABLED = "false";
   process.env.PLATFORM_MODE = "selfhosted";
   process.env.GOOGLE_CLIENT_ID = "google-client-id";
+  delete process.env.SIGNUP_ENABLED;
   delete process.env.SIGNUP_BOT_PROTECTION_PROVIDER;
   delete process.env.NEXT_PUBLIC_SIGNUP_BOT_PROTECTION_PROVIDER;
   delete process.env.SIGNUP_TURNSTILE_SECRET;
@@ -176,6 +177,9 @@ beforeEach(() => {
 
 afterAll(() => {
   mockVerifyApiKey.mockRestore();
+  // The last-run test's value must not leak into later test files in the same
+  // Jest worker — beforeEach only resets it within this file.
+  delete process.env.SIGNUP_ENABLED;
 });
 
 describe("auth rate limit configuration", () => {
@@ -225,6 +229,26 @@ describe("auth rate limit configuration", () => {
   );
 });
 
+describe("password signup availability configuration", () => {
+  it("defaults absent or blank values to enabled", () => {
+    delete process.env.SIGNUP_ENABLED;
+    expect(authRouteTestHelpers.isSignupEnabled()).toBe(true);
+
+    process.env.SIGNUP_ENABLED = "   ";
+    expect(authRouteTestHelpers.isSignupEnabled()).toBe(true);
+  });
+
+  it.each(["true", "1", "YES", " on "])("enables password signup for %p", (value) => {
+    process.env.SIGNUP_ENABLED = value;
+    expect(authRouteTestHelpers.isSignupEnabled()).toBe(true);
+  });
+
+  it.each(["false", "0", "NO", " off ", "invalid"])("disables password signup for %p", (value) => {
+    process.env.SIGNUP_ENABLED = value;
+    expect(authRouteTestHelpers.isSignupEnabled()).toBe(false);
+  });
+});
+
 describe("bootstrap admin startup gate", () => {
   it("refuses an empty hosted PaaS database without explicit bootstrap credentials", async () => {
     const originalEmail = process.env.DEFAULT_ADMIN_EMAIL;
@@ -249,6 +273,56 @@ describe("bootstrap admin startup gate", () => {
 });
 
 describe("POST /auth/signup", () => {
+  it("rejects disabled password signup before validation or work", async () => {
+    process.env.SIGNUP_ENABLED = "false";
+    const hashSpy = jest.spyOn(bcrypt, "hash");
+
+    try {
+      const res = await signupRequest().send({});
+
+      expect(res.status).toBe(403);
+      expect(res.body).toEqual({
+        error: "Registration is disabled by this Nora operator.",
+        code: "SIGNUP_DISABLED",
+      });
+      expect(hashSpy).not.toHaveBeenCalled();
+      expect(mockDb.query).not.toHaveBeenCalled();
+      expect(mockDb.connect).not.toHaveBeenCalled();
+    } finally {
+      hashSpy.mockRestore();
+    }
+  });
+
+  it("returns the disabled response without consuming the same IP's signup quota", async () => {
+    process.env.SIGNUP_ENABLED = "false";
+    const ip = "198.51.100.251";
+    const hashSpy = jest.spyOn(bcrypt, "hash");
+    const disabledResponse = {
+      error: "Registration is disabled by this Nora operator.",
+      code: "SIGNUP_DISABLED",
+    };
+
+    try {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const res = await signupRequest(ip).send({});
+
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual(disabledResponse);
+      }
+
+      process.env.SIGNUP_ENABLED = "true";
+      const enabledRes = await signupRequest(ip).send({});
+      expect(enabledRes.status).toBe(400);
+      expect(enabledRes.body.error).toMatch(/email/i);
+
+      expect(hashSpy).not.toHaveBeenCalled();
+      expect(mockDb.query).not.toHaveBeenCalled();
+      expect(mockDb.connect).not.toHaveBeenCalled();
+    } finally {
+      hashSpy.mockRestore();
+    }
+  });
+
   it("rejects missing email", async () => {
     const res = await signupRequest().send({ password: "testpassword123" });
     expect(res.status).toBe(400);
@@ -1102,6 +1176,107 @@ describe("OAuth hardening", () => {
     expect(decoded).toMatchObject({ id: "user-1", email: "user@example.com", role: "user" });
   });
 
+  it("rejects OAuth registration when signup is disabled", async () => {
+    process.env.OAUTH_LOGIN_ENABLED = "true";
+    process.env.SIGNUP_ENABLED = "false";
+    global.fetch.mockResolvedValueOnce(
+      jsonResponse({
+        sub: "google-sub-new",
+        email: "new-user@example.com",
+        email_verified: "true",
+        aud: "google-client-id",
+        name: "New Google User",
+      }),
+    );
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ has_users: true }] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: "new-user-1",
+            email: "new-user@example.com",
+            role: "user",
+            name: "New Google User",
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/auth/oauth-login").send({
+      email: "new-user@example.com",
+      provider: "google",
+      providerId: "google-sub-new",
+      oauthIdToken: "google-id-token",
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({
+      error: "Registration is disabled by this Nora operator.",
+      code: "SIGNUP_DISABLED",
+    });
+    expect(
+      mockDb.query.mock.calls.some(([query]) => /INSERT INTO users/i.test(String(query))),
+    ).toBe(false);
+  });
+
+  it("allows existing OAuth users to log in when signup is disabled", async () => {
+    process.env.OAUTH_LOGIN_ENABLED = "true";
+    process.env.SIGNUP_ENABLED = "false";
+    global.fetch.mockResolvedValueOnce(
+      jsonResponse({
+        sub: "google-sub-existing",
+        email: "existing-user@example.com",
+        email_verified: "true",
+        aud: "google-client-id",
+        name: "Existing Google User",
+      }),
+    );
+    const existingUser = {
+      id: "existing-user-1",
+      email: "existing-user@example.com",
+      role: "user",
+      name: "Existing Google User",
+      provider: "google",
+      provider_id: "google-sub-existing",
+      password_hash: null,
+    };
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [existingUser] })
+      .mockResolvedValueOnce({ rows: [existingUser] })
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: existingUser.id,
+            email: existingUser.email,
+            role: existingUser.role,
+            name: existingUser.name,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).post("/auth/oauth-login").send({
+      email: existingUser.email,
+      provider: "google",
+      providerId: existingUser.provider_id,
+      oauthIdToken: "google-id-token",
+    });
+
+    expect(res.status).toBe(200);
+    const decoded = jwt.verify(res.body.token, JWT_SECRET);
+    expect(decoded).toMatchObject({
+      id: existingUser.id,
+      email: existingUser.email,
+      role: existingUser.role,
+    });
+  });
+
   it("assigns admin role to the first OAuth-created user", async () => {
     process.env.OAUTH_LOGIN_ENABLED = "true";
     global.fetch.mockResolvedValueOnce(
@@ -1303,6 +1478,7 @@ describe("GET /auth/bootstrap-status", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       needsFirstAdmin: true,
+      signupEnabled: true,
       oauthLoginEnabled: false,
       platformMode: "selfhosted",
       signupBotProtection: disabledSignupBotProtection,
@@ -1315,6 +1491,23 @@ describe("GET /auth/bootstrap-status", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       needsFirstAdmin: false,
+      signupEnabled: true,
+      oauthLoginEnabled: false,
+      platformMode: "selfhosted",
+      signupBotProtection: disabledSignupBotProtection,
+    });
+  });
+
+  it("does not advertise first-admin signup when password registration is disabled", async () => {
+    process.env.SIGNUP_ENABLED = "false";
+    mockDb.query.mockResolvedValueOnce({ rows: [] });
+
+    const res = await request(app).get("/auth/bootstrap-status");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      needsFirstAdmin: false,
+      signupEnabled: false,
       oauthLoginEnabled: false,
       platformMode: "selfhosted",
       signupBotProtection: disabledSignupBotProtection,
@@ -1342,6 +1535,7 @@ describe("GET /auth/bootstrap-status", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       needsFirstAdmin: false,
+      signupEnabled: true,
       oauthLoginEnabled: true,
       platformMode: "paas",
       signupBotProtection: {
@@ -1365,6 +1559,7 @@ describe("GET /auth/bootstrap-status", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       needsFirstAdmin: false,
+      signupEnabled: true,
       oauthLoginEnabled: false,
       platformMode: "selfhosted",
       signupBotProtection: {

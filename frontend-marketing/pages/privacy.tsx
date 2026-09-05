@@ -1,5 +1,6 @@
 import Link from "next/link";
 import SeoHead from "../components/SeoHead";
+import { SignupGate } from "../components/SignupGate";
 
 // NOTE: Boilerplate for a self-hosted-OSS product + hosted reference deployment.
 // Have it reviewed by counsel and set a real contact address before launch.
@@ -40,12 +41,14 @@ export default function Privacy() {
             >
               Log In
             </Link>
-            <Link
-              href="/signup"
-              className="rounded-full bg-brand-cyan px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-cyan/25 transition-transform hover:-translate-y-0.5"
-            >
-              Create Account
-            </Link>
+            <SignupGate>
+              <Link
+                href="/signup"
+                className="rounded-full bg-brand-cyan px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-cyan/25 transition-transform hover:-translate-y-0.5"
+              >
+                Create Account
+              </Link>
+            </SignupGate>
           </div>
         </header>
 

@@ -177,16 +177,30 @@ describe("OpenAPI document", () => {
         "needsFirstAdmin",
         "oauthLoginEnabled",
         "platformMode",
+        "signupEnabled",
         "signupBotProtection",
       ]),
     );
     expect(bootstrapSchema.properties.platformMode.enum).toEqual(["selfhosted", "paas"]);
+    expect(bootstrapSchema.properties.signupEnabled).toEqual({ type: "boolean" });
 
     const signupSchema =
       doc.paths["/auth/signup"].post.requestBody.content["application/json"].schema;
     expect(signupSchema.required).toEqual(["email", "password"]);
     expect(signupSchema.properties.botProtectionToken).toEqual(
       expect.objectContaining({ type: "string" }),
+    );
+
+    const signupDisabledResponse = doc.paths["/auth/signup"].post.responses[403];
+    expect(signupDisabledResponse.description).toMatch(/disabled/i);
+    expect(signupDisabledResponse.content["application/json"].schema.properties.code).toEqual(
+      expect.objectContaining({ type: "string", enum: ["SIGNUP_DISABLED"] }),
+    );
+
+    const oauthSignupDisabledResponse = doc.paths["/auth/oauth-login"].post.responses[403];
+    expect(oauthSignupDisabledResponse.description).toMatch(/registration.*disabled/i);
+    expect(oauthSignupDisabledResponse.content["application/json"].schema.properties.code).toEqual(
+      expect.objectContaining({ type: "string", enum: ["SIGNUP_DISABLED"] }),
     );
   });
 

@@ -4,7 +4,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const rateLimit = require("express-rate-limit");
 const db = require("../db");
-const { allowsFirstAdminSignupClaim } = require("../bootstrapAdmin");
+const { allowsFirstAdminSignupClaim, isSignupEnabled } = require("../bootstrapAdmin");
 const { authenticateToken, requireSession } = require("../middleware/auth");
 const { setAuthCookie, clearAuthCookie } = require("../authCookie");
 const { normalizeEmail, normalizeProvider, verifyOAuthIdentity } = require("../oauthProviders");
@@ -17,12 +17,23 @@ const {
 const router = express.Router();
 const FIRST_USER_ADMIN_LOCK_KEY = 20260408;
 const DUPLICATE_SIGNUP_MESSAGE = "Account already exists for this email";
+const SIGNUP_DISABLED_MESSAGE = "Registration is disabled by this Nora operator.";
+const SIGNUP_DISABLED_CODE = "SIGNUP_DISABLED";
 const SIGNUP_CHALLENGE_MESSAGE = "Complete the verification challenge and try again";
 const TURNSTILE_SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const RECAPTCHA_SITEVERIFY_URL = "https://www.google.com/recaptcha/api/siteverify";
 
 function isOAuthLoginEnabled() {
   return process.env.OAUTH_LOGIN_ENABLED === "true";
+}
+
+function sendSignupDisabled(res) {
+  return res.status(403).json({ error: SIGNUP_DISABLED_MESSAGE, code: SIGNUP_DISABLED_CODE });
+}
+
+function requireSignupEnabled(_req, res, next) {
+  if (!isSignupEnabled()) return sendSignupDisabled(res);
+  next();
 }
 
 function getPublicPlatformMode() {
@@ -383,8 +394,10 @@ router.get("/bootstrap-status", async (req, res) => {
   try {
     const { rows } = await db.query("SELECT 1 FROM users LIMIT 1");
     const firstAdminClaimAllowed = allowsFirstAdminSignupClaim();
+    const signupEnabled = isSignupEnabled();
     res.json({
-      needsFirstAdmin: rows.length === 0 && firstAdminClaimAllowed,
+      needsFirstAdmin: signupEnabled && rows.length === 0 && firstAdminClaimAllowed,
+      signupEnabled,
       oauthLoginEnabled: isOAuthLoginEnabled(),
       platformMode: getPublicPlatformMode(),
       signupBotProtection: getPublicSignupBotProtectionConfig(),
@@ -394,43 +407,49 @@ router.get("/bootstrap-status", async (req, res) => {
   }
 });
 
-router.post("/signup", signupBurstLimiter, signupDailyLimiter, async (req, res) => {
-  const { email, password } = req.body;
-  const normalizedEmail = normalizeEmail(email);
-  const emailErr = validateEmail(normalizedEmail);
-  if (emailErr) return res.status(400).json({ error: emailErr });
-  const pwErr = validatePassword(password);
-  if (pwErr) return res.status(400).json({ error: pwErr });
-  try {
-    await verifySignupBotProtection(req);
-    const existingUser = await findExistingUserByEmail(normalizedEmail);
-    if (existingUser) return res.status(409).json({ error: DUPLICATE_SIGNUP_MESSAGE });
+router.post(
+  "/signup",
+  requireSignupEnabled,
+  signupBurstLimiter,
+  signupDailyLimiter,
+  async (req, res) => {
+    const { email, password } = req.body;
+    const normalizedEmail = normalizeEmail(email);
+    const emailErr = validateEmail(normalizedEmail);
+    if (emailErr) return res.status(400).json({ error: emailErr });
+    const pwErr = validatePassword(password);
+    if (pwErr) return res.status(400).json({ error: pwErr });
+    try {
+      await verifySignupBotProtection(req);
+      const existingUser = await findExistingUserByEmail(normalizedEmail);
+      if (existingUser) return res.status(409).json({ error: DUPLICATE_SIGNUP_MESSAGE });
 
-    const hash = await bcrypt.hash(password, 10);
-    const user = await withUserCreationLock(async (client) => {
-      const role = await nextRegisteredUserRole(client);
-      const result = await client.query(
-        "INSERT INTO users(email, password_hash, role) VALUES($1, $2, $3) RETURNING id, email, role",
-        [normalizedEmail, hash, role],
-      );
-      return result.rows[0];
-    });
-    res.json(user);
-  } catch (e) {
-    if (isDuplicateUserError(e)) {
-      return res.status(409).json({ error: DUPLICATE_SIGNUP_MESSAGE });
+      const hash = await bcrypt.hash(password, 10);
+      const user = await withUserCreationLock(async (client) => {
+        const role = await nextRegisteredUserRole(client);
+        const result = await client.query(
+          "INSERT INTO users(email, password_hash, role) VALUES($1, $2, $3) RETURNING id, email, role",
+          [normalizedEmail, hash, role],
+        );
+        return result.rows[0];
+      });
+      res.json(user);
+    } catch (e) {
+      if (isDuplicateUserError(e)) {
+        return res.status(409).json({ error: DUPLICATE_SIGNUP_MESSAGE });
+      }
+      const statusCode = e.statusCode || 500;
+      if (e.code === "PAAS_BOOTSTRAP_ADMIN_REQUIRED") {
+        return res.status(statusCode).json({ error: e.message, code: e.code });
+      }
+      if (statusCode >= 500) {
+        console.error("Signup failed:", e.message);
+        return res.status(500).json({ error: "Could not create account" });
+      }
+      res.status(statusCode).json({ error: e.message });
     }
-    const statusCode = e.statusCode || 500;
-    if (e.code === "PAAS_BOOTSTRAP_ADMIN_REQUIRED") {
-      return res.status(statusCode).json({ error: e.message, code: e.code });
-    }
-    if (statusCode >= 500) {
-      console.error("Signup failed:", e.message);
-      return res.status(500).json({ error: "Could not create account" });
-    }
-    res.status(statusCode).json({ error: e.message });
-  }
-});
+  },
+);
 
 router.post("/login", authLimiter, async (req, res) => {
   const { email, password } = req.body;
@@ -534,6 +553,13 @@ router.post("/oauth-login", authLimiter, async (req, res, next) => {
         throw error;
       }
 
+      if (!linkedUser && !existingUser && !isSignupEnabled()) {
+        const error = new Error(SIGNUP_DISABLED_MESSAGE);
+        error.statusCode = 403;
+        error.code = SIGNUP_DISABLED_CODE;
+        throw error;
+      }
+
       const role = existingUser?.role || (await nextRegisteredUserRole(client));
       const result = await client.query(
         `INSERT INTO users(email, name, provider, provider_id, role)
@@ -567,6 +593,9 @@ router.post("/oauth-login", authLimiter, async (req, res, next) => {
     }
     if (e.statusCode === 409) {
       return res.status(409).json({ error: e.message });
+    }
+    if (e.code === SIGNUP_DISABLED_CODE) {
+      return sendSignupDisabled(res);
     }
     if (
       /verification failed|audience mismatch|email is not verified|email is missing or unverified|did not match|required/i.test(
@@ -739,4 +768,8 @@ router.post("/logout", (req, res) => {
 });
 
 module.exports = router;
-module.exports.__test = Object.freeze({ getAuthRateLimitConfig, parsePositiveIntegerEnv });
+module.exports.__test = Object.freeze({
+  getAuthRateLimitConfig,
+  isSignupEnabled,
+  parsePositiveIntegerEnv,
+});

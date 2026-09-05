@@ -811,9 +811,10 @@ ensure_nemoclaw_sandbox_image() {
 
 ensure_signup_protection_env() {
   local env_path="$1"
-  local burst_max burst_window daily_max daily_window provider turnstile_site_key
+  local signup_enabled burst_max burst_window daily_max daily_window provider turnstile_site_key
   local turnstile_secret recaptcha_site_key recaptcha_secret
 
+  signup_enabled="$(read_env_value "$env_path" "SIGNUP_ENABLED" "true")"
   burst_max="$(read_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_MAX" "5")"
   burst_window="$(read_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" "600000")"
   daily_max="$(read_env_value "$env_path" "SIGNUP_RATE_LIMIT_DAILY_MAX" "20")"
@@ -824,6 +825,7 @@ ensure_signup_protection_env() {
   recaptcha_site_key="$(read_env_value_with_alias "$env_path" "SIGNUP_RECAPTCHA_SITE_KEY" "NEXT_PUBLIC_SIGNUP_RECAPTCHA_SITE_KEY" "")"
   recaptcha_secret="$(read_env_value "$env_path" "SIGNUP_RECAPTCHA_SECRET" "")"
 
+  set_env_value "$env_path" "SIGNUP_ENABLED" "$signup_enabled"
   set_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_MAX" "$burst_max"
   set_env_value "$env_path" "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" "$burst_window"
   set_env_value "$env_path" "SIGNUP_RATE_LIMIT_DAILY_MAX" "$daily_max"
@@ -1989,6 +1991,7 @@ REDIS_TLS_KEY="$(read_env_value "$ENV_FILE" "REDIS_TLS_KEY" "")"
 REDIS_TLS_KEY_FILE="$(read_env_value "$ENV_FILE" "REDIS_TLS_KEY_FILE" "")"
 REDIS_TLS_INSECURE_SKIP_VERIFY="$(read_env_value "$ENV_FILE" "REDIS_TLS_INSECURE_SKIP_VERIFY" "false")"
 REDIS_CONNECT_TIMEOUT_MS="$(read_env_value "$ENV_FILE" "REDIS_CONNECT_TIMEOUT_MS" "10000")"
+SIGNUP_ENABLED="$(read_env_value "$ENV_FILE" "SIGNUP_ENABLED" "true")"
 SIGNUP_RATE_LIMIT_BURST_MAX="$(read_env_value "$ENV_FILE" "SIGNUP_RATE_LIMIT_BURST_MAX" "5")"
 SIGNUP_RATE_LIMIT_BURST_WINDOW_MS="$(read_env_value "$ENV_FILE" "SIGNUP_RATE_LIMIT_BURST_WINDOW_MS" "600000")"
 SIGNUP_RATE_LIMIT_DAILY_MAX="$(read_env_value "$ENV_FILE" "SIGNUP_RATE_LIMIT_DAILY_MAX" "20")"
@@ -2083,6 +2086,7 @@ GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
 NEXTAUTH_URL=${NEXTAUTH_URL}
 
 # ── Public Signup Abuse Protection ──────────────────────────
+SIGNUP_ENABLED=${SIGNUP_ENABLED}
 SIGNUP_RATE_LIMIT_BURST_MAX=${SIGNUP_RATE_LIMIT_BURST_MAX}
 SIGNUP_RATE_LIMIT_BURST_WINDOW_MS=${SIGNUP_RATE_LIMIT_BURST_WINDOW_MS}
 SIGNUP_RATE_LIMIT_DAILY_MAX=${SIGNUP_RATE_LIMIT_DAILY_MAX}

@@ -39,6 +39,23 @@ function allowsFirstAdminSignupClaim(platformMode = process.env.PLATFORM_MODE) {
 }
 
 /**
+ * Whether public account registration is enabled. Unset/empty defaults to
+ * enabled; any other value must be an explicit truthy token, so a typo fails
+ * closed. Shared by the auth routes (signup/OAuth guards, bootstrap-status)
+ * and the boot-time first-admin seed diagnostics.
+ *
+ * @param {string} [value] - Raw SIGNUP_ENABLED value (defaults to the env).
+ * @returns {boolean} True when public signup is allowed.
+ */
+function isSignupEnabled(value = process.env.SIGNUP_ENABLED) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return true;
+  return ["true", "1", "yes", "on"].includes(normalized);
+}
+
+/**
  * Validate optional bootstrap-admin credentials without mutating persistence,
  * declining to seed missing, invalid, short, placeholder, or default credentials.
  *
@@ -92,4 +109,5 @@ function getBootstrapAdminSeedConfig({ adminEmail, adminPassword }) {
 module.exports = {
   allowsFirstAdminSignupClaim,
   getBootstrapAdminSeedConfig,
+  isSignupEnabled,
 };

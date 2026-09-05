@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import LanguageSwitcher from "../components/LanguageSwitcher";
 import SeoHead from "../components/SeoHead";
+import { SignupGate } from "../components/SignupGate";
 
 const OSS_REPO_URL = "https://github.com/solomon2773/nora";
 const QUICKSTART_URL = `${OSS_REPO_URL}#quick-start`;
@@ -134,12 +135,14 @@ export default function Pricing() {
             >
               Log In
             </Link>
-            <Link
-              href="/signup"
-              className="rounded-full bg-brand-cyan px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-cyan/25 transition-transform hover:-translate-y-0.5"
-            >
-              Create Account
-            </Link>
+            <SignupGate>
+              <Link
+                href="/signup"
+                className="rounded-full bg-brand-cyan px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-cyan/25 transition-transform hover:-translate-y-0.5"
+              >
+                Create Account
+              </Link>
+            </SignupGate>
           </div>
         </header>
 
@@ -168,12 +171,14 @@ export default function Pricing() {
                 >
                   Open Quick Start <ArrowRight size={16} />
                 </a>
-                <Link
-                  href="/signup"
-                  className="inline-flex items-center justify-center gap-2 rounded-full border border-brand-ink/10 bg-white/70 px-6 py-3 text-sm font-bold text-brand-ink transition-colors hover:bg-brand-cyan/16"
-                >
-                  Create Account
-                </Link>
+                <SignupGate>
+                  <Link
+                    href="/signup"
+                    className="inline-flex items-center justify-center gap-2 rounded-full border border-brand-ink/10 bg-white/70 px-6 py-3 text-sm font-bold text-brand-ink transition-colors hover:bg-brand-cyan/16"
+                  >
+                    Create Account
+                  </Link>
+                </SignupGate>
                 <a
                   href={OSS_REPO_URL}
                   target="_blank"
@@ -294,20 +299,28 @@ export default function Pricing() {
               </div>
 
               <div className="space-y-3">
-                {ENTRY_LINKS.map((item) => (
-                  <a
-                    key={item.label}
-                    href={item.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block rounded-[26px] border border-white/10 bg-white/[0.03] px-4 py-4 transition-colors hover:bg-white/[0.06]"
-                  >
-                    <div className="text-xs font-black uppercase tracking-[0.28em] text-slate-500">
-                      {item.label}
-                    </div>
-                    <div className="mt-2 text-lg font-black text-white">{item.text}</div>
-                  </a>
-                ))}
+                {ENTRY_LINKS.map((item) => {
+                  const entryLink = (
+                    <a
+                      key={item.label}
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block rounded-[26px] border border-white/10 bg-white/[0.03] px-4 py-4 transition-colors hover:bg-white/[0.06]"
+                    >
+                      <div className="text-xs font-black uppercase tracking-[0.28em] text-slate-500">
+                        {item.label}
+                      </div>
+                      <div className="mt-2 text-lg font-black text-white">{item.text}</div>
+                    </a>
+                  );
+
+                  return item.href === SIGNUP_URL ? (
+                    <SignupGate key={item.label}>{entryLink}</SignupGate>
+                  ) : (
+                    entryLink
+                  );
+                })}
               </div>
             </div>
           </section>

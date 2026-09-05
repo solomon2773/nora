@@ -833,6 +833,78 @@ test "$(read_deploy_env_value "$1" NEMOCLAW_SANDBOX_IMAGE "")" = "nora-nemoclaw-
   }
 });
 
+test("setup persists signup availability across existing and generated environments", () => {
+  const envExample = read(".env.example");
+  const bashSetup = read("setup.sh");
+  const powershellSetup = read("setup.ps1");
+
+  const exampleSignupSection = envExample.match(
+    /# ── Public Signup Abuse Protection[^\n]*\n([\s\S]*?)(?=\n# ──)/,
+  )?.[1];
+  assert.ok(exampleSignupSection, ".env.example must expose the public signup section");
+  assert.match(exampleSignupSection, /^SIGNUP_ENABLED=true\nSIGNUP_RATE_LIMIT_BURST_MAX=5$/m);
+
+  const bashUpdateHelper = bashSetup.match(
+    /^ensure_signup_protection_env\(\) \{\n([\s\S]*?)^\}/m,
+  )?.[1];
+  assert.ok(bashUpdateHelper, "setup.sh must expose ensure_signup_protection_env");
+  assert.match(
+    bashUpdateHelper,
+    /signup_enabled="\$\(read_env_value "\$env_path" "SIGNUP_ENABLED" "true"\)"[\s\S]*?burst_max="\$\(read_env_value/,
+  );
+  assert.match(
+    bashUpdateHelper,
+    /set_env_value "\$env_path" "SIGNUP_ENABLED" "\$signup_enabled"[\s\S]*?set_env_value "\$env_path" "SIGNUP_RATE_LIMIT_BURST_MAX"/,
+  );
+  assert.match(
+    bashSetup,
+    /^SIGNUP_ENABLED="\$\(read_env_value "\$ENV_FILE" "SIGNUP_ENABLED" "true"\)"$/m,
+  );
+  const bashGeneratedSignupSection = bashSetup.match(
+    /# ── Public Signup Abuse Protection[^\n]*\n([\s\S]*?)(?=\n# ── Platform Mode)/,
+  )?.[1];
+  assert.ok(bashGeneratedSignupSection, "setup.sh must generate the public signup section");
+  assert.match(
+    bashGeneratedSignupSection,
+    /^SIGNUP_ENABLED=\$\{SIGNUP_ENABLED\}\nSIGNUP_RATE_LIMIT_BURST_MAX=\$\{SIGNUP_RATE_LIMIT_BURST_MAX\}$/m,
+  );
+
+  const powershellUpdateHelper = powershellSetup.match(
+    /^function Update-SignupProtectionEnv \{\n([\s\S]*?)^\}/m,
+  )?.[1];
+  assert.ok(powershellUpdateHelper, "setup.ps1 must expose Update-SignupProtectionEnv");
+  assert.match(
+    powershellUpdateHelper,
+    /SIGNUP_ENABLED = \(Read-EnvValue -EnvPath \$EnvPath -Name "SIGNUP_ENABLED" -Default "true"\)[\s\S]*?SIGNUP_RATE_LIMIT_BURST_MAX =/,
+  );
+  assert.match(
+    powershellUpdateHelper,
+    /foreach \(\$entry in \$values\.GetEnumerator\(\)\) \{\s+Set-EnvValue -EnvPath \$EnvPath -Name \$entry\.Key -Value \(\[string\]\$entry\.Value\)/,
+  );
+  assert.match(
+    powershellSetup,
+    /^\$SIGNUP_ENABLED = Read-EnvValue -EnvPath \$ENV_FILE -Name "SIGNUP_ENABLED" -Default "true"$/m,
+  );
+  const powershellGeneratedSignupSection = powershellSetup.match(
+    /# ── Public Signup Abuse Protection[^\n]*\n([\s\S]*?)(?=\n# ── Platform Mode)/,
+  )?.[1];
+  assert.ok(powershellGeneratedSignupSection, "setup.ps1 must generate the public signup section");
+  assert.match(
+    powershellGeneratedSignupSection,
+    /^SIGNUP_ENABLED=\$SIGNUP_ENABLED\nSIGNUP_RATE_LIMIT_BURST_MAX=\$SIGNUP_RATE_LIMIT_BURST_MAX$/m,
+  );
+});
+
+test("PowerShell env reader scans all assignments before returning the last match", () => {
+  const powershellSetup = read("setup.ps1");
+  const reader = powershellSetup.match(/^function Read-EnvValue \{\n([\s\S]*?)^\}/m)?.[1];
+  assert.ok(reader, "setup.ps1 must expose Read-EnvValue");
+  assert.match(
+    reader,
+    /\$matchedValue = \$null\s+\$foundMatch = \$false[\s\S]*?foreach \(\$line in Get-Content -LiteralPath \$EnvPath\) \{\s+if \(\$line -match \$pattern\) \{\s+\$matchedValue = \$matches\[1\]\.Trim\(\)\s+\$foundMatch = \$true\s+\}\s+\}\s+if \(\$foundMatch\) \{\s+return ConvertFrom-ComposeEnvLiteral -Value \$matchedValue\s+\}/,
+  );
+});
+
 test("production deploy rejects PaaS without complete signup bot protection", () => {
   const workflow = read(".github/workflows/deploy-production.yml");
   const validator = path.join(repoRoot, "scripts", "validate-paas-signup-protection.sh");
@@ -851,9 +923,40 @@ test("production deploy rejects PaaS without complete signup bot protection", ()
   try {
     assert.equal(run(["PLATFORM_MODE=selfhosted"]).status, 0);
 
-    const disabled = run(["PLATFORM_MODE=paas", "SIGNUP_BOT_PROTECTION_PROVIDER=none"]);
-    assert.notEqual(disabled.status, 0);
-    assert.match(disabled.stderr, /requires SIGNUP_BOT_PROTECTION_PROVIDER=turnstile or recaptcha/);
+    const closed = run([
+      "PLATFORM_MODE=paas",
+      "SIGNUP_ENABLED=false",
+      "SIGNUP_BOT_PROTECTION_PROVIDER=none",
+    ]);
+    assert.equal(closed.status, 0, closed.stderr || closed.stdout);
+
+    const normalizedClosed = run([
+      "PLATFORM_MODE=paas",
+      'SIGNUP_ENABLED = " OFF "',
+      "SIGNUP_BOT_PROTECTION_PROVIDER=none",
+    ]);
+    assert.equal(normalizedClosed.status, 0, normalizedClosed.stderr || normalizedClosed.stdout);
+
+    const publicWithoutProtection = run([
+      "PLATFORM_MODE=paas",
+      "SIGNUP_BOT_PROTECTION_PROVIDER=none",
+    ]);
+    assert.notEqual(publicWithoutProtection.status, 0);
+    assert.match(
+      publicWithoutProtection.stderr,
+      /requires SIGNUP_BOT_PROTECTION_PROVIDER=turnstile or recaptcha/,
+    );
+
+    const invalidSignupSetting = run([
+      "PLATFORM_MODE=paas",
+      "SIGNUP_ENABLED=sometimes",
+      "SIGNUP_BOT_PROTECTION_PROVIDER=none",
+    ]);
+    assert.notEqual(invalidSignupSetting.status, 0);
+    assert.match(
+      invalidSignupSetting.stderr,
+      /requires SIGNUP_BOT_PROTECTION_PROVIDER=turnstile or recaptcha/,
+    );
 
     const incomplete = run([
       "PLATFORM_MODE=paas",
@@ -935,6 +1038,51 @@ const hasPowerShell =
   spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "exit 0"], {
     cwd: repoRoot,
   }).status === 0;
+
+test(
+  "PowerShell env reader uses the last duplicate assignment",
+  {
+    skip: hasPowerShell
+      ? false
+      : "pwsh unavailable; structural last-match regression remains enforced",
+  },
+  () => {
+    runChecked("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "-"], {
+      input: `$ErrorActionPreference = "Stop"
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+  (Resolve-Path "setup.ps1"),
+  [ref]$tokens,
+  [ref]$parseErrors
+)
+if ($parseErrors.Count -gt 0) { throw ($parseErrors | Out-String) }
+foreach ($name in @("ConvertFrom-ComposeEnvLiteral", "Read-EnvValue")) {
+  $definition = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+  }, $true)
+  if (-not $definition) { throw "Missing function $name" }
+  Invoke-Expression $definition.Extent.Text
+}
+$fixture = Join-Path ([System.IO.Path]::GetTempPath()) ("nora-env-reader-" + [guid]::NewGuid().ToString("N"))
+try {
+  Set-Content -LiteralPath $fixture -Value @(
+    "SIGNUP_ENABLED=true",
+    'QUOTED_VALUE="first value"',
+    'SIGNUP_ENABLED="false"',
+    "QUOTED_VALUE='last value'"
+  )
+  if ((Read-EnvValue -EnvPath $fixture -Name "SIGNUP_ENABLED" -Default "fallback") -ne "false") { throw "Did not select last duplicate assignment" }
+  if ((Read-EnvValue -EnvPath $fixture -Name "QUOTED_VALUE" -Default "fallback") -ne "last value") { throw "Last quoted assignment was not decoded" }
+  if ((Read-EnvValue -EnvPath $fixture -Name "MISSING" -Default "fallback") -ne "fallback") { throw "Missing key did not use default" }
+  if ((Read-EnvValue -EnvPath "$fixture.missing" -Name "SIGNUP_ENABLED" -Default "fallback") -ne "fallback") { throw "Missing file did not use default" }
+} finally {
+  Remove-Item -LiteralPath $fixture -Force -ErrorAction SilentlyContinue
+}`,
+    });
+  },
+);
 
 test(
   "PowerShell setup applies immutable-aware NemoClaw image policy",

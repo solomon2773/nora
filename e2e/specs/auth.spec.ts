@@ -11,6 +11,7 @@ test.describe("Auth gates", () => {
         body: JSON.stringify({
           needsFirstAdmin: false,
           oauthLoginEnabled: true,
+          signupEnabled: true,
           platformMode: "paas",
           signupBotProtection: {
             enabled: true,
@@ -84,6 +85,7 @@ test.describe("Auth gates", () => {
         body: JSON.stringify({
           needsFirstAdmin: false,
           oauthLoginEnabled: false,
+          signupEnabled: true,
           platformMode: "selfhosted",
           signupBotProtection: {
             enabled: true,
@@ -123,6 +125,7 @@ test.describe("Auth gates", () => {
         body: JSON.stringify({
           needsFirstAdmin: false,
           oauthLoginEnabled: true,
+          signupEnabled: true,
           platformMode: "paas",
           signupBotProtection: {
             enabled: "true",
@@ -140,8 +143,52 @@ test.describe("Auth gates", () => {
     await expect(page.getByTestId("signup-protection-configuration-error")).toContainText(
       /could not load signup verification configuration/i,
     );
-    await expect(page.getByRole("button", { name: /create account/i })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /create account/i })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /continue with google/i })).toHaveCount(0);
+  });
+
+  test("disabled signup hides registration and shows operator guidance", async ({ page }) => {
+    await page.route("**/api/auth/bootstrap-status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          needsFirstAdmin: false,
+          oauthLoginEnabled: true,
+          signupEnabled: false,
+          platformMode: "selfhosted",
+          signupBotProtection: {
+            enabled: false,
+            provider: "none",
+            siteKey: null,
+            configured: true,
+            configurationError: null,
+          },
+        }),
+      });
+    });
+
+    await page.goto("/signup");
+
+    // Both the supporting panel (h1) and the access state (h2) announce the
+    // disabled state — assert each level explicitly.
+    await expect(
+      page.getByRole("heading", { level: 1, name: /registration is disabled on this nora/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Registration is disabled", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText(/not accepting new accounts/i)).toBeVisible();
+    await expect(page.getByRole("link", { name: /return to login/i }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /create account/i })).toHaveCount(0);
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /continue with google/i })).toHaveCount(0);
+
+    await page.goto("/login");
+    await expect(
+      page.getByRole("heading", { name: /log in to the nora instance/i, level: 1 }),
+    ).toBeVisible();
+    await expect(page.getByText(/need an account\?/i)).toHaveCount(0);
   });
 
   test("login renders OAuth and hosted copy from runtime bootstrap metadata", async ({ page }) => {
@@ -152,6 +199,7 @@ test.describe("Auth gates", () => {
         body: JSON.stringify({
           needsFirstAdmin: false,
           oauthLoginEnabled: true,
+          signupEnabled: true,
           platformMode: "paas",
           signupBotProtection: {
             enabled: false,
@@ -199,6 +247,7 @@ test.describe("Auth gates", () => {
         body: JSON.stringify({
           needsFirstAdmin: false,
           oauthLoginEnabled: false,
+          signupEnabled: true,
           platformMode: "selfhosted",
           signupBotProtection: {
             enabled: false,
@@ -273,6 +322,7 @@ test.describe("Auth gates", () => {
         body: JSON.stringify({
           needsFirstAdmin: false,
           oauthLoginEnabled: false,
+          signupEnabled: true,
           platformMode: "selfhosted",
           signupBotProtection: {
             enabled: false,
@@ -372,6 +422,7 @@ test.describe("Auth gates", () => {
         body: JSON.stringify({
           needsFirstAdmin: false,
           oauthLoginEnabled: false,
+          signupEnabled: true,
           platformMode: "selfhosted",
           signupBotProtection: {
             enabled: false,

@@ -39,7 +39,11 @@ try {
 }
 const { listKubernetesExecutionTargets } = require("./kubernetesClusters");
 const { STARTER_TEMPLATES } = require("./starterTemplates");
-const { allowsFirstAdminSignupClaim, getBootstrapAdminSeedConfig } = require("./bootstrapAdmin");
+const {
+  allowsFirstAdminSignupClaim,
+  getBootstrapAdminSeedConfig,
+  isSignupEnabled,
+} = require("./bootstrapAdmin");
 const { ensureFirstRegisteredUserIsAdmin } = require("./ensureAdminUser");
 const { authenticateToken } = require("./middleware/auth");
 const {
@@ -2548,6 +2552,15 @@ async function seedBootstrapAdminAccount() {
         );
         error.code = "PAAS_BOOTSTRAP_ADMIN_REQUIRED";
         throw error;
+      }
+      if (!isSignupEnabled()) {
+        // The advice below would be impossible to follow: signup is disabled,
+        // so with an empty user table and no seedable admin the instance has
+        // no way to create its first account until the operator intervenes.
+        console.warn(
+          "Skipping bootstrap admin seed with SIGNUP_ENABLED=false: the user database is empty and public signup is disabled, so no account can be created. Set explicit DEFAULT_ADMIN_EMAIL and a non-default DEFAULT_ADMIN_PASSWORD with at least 12 characters, or temporarily set SIGNUP_ENABLED=true to claim the first account through signup.",
+        );
+        return;
       }
       console.warn(
         "Skipping bootstrap admin seed: set explicit DEFAULT_ADMIN_EMAIL and a non-default DEFAULT_ADMIN_PASSWORD with at least 12 characters, or claim the first account through signup.",

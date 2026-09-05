@@ -2,7 +2,7 @@
 
 > Sign up, log in, and manage your Nora account via the Auth API. Includes JWT token usage, profile updates, and password management.
 
-Every protected Nora API endpoint requires an authenticated identity — either a **session JWT** (covered on this page) or a **workspace API key** with scopes (see the [API overview](/api/overview#authentication) for the key-and-scope model). You obtain a JWT by signing up and then logging in; it is valid for **7 days**, sent as a Bearer token in the `Authorization` header of every subsequent request, and also accepted as an HttpOnly session cookie. This page covers all authentication endpoints and shows you exactly what each one returns.
+Every protected Nora API endpoint requires an authenticated identity — either a **session JWT** (covered on this page) or a **workspace API key** with scopes (see the [API overview](/api/overview#authentication) for the key-and-scope model). When the operator allows registration, a new user can sign up and then log in to obtain a JWT. Existing users can continue to log in when registration is disabled. A JWT is valid for **7 days**, sent as a Bearer token in the `Authorization` header of every subsequent request, and also accepted as an HttpOnly session cookie. This page covers all authentication endpoints and shows you exactly what each one returns.
 
 <Warning>
   An explicit `Authorization`, `X-Api-Key`, or `X-Nora-Api-Key` credential takes precedence over the
@@ -12,18 +12,19 @@ Every protected Nora API endpoint requires an authenticated identity — either 
 
 <Note>
   Login and OAuth auth endpoints are rate-limited to **20 requests per 15-minute window** per IP.
-  Public signup has stricter burst and daily rate limits, plus Turnstile or reCAPTCHA verification
-  when configured. Hosted PaaS mode requires one of those providers and fails closed when neither is
-  configured; self-hosted mode may explicitly use `none`.
+  When enabled, public signup has stricter burst and daily rate limits, plus Turnstile or reCAPTCHA
+  verification when configured. Hosted PaaS mode requires one of those providers and fails closed
+  when neither is configured; self-hosted mode may explicitly use `none`.
 </Note>
 
 ## Bootstrap status
 
 Check whether a self-hosted server still needs its first admin. This drives the "claim this server"
 first-run flow: until the first user registers (that first account becomes the platform admin),
-`needsFirstAdmin` is `true`; afterward it is `false`. Hosted PaaS requires an explicit bootstrap
-administrator before startup and never reports public first-admin claim. The response also contains runtime OAuth visibility, normalized platform
-mode, and signup-challenge metadata so published frontend images can render the
+`needsFirstAdmin` is `true`; afterward it is `false`. It is also `false` whenever public signup is
+disabled. Hosted PaaS requires an explicit bootstrap administrator before startup and never reports
+public first-admin claim. The response also contains runtime OAuth visibility, signup availability,
+normalized platform mode, and signup-challenge metadata so published frontend images can render the
 correct auth surface without build-time replacement. Verification secrets are never
 returned. A user count or emails would aid account enumeration. See the [security
 overview](/concepts/security) for the broader claim flow.
@@ -50,6 +51,11 @@ Public — no authentication required.
   Normalized deployment mode: `selfhosted` or `paas`.
 </ResponseField>
 
+<ResponseField name="signupEnabled" type="boolean">
+  Whether the operator currently allows new password or OAuth registrations. Existing-account login
+  remains available when this is `false`.
+</ResponseField>
+
 <ResponseField name="signupBotProtection" type="object">
   Safe public runtime configuration: `enabled`, `provider`, public `siteKey`, `configured`, and a
   user-safe `configurationError`. Secret verification keys remain backend-only.
@@ -64,6 +70,7 @@ curl http://localhost:8080/api/auth/bootstrap-status
   "needsFirstAdmin": true,
   "oauthLoginEnabled": false,
   "platformMode": "selfhosted",
+  "signupEnabled": true,
   "signupBotProtection": {
     "enabled": true,
     "provider": "turnstile",
@@ -78,10 +85,12 @@ curl http://localhost:8080/api/auth/bootstrap-status
 
 ## Sign up
 
-Create a new user account. On an empty self-hosted installation, the **first** registered user
+Create a new user account when the operator has enabled public registration. On an empty self-hosted installation, the **first** registered user
 becomes the platform admin (the first-admin claim flow — see [bootstrap status](#bootstrap-status)
 and the [security overview](/concepts/security)). Hosted PaaS must seed its administrator before
-startup, so public signup there always creates a regular user.
+startup, so public signup there always creates a regular user. Operators can disable new password
+and OAuth registrations with `SIGNUP_ENABLED=false`; password login and sessions for existing users
+are unaffected.
 
 ```
 POST /auth/signup
@@ -129,12 +138,22 @@ POST /auth/signup
 
 ### Error responses
 
-| Status | Condition                                     |
-| ------ | --------------------------------------------- |
-| `400`  | Missing or invalid email/password             |
-| `403`  | Bot protection token is missing or invalid    |
-| `409`  | Account already exists for this email         |
-| `429`  | Signup burst or daily rate limit was exceeded |
+When registration is disabled, the response has a stable machine-readable code:
+
+```json theme={null}
+{
+  "error": "Registration is disabled by this Nora operator.",
+  "code": "SIGNUP_DISABLED"
+}
+```
+
+| Status | Condition                                            |
+| ------ | ---------------------------------------------------- |
+| `400`  | Missing or invalid email/password                    |
+| `403`  | Registration is disabled (`code: "SIGNUP_DISABLED"`) |
+| `403`  | Bot protection token is missing or invalid           |
+| `409`  | Account already exists for this email                |
+| `429`  | Signup burst or daily rate limit was exceeded        |
 
 ---
 
@@ -371,7 +390,9 @@ POST /auth/oauth-login
   This endpoint is **disabled by default**. Unless `OAUTH_LOGIN_ENABLED=true`, it returns `403`.
   Google or GitHub credentials must also be configured in the marketing OAuth bridge. Provider
   tokens are verified server-side before Nora issues a session. Like password login, this endpoint
-  is rate-limited to **20 requests per 15-minute window** per IP.
+  is rate-limited to **20 requests per 15-minute window** per IP. When OAuth is enabled but public
+  signup is disabled, an existing linked OAuth user can still authenticate. A verified identity that
+  would create a new Nora user receives `403` with `code: "SIGNUP_DISABLED"`.
 </Note>
 
 ### Request body

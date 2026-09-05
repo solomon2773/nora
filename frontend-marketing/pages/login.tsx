@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, CheckCircle2, Loader2, Lock, Mail, Shield, Zap } from "lucide-react";
+import { useAuthBootstrap } from "../components/AuthBootstrapProvider";
 import LanguageSwitcher from "../components/LanguageSwitcher";
 import SeoHead from "../components/SeoHead";
-import { fetchAuthBootstrapStatus, type AuthBootstrapStatus } from "../lib/authBootstrap";
+import { SignupGate } from "../components/SignupGate";
 import { normalizeLocale, useI18n } from "../lib/i18n";
 
 const OSS_REPO_URL = "https://github.com/solomon2773/nora";
@@ -43,8 +44,10 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [oauthLoading, setOauthLoading] = useState("");
   const [error, setError] = useState("");
-  const [bootstrapStatus, setBootstrapStatus] = useState<AuthBootstrapStatus | null>(null);
-  const [bootstrapError, setBootstrapError] = useState("");
+  const { status: bootstrapStatus, error: bootstrapLoadError } = useAuthBootstrap();
+  const bootstrapError = bootstrapLoadError
+    ? "OAuth availability could not be checked. Email and password login remains available."
+    : "";
   const oauthLoginEnabled = bootstrapStatus?.oauthLoginEnabled === true;
   const platformMode = bootstrapStatus?.platformMode || null;
 
@@ -84,24 +87,6 @@ export default function Login() {
   useEffect(() => {
     routeAfterLoginRef.current = routeAfterLogin;
   }, [routeAfterLogin]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    async function loadBootstrapStatus() {
-      try {
-        setBootstrapStatus(await fetchAuthBootstrapStatus(controller.signal));
-        setBootstrapError("");
-      } catch (bootstrapStatusError) {
-        if (controller.signal.aborted) return;
-        console.error(bootstrapStatusError);
-        setBootstrapError(
-          "OAuth availability could not be checked. Email and password login remains available.",
-        );
-      }
-    }
-    void loadBootstrapStatus();
-    return () => controller.abort();
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,12 +208,14 @@ export default function Login() {
             >
               GitHub <ArrowUpRight size={16} />
             </a>
-            <Link
-              href="/signup"
-              className="rounded-full bg-brand-cyan px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-cyan/25 transition-transform hover:-translate-y-0.5"
-            >
-              Create Account
-            </Link>
+            <SignupGate>
+              <Link
+                href="/signup"
+                className="rounded-full bg-brand-cyan px-4 py-2 text-sm font-black text-brand-ink shadow-lg shadow-brand-cyan/25 transition-transform hover:-translate-y-0.5"
+              >
+                Create Account
+              </Link>
+            </SignupGate>
           </div>
         </header>
 
@@ -451,15 +438,17 @@ export default function Login() {
             </form>
 
             <div className="mt-6 flex flex-col gap-3 text-sm text-slate-700">
-              <p>
-                Need an account?{" "}
-                <Link
-                  href="/signup"
-                  className="font-black text-slate-950 underline underline-offset-4"
-                >
-                  Create one here.
-                </Link>
-              </p>
+              <SignupGate>
+                <p>
+                  Need an account?{" "}
+                  <Link
+                    href="/signup"
+                    className="font-black text-slate-950 underline underline-offset-4"
+                  >
+                    Create one here.
+                  </Link>
+                </p>
+              </SignupGate>
               <p>
                 Prefer to self-host first?{" "}
                 <a
