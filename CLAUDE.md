@@ -47,6 +47,9 @@ cd frontend-dashboard && npm install && npm run dev
 cd backend-api && npm test              # jest --forceExit --detectOpenHandles
 cd backend-api && npx jest path/to/file # single test file
 
+# Marketing-site unit tests (node:test via tsx; also run in ci-compose)
+cd frontend-marketing && npm test
+
 # E2E (Playwright) — requires running stack
 cd e2e && npm ci && npx playwright install --with-deps chromium && npm test
 
@@ -150,7 +153,7 @@ When multiple agents work the repo at once:
 
 Copy `.env.example` to `.env`. Required (boot fails closed in production): `JWT_SECRET`, `ENCRYPTION_KEY`. Also required for managed backups: `NORA_BACKUP_ENCRYPTION_KEY`. `NORA_AGENT_HUB_API_KEY_HASH_SECRET` is in the Required block but auto-generates on setup/update when missing. `NEXTAUTH_URL` has a working localhost default and is kept only for deploy-env compatibility (not validated).
 
-Commonly toggled: `PLATFORM_MODE` (`selfhosted` or `paas`), `ENABLED_RUNTIME_FAMILIES`, `ENABLED_BACKENDS`, `NGINX_CONFIG_FILE`, `NGINX_HTTP_PORT`, `BACKEND_API_PORT`, `NORA_KUBECONFIGS_DIR`, `NVIDIA_API_KEY` (required when `nemoclaw` is enabled), `CORS_ORIGINS`.
+Commonly toggled: `PLATFORM_MODE` (`selfhosted` or `paas`), `ENABLED_RUNTIME_FAMILIES`, `ENABLED_BACKENDS`, `SIGNUP_ENABLED` (default `true`; disabling blocks public password signup and new-OAuth account creation while existing users keep logging in), `NGINX_CONFIG_FILE`, `NGINX_HTTP_PORT`, `BACKEND_API_PORT`, `NORA_KUBECONFIGS_DIR`, `NVIDIA_API_KEY` (required when `nemoclaw` is enabled), `CORS_ORIGINS`.
 
 `.env.test` exists for test-mode overrides; `NORA_ENV_FILE` can point compose at an alternate env file.
 
