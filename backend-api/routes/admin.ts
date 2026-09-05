@@ -496,12 +496,15 @@ async function reconcileAdminAgent(agent) {
     if (reconciledStatus !== agent.status) {
       // Guarded on the observed status so this read-path reconcile cannot
       // clobber a deploy that started while the liveness probe was in flight.
-      await db.query("UPDATE agents SET status = $1 WHERE id = $2 AND status = $3", [
-        reconciledStatus,
-        agent.id,
-        agent.status,
-      ]);
-      agent.status = reconciledStatus;
+      const reconciled = await db.query(
+        "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3 RETURNING id",
+        [reconciledStatus, agent.id, agent.status],
+      );
+      // Mirror in memory only when the row actually changed, so a lost
+      // compare-and-swap cannot make the response disagree with the DB.
+      if (reconciled?.rows?.length) {
+        agent.status = reconciledStatus;
+      }
     }
   } catch {
     // Leave the stored status alone when the runtime is unreachable.

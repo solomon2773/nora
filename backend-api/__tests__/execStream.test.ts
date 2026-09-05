@@ -559,12 +559,15 @@ describe("exec stream websocket auth", () => {
   // NOT be promoted to 'running'. The provisioner's own writes are guarded on
   // status='deploying', so clobbering it makes readiness finalization match zero
   // rows, which the worker reads as "agent deleted" and destroys the new runtime.
+  // 'queued' is protected too: a redeploy queues while the previous container
+  // is still live, and promoting it makes the worker skip the queued job.
+  const PROMOTION_GUARD = /status\s+NOT\s+IN\s+\('deploying',\s*'queued'\)/;
   function stubAgentDb(dbRow) {
     mockDb.query.mockImplementation((sql) => {
       if (/UPDATE\s+agents/i.test(sql) && /status\s*=\s*'running'/.test(sql)) {
         // Emulate Postgres row matching for the promotion UPDATE.
-        const excludesDeploying = /status\s*<>\s*'deploying'/.test(sql);
-        if (excludesDeploying && dbRow.status === "deploying") {
+        const guarded = PROMOTION_GUARD.test(sql);
+        if (guarded && ["deploying", "queued"].includes(dbRow.status)) {
           return Promise.resolve({ rows: [], rowCount: 0 });
         }
         dbRow.status = "running";
@@ -591,32 +594,35 @@ describe("exec stream websocket auth", () => {
     });
   }
 
-  it("does not promote a deploying agent whose container is already live", async () => {
-    const dbRow = {
-      id: "agent-deploying",
-      name: "Deploying Agent",
-      status: "deploying",
-      container_id: "hermes-agent-deploying",
-      backend_type: "k8s",
-      deploy_target: "k8s",
-      user_id: "owner-1",
-    };
-    stubAgentDb(dbRow);
-    stubLiveExec();
+  it.each(["deploying", "queued"])(
+    "does not promote a '%s' agent whose container is already live",
+    async (lifecycleStatus) => {
+      const dbRow = {
+        id: `agent-${lifecycleStatus}`,
+        name: "Lifecycle Agent",
+        status: lifecycleStatus,
+        container_id: `hermes-agent-${lifecycleStatus}`,
+        backend_type: "k8s",
+        deploy_target: "k8s",
+        user_id: "owner-1",
+      };
+      stubAgentDb(dbRow);
+      stubLiveExec();
 
-    const ws = openExecStream("agent-deploying", { id: "admin-1", role: "admin" });
-    await flushAsyncWork();
+      const ws = openExecStream(`agent-${lifecycleStatus}`, { id: "admin-1", role: "admin" });
+      await flushAsyncWork();
 
-    const promotions = promotionQueries();
-    expect(promotions).toHaveLength(1);
-    expect(promotions[0][0]).toMatch(/status\s*<>\s*'deploying'/);
+      const promotions = promotionQueries();
+      expect(promotions).toHaveLength(1);
+      expect(promotions[0][0]).toMatch(PROMOTION_GUARD);
 
-    // The UPDATE matched no rows: the provisioner still owns this agent.
-    expect(dbRow.status).toBe("deploying");
-    expect(dbRow.container_id).toBe("hermes-agent-deploying");
+      // The UPDATE matched no rows: the provisioner still owns this agent.
+      expect(dbRow.status).toBe(lifecycleStatus);
+      expect(dbRow.container_id).toBe(`hermes-agent-${lifecycleStatus}`);
 
-    ws.close();
-  });
+      ws.close();
+    },
+  );
 
   it("keeps the in-memory agent as deploying when the guarded promotion matches no row", async () => {
     const dbRow = {

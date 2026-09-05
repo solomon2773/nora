@@ -763,6 +763,40 @@ describe("gateway proxy control-plane routes", () => {
     expect(mockFakeWebSocket.connectParams[0].auth.password).toBe("concurrent-gateway-token");
   });
 
+  it("promotes a warning agent to running only while it is still in warning", async () => {
+    mockDb.query.mockImplementation(async (sql) => {
+      if (String(sql).includes("FROM agents WHERE id = $1")) {
+        return {
+          rows: [
+            {
+              id: "agent-warning-promote",
+              user_id: "user-1",
+              status: "warning",
+              host: "10.0.0.45",
+              gateway_token: "warning-gateway-token",
+              gateway_host_port: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    });
+
+    const response = await request(app).get("/agents/agent-warning-promote/gateway/status");
+    expect(response.status).toBe(200);
+
+    // The healthy-gateway auto-promote must be a compare-and-swap on 'warning'
+    // so it cannot clobber a redeploy that queued after the router gate read
+    // the agent's status.
+    const promotions = mockDb.query.mock.calls.filter(([sql]) =>
+      /UPDATE agents SET status = 'running'/.test(String(sql)),
+    );
+    expect(promotions).toHaveLength(1);
+    expect(promotions[0][0]).toMatch(/AND status = 'warning'/);
+    expect(promotions[0][1]).toEqual(["agent-warning-promote"]);
+    evictConnection("10.0.0.45");
+  });
+
   it("revalidates and retires a warm Remote Docker socket after share revocation", async () => {
     let grantActive = true;
     const agent = {

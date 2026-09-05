@@ -843,12 +843,15 @@ router.get(
           // deploy lifecycle while the liveness probe above is in flight, and an
           // unguarded write would clobber 'deploying' out from under the
           // provisioner's compare-and-swap.
-          await db.query("UPDATE agents SET status = $1 WHERE id = $2 AND status = $3", [
-            reconciledStatus,
-            agent.id,
-            agent.status,
-          ]);
-          agent.status = reconciledStatus;
+          const reconciled = await db.query(
+            "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3 RETURNING id",
+            [reconciledStatus, agent.id, agent.status],
+          );
+          // Mirror in memory only when the row actually changed, so a lost
+          // compare-and-swap cannot make the response disagree with the DB.
+          if (reconciled?.rows?.length) {
+            agent.status = reconciledStatus;
+          }
         }
       } catch {
         // Can't reach container runtime — leave DB status as-is
