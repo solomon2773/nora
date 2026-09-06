@@ -715,6 +715,14 @@ if (billing.BILLING_ENABLED) {
   });
 }
 
+// OTLP trace ingest (logging control plane, Phase 11) needs the raw request
+// body — real OTLP/HTTP exporters push `application/x-protobuf` — so it is
+// mounted here, before the global express.json() body parser, exactly like
+// the Stripe webhook above. It authenticates itself per-request via
+// x-nora-ingest-key rather than JWT/session auth, so it does not need
+// authenticateToken or the workspace-membership middleware other routes use.
+app.use("/otlp", require("./routes/otlp"));
+
 app.use(express.json({ limit: "1mb" }));
 app.use(correlationId);
 app.use(require("./middleware/requestMetrics"));

@@ -5621,6 +5621,33 @@ scheduleRunWorker.on("completed", (job) => {
   );
 });
 
+// ── Span Ingest Worker (logging control plane, Phase 11) ──────────
+// Drains OTLP trace-export jobs enqueued by backend-api/routes/otlp.ts and
+// batch-inserts into agent_spans. Reuses this file's existing `db` pool
+// rather than opening a second one; drainSpanIngest lazily creates its own
+// pool only when no pool is injected (e.g. under test).
+const { drainSpanIngest } = require("./spanDrain");
+const SPAN_INGEST_CONCURRENCY = parsePositiveInteger(
+  process.env.SPAN_INGEST_WORKER_CONCURRENCY,
+  5,
+);
+
+const spanIngestWorker = new Worker(
+  "span-ingest",
+  async (job) => drainSpanIngest(job, { pool: db }),
+  { connection, concurrency: SPAN_INGEST_CONCURRENCY },
+);
+
+spanIngestWorker.on("failed", (job, err) => {
+  console.error(`[span-ingest] Job ${job?.id} failed: ${err.message}`);
+});
+
+spanIngestWorker.on("completed", (job, result) => {
+  if (result?.inserted) {
+    console.log(`[span-ingest] Job ${job.id} inserted ${result.inserted} span(s)`);
+  }
+});
+
 // ── Health Check Server ──────────────────────────────────────────
 //
 // Logging control plane Phase 6 item 7 (recency gap): this same server also
