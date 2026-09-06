@@ -1307,6 +1307,11 @@ app.use("/agents", require("./routes/nemoclaw"));
 app.use("/agent-migrations", require("./routes/agentMigrations"));
 app.use("/", require("./routes/integrations")); // handles /agents/:id/integrations + /integrations/catalog
 app.use("/", require("./routes/monitoring")); // handles /monitoring/* + /agents/:id/metrics
+// Logging control plane (Phase 5+): DELETE /logs (manual deletion, editor+
+// workspace role) and GET/PUT /admin/log-storage (platform-admin destination
+// setting). This file grows in later phases (5b, 6, 7, 12, 13) — see its own
+// header comment.
+app.use("/", require("./routes/observability"));
 app.use("/llm-providers", require("./routes/llmProviders"));
 app.use("/clawhub", require("./routes/clawhub"));
 app.use("/hermes-skills", require("./routes/hermesSkills"));
@@ -2600,6 +2605,33 @@ async function migrateDB(database = db, env = process.env) {
      )`,
     `CREATE INDEX IF NOT EXISTS idx_storage_migration_jobs_status
        ON storage_migration_jobs(status)`,
+    // Phase 5: per-plan log retention ceilings, mirroring backup_plan_limits.
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_retention_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    // Phase 5: platform-wide log segment storage destination, changeable
+    // after setup exactly like the backup_* columns — see logStorageConfig.ts
+    // and Design Decision 2b. Columns are nullable (unlike the backup_*
+    // columns' NOT NULL DEFAULTs) so "no row has ever been written" is
+    // distinguishable from "explicitly set to local" — logStorageConfig.ts's
+    // readPlatformLogStorageRow() falls back to the NORA_LOG_* env block
+    // whenever log_storage_backend is NULL.
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_backend TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_local_path TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_s3_bucket TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_s3_region TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_s3_endpoint TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_s3_access_key_id_encrypted TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_s3_secret_access_key_encrypted TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_host TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_port INTEGER`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_username TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_remote_path TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_ssh_private_key_encrypted TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_ssh_password_encrypted TEXT`,
   ];
 
   return runVersionedMigrations(database, migrations, {

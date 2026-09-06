@@ -361,6 +361,28 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   -- normalizeBackupPlanLimits on read. Keep the schema default empty so the
   -- two stay in sync from a single source of truth.
   backup_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Logging control plane (Phase 5): per-plan retention CEILINGS. Per-key
+  -- defaults live in backend-api/platformSettings.ts
+  -- (DEFAULT_LOG_RETENTION_PLAN_LIMITS), mirroring backup_plan_limits above.
+  log_retention_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Logging control plane (Phase 5): platform-wide log segment storage
+  -- destination, changeable after setup exactly like the backup_* columns
+  -- above. NORA_LOG_STORAGE and the NORA_LOG_* env block seed the initial
+  -- value; once a row's log_storage_backend is set, the database is
+  -- authoritative (see logStorageConfig.ts / Design Decision 2b).
+  log_storage_backend TEXT,
+  log_storage_local_path TEXT,
+  log_storage_s3_bucket TEXT,
+  log_storage_s3_region TEXT,
+  log_storage_s3_endpoint TEXT,
+  log_storage_s3_access_key_id_encrypted TEXT,
+  log_storage_s3_secret_access_key_encrypted TEXT,
+  log_storage_ssh_host TEXT,
+  log_storage_ssh_port INTEGER,
+  log_storage_ssh_username TEXT,
+  log_storage_ssh_remote_path TEXT,
+  log_storage_ssh_private_key_encrypted TEXT,
+  log_storage_ssh_password_encrypted TEXT,
   -- Dev-mode only: the generated JWT secret persisted so sessions survive
   -- restarts when JWT_SECRET is not configured. Never used in production
   -- (boot fails there without an explicit JWT_SECRET).
