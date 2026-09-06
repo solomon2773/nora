@@ -97,6 +97,7 @@ const {
 } = require("../../agent-runtime/lib/hermesRuntimeBootstrap");
 const { waitForAgentReadiness } = require("./healthChecks");
 const { runDemoActivationCanary } = require("./demoActivationCanary");
+const { createSegmentWriter } = require("./logs/segmentWriter");
 const {
   acquireDedicatedSessionLock,
   finalizeProvisionedDeployment,
@@ -4328,6 +4329,14 @@ console.log(
   `Provisioner worker started [enabled backends=${enabledBackends.join(", ") || "docker"} default backend=${getDefaultBackend()} concurrency=${DEPLOYMENT_WORKER_CONCURRENCY}]`,
 );
 
+// Logging control plane Phase 3 item 20: warn (never fail boot) when the
+// `local` log storage driver can't reach every enabled deploy target.
+{
+  const { assertDriverSupportsTargets } = require("./logs/logStorageConfig");
+  const configuredLogStorage = String(process.env.NORA_LOG_STORAGE || "local").trim().toLowerCase() || "local";
+  assertDriverSupportsTargets(configuredLogStorage, enabledBackends);
+}
+
 // ── Worker ───────────────────────────────────────────────
 const worker = new Worker(
   "deployments",
@@ -5634,6 +5643,157 @@ healthServer.listen(HEALTH_PORT, () => {
   console.log(`Worker health check listening on port ${HEALTH_PORT}`);
 });
 
+// ── Graceful Shutdown Coordinator (Logging Control Plane Phase 3 item 6) ──
+//
+// No `process.on("SIGTERM"/"SIGINT", ...)` handling existed anywhere in this
+// file before this — see Design Decision 17 / Phase 3's "Rationale &
+// tradeoffs". Without it, a plain `docker compose restart` (not only a
+// crash) would silently discard up to 15 minutes of buffered-but-unflushed
+// log lines, because segments deliberately do NOT flush on stream end (see
+// segmentWriter.ts) — SIGTERM is one of only three flush triggers.
+//
+// The single segment writer instance for this process. Constructing it here
+// does NOT require NORA_LOG_ENCRYPTION_KEY or any NORA_LOG_* storage
+// destination to be configured — createSegmentWriter() defers loading the
+// encryption key ring and resolving storage config until the first actual
+// flush, so an installation that hasn't touched the new log-storage env
+// block yet still boots exactly as before. Phase 4 (not yet built) is what
+// will call `.append()` on this instance from a real container log
+// collector; until then `flushAll()` below is a no-op over zero buffers.
+const segmentWriter = createSegmentWriter();
+
+// Phase 4's collector/reconciler don't exist yet. This is the stop-hook
+// registry item 6(a) asks for: "there may be no collector/reconciler wired
+// up yet since Phase 4 builds the collector — just expose the stop-hook the
+// coordinator will call, and call it if present." Phase 4 calls
+// `registerLogPipelineHooks({ stopCollector, stopReconciler })` once it
+// exists; until then both hooks are null and the coordinator skips them.
+const logPipelineHooks = { stopCollector: null, stopReconciler: null };
+function registerLogPipelineHooks(hooks = {}) {
+  if (typeof hooks.stopCollector === "function") {
+    logPipelineHooks.stopCollector = hooks.stopCollector;
+  }
+  if (typeof hooks.stopReconciler === "function") {
+    logPipelineHooks.stopReconciler = hooks.stopReconciler;
+  }
+}
+
+/**
+ * Installs SIGTERM/SIGINT handlers that: (a) stop the log collector from
+ * accepting new lines and the reconciler from starting new attaches, via
+ * whatever hooks `getLogPipelineHooks()` currently returns; (b) call the
+ * segment writer's `flushAll()`; (c) wait up to `deadlineMs` (default 10s)
+ * for those flushes to land; (d) let the process exit regardless of whether
+ * the deadline was hit, logging a warning if it was.
+ *
+ * Every dependency is passed in explicitly (no reliance on this module's
+ * own top-level state) so this function is directly unit-testable with a
+ * fake process-like object and a fake segment writer — see
+ * segmentWriter.test.js.
+ *
+ * ── Decision: in-flight BullMQ provisioning jobs are NOT waited on ──────
+ *
+ * This process also drains several BullMQ queues via `new Worker(...)`
+ * above (`deployments`, `clawhub-jobs`, `hermes-skills-jobs`,
+ * `k8s-policy-settings`, `alert-deliveries`, `agent-schedules`). Shutdown
+ * deliberately does NOT call `.close()` on any of them, and does NOT wait
+ * for their in-flight jobs to finish, for two reasons:
+ *
+ *   1. BullMQ jobs already have an independent durability mechanism —
+ *      `lockDuration`/`stalledInterval` — that reclaims and retries a job
+ *      whose worker disappears mid-processing. An interrupted provisioning
+ *      job is not lost the way an interrupted-and-never-flushed log buffer
+ *      would be; it resumes on whichever worker replica picks up the
+ *      stalled job next. Waiting for it here would duplicate a safety net
+ *      that already exists elsewhere in the stack.
+ *   2. Some of those jobs (container creation, image pulls, Kubernetes
+ *      pod scheduling) can legitimately run for minutes. Blocking shutdown
+ *      on them would make the bounded, fast-exit guarantee this coordinator
+ *      exists to provide meaningless in practice, and would make Docker
+ *      Compose / Kubernetes rolling restarts wait far longer than their own
+ *      termination grace periods, likely ending in a SIGKILL anyway.
+ *
+ * The bounded deadline in this coordinator therefore protects exactly one
+ * thing: getting buffered log lines durably written before exit. It is not
+ * a general "drain everything" shutdown.
+ */
+function registerShutdownCoordinator({
+  process: proc = process,
+  segmentWriter: writer = segmentWriter,
+  getLogPipelineHooks: getHooks = () => logPipelineHooks,
+  deadlineMs = 10000,
+  logger = console,
+  onShutdownComplete,
+} = {}) {
+  let shuttingDown = false;
+
+  async function runShutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.log(`[shutdown] received ${signal}, starting graceful shutdown (deadline ${deadlineMs}ms)`);
+
+    const hooks = getHooks() || {};
+    try {
+      if (typeof hooks.stopReconciler === "function") await hooks.stopReconciler();
+    } catch (error) {
+      logger.error(`[shutdown] stopReconciler failed: ${error.message}`);
+    }
+    try {
+      if (typeof hooks.stopCollector === "function") await hooks.stopCollector();
+    } catch (error) {
+      logger.error(`[shutdown] stopCollector failed: ${error.message}`);
+    }
+
+    let deadlineHit = false;
+    const flushPromise =
+      writer && typeof writer.flushAll === "function"
+        ? writer.flushAll().catch((error) => {
+            logger.error(`[shutdown] flushAll rejected: ${error.message}`);
+          })
+        : Promise.resolve();
+    const timeoutPromise = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        deadlineHit = true;
+        resolve();
+      }, deadlineMs);
+      if (typeof timer.unref === "function") timer.unref();
+    });
+    await Promise.race([flushPromise, timeoutPromise]);
+
+    if (deadlineHit) {
+      logger.warn(
+        `[shutdown] flushAll did not complete within ${deadlineMs}ms — exiting anyway. Any lines ` +
+          `not yet durably flushed will be re-ingested on the next collector attach via the last ` +
+          `successfully flushed cursor (see Phase 4 item 2a's cursor-advances-only-after-flush rule).`,
+      );
+    } else {
+      logger.log("[shutdown] flush complete, exiting");
+    }
+
+    if (typeof onShutdownComplete === "function") onShutdownComplete({ deadlineHit });
+    proc.exit(0);
+  }
+
+  const onSigterm = () => {
+    runShutdown("SIGTERM").catch((error) => {
+      logger.error(`[shutdown] unexpected error: ${error.message}`);
+      proc.exit(1);
+    });
+  };
+  const onSigint = () => {
+    runShutdown("SIGINT").catch((error) => {
+      logger.error(`[shutdown] unexpected error: ${error.message}`);
+      proc.exit(1);
+    });
+  };
+  proc.on("SIGTERM", onSigterm);
+  proc.on("SIGINT", onSigint);
+
+  return { runShutdown };
+}
+
+registerShutdownCoordinator();
+
 module.exports = {
   allocateAvailableLocalDockerGatewayPort,
   assertProvisionerRuntimeSelection,
@@ -5671,4 +5831,7 @@ module.exports = {
   runHermesSkillDeleteJob,
   reconcileHermesSkills,
   loadHermesSkillJobAgent,
+  segmentWriter,
+  registerLogPipelineHooks,
+  registerShutdownCoordinator,
 };
