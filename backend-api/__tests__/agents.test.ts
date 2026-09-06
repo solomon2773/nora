@@ -251,6 +251,23 @@ jest.mock("../monitoring", () => ({
   logEvent: jest.fn(),
   getRecentEvents: jest.fn().mockResolvedValue([]),
 }));
+const mockSnapshotDeletedLogOwner = jest.fn().mockResolvedValue({ id: "recovery-row-1" });
+const mockDeleteAgentLogs = jest.fn().mockResolvedValue({
+  deletedSegments: 0,
+  deletedObjects: 0,
+  deletedLegacyCopies: 0,
+  deletedSpans: 0,
+});
+jest.mock("../../workers/provisioner/logs/logDeletion.ts", () => ({
+  snapshotDeletedLogOwner: (...args) => mockSnapshotDeletedLogOwner(...args),
+  deleteAgentLogs: (...args) => mockDeleteAgentLogs(...args),
+  deleteWorkspaceLogs: jest.fn().mockResolvedValue({
+    deletedSegments: 0,
+    deletedObjects: 0,
+    deletedLegacyCopies: 0,
+    deletedSpans: 0,
+  }),
+}));
 jest.mock("../billing", () => ({
   BILLING_ENABLED: false,
   PLATFORM_MODE: "selfhosted",
@@ -443,6 +460,13 @@ function createMockFetchResponse({ ok = true, status = 200, body = {}, headers =
 beforeEach(() => {
   jest.clearAllMocks();
   mockDb.query.mockReset();
+  mockSnapshotDeletedLogOwner.mockReset().mockResolvedValue({ id: "recovery-row-1" });
+  mockDeleteAgentLogs.mockReset().mockResolvedValue({
+    deletedSegments: 0,
+    deletedObjects: 0,
+    deletedLegacyCopies: 0,
+    deletedSpans: 0,
+  });
   mockDb.connect.mockReset().mockResolvedValue(mockDbClient);
   mockDbClient.query.mockReset().mockResolvedValue({ rows: [] });
   mockDbClient.release.mockReset();
@@ -7529,10 +7553,12 @@ describe("POST /agents/:id/rollback/:versionId", () => {
 });
 
 describe("agent deletion routes", () => {
-  function deleteRequest(method, agentId) {
-    return method === "post"
-      ? request(app).post(`/agents/${agentId}/delete`)
-      : request(app).delete(`/agents/${agentId}`);
+  function deleteRequest(method, agentId, body = { deleteLogs: true }) {
+    const req =
+      method === "post"
+        ? request(app).post(`/agents/${agentId}/delete`)
+        : request(app).delete(`/agents/${agentId}`);
+    return body === null ? req : req.send(body);
   }
 
   it.each([
@@ -7672,7 +7698,7 @@ describe("agent deletion routes", () => {
     };
     mockDb.query.mockResolvedValueOnce({ rows: [agent] }).mockResolvedValueOnce({ rows: [agent] });
 
-    const res = await auth(request(app).delete("/agents/a-queued"));
+    const res = await auth(request(app).delete("/agents/a-queued").send({ deleteLogs: true }));
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("Internal server error");
@@ -7690,7 +7716,7 @@ describe("agent deletion routes", () => {
       })
       .mockResolvedValueOnce({ rows: [{ role: "admin" }] });
 
-    const res = await auth(request(app).post("/agents/a-shared/delete"));
+    const res = await auth(request(app).post("/agents/a-shared/delete").send({ deleteLogs: true }));
 
     expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/direct agent owner/i);
@@ -7720,7 +7746,7 @@ describe("agent deletion routes", () => {
       .mockResolvedValueOnce({ rows: [agent] })
       .mockResolvedValueOnce({ rows: [] });
 
-    const res = await auth(request(app).delete("/agents/a-k8s-stale"));
+    const res = await auth(request(app).delete("/agents/a-k8s-stale").send({ deleteLogs: true }));
 
     expect(res.status).toBe(200);
     expect(containerManager.destroy).toHaveBeenCalledWith(
@@ -7751,7 +7777,7 @@ describe("agent deletion routes", () => {
     };
     mockDb.query.mockResolvedValueOnce({ rows: [agent] }).mockResolvedValueOnce({ rows: [agent] });
 
-    const res = await auth(request(app).delete("/agents/a-k8s-delete-fail"));
+    const res = await auth(request(app).delete("/agents/a-k8s-delete-fail").send({ deleteLogs: true }));
 
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/Kubernetes API unreachable/i);
@@ -7775,7 +7801,7 @@ describe("agent deletion routes", () => {
     };
     mockDb.query.mockResolvedValueOnce({ rows: [agent] }).mockResolvedValueOnce({ rows: [agent] });
 
-    const res = await auth(request(app).delete("/agents/a-proxmox-delete-fail"));
+    const res = await auth(request(app).delete("/agents/a-proxmox-delete-fail").send({ deleteLogs: true }));
 
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/Proxmox destroy task failed/i);
@@ -7786,8 +7812,105 @@ describe("agent deletion routes", () => {
   it("returns 404 for non-existent agent", async () => {
     mockDb.query.mockResolvedValueOnce({ rows: [] });
 
-    const res = await auth(request(app).post("/agents/missing/delete"));
+    const res = await auth(request(app).post("/agents/missing/delete").send({ deleteLogs: true }));
     expect(res.status).toBe(404);
     expect(mockAcquireAgentProvisionLock).not.toHaveBeenCalled();
+  });
+
+  describe("Phase 5c: deleteLogs contract", () => {
+    it.each([
+      ["POST /agents/:id/delete", "post"],
+      ["DELETE /agents/:id", "delete"],
+    ])(
+      "%s rejects a dashboard-shaped request with no deleteLogs before touching the database",
+      async (_route, method) => {
+        const res = await auth(deleteRequest(method, "a-no-flag-dashboard", {}));
+
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/deleteLogs/i);
+        expect(mockDb.query).not.toHaveBeenCalled();
+        expect(mockAcquireAgentProvisionLock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rejects a programmatic (API key) request with no deleteLogs before touching the database", async () => {
+      authorizeWorkspaceApiKey();
+      const agentId = "a-no-flag-api-key";
+      // requireApiKeyAgentScope's param middleware (the "global API-key path
+      // guard") runs before the route handler and needs one row to resolve
+      // the key's scope for this agent — this is unrelated to the deleteLogs
+      // contract under test, it just has to succeed so the request actually
+      // reaches destroyAgent's validation.
+      mockDb.query.mockResolvedValueOnce({
+        rows: [{ id: agentId, container_id: null, user_id: "user-1" }],
+      });
+
+      const res = await workspaceApiKeyAuth(deleteRequest("delete", agentId, null));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/deleteLogs/i);
+      expect(mockAcquireAgentProvisionLock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-boolean deleteLogs value", async () => {
+      const res = await auth(deleteRequest("delete", "a-bad-flag", { deleteLogs: "yes" }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/deleteLogs/i);
+      expect(mockDb.query).not.toHaveBeenCalled();
+    });
+
+    it("deleteLogs:true trails the synchronous agent-row delete with an async cleanup call", async () => {
+      const agentId = "a-delete-logs-true";
+      const agent = { id: agentId, container_id: null, user_id: "user-1" };
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [agent] })
+        .mockResolvedValueOnce({ rows: [agent] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await auth(deleteRequest("delete", agentId, { deleteLogs: true }));
+
+      expect(res.status).toBe(200);
+      expect(mockDeleteAgentLogs).toHaveBeenCalledWith(agentId);
+      expect(mockSnapshotDeletedLogOwner).not.toHaveBeenCalled();
+      // The async cleanup must not have blocked the already-synchronous
+      // agent-row deletion that preceded it.
+      expect(mockDb.query).toHaveBeenLastCalledWith("DELETE FROM agents WHERE id = $1", [agentId]);
+    });
+
+    it("deleteLogs:false snapshots deleted_log_owners before deleting the agent row, and skips async cleanup", async () => {
+      const agentId = "a-delete-logs-false";
+      const agent = { id: agentId, name: "Kept Logs Agent", container_id: null, user_id: "user-1" };
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [agent] })
+        .mockResolvedValueOnce({ rows: [agent] })
+        // No container_id/container_name on this agent, so
+        // containerManager.canDestroy() is false and no destroy-related
+        // query runs — next is the workspace_agents lookup below.
+        .mockResolvedValueOnce({ rows: [{ workspace_id: "workspace-a" }] }) // workspace_agents lookup
+        .mockResolvedValueOnce({ rows: [] }); // DELETE FROM agents
+
+      const res = await auth(deleteRequest("delete", agentId, { deleteLogs: false }));
+
+      expect(res.status).toBe(200);
+      expect(mockSnapshotDeletedLogOwner).toHaveBeenCalledWith(
+        "agent",
+        agentId,
+        expect.objectContaining({ id: "user-1" }),
+        expect.objectContaining({
+          displayName: "Kept Logs Agent",
+          ownerUserId: "user-1",
+          workspaceId: "workspace-a",
+        }),
+      );
+      expect(mockDeleteAgentLogs).not.toHaveBeenCalled();
+
+      const snapshotOrder = mockSnapshotDeletedLogOwner.mock.invocationCallOrder[0];
+      const deleteAgentIndex = mockDb.query.mock.calls.findIndex(
+        ([sql, params]) => sql === "DELETE FROM agents WHERE id = $1" && params?.[0] === agentId,
+      );
+      expect(deleteAgentIndex).toBeGreaterThanOrEqual(0);
+      expect(snapshotOrder).toBeLessThan(mockDb.query.mock.invocationCallOrder[deleteAgentIndex]);
+    });
   });
 });

@@ -79,6 +79,7 @@ const {
   buildReplacementDeploymentJob,
   enqueueReplacementDeployment,
 } = require("../agentProvisionLock");
+const logDeletionModule = require("../../workers/provisioner/logs/logDeletion.ts");
 
 const router = express.Router();
 
@@ -2430,6 +2431,91 @@ router.post(
   "/dlq/:jobId/retry",
   asyncHandler(async (req, res) => {
     res.json(await retryDLQJob(req.params.jobId));
+  }),
+);
+
+// ── Phase 5c: log recovery (kept logs for a deleted agent/workspace) ───────
+//
+// Platform-admin only (this whole router is behind `router.use(requireAdmin)`
+// above), and scoped by `deleted_log_owners.source_id` — never by
+// `findAccessibleAgentForActor` or workspace-role checks, since the
+// agent/workspace this data belonged to no longer exists to check access
+// against. See workers/provisioner/logs/logDeletion.ts's module header for
+// what `GET /log-recovery/:id/logs` and the export endpoint below are (and
+// are not) — a real, minimal reader Phase 6/7 are expected to replace with
+// the general search/export machinery once those phases are built.
+
+router.get(
+  "/log-recovery",
+  asyncHandler(async (_req, res) => {
+    const result = await db.query(
+      `SELECT id, kind, source_id, display_name, owner_user_id, retention_days,
+              deleted_by_user_id, deleted_at
+         FROM deleted_log_owners
+        ORDER BY deleted_at DESC`,
+    );
+    res.json({ entries: result.rows || [] });
+  }),
+);
+
+router.get(
+  "/log-recovery/:id/logs",
+  asyncHandler(async (req, res) => {
+    const limit = Number(req.query.limit) > 0 ? Number(req.query.limit) : undefined;
+    const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
+    try {
+      const result = await logDeletionModule.listRecoveredLogLines(req.params.id, {
+        limit,
+        cursor,
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ error: error.message });
+    }
+  }),
+);
+
+router.get(
+  "/log-recovery/:id/export",
+  asyncHandler(async (req, res) => {
+    const format = String(req.query.format || "ndjson").toLowerCase() === "csv" ? "csv" : "ndjson";
+    let collected;
+    try {
+      collected = await logDeletionModule.collectAllRecoveredLogLines(req.params.id);
+    } catch (error) {
+      return res.status(error.statusCode || 500).json({ error: error.message });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `nora-log-recovery-${req.params.id}-${timestamp}.${format}`;
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    if (format === "csv") {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      const headers = ["ts", "observed_ts", "stream", "level", "message"];
+      const csvLines = [
+        headers.join(","),
+        ...collected.lines.map((line) =>
+          headers.map((header) => csvCell(line[header])).join(","),
+        ),
+      ];
+      res.send(csvLines.join("\n"));
+    } else {
+      res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+      res.send(collected.lines.map((line) => JSON.stringify(line)).join("\n"));
+    }
+  }),
+);
+
+router.delete(
+  "/log-recovery/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await logDeletionModule.purgeDeletedLogOwner(req.params.id, req.user);
+      res.json(result);
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ error: error.message });
+    }
   }),
 );
 

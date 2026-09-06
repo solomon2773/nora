@@ -2,6 +2,7 @@
 const express = require("express");
 const db = require("../db");
 const workspaces = require("../workspaces");
+const logDeletion = require("../../workers/provisioner/logs/logDeletion.ts");
 const workspaceMembers = require("../workspaceMembers");
 const monitoring = require("../monitoring");
 const apiKeysRouter = require("./apiKeys");
@@ -183,14 +184,50 @@ router.delete("/:id/agents/:agentId", requireWorkspaceRole("admin"), async (req,
   }
 });
 
+// Phase 5c item 1: no default — a request omitting `deleteLogs` is rejected
+// with 400, for both interactive (dashboard-confirmed) and programmatic
+// (CLI/MCP/direct API) callers alike. Checked before any other validation
+// or side effect, same contract as the agent delete route.
 router.delete("/:id", requireWorkspaceRole("owner"), async (req, res, next) => {
   try {
+    const { deleteLogs } = req.body || {};
+    if (typeof deleteLogs !== "boolean") {
+      return res.status(400).json({
+        error:
+          "deleteLogs (boolean) is required — choose whether this workspace's logs are deleted or kept",
+      });
+    }
+
+    // Phase 5c item 3: snapshot BEFORE the workspace row (and its
+    // workspace_log_settings row, which cascades on delete) is gone — the
+    // retention lookup inside snapshotDeletedLogOwner needs that row to
+    // still exist to read from it.
+    if (!deleteLogs) {
+      try {
+        await logDeletion.snapshotDeletedLogOwner("workspace", req.params.id, req.user, {
+          displayName: req.workspace?.name || null,
+          ownerUserId: req.workspace?.user_id || null,
+        });
+      } catch (error) {
+        console.error("Failed to snapshot deleted_log_owners for workspace:", error.message);
+      }
+    }
+
     await db.query("DELETE FROM workspace_agents WHERE workspace_id = $1", [req.params.id]);
     await db.query("DELETE FROM workspaces WHERE id = $1", [req.params.id]);
     await logWorkspaceEvent(req, "workspace_deleted", `Workspace ${req.params.id} deleted`, {
       id: req.params.id,
       name: req.workspace?.name,
     });
+
+    // Phase 5c item 2: deleteLogs:true trails the (already-synchronous)
+    // workspace-row deletion with an async cleanup job — never awaited.
+    if (deleteLogs) {
+      logDeletion.deleteWorkspaceLogs(req.params.id).catch((error) => {
+        console.error(`Async log cleanup failed for deleted workspace ${req.params.id}:`, error.message);
+      });
+    }
+
     res.json({ success: true });
   } catch (e) {
     next(e);
