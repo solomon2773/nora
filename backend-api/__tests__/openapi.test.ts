@@ -81,6 +81,11 @@ const COMPLETE_ROUTERS = [
     router: () => require("../routes/remoteHosts"),
     mount: "/remote-hosts",
   },
+  {
+    name: "hermesSkills",
+    router: () => require("../routes/hermesSkills"),
+    mount: "/hermes-skills",
+  },
 ];
 
 // Admin has many browser-only implementation routes. Doctor is the one stable
