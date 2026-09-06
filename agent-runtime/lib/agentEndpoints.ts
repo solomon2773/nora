@@ -1,5 +1,5 @@
 const net = require("net");
-const { AGENT_RUNTIME_PORT, OPENCLAW_GATEWAY_PORT, HERMES_DASHBOARD_PORT } = require("./contracts");
+const { AGENT_RUNTIME_PORT, OPENCLAW_GATEWAY_PORT, HERMES_DASHBOARD_PORT } = require("./contracts.ts");
 
 function normalizePath(path = "/") {
   if (!path) return "";
