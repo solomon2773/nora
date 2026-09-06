@@ -27,6 +27,14 @@ const mockGetCapacityStatus = jest.fn().mockResolvedValue({
   limitBytes: Infinity,
   state: "ok",
 });
+const mockLocalStorageUsage = jest.fn().mockResolvedValue(0);
+const mockBackendsRequiringRetainedCredentials = jest.fn().mockResolvedValue(new Set());
+const mockStartStorageMigration = jest.fn().mockResolvedValue({
+  jobId: "job-1",
+  segmentsTotal: 0,
+  bytesToMigrate: 0,
+});
+const mockGetMigrationStatus = jest.fn().mockResolvedValue({ status: "none" });
 
 jest.mock("../db", () => mockDb);
 jest.mock("../redisQueue", () => ({
@@ -58,6 +66,12 @@ jest.mock("../billing", () => ({
 jest.mock("../../workers/provisioner/logs/retentionSweeper.ts", () => ({
   deleteLogsByAgentAndRange: mockDeleteLogsByAgentAndRange,
   getCapacityStatus: mockGetCapacityStatus,
+  localStorageUsage: mockLocalStorageUsage,
+}));
+jest.mock("../../workers/provisioner/logs/storageMigration.ts", () => ({
+  backendsRequiringRetainedCredentials: mockBackendsRequiringRetainedCredentials,
+  startStorageMigration: mockStartStorageMigration,
+  getMigrationStatus: mockGetMigrationStatus,
 }));
 
 const app = require("../server");
@@ -71,7 +85,16 @@ beforeEach(() => {
   mockLogEvent.mockClear();
   mockDeleteLogsByAgentAndRange.mockReset();
   mockGetCapacityStatus.mockClear();
+  mockLocalStorageUsage.mockReset().mockResolvedValue(0);
+  mockBackendsRequiringRetainedCredentials.mockReset().mockResolvedValue(new Set());
+  mockStartStorageMigration.mockReset().mockResolvedValue({
+    jobId: "job-1",
+    segmentsTotal: 0,
+    bytesToMigrate: 0,
+  });
+  mockGetMigrationStatus.mockReset().mockResolvedValue({ status: "none" });
   delete process.env.ENABLED_BACKENDS;
+  delete process.env.NORA_LOG_LOCAL_MAX_BYTES;
 });
 
 describe("DELETE /logs (manual deletion, item 7b)", () => {
@@ -173,8 +196,9 @@ describe("PUT /admin/log-storage (item 7a-ii)", () => {
   it("writes a distinct events row on every successful change", async () => {
     process.env.ENABLED_BACKENDS = "docker";
     mockDb.query
-      .mockResolvedValueOnce({ rows: [{}] })
-      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3", log_storage_s3_bucket: "b" }] });
+      .mockResolvedValueOnce({ rows: [{}] }) // current row read
+      .mockResolvedValueOnce({ rows: [] }) // no active migration job (backend is changing: local -> s3)
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3", log_storage_s3_bucket: "b" }] }); // upsert RETURNING
     const res = await asAdmin(
       request(app)
         .put("/admin/log-storage")
@@ -183,16 +207,159 @@ describe("PUT /admin/log-storage (item 7a-ii)", () => {
     expect(res.status).toBe(200);
     expect(mockLogEvent).toHaveBeenCalledTimes(1);
     expect(mockLogEvent.mock.calls[0][0]).toBe("admin_log_storage_settings_updated");
+    // Destination actually changed (local -> s3), so Phase 5b's migration
+    // kicks off automatically.
+    expect(mockStartStorageMigration).toHaveBeenCalledWith(
+      { storageBackend: "local" },
+      { storageBackend: "s3" },
+      false,
+    );
+    expect(res.body.migration).toMatchObject({ jobId: "job-1" });
   });
 
   it("selecting s3 while k8s is enabled is allowed (only local+k8s is rejected)", async () => {
     process.env.ENABLED_BACKENDS = "docker,k8s";
     mockDb.query
       .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [] }) // no active migration job
       .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3" }] });
     const res = await asAdmin(
       request(app).put("/admin/log-storage").send({ storageBackend: "s3", s3Bucket: "b" }),
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe("PUT /admin/log-storage — Phase 5b storage migration integration", () => {
+  it("rejects an overlapping migration with no side effects", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{}] }) // current row read (backend: local)
+      .mockResolvedValueOnce({ rows: [{ id: "job-existing" }] }); // an active migration job
+    const res = await asAdmin(
+      request(app).put("/admin/log-storage").send({ storageBackend: "s3", s3Bucket: "b" }),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("log_storage_migration_in_progress");
+    expect(mockDb.query).toHaveBeenCalledTimes(2); // no upsert attempted
+    expect(mockStartStorageMigration).not.toHaveBeenCalled();
+  });
+
+  it("rejects switching to local with no side effects when capacity would be exceeded", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    process.env.NORA_LOG_LOCAL_MAX_BYTES = "1000";
+    mockLocalStorageUsage.mockResolvedValueOnce(400);
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3" }] }) // current row read
+      .mockResolvedValueOnce({ rows: [] }) // no active migration job
+      .mockResolvedValueOnce({ rows: [{ bytes: "800" }] }); // segments to migrate under s3
+    const res = await asAdmin(
+      request(app).put("/admin/log-storage").send({ storageBackend: "local" }),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("log_storage_capacity_exceeded");
+    expect(mockDb.query).toHaveBeenCalledTimes(3); // no upsert attempted
+    expect(mockStartStorageMigration).not.toHaveBeenCalled();
+  });
+
+  it("allows switching to local when there is enough headroom", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    process.env.NORA_LOG_LOCAL_MAX_BYTES = "10000";
+    mockLocalStorageUsage.mockResolvedValueOnce(100);
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3" }] }) // current row read
+      .mockResolvedValueOnce({ rows: [] }) // no active migration job
+      .mockResolvedValueOnce({ rows: [{ bytes: "200" }] }) // segments to migrate under s3
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] }); // upsert RETURNING
+    const res = await asAdmin(
+      request(app).put("/admin/log-storage").send({ storageBackend: "local" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockStartStorageMigration).toHaveBeenCalledWith(
+      { storageBackend: "s3" },
+      { storageBackend: "local" },
+      false,
+    );
+  });
+
+  it("passes keepSourceCopies through to startStorageMigration", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3" }] });
+    const res = await asAdmin(
+      request(app)
+        .put("/admin/log-storage")
+        .send({ storageBackend: "s3", s3Bucket: "b", keepSourceCopies: true }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockStartStorageMigration).toHaveBeenCalledWith(
+      { storageBackend: "local" },
+      { storageBackend: "s3" },
+      true,
+    );
+  });
+
+  it("rejects clearing S3 credentials while a migration or legacy copy still references that backend", async () => {
+    mockBackendsRequiringRetainedCredentials.mockResolvedValueOnce(new Set(["s3"]));
+    const res = await asAdmin(
+      request(app)
+        .put("/admin/log-storage")
+        .send({ storageBackend: "local", clearS3AccessKey: true }),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("log_storage_credentials_in_use");
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects clearing SSH credentials while a migration or legacy copy still references that backend", async () => {
+    mockBackendsRequiringRetainedCredentials.mockResolvedValueOnce(new Set(["ssh"]));
+    const res = await asAdmin(
+      request(app)
+        .put("/admin/log-storage")
+        .send({ storageBackend: "local", clearSshPassword: true }),
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("log_storage_credentials_in_use");
+    expect(mockDb.query).not.toHaveBeenCalled();
+  });
+
+  it("allows clearing S3 credentials once no migration or legacy copy references it", async () => {
+    mockBackendsRequiringRetainedCredentials.mockResolvedValueOnce(new Set());
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] })
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] });
+    const res = await asAdmin(
+      request(app)
+        .put("/admin/log-storage")
+        .send({ storageBackend: "local", clearS3AccessKey: true }),
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("GET /admin/log-storage/migration (item 6)", () => {
+  it("rejects non-admin", async () => {
+    const res = await asUser(request(app).get("/admin/log-storage/migration"));
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 'none' when no migration has ever run", async () => {
+    const res = await asAdmin(request(app).get("/admin/log-storage/migration"));
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: "none" });
+  });
+
+  it("returns real progress from a running job", async () => {
+    mockGetMigrationStatus.mockResolvedValueOnce({
+      jobId: "job-1",
+      status: "running",
+      segmentsTotal: 10,
+      segmentsMigrated: 4,
+    });
+    const res = await asAdmin(request(app).get("/admin/log-storage/migration"));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: "running", segmentsTotal: 10, segmentsMigrated: 4 });
   });
 });
