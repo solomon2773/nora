@@ -8,6 +8,7 @@ const { resolveAgentBackendType } = require("./agentRuntimeFields");
 const { extractSessionTokenFromUpgrade } = require("./authCookie");
 const { findAccessibleAgentForActor } = require("./middleware/ownership");
 const { assertRemoteHostAgentUse, isRemoteHostAccessRevokedError } = require("./remoteHosts");
+const { parseContainerLogChunk } = require("../agent-runtime/lib/logLine");
 
 const ACCESS_RECHECK_MS = Math.max(
   250,
@@ -249,43 +250,25 @@ function attachLogStream(server) {
         );
 
         // Parse log lines (handles Docker multiplexed stream + raw streams)
+        // via the shared parser in agent-runtime/lib/logLine.ts, so the live
+        // viewer and the log collector (Phase 3+) never drift apart on
+        // framing, timestamp extraction, or level inference. The wire shape
+        // sent to the browser — { type, timestamp, level, message } — is
+        // unchanged; `timestamp` prefers the parsed source timestamp and
+        // falls back to the collector's observed time, exactly as before.
         logStream.on("data", (chunk) => {
           if (ws.readyState !== 1) return;
-          // Docker multiplexed stream: 8-byte header per frame
-          // Skip the 8-byte docker header if present (stream_type byte > 2 means no header)
-          let payload = chunk;
-          if (
-            chunk.length > 8 &&
-            chunk[0] <= 2 &&
-            chunk[1] === 0 &&
-            chunk[2] === 0 &&
-            chunk[3] === 0
-          ) {
-            payload = chunk.slice(8);
-          }
-          const text = payload.toString("utf8").trim();
-          if (!text) return;
 
-          for (const line of text.split("\n")) {
-            if (!line.trim()) continue;
-
-            // Docker timestamps format: 2024-01-15T12:34:56.789Z <message>
-            let timestamp = new Date().toISOString();
-            let message = line;
-            const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)\s+(.*)/);
-            if (tsMatch) {
-              timestamp = tsMatch[1];
-              message = tsMatch[2];
-            }
-
-            // Infer log level from message content
-            let level = "INFO";
-            const upper = message.toUpperCase();
-            if (upper.includes("ERROR") || upper.includes("ERR ")) level = "ERROR";
-            else if (upper.includes("WARN")) level = "WARN";
-            else if (upper.includes("DEBUG")) level = "DEBUG";
-
-            ws.send(JSON.stringify({ type: "log", timestamp, level, message }));
+          const lines = parseContainerLogChunk(chunk, { stream: "runtime" });
+          for (const line of lines) {
+            ws.send(
+              JSON.stringify({
+                type: "log",
+                timestamp: line.ts ?? line.observed_ts,
+                level: line.level,
+                message: line.message,
+              }),
+            );
           }
         });
 
