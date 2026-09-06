@@ -8,7 +8,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test:helpers": "tsx --test lib/api.test.ts lib/remoteHosts.test.ts lib/userGroups.test.ts",
+    "test:helpers": "tsx --test lib/api.test.ts lib/remoteHosts.test.ts lib/remoteHostsI18n.test.ts lib/userGroups.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -50,6 +50,9 @@ cd backend-api && npx jest path/to/file # single test file
 # Marketing-site unit tests (node:test via tsx; also run in ci-compose)
 cd frontend-marketing && npm test
 
+# Admin dashboard helper and localization contract tests
+cd admin-dashboard && npm run test:helpers && npm run typecheck
+
 # E2E (Playwright) — requires running stack
 cd e2e && npm ci && npx playwright install --with-deps chromium && npm test
 
@@ -61,6 +64,8 @@ cd e2e && npm run capture:operator-readme   # Regenerate README screenshots
 ```
 
 CI is split across `.github/workflows/ci-quality.yml`, `.github/workflows/ci-security.yml`, `.github/workflows/ci-compose.yml`, and `.github/workflows/ci-codeql.yml` on pull requests and pushes to `master` under Node 24. npm advisory auditing is deliberately **not** a per-PR blocking check — `npm audit` queries the live advisory DB, so an unchanged lockfile would flip red whenever an unrelated advisory is published. It runs instead on a schedule in `.github/workflows/dependency-audit.yml` (daily + `workflow_dispatch`), with Dependabot security updates handling remediation; the blocking `Security gate` in `ci-security.yml` covers only the deterministic checks (secret scan, license policy, infra validation).
+
+Remote Hosts page copy is defined in `admin-dashboard/lib/remoteHostTranslations.ts`. Keep visible JSX text and user-facing attributes behind `useI18n().t()`; `remoteHostsI18n.test.ts` checks this boundary and requires every used key in all supported non-English locales.
 
 ## Architecture
 

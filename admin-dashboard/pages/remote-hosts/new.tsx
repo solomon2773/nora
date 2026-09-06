@@ -7,6 +7,7 @@ import RemoteHostConfigForm from "../../components/remote-hosts/RemoteHostConfig
 import RemoteHostsAvailability from "../../components/remote-hosts/RemoteHostsAvailability";
 import { useToast } from "../../components/Toast";
 import { fetchWithAuth } from "../../lib/api";
+import { useI18n } from "../../lib/i18n";
 import { useVerifiedPlatformMode } from "../../lib/platform";
 import {
   buildRemoteHostPayload,
@@ -19,6 +20,7 @@ import {
 } from "../../lib/remoteHosts";
 
 export default function NewRemoteHostPage() {
+  const { t } = useI18n();
   const router = useRouter();
   const toast = useToast();
   const platformMode = useVerifiedPlatformMode();
@@ -41,14 +43,14 @@ export default function NewRemoteHostPage() {
         body: JSON.stringify(buildRemoteHostPayload(form)),
       });
       if (!response.ok) {
-        const failure = await responseError(response, "Failed to create platform host");
+        const failure = await responseError(response, t("Failed to create platform host"));
         throw new Error(failure.message);
       }
       const host = (await response.json().catch(() => ({}))) as Partial<RemoteHost>;
-      toast.success("Platform host created. Run Test connection before deployment.");
+      toast.success(t("Platform host created. Run Test connection before deployment."));
       await router.push(`/remote-hosts/${encodeURIComponent(host.id || form.id)}`);
     } catch (error) {
-      const message = errorMessage(error, "Failed to create platform host");
+      const message = errorMessage(error, t("Failed to create platform host"));
       setActionError(message);
       toast.error(message);
     } finally {
@@ -72,7 +74,7 @@ export default function NewRemoteHostPage() {
           className="inline-flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-slate-800 focus:outline-none focus:ring-4 focus:ring-brand-cyan/20"
         >
           <ArrowLeft size={15} />
-          Back to Remote Hosts
+          {t("Back to Remote Hosts")}
         </Link>
 
         <header className="grid gap-5 lg:grid-cols-[1.05fr,0.95fr]">
@@ -81,34 +83,35 @@ export default function NewRemoteHostPage() {
               <Server size={23} />
             </span>
             <p className="mt-5 text-[11px] font-black uppercase tracking-[0.2em] text-brand-ink/55">
-              Platform registry
+              {t("Platform registry")}
             </p>
             <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">
-              Add platform host
+              {t("Add platform host")}
             </h1>
             <p className="mt-3 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
-              Register a Linux Docker server, VPS, or cloud VM for platform-level Remote Docker
-              placement. Access can be granted after registration.
+              {t(
+                "Register a Linux Docker server, VPS, or cloud VM for platform-level Remote Docker placement. Access can be granted after registration.",
+              )}
             </p>
           </div>
 
           <div className="rounded-[2rem] border border-brand-cyan/15 bg-brand-ink p-6 text-brand-foreground shadow-sm">
             <div className="flex items-center gap-3">
               <ShieldCheck size={20} className="text-brand-cyan" />
-              <h2 className="font-black">Registration safety</h2>
+              <h2 className="font-black">{t("Registration safety")}</h2>
             </div>
             <div className="mt-5 space-y-3 text-sm font-medium text-brand-foreground/70">
               <p className="flex items-start gap-2">
                 <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-brand-cyan" />
-                Credentials are accepted only after verified self-hosted mode.
+                {t("Credentials are accepted only after verified self-hosted mode.")}
               </p>
               <p className="flex items-start gap-2">
                 <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-brand-cyan" />
-                The first successful test pins the SSH host key.
+                {t("The first successful test pins the SSH host key.")}
               </p>
               <p className="flex items-start gap-2">
                 <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-brand-cyan" />
-                New hosts are not deployable until testing succeeds.
+                {t("New hosts are not deployable until testing succeeds.")}
               </p>
             </div>
           </div>
@@ -128,7 +131,7 @@ export default function NewRemoteHostPage() {
           editing={false}
           saving={saving}
           credentialsAllowed
-          submitLabel="Create platform host"
+          submitLabel={t("Create platform host")}
           onFieldChange={updateField}
           onSubmit={createHost}
           onCancel={() => void router.push("/remote-hosts")}

@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/router";
+import { REMOTE_HOST_TRANSLATIONS } from "./remoteHostTranslations";
 
 export const LOCALES = ["en", "es", "fr", "zh-Hans", "zh-Hant"] as const;
 export type Locale = (typeof LOCALES)[number];
@@ -23,6 +24,7 @@ export const LOCALE_LABELS: Record<Locale, string> = {
 
 const TRANSLATIONS = {
   es: {
+    ...REMOTE_HOST_TRANSLATIONS.es,
     "Nora Admin": "Admin de Nora",
     "Full platform control": "Control total de la plataforma",
     Overview: "Resumen",
@@ -125,6 +127,7 @@ const TRANSLATIONS = {
     "Save SMTP settings first": "Guarda primero la configuracion SMTP",
   },
   fr: {
+    ...REMOTE_HOST_TRANSLATIONS.fr,
     "Nora Admin": "Admin Nora",
     "Full platform control": "Controle complet de la plateforme",
     Overview: "Vue d'ensemble",
@@ -227,6 +230,7 @@ const TRANSLATIONS = {
     "Save SMTP settings first": "Enregistrez d'abord la configuration SMTP",
   },
   "zh-Hans": {
+    ...REMOTE_HOST_TRANSLATIONS["zh-Hans"],
     "Nora Admin": "Nora 管理",
     "Full platform control": "完整平台控制",
     Overview: "概览",
@@ -329,6 +333,7 @@ const TRANSLATIONS = {
     "Save SMTP settings first": "请先保存 SMTP 设置",
   },
   "zh-Hant": {
+    ...REMOTE_HOST_TRANSLATIONS["zh-Hant"],
     "Nora Admin": "Nora 管理",
     "Full platform control": "完整平台控制",
     Overview: "概覽",
@@ -534,6 +539,10 @@ async function persistPreferredLocale(locale: Locale | null) {
 export function translateText(value: string, locale: Locale): string {
   if (locale === DEFAULT_LOCALE) return value;
   return TRANSLATIONS[locale][value] || value;
+}
+
+export function hasTranslation(value: string, locale: Locale): boolean {
+  return locale === DEFAULT_LOCALE || Object.hasOwn(TRANSLATIONS[locale], value);
 }
 
 export function marketingPath(path: string, locale: Locale): string {
