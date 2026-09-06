@@ -19,6 +19,7 @@ const channelsPaths = require("./paths/channels");
 const backupsPaths = require("./paths/backups");
 const agentHubPaths = require("./paths/agentHub");
 const remoteHostsPaths = require("./paths/remoteHosts");
+const hermesSkillsPaths = require("./paths/hermesSkills");
 const adminPaths = require("./paths/admin");
 
 function pascalCase(value) {
@@ -244,6 +245,7 @@ function buildOpenApiDocument() {
       ...backupsPaths,
       ...agentHubPaths,
       ...remoteHostsPaths,
+      ...hermesSkillsPaths,
       ...adminPaths,
     }),
   };
