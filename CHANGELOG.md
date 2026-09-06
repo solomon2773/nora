@@ -4,6 +4,45 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
+## [v1.20.0](https://github.com/solomon2773/nora/releases/tag/v1.20.0) — 2026-09-06
+
+Deploy-status integrity and signup control release. Every backend write that could still overwrite
+an agent's `deploying`/`queued` lifecycle status is now compare-and-swap guarded, closing the
+remaining window in the v1.19.0 race class. Self-hosted operators can now disable public signup at
+runtime, and the CLI gains monitoring-event filters.
+
+### Added
+
+- **`SIGNUP_ENABLED` runtime signup control.** Setting `SIGNUP_ENABLED=false` blocks public
+  password signup and new-OAuth account creation at the backend while existing users keep logging
+  in; the marketing site hides signup entry points only on an explicit disabled flag (fail-open, so
+  a transient API failure or an older backend never strips CTAs), and both setup scripts persist
+  the choice. The signup gate runs before rate limiting, and the backend warns at boot when signup
+  is disabled on an empty database.
+- **CLI monitoring-event filters.** `nora monitoring events` accepts `--search`, `--type`,
+  `--from`, and `--to` to narrow the event stream from the terminal.
+- **Admin Remote Hosts pages are localized** into Spanish, French, Simplified and Traditional
+  Chinese, with an AST-based contract test that fails if untranslated copy is added to those pages.
+  Contributed by @be-student.
+
+### Fixed
+
+- **Log/exec stream liveness writes no longer clobber a deploying agent.** Every status write from
+  the exec and log stream paths, agent routes, admin routes, and the gateway proxy is now
+  compare-and-swap guarded on the observed status (`deploying` and `queued` excluded), and the
+  in-memory status mirror updates only when the database row actually changed. Contributed in part
+  by @MichaelAtram.
+- **Status reconciliation refuses to overwrite deploy-lifecycle states**, so a stale health
+  snapshot arriving mid-deployment can no longer flip an agent out of `deploying` and trigger the
+  cleanup path that destroys its replacement runtime.
+- **`setup.ps1` preserves the last environment assignment** when rewriting `.env` on Windows.
+
+### Changed
+
+- **CI runs the frontend-marketing unit suite** in the compose pipeline, the OpenAPI drift test
+  now covers the `hermes-skills` routes in both directions, and `agentHubSafety` and `releaseInfo`
+  gained dedicated unit tests.
+
 ## [v1.19.0](https://github.com/solomon2773/nora/releases/tag/v1.19.0) — 2026-09-01
 
 Redeploy data-integrity release. Redeploying an agent could delete the durable state it was supposed
