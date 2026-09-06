@@ -1,0 +1,153 @@
+// Vendored copy of the standard OpenTelemetry Protocol (OTLP) trace schema.
+//
+// This file consolidates the message definitions Nora's `/otlp/v1/traces`
+// receiver needs to decode an `ExportTraceServiceRequest`, adapted from the
+// public OTLP proto definitions published by the OpenTelemetry project:
+//
+//   - opentelemetry/proto/collector/trace/v1/trace_service.proto
+//   - opentelemetry/proto/trace/v1/trace.proto
+//   - opentelemetry/proto/common/v1/common.proto
+//   - opentelemetry/proto/resource/v1/resource.proto
+//
+// Field names, field numbers, and wire types are preserved exactly from the
+// upstream definitions so this file stays wire-compatible with real OTLP/HTTP
+// protobuf exporters (e.g. OpenClaw's `diagnostics.otel` exporter). The four
+// upstream files are combined into one package here purely to keep Nora's
+// vendored copy self-contained — Nora does not implement metrics or logs
+// ingestion, so those sibling proto files are intentionally not vendored.
+//
+// Do not hand-edit field numbers/types below; if the upstream schema changes,
+// re-vendor from https://github.com/open-telemetry/opentelemetry-proto.
+
+syntax = "proto3";
+
+package opentelemetry.proto.collector.trace.v1;
+
+// ── collector/trace/v1/trace_service.proto ──────────────────────────────
+
+message ExportTraceServiceRequest {
+  repeated ResourceSpans resource_spans = 1;
+}
+
+message ExportTraceServiceResponse {
+  ExportTracePartialSuccess partial_success = 1;
+}
+
+message ExportTracePartialSuccess {
+  int64 rejected_spans = 1;
+  string error_message = 2;
+}
+
+// ── trace/v1/trace.proto ─────────────────────────────────────────────────
+
+message ResourceSpans {
+  Resource resource = 1;
+  repeated ScopeSpans scope_spans = 2;
+  string schema_url = 3;
+}
+
+message ScopeSpans {
+  InstrumentationScope scope = 1;
+  repeated Span spans = 2;
+  string schema_url = 3;
+}
+
+message Span {
+  bytes trace_id = 1;
+  bytes span_id = 2;
+  string trace_state = 3;
+  bytes parent_span_id = 4;
+  uint32 flags = 16;
+  string name = 5;
+
+  enum SpanKind {
+    SPAN_KIND_UNSPECIFIED = 0;
+    SPAN_KIND_INTERNAL = 1;
+    SPAN_KIND_SERVER = 2;
+    SPAN_KIND_CLIENT = 3;
+    SPAN_KIND_PRODUCER = 4;
+    SPAN_KIND_CONSUMER = 5;
+  }
+  SpanKind kind = 6;
+
+  fixed64 start_time_unix_nano = 7;
+  fixed64 end_time_unix_nano = 8;
+
+  repeated KeyValue attributes = 9;
+  uint32 dropped_attributes_count = 10;
+
+  message Event {
+    fixed64 time_unix_nano = 1;
+    string name = 2;
+    repeated KeyValue attributes = 3;
+    uint32 dropped_attributes_count = 4;
+  }
+  repeated Event events = 11;
+  uint32 dropped_events_count = 12;
+
+  message Link {
+    bytes trace_id = 1;
+    bytes span_id = 2;
+    string trace_state = 3;
+    repeated KeyValue attributes = 4;
+    uint32 dropped_attributes_count = 5;
+    uint32 flags = 6;
+  }
+  repeated Link links = 13;
+  uint32 dropped_links_count = 14;
+
+  Status status = 15;
+}
+
+message Status {
+  reserved 1;
+  string message = 2;
+
+  enum StatusCode {
+    STATUS_CODE_UNSET = 0;
+    STATUS_CODE_OK = 1;
+    STATUS_CODE_ERROR = 2;
+  }
+  StatusCode code = 3;
+}
+
+// ── common/v1/common.proto ───────────────────────────────────────────────
+
+message AnyValue {
+  oneof value {
+    string string_value = 1;
+    bool bool_value = 2;
+    int64 int_value = 3;
+    double double_value = 4;
+    ArrayValue array_value = 5;
+    KeyValueList kvlist_value = 6;
+    bytes bytes_value = 7;
+  }
+}
+
+message ArrayValue {
+  repeated AnyValue values = 1;
+}
+
+message KeyValueList {
+  repeated KeyValue values = 1;
+}
+
+message KeyValue {
+  string key = 1;
+  AnyValue value = 2;
+}
+
+message InstrumentationScope {
+  string name = 1;
+  string version = 2;
+  repeated KeyValue attributes = 3;
+  uint32 dropped_attributes_count = 4;
+}
+
+// ── resource/v1/resource.proto ───────────────────────────────────────────
+
+message Resource {
+  repeated KeyValue attributes = 1;
+  uint32 dropped_attributes_count = 2;
+}
