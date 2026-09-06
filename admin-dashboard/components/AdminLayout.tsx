@@ -7,6 +7,7 @@ import {
   FileText,
   Archive,
   Boxes,
+  History,
   LayoutDashboard,
   LogOut,
   SlidersHorizontal,
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { name: "Agent Hub", icon: ShoppingBag, href: "/agent-hub" },
   { name: "Backups", icon: Archive, href: "/backups" },
   { name: "Audit", icon: FileText, href: "/audit" },
+  { name: "Log Recovery", icon: History, href: "/log-recovery" },
   { name: "Settings", icon: SlidersHorizontal, href: "/settings" },
 ];
 

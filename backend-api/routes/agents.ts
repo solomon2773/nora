@@ -18,6 +18,7 @@ const agentSchedules = require("../agentSchedules");
 const monitoring = require("../monitoring");
 const metrics = require("../metrics");
 const workspaces = require("../workspaces");
+const logDeletion = require("../../workers/provisioner/logs/logDeletion.ts");
 const {
   CLONE_MODES,
   buildTemplatePayloadFromAgent,
@@ -2699,7 +2700,27 @@ router.post("/:id/stop", async (req, res, next) => {
   }
 });
 
+/**
+ * Phase 5c item 1: no default — a request that omits `deleteLogs` is
+ * rejected outright, for both an interactive (dashboard-confirmed) and a
+ * programmatic (CLI/MCP/direct API) caller alike. Checked before any other
+ * validation or side effect.
+ */
+function requireDeleteLogsFlag(req, res) {
+  const { deleteLogs } = req.body || {};
+  if (typeof deleteLogs !== "boolean") {
+    res.status(400).json({
+      error: "deleteLogs (boolean) is required — choose whether this agent's logs are deleted or kept",
+    });
+    return null;
+  }
+  return deleteLogs;
+}
+
 async function destroyAgent(agentId, req, res) {
+  const deleteLogs = requireDeleteLogsFlag(req, res);
+  if (deleteLogs === null) return;
+
   const visibleAgent = await findAccessibleAgentForRequest(req, agentId, "viewer");
   if (!visibleAgent) return res.status(404).json({ error: "Agent not found" });
   if (visibleAgent.user_id !== req.user.id) {
@@ -2746,6 +2767,39 @@ async function destroyAgent(agentId, req, res) {
       }
     }
 
+    // Phase 5c item 3: when logs are kept, snapshot the deleted_log_owners
+    // row BEFORE the agent row (and therefore this lookup's context) is
+    // gone. Best-effort single workspace lookup — an agent can belong to
+    // more than one workspace via workspace_agents, so this picks whichever
+    // one is found first purely to resolve a retention_days snapshot; it is
+    // not a claim about which workspace "owns" the agent.
+    if (!deleteLogs) {
+      let agentWorkspaceId = null;
+      try {
+        const workspaceRow = await db.query(
+          "SELECT workspace_id FROM workspace_agents WHERE agent_id = $1 LIMIT 1",
+          [agent.id],
+        );
+        agentWorkspaceId = workspaceRow.rows[0]?.workspace_id || null;
+      } catch (error) {
+        console.error("Failed to resolve agent workspace for log-recovery snapshot:", error.message);
+      }
+      try {
+        await logDeletion.snapshotDeletedLogOwner(
+          "agent",
+          agent.id,
+          req.user,
+          {
+            displayName: agent.name || null,
+            ownerUserId: agent.user_id || null,
+            workspaceId: agentWorkspaceId,
+          },
+        );
+      } catch (error) {
+        console.error("Failed to snapshot deleted_log_owners for agent:", error.message);
+      }
+    }
+
     // Free the agent's reserved gateway port. The FK is ON DELETE CASCADE so the
     // hard delete below already releases it, but release explicitly so the
     // allocation can't leak if agent deletion ever becomes a soft-delete.
@@ -2758,6 +2812,17 @@ async function destroyAgent(agentId, req, res) {
         result: { deleted: true },
       }),
     );
+
+    // Phase 5c item 2: deleteLogs:true trails the (already-synchronous)
+    // agent-row deletion with an async cleanup job — never awaited, so a
+    // slow or failing log purge cannot hold up the delete response the
+    // caller is waiting on.
+    if (deleteLogs) {
+      logDeletion.deleteAgentLogs(agent.id).catch((error) => {
+        console.error(`Async log cleanup failed for deleted agent ${agent.id}:`, error.message);
+      });
+    }
+
     return res.json({ success: true });
   } finally {
     await provisionLock.release();

@@ -128,16 +128,40 @@ async function resolveRetentionDaysForColumn(workspaceId, column, deps = {}) {
 
 /**
  * Per-workspace runtime/gateway log retention, clamped to the platform
- * ceiling (Phase 5 item 2 / Functions list). Workspaces with no
- * `workspace_log_settings` row — including the null-workspace case for
- * agents that belong to no workspace — fall back to the platform ceiling
- * rather than retaining forever.
+ * ceiling (Phase 5 item 2 / Functions list).
+ *
+ * Phase 5c item 6 / Functions list: accepts an optional THIRD argument,
+ * `snapshottedRetentionDays` — when non-null, this is a `deleted_log_owners`
+ * row's snapshotted retention value (captured at agent/workspace deletion
+ * time, before the source row — and possibly its `workspace_log_settings`
+ * row — stopped existing). In that case `workspaceId`'s normal
+ * `workspace_log_settings` lookup is skipped entirely (there is nothing left
+ * for it to resolve, by design — see the manifest's Deletion Model) and the
+ * snapshotted value is used directly, still clamped to the CURRENT platform
+ * ceiling exactly like the live path (an operator lowering the ceiling after
+ * the snapshot was taken must still bind kept logs). The ceiling is resolved
+ * under the "free" plan for this path since a deleted owner has no billing
+ * context left to look up — the same conservative fallback
+ * `resolveRetentionDaysForColumn` already uses when the PaaS billing lookup
+ * itself fails.
+ *
+ * Workspaces with no `workspace_log_settings` row — including the
+ * null-workspace case for agents that belong to no workspace — fall back to
+ * the platform ceiling rather than retaining forever.
  *
  * @param {string|null} workspaceId
  * @param {Object} [deps]
+ * @param {number|null} [snapshottedRetentionDays]
  * @returns {Promise<number>} Effective retention in days.
  */
-async function resolveLogRetention(workspaceId, deps = {}) {
+async function resolveLogRetention(workspaceId, deps = {}, snapshottedRetentionDays = null) {
+  if (snapshottedRetentionDays != null) {
+    const platformSettings = lazyPlatformSettings(deps);
+    const getLogRetentionCeilingDays =
+      deps.getLogRetentionCeilingDays || platformSettings.getLogRetentionCeilingDays;
+    const ceilingDays = await getLogRetentionCeilingDays("free");
+    return Math.min(Number(snapshottedRetentionDays), ceilingDays);
+  }
   return resolveRetentionDaysForColumn(workspaceId, "runtime_retention_days", deps);
 }
 
@@ -233,17 +257,32 @@ async function deleteLegacyCopiesForSegments(segmentIds, deps = {}) {
  * @param {Object} [deps]
  * @returns {Promise<{deletedSegments: number, deletedObjects: number, deletedLegacyCopies: number}>}
  */
-async function sweepExpiredSegments(workspaceId, cutoff, deps = {}) {
+/**
+ * Shared guts of `sweepExpiredSegments`/`sweepExpiredSegmentsForDeletedOwner`
+ * (Phase 5c item 6): everything about content-time expiry and
+ * objects-before-rows ordering is identical between "sweep a live
+ * workspace's segments" and "sweep a deleted owner's segments" — only the
+ * SQL scoping predicate (and its one bind param) differs, so that's the only
+ * thing callers supply.
+ *
+ * @param {string} whereSql - a SQL predicate referencing bind param `$2`
+ *   (e.g. `workspace_id = $2` or `agent_id = $2`), or a predicate with no
+ *   bind param at all (e.g. `workspace_id IS NULL`) when `param` is `null`.
+ * @param {*} param - the `$2` bind value, or `null` when `whereSql` needs
+ *   no second param.
+ * @param {string} cutoff - ISO timestamp; rows with ts_to < cutoff expire.
+ * @param {Object} [deps]
+ */
+async function sweepExpiredSegmentsByScope(whereSql, param, cutoff, deps = {}) {
   const db = lazyDb(deps);
   const deleteObjs = deps.deleteStorageObjects || objectStorage.deleteStorageObjects;
   const resolveConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
 
-  const whereWorkspace = workspaceId == null ? `workspace_id IS NULL` : `workspace_id = $2`;
-  const params = workspaceId == null ? [cutoff] : [cutoff, workspaceId];
+  const params = param == null ? [cutoff] : [cutoff, param];
   const result = await db.query(
     `SELECT id, storage_key, storage_backend, storage_config
        FROM log_segments
-      WHERE ts_to < $1 AND ${whereWorkspace}`,
+      WHERE ts_to < $1 AND ${whereSql}`,
     params,
   );
   const rows = result.rows || [];
@@ -281,15 +320,94 @@ async function sweepExpiredSegments(workspaceId, cutoff, deps = {}) {
   };
 }
 
-async function sweepExpiredSpans(workspaceId, cutoff, deps = {}) {
+/**
+ * Sweep every `log_segments` row for `workspaceId` (or, when `workspaceId`
+ * is `null`, every row belonging to no workspace) whose content-time
+ * (`ts_to`) is older than `cutoff` (Phase 5 item 4a: expiry is on content
+ * time, not write time, matching the search path). Sweep order (item 4):
+ * any legacy copy's object first, then this segment's own object, batched
+ * per rehydrated config (item 4a), THEN the `log_segments` row — an index
+ * row must never outlive its object.
+ *
+ * @param {string|null} workspaceId
+ * @param {string} cutoff - ISO timestamp; rows with ts_to < cutoff expire.
+ * @param {Object} [deps]
+ * @returns {Promise<{deletedSegments: number, deletedObjects: number, deletedLegacyCopies: number}>}
+ */
+async function sweepExpiredSegments(workspaceId, cutoff, deps = {}) {
+  const whereSql = workspaceId == null ? `workspace_id IS NULL` : `workspace_id = $2`;
+  return sweepExpiredSegmentsByScope(whereSql, workspaceId, cutoff, deps);
+}
+
+/**
+ * Phase 5c item 6: the same sweep, scoped instead to a `deleted_log_owners`
+ * row's `source_id` — by `agent_id` for a deleted agent's kept logs, or by
+ * `workspace_id` for a deleted workspace's. This is NOT the same as
+ * `sweepExpiredSegments(sourceId, ...)`, which would (wrongly, for the
+ * "agent" kind) scope by `workspace_id` and sweep every OTHER still-live
+ * agent's logs in that workspace too.
+ *
+ * @param {"agent"|"workspace"} kind
+ * @param {string} sourceId
+ * @param {string} cutoff
+ * @param {Object} [deps]
+ */
+async function sweepExpiredSegmentsForDeletedOwner(kind, sourceId, cutoff, deps = {}) {
+  const column = kind === "workspace" ? "workspace_id" : "agent_id";
+  return sweepExpiredSegmentsByScope(`${column} = $2`, sourceId, cutoff, deps);
+}
+
+async function sweepExpiredSpansByScope(whereSql, param, cutoff, deps = {}) {
   const db = lazyDb(deps);
-  const whereWorkspace = workspaceId == null ? `workspace_id IS NULL` : `workspace_id = $2`;
-  const params = workspaceId == null ? [cutoff] : [cutoff, workspaceId];
+  const params = param == null ? [cutoff] : [cutoff, param];
   const result = await db.query(
-    `DELETE FROM agent_spans WHERE started_at < $1 AND ${whereWorkspace} RETURNING id`,
+    `DELETE FROM agent_spans WHERE started_at < $1 AND ${whereSql} RETURNING id`,
     params,
   );
   return { deletedSpans: result.rowCount || (result.rows || []).length || 0 };
+}
+
+async function sweepExpiredSpans(workspaceId, cutoff, deps = {}) {
+  const whereSql = workspaceId == null ? `workspace_id IS NULL` : `workspace_id = $2`;
+  return sweepExpiredSpansByScope(whereSql, workspaceId, cutoff, deps);
+}
+
+/** Phase 5c item 6: `sweepExpiredSpans`'s deleted-owner counterpart. */
+async function sweepExpiredSpansForDeletedOwner(kind, sourceId, cutoff, deps = {}) {
+  const column = kind === "workspace" ? "workspace_id" : "agent_id";
+  return sweepExpiredSpansByScope(`${column} = $2`, sourceId, cutoff, deps);
+}
+
+/**
+ * Phase 5c item 6: sweep every `deleted_log_owners` row's kept logs against
+ * ITS OWN snapshotted `retention_days` (via `resolveLogRetention`'s
+ * snapshotted-value path), never through a `workspace_log_settings` lookup —
+ * the source agent/workspace row is gone, so that lookup would either
+ * resolve to an unrelated still-live workspace's policy (wrong) or nothing
+ * at all. Sweeping here only ever removes expired `log_segments`/
+ * `agent_spans` rows — the `deleted_log_owners` row itself is left alone
+ * until an operator explicitly purges it (Phase 5c item 7), since the
+ * recovery view should keep listing the entry (now with nothing left under
+ * it) rather than having it silently disappear.
+ *
+ * @param {Object} [deps]
+ * @returns {Promise<Array<{deletedLogOwnerId: string, deletedSegments: number, deletedObjects: number, deletedLegacyCopies: number, deletedSpans: number}>>}
+ */
+async function sweepDeletedLogOwners(deps = {}) {
+  const db = lazyDb(deps);
+  const now = deps.now ? deps.now() : Date.now();
+  const rows = (await db.query(`SELECT id, kind, source_id, retention_days FROM deleted_log_owners`))
+    .rows || [];
+
+  const summaries = [];
+  for (const row of rows) {
+    const retentionDays = await resolveLogRetention(null, deps, row.retention_days);
+    const cutoff = daysAgoIso(retentionDays, now);
+    const segOutcome = await sweepExpiredSegmentsForDeletedOwner(row.kind, row.source_id, cutoff, deps);
+    const spanOutcome = await sweepExpiredSpansForDeletedOwner(row.kind, row.source_id, cutoff, deps);
+    summaries.push({ deletedLogOwnerId: row.id, ...segOutcome, ...spanOutcome });
+  }
+  return summaries;
 }
 
 // ── localStorageUsage / checkCapacityState (Phase 5 items 5-7) ──────────
@@ -629,6 +747,15 @@ function startRetentionSweeper(deps = {}) {
         );
       }
     }
+
+    // Phase 5c item 6: kept logs behind deleted_log_owners are on their own
+    // snapshotted retention, not a workspace_log_settings lookup — swept
+    // separately from the workspace loop above, never folded into it.
+    try {
+      await sweepDeletedLogOwners(deps);
+    } catch (error) {
+      logger.error(`[retentionSweeper] sweep of deleted_log_owners failed: ${error.message}`);
+    }
   }
 
   async function runDailyReconcileOnce() {
@@ -677,7 +804,10 @@ function startRetentionSweeper(deps = {}) {
 module.exports = {
   startRetentionSweeper,
   sweepExpiredSegments,
+  sweepExpiredSegmentsForDeletedOwner,
   sweepExpiredSpans,
+  sweepExpiredSpansForDeletedOwner,
+  sweepDeletedLogOwners,
   localStorageUsage,
   checkCapacityState,
   getCapacityStatus,
@@ -686,6 +816,7 @@ module.exports = {
   resolveLogRetention,
   resolveTraceRetention,
   deleteLegacyCopiesForSegments,
+  groupKeysByConfig,
   DEFAULT_HOURLY_INTERVAL_MS,
   DEFAULT_DAILY_INTERVAL_MS,
   DEFAULT_CAPACITY_CHECK_INTERVAL_MS,

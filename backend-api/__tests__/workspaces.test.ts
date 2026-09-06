@@ -71,6 +71,23 @@ const mockMonitoring = {
   getRecentEvents: jest.fn().mockResolvedValue([]),
 };
 jest.mock("../monitoring", () => mockMonitoring);
+const mockSnapshotDeletedLogOwner = jest.fn().mockResolvedValue({ id: "recovery-row-1" });
+const mockDeleteWorkspaceLogs = jest.fn().mockResolvedValue({
+  deletedSegments: 0,
+  deletedObjects: 0,
+  deletedLegacyCopies: 0,
+  deletedSpans: 0,
+});
+jest.mock("../../workers/provisioner/logs/logDeletion.ts", () => ({
+  snapshotDeletedLogOwner: (...args) => mockSnapshotDeletedLogOwner(...args),
+  deleteWorkspaceLogs: (...args) => mockDeleteWorkspaceLogs(...args),
+  deleteAgentLogs: jest.fn().mockResolvedValue({
+    deletedSegments: 0,
+    deletedObjects: 0,
+    deletedLegacyCopies: 0,
+    deletedSpans: 0,
+  }),
+}));
 const mockMailer = {
   sendMail: jest.fn().mockResolvedValue({ delivered: false, error: "not_configured" }),
   isConfigured: jest.fn().mockResolvedValue(false),
@@ -144,6 +161,13 @@ beforeEach(() => {
   mockMonitoring.logEvent.mockReset().mockResolvedValue(undefined);
   mockMailer.sendMail.mockReset().mockResolvedValue({ delivered: false, error: "not_configured" });
   mockMailer.isConfigured.mockReset().mockResolvedValue(false);
+  mockSnapshotDeletedLogOwner.mockReset().mockResolvedValue({ id: "recovery-row-1" });
+  mockDeleteWorkspaceLogs.mockReset().mockResolvedValue({
+    deletedSegments: 0,
+    deletedObjects: 0,
+    deletedLegacyCopies: 0,
+    deletedSpans: 0,
+  });
 });
 
 describe("GET /workspaces", () => {
@@ -196,7 +220,7 @@ describe("DELETE /workspaces/:id", () => {
   it("rejects if not a member", async () => {
     mockDb.query.mockResolvedValueOnce({ rows: [] }); // membership check fails
 
-    const res = await auth(request(app).delete("/workspaces/ws-1"));
+    const res = await auth(request(app).delete("/workspaces/ws-1").send({ deleteLogs: true }));
     expect(res.status).toBe(404);
   });
 
@@ -204,7 +228,7 @@ describe("DELETE /workspaces/:id", () => {
     mockDb.query.mockResolvedValueOnce({
       rows: [{ id: "ws-1", user_id: "creator", role: "admin" }],
     });
-    const res = await auth(request(app).delete("/workspaces/ws-1"));
+    const res = await auth(request(app).delete("/workspaces/ws-1").send({ deleteLogs: true }));
     expect(res.status).toBe(403);
   });
 
@@ -214,7 +238,7 @@ describe("DELETE /workspaces/:id", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
-    const res = await auth(request(app).delete("/workspaces/ws-1"));
+    const res = await auth(request(app).delete("/workspaces/ws-1").send({ deleteLogs: true }));
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("success", true);
   });
@@ -226,8 +250,76 @@ describe("DELETE /workspaces/:id", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
-    const res = await auth(request(app).delete("/workspaces/ws-1"));
+    const res = await auth(request(app).delete("/workspaces/ws-1").send({ deleteLogs: true }));
     expect(res.status).toBe(200);
+  });
+
+  describe("Phase 5c: deleteLogs contract", () => {
+    it("rejects a request with no deleteLogs, after the workspace-role check but before any delete-related query", async () => {
+      mockDb.query.mockResolvedValueOnce({
+        rows: [{ id: "ws-1", user_id: "user-1", role: "owner" }],
+      });
+
+      const res = await auth(request(app).delete("/workspaces/ws-1"));
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/deleteLogs/i);
+      // Only the requireWorkspaceRole membership check ran — never
+      // workspace_agents/workspaces deletion.
+      expect(mockDb.query).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a non-boolean deleteLogs value", async () => {
+      mockDb.query.mockResolvedValueOnce({
+        rows: [{ id: "ws-1", user_id: "user-1", role: "owner" }],
+      });
+
+      const res = await auth(
+        request(app).delete("/workspaces/ws-1").send({ deleteLogs: "yes" }),
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/deleteLogs/i);
+      expect(mockDb.query).toHaveBeenCalledTimes(1);
+    });
+
+    it("deleteLogs:true trails the synchronous workspace-row delete with an async cleanup call", async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [{ id: "ws-1", user_id: "user-1", role: "owner" }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const res = await auth(request(app).delete("/workspaces/ws-1").send({ deleteLogs: true }));
+
+      expect(res.status).toBe(200);
+      expect(mockDeleteWorkspaceLogs).toHaveBeenCalledWith("ws-1");
+      expect(mockSnapshotDeletedLogOwner).not.toHaveBeenCalled();
+    });
+
+    it("deleteLogs:false snapshots deleted_log_owners before deleting workspace_agents/workspaces, and skips async cleanup", async () => {
+      mockDb.query
+        .mockResolvedValueOnce({ rows: [{ id: "ws-1", user_id: "user-1", role: "owner" }] })
+        .mockResolvedValueOnce({ rows: [] }) // DELETE FROM workspace_agents
+        .mockResolvedValueOnce({ rows: [] }); // DELETE FROM workspaces
+
+      const res = await auth(request(app).delete("/workspaces/ws-1").send({ deleteLogs: false }));
+
+      expect(res.status).toBe(200);
+      expect(mockSnapshotDeletedLogOwner).toHaveBeenCalledWith(
+        "workspace",
+        "ws-1",
+        expect.objectContaining({ id: "user-1" }),
+        expect.objectContaining({ ownerUserId: "user-1" }),
+      );
+      expect(mockDeleteWorkspaceLogs).not.toHaveBeenCalled();
+
+      const snapshotOrder = mockSnapshotDeletedLogOwner.mock.invocationCallOrder[0];
+      const deleteWorkspaceIndex = mockDb.query.mock.calls.findIndex(
+        ([sql, params]) => sql === "DELETE FROM workspaces WHERE id = $1" && params?.[0] === "ws-1",
+      );
+      expect(deleteWorkspaceIndex).toBeGreaterThanOrEqual(0);
+      expect(snapshotOrder).toBeLessThan(mockDb.query.mock.invocationCallOrder[deleteWorkspaceIndex]);
+    });
   });
 });
 

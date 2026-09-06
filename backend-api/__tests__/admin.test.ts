@@ -304,6 +304,18 @@ jest.mock("dockerode", () =>
   })),
 );
 
+const mockListRecoveredLogLines = jest.fn();
+const mockCollectAllRecoveredLogLines = jest.fn();
+const mockPurgeDeletedLogOwner = jest.fn();
+jest.mock("../../workers/provisioner/logs/logDeletion.ts", () => ({
+  listRecoveredLogLines: (...args) => mockListRecoveredLogLines(...args),
+  collectAllRecoveredLogLines: (...args) => mockCollectAllRecoveredLogLines(...args),
+  purgeDeletedLogOwner: (...args) => mockPurgeDeletedLogOwner(...args),
+  snapshotDeletedLogOwner: jest.fn(),
+  deleteAgentLogs: jest.fn(),
+  deleteWorkspaceLogs: jest.fn(),
+}));
+
 const app = require("../server");
 const { normalizeHealthcheckBudget } = require("../releaseUpgrade");
 
@@ -2842,5 +2854,131 @@ describe("admin routes", () => {
     expect(res.text).toContain("Invalid role");
     expect(res.text).toContain("metadata_json");
     expect(res.text).toContain("source_kind");
+  });
+});
+
+describe("Phase 5c: /admin/log-recovery", () => {
+  it("GET /admin/log-recovery requires platform-admin", async () => {
+    const res = await withToken(request(app).get("/admin/log-recovery"), userToken);
+    expect(res.status).toBe(403);
+  });
+
+  it("GET /admin/log-recovery lists deleted_log_owners entries", async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "owner-1",
+          kind: "agent",
+          source_id: "agent-1",
+          display_name: "Old Agent",
+          owner_user_id: "user-1",
+          retention_days: 30,
+          deleted_by_user_id: "user-1",
+          deleted_at: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const res = await withToken(request(app).get("/admin/log-recovery"), adminToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body.entries).toHaveLength(1);
+    expect(res.body.entries[0]).toMatchObject({ id: "owner-1", kind: "agent" });
+  });
+
+  it("GET /admin/log-recovery/:id/logs requires platform-admin", async () => {
+    const res = await withToken(request(app).get("/admin/log-recovery/owner-1/logs"), userToken);
+    expect(res.status).toBe(403);
+    expect(mockListRecoveredLogLines).not.toHaveBeenCalled();
+  });
+
+  it("GET /admin/log-recovery/:id/logs returns the paginated recovered lines", async () => {
+    mockListRecoveredLogLines.mockResolvedValueOnce({
+      owner: { id: "owner-1", kind: "agent", source_id: "agent-1" },
+      lines: [{ ts: "2026-01-01T00:00:00.000Z", message: "hello" }],
+      nextCursor: null,
+      totalSegments: 1,
+    });
+
+    const res = await withToken(
+      request(app).get("/admin/log-recovery/owner-1/logs?limit=50"),
+      adminToken,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body.lines).toEqual([{ ts: "2026-01-01T00:00:00.000Z", message: "hello" }]);
+    expect(mockListRecoveredLogLines).toHaveBeenCalledWith("owner-1", {
+      limit: 50,
+      cursor: null,
+    });
+  });
+
+  it("GET /admin/log-recovery/:id/logs surfaces a 404 for an unknown entry", async () => {
+    const error = new Error("Recovery entry not found");
+    error.statusCode = 404;
+    mockListRecoveredLogLines.mockRejectedValueOnce(error);
+
+    const res = await withToken(request(app).get("/admin/log-recovery/missing/logs"), adminToken);
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/not found/i);
+  });
+
+  it("GET /admin/log-recovery/:id/export streams NDJSON by default", async () => {
+    mockCollectAllRecoveredLogLines.mockResolvedValueOnce({
+      owner: { id: "owner-1" },
+      lines: [{ message: "a" }, { message: "b" }],
+      truncated: false,
+    });
+
+    const res = await withToken(request(app).get("/admin/log-recovery/owner-1/export"), adminToken);
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/x-ndjson");
+    expect(res.headers["content-disposition"]).toContain("nora-log-recovery-owner-1-");
+    expect(res.text.trim().split("\n")).toHaveLength(2);
+  });
+
+  it("GET /admin/log-recovery/:id/export?format=csv streams CSV", async () => {
+    mockCollectAllRecoveredLogLines.mockResolvedValueOnce({
+      owner: { id: "owner-1" },
+      lines: [{ ts: "2026-01-01T00:00:00.000Z", stream: "runtime", level: "INFO", message: "hi, there" }],
+      truncated: false,
+    });
+
+    const res = await withToken(
+      request(app).get("/admin/log-recovery/owner-1/export?format=csv"),
+      adminToken,
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.text).toContain("ts,observed_ts,stream,level,message");
+    expect(res.text).toContain('"hi, there"');
+  });
+
+  it("DELETE /admin/log-recovery/:id requires platform-admin", async () => {
+    const res = await withToken(request(app).delete("/admin/log-recovery/owner-1"), userToken);
+    expect(res.status).toBe(403);
+    expect(mockPurgeDeletedLogOwner).not.toHaveBeenCalled();
+  });
+
+  it("DELETE /admin/log-recovery/:id purges the entry", async () => {
+    mockPurgeDeletedLogOwner.mockResolvedValueOnce({
+      purged: true,
+      deletedSegments: 2,
+      deletedObjects: 2,
+      deletedLegacyCopies: 0,
+      deletedSpans: 1,
+    });
+
+    const res = await withToken(request(app).delete("/admin/log-recovery/owner-1"), adminToken);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ purged: true, deletedSegments: 2 });
+    expect(mockPurgeDeletedLogOwner).toHaveBeenCalledWith(
+      "owner-1",
+      expect.objectContaining({ id: "admin-1" }),
+    );
   });
 });
