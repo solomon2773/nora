@@ -5662,12 +5662,29 @@ healthServer.listen(HEALTH_PORT, () => {
 // collector; until then `flushAll()` below is a no-op over zero buffers.
 const segmentWriter = createSegmentWriter();
 
-// Phase 4's collector/reconciler don't exist yet. This is the stop-hook
-// registry item 6(a) asks for: "there may be no collector/reconciler wired
-// up yet since Phase 4 builds the collector — just expose the stop-hook the
-// coordinator will call, and call it if present." Phase 4 calls
-// `registerLogPipelineHooks({ stopCollector, stopReconciler })` once it
-// exists; until then both hooks are null and the coordinator skips them.
+// ── Log Collector (Logging Control Plane Phase 4) ─────────────────────
+//
+// Maintains one live follow stream per running/warning agent with a
+// container, feeding parsed lines into `segmentWriter` above. See
+// logs/logCollector.ts's module header for the full design rationale
+// (level-triggered reconcile, cursor-advances-only-after-flush replay,
+// capacity-paused disconnect, tenant re-resolution on reconnect).
+//
+// Constructing it here does not require any NORA_LOG_* configuration to be
+// present — like `segmentWriter` above, storage/encryption config is only
+// resolved lazily, at the first actual flush. `start()` begins the 30s
+// reconcile timer immediately; `stopReconciler`/`stopCollector` are wired
+// into the shutdown coordinator below via `registerLogPipelineHooks`, in
+// the exact two-hook shape it already expects.
+const { startLogCollector } = require("./logs/logCollector");
+const logCollector = startLogCollector({ segmentWriter });
+
+// This is the stop-hook registry item 6(a) asks for: "there may be no
+// collector/reconciler wired up yet since Phase 4 builds the collector —
+// just expose the stop-hook the coordinator will call, and call it if
+// present." Phase 4 (this file, now) calls
+// `registerLogPipelineHooks({ stopCollector, stopReconciler })` immediately
+// below so both hooks are wired from process start.
 const logPipelineHooks = { stopCollector: null, stopReconciler: null };
 function registerLogPipelineHooks(hooks = {}) {
   if (typeof hooks.stopCollector === "function") {
@@ -5792,6 +5809,11 @@ function registerShutdownCoordinator({
   return { runShutdown };
 }
 
+registerLogPipelineHooks({
+  stopReconciler: () => logCollector.stopReconciler(),
+  stopCollector: () => logCollector.stopCollector(),
+});
+
 registerShutdownCoordinator();
 
 module.exports = {
@@ -5832,6 +5854,7 @@ module.exports = {
   reconcileHermesSkills,
   loadHermesSkillJobAgent,
   segmentWriter,
+  logCollector,
   registerLogPipelineHooks,
   registerShutdownCoordinator,
 };

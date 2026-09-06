@@ -3097,6 +3097,15 @@ class K8sBackend extends ProvisionerBackend {
   /**
    * Stream logs from a pod of the deployment.
    */
+  // Logging control plane Phase 4 item 2b: mirror the docker.ts fix — an
+  // absent `opts.tail` must mean "all available lines" from the kubelet,
+  // not silently default to 100 (`tailLines` omitted entirely rather than
+  // substituted). The live WebSocket viewer now passes `tail: 100`
+  // explicitly to keep its own behavior; the log collector omits `tail` so
+  // a reconnect replays full retained history instead of re-ingesting only
+  // the last 100 lines. `opts.since` (an ISO-8601 string, matching the line
+  // envelope's ts/observed_ts fields) maps onto the k8s log request's
+  // `sinceTime`, which expects RFC3339.
   async logs(containerId, opts = {}) {
     const deployName = containerId;
     const namespace = this._namespaceForDeployName(deployName);
@@ -3105,12 +3114,22 @@ class K8sBackend extends ProvisionerBackend {
     const runningPod = await this._findRunningPod(deployName, namespace);
     if (!runningPod) return null;
 
-    const stream = new (require("stream").PassThrough)();
-    await log.log(namespace, runningPod.metadata.name, "agent", stream, {
+    const logOptions = {
       follow: opts.follow !== false,
-      tailLines: opts.tail || 100,
       timestamps: true,
-    });
+    };
+    if (opts.tail !== undefined && opts.tail !== null) {
+      logOptions.tailLines = opts.tail;
+    }
+    if (opts.since !== undefined && opts.since !== null) {
+      const sinceDate = typeof opts.since === "number" ? new Date(opts.since * 1000) : new Date(opts.since);
+      if (!Number.isNaN(sinceDate.getTime())) {
+        logOptions.sinceTime = sinceDate.toISOString();
+      }
+    }
+
+    const stream = new (require("stream").PassThrough)();
+    await log.log(namespace, runningPod.metadata.name, "agent", stream, logOptions);
     return stream;
   }
 }

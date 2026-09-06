@@ -204,6 +204,41 @@ describe("log stream websocket auth", () => {
     ws.close();
   });
 
+  // Logging control plane Phase 4 item 2b regression guard: docker.ts/k8s.ts
+  // no longer default an absent `tail` to 100 (they now treat "no tail
+  // passed" as unlimited, for the new collector's reconnect path). The live
+  // WebSocket viewer must keep its historical "last 100 lines on connect"
+  // behavior by passing `tail: 100` explicitly at this call site rather than
+  // relying on the adapters' former implicit default.
+  it("requests exactly the last 100 lines from containerManager.logs, unaffected by the adapter tail-default fix", async () => {
+    const logStream = new PassThrough();
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "agent-tail-regression",
+          name: "Tail Regression Agent",
+          status: "running",
+          container_id: "oclaw-agent-tail-regression",
+          backend_type: "docker",
+          deploy_target: "docker",
+          user_id: "owner-1",
+        },
+      ],
+    });
+    mockContainerManager.status.mockResolvedValueOnce({ running: true });
+    mockContainerManager.logs.mockResolvedValueOnce(logStream);
+
+    const ws = openLogStream("agent-tail-regression", { id: "admin-1", role: "admin" });
+    await flushAsyncWork();
+
+    expect(mockContainerManager.logs).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "agent-tail-regression" }),
+      { follow: true, tail: 100 },
+    );
+
+    ws.close();
+  });
+
   it("surfaces backend log stream errors to the websocket client", async () => {
     const logStream = new PassThrough();
     mockDb.query.mockResolvedValueOnce({

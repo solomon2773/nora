@@ -1304,15 +1304,41 @@ class DockerBackend extends ProvisionerBackend {
     console.log(`[docker] Container ${containerId} restarted`);
   }
 
+  // Logging control plane Phase 4 item 2b: an absent `opts.tail` must mean
+  // "all available lines," not silently default to 100. dockerode/the Docker
+  // Engine API treat an OMITTED `tail` field as unlimited — but a `tail`
+  // key present with any value (including `undefined` on some transports)
+  // can still trip a default deeper in the stack, so this only ever sets
+  // the key when the caller actually passed a tail value. The live
+  // WebSocket viewer (backend-api/logStream.ts) now passes `tail: 100`
+  // explicitly to keep its own behavior unchanged; the log collector
+  // (workers/provisioner/logs/logCollector.ts) omits `tail` entirely so a
+  // reconnect replays the full retained history instead of re-ingesting
+  // only the last 100 lines on every reattach.
   async logs(containerId, opts = {}) {
     const container = this.docker.getContainer(containerId);
-    const stream = await container.logs({
+    const logOptions = {
       follow: opts.follow !== false,
       stdout: true,
       stderr: true,
-      tail: opts.tail || 100,
       timestamps: opts.timestamps !== false,
-    });
+    };
+    if (opts.tail !== undefined && opts.tail !== null) {
+      logOptions.tail = opts.tail;
+    }
+    // Phase 4 item 2a's cursor-advances-only-after-flush replay depends on
+    // this reaching dockerode: the Docker Engine API's `since` query param
+    // accepts a UNIX timestamp (seconds). The collector passes an ISO-8601
+    // string (matching the line envelope's ts/observed_ts fields), so it is
+    // converted here rather than pushed onto every caller.
+    if (opts.since !== undefined && opts.since !== null) {
+      const sinceMs =
+        typeof opts.since === "number" ? opts.since * 1000 : new Date(opts.since).getTime();
+      if (Number.isFinite(sinceMs)) {
+        logOptions.since = Math.floor(sinceMs / 1000);
+      }
+    }
+    const stream = await container.logs(logOptions);
     return stream;
   }
 
