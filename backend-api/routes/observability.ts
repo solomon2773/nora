@@ -30,6 +30,7 @@ const objectStorage = require("../../agent-runtime/lib/objectStorage.ts");
 const { getEnabledBackends } = require("../../agent-runtime/lib/backendCatalog.ts");
 const retentionSweeper = require("../../workers/provisioner/logs/retentionSweeper.ts");
 const logStorageConfigModule = require("../../workers/provisioner/logs/logStorageConfig.ts");
+const storageMigration = require("../../workers/provisioner/logs/storageMigration.ts");
 const db = require("../db");
 
 const router = express.Router();
@@ -218,8 +219,80 @@ router.put(
       }
     }
 
+    // Phase 5b item 7: the previous destination's credentials must stay
+    // configured for the life of any migration job that still references it,
+    // and — when kept — until every legacy copy referencing it has expired.
+    // Reject a request to CLEAR those specific credential fields outright,
+    // before any other validation or side effect, while either condition
+    // holds. S3 and R2 share the same credential columns (R2 is
+    // S3-compatible), so clearing either protects both backend names.
+    const clearingS3Credentials = Boolean(body.clearS3AccessKey || body.clearS3SecretAccessKey);
+    const clearingSshCredentials = Boolean(body.clearSshPrivateKey || body.clearSshPassword);
+    if (clearingS3Credentials || clearingSshCredentials) {
+      const protectedBackends = await storageMigration.backendsRequiringRetainedCredentials({ db });
+      if (clearingS3Credentials && (protectedBackends.has("s3") || protectedBackends.has("r2"))) {
+        return res.status(409).json({
+          error:
+            "Cannot clear S3/R2 credentials while a storage migration or a kept legacy copy still " +
+            "references that destination — its objects must remain readable until the migration " +
+            "completes or the legacy copy expires.",
+          code: "log_storage_credentials_in_use",
+        });
+      }
+      if (clearingSshCredentials && protectedBackends.has("ssh")) {
+        return res.status(409).json({
+          error:
+            "Cannot clear SSH credentials while a storage migration or a kept legacy copy still " +
+            "references that destination — its objects must remain readable until the migration " +
+            "completes or the legacy copy expires.",
+          code: "log_storage_credentials_in_use",
+        });
+      }
+    }
+
     const current = await readLogStorageRow();
     const previous = resolveLogStoragePayload(current);
+    const keepSourceCopies = Boolean(body.keepSourceCopies);
+    const backendIsChanging = storageBackend !== previous.storageBackend;
+
+    // Phase 5b items 1/8: a destination change kicks off an async migration
+    // of every previously-written segment. Reject the whole request, with NO
+    // side effects at all, up front when either an overlapping migration is
+    // already in flight or (when the new destination is local) there isn't
+    // real capacity for the exact bytes about to be migrated — this must
+    // happen BEFORE the settings row is written below.
+    if (backendIsChanging) {
+      const activeJob = await db.query(
+        `SELECT id FROM storage_migration_jobs WHERE status IN ('running','paused') LIMIT 1`,
+      );
+      if (activeJob.rows[0]) {
+        return res.status(409).json({
+          error:
+            "A storage migration is already in progress; wait for it to complete before changing " +
+            "the destination again",
+          code: "log_storage_migration_in_progress",
+        });
+      }
+
+      if (storageBackend === "local") {
+        const usedBytes = await retentionSweeper.localStorageUsage();
+        const bytesResult = await db.query(
+          `SELECT COALESCE(SUM(bytes), 0)::bigint AS bytes FROM log_segments WHERE storage_backend = $1`,
+          [previous.storageBackend],
+        );
+        const bytesToMigrate = Number(bytesResult.rows[0]?.bytes || 0);
+        const limitBytes = Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity;
+        if (Number.isFinite(limitBytes) && usedBytes + bytesToMigrate > limitBytes) {
+          return res.status(400).json({
+            error:
+              `Migrating ${bytesToMigrate} byte(s) currently on "${previous.storageBackend}" to local ` +
+              `storage would exceed the configured cap (${usedBytes} already used + ${bytesToMigrate} ` +
+              `to migrate > ${limitBytes} byte limit). Raise NORA_LOG_LOCAL_MAX_BYTES or free space first.`,
+            code: "log_storage_capacity_exceeded",
+          });
+        }
+      }
+    }
 
     let s3AccessKeyIdEncrypted = current.log_storage_s3_access_key_id_encrypted || null;
     let s3SecretAccessKeyEncrypted = current.log_storage_s3_secret_access_key_encrypted || null;
@@ -351,7 +424,46 @@ router.put(
       },
     );
 
-    res.json(nextSettings);
+    // Phase 5b item 1: the resolved config has already flipped above (the
+    // cache invalidation call), so new writes go to the new destination
+    // immediately. Now kick off the async migration of every
+    // previously-written segment, if the destination actually changed.
+    let migration = null;
+    if (backendIsChanging) {
+      try {
+        const started = await storageMigration.startStorageMigration(
+          { storageBackend: previous.storageBackend },
+          { storageBackend: nextSettings.storageBackend },
+          keepSourceCopies,
+        );
+        migration = { jobId: started.jobId, segmentsTotal: started.segmentsTotal, status: "running" };
+      } catch (error) {
+        // The pre-flight checks above should make this unreachable in
+        // practice, but never let a race here silently drop the migration —
+        // surface it as part of the response rather than throwing after the
+        // settings row (and the operator-visible destination) already
+        // changed.
+        migration = { error: error.message, code: error.code };
+      }
+    }
+
+    res.json({ ...nextSettings, migration });
+  }),
+);
+
+// ─── 3. Storage migration progress (Phase 5b item 6) ───────────────────────
+
+/**
+ * GET /admin/log-storage/migration
+ * The current or most-recent migration job's progress:
+ * `segments_migrated`/`segments_total` and `status` (`running` | `paused` |
+ * `completed` | `failed`), for the admin settings UI to poll.
+ */
+router.get(
+  "/admin/log-storage/migration",
+  asyncHandler(async (_req, res) => {
+    const status = await storageMigration.getMigrationStatus({ db });
+    res.json(status);
   }),
 );
 

@@ -5679,6 +5679,23 @@ const segmentWriter = createSegmentWriter();
 const { startLogCollector } = require("./logs/logCollector");
 const logCollector = startLogCollector({ segmentWriter });
 
+// ── Storage Migration Resume (Logging Control Plane Phase 5b item 10) ────
+//
+// Pick up any `running` or `paused` storage_migration_jobs row left over
+// from an ungraceful restart. A `paused` job is driven exactly like a
+// `running` one — resumeStorageMigration() does not distinguish — but
+// migrateSegmentBatch() re-checks the shared capacity gate before it
+// advances anything, so a job that's still over the cap at restart time
+// simply re-confirms `paused` and stops again immediately. See
+// storageMigration.ts's module header for why this is a fire-and-forget
+// call: the loop it starts is self-driving and checkpoints itself.
+const { resumeStorageMigration } = require("./logs/storageMigration");
+Promise.resolve()
+  .then(() => resumeStorageMigration())
+  .catch((error) => {
+    console.error(`[worker] resumeStorageMigration failed at boot: ${error.message}`);
+  });
+
 // This is the stop-hook registry item 6(a) asks for: "there may be no
 // collector/reconciler wired up yet since Phase 4 builds the collector —
 // just expose the stop-hook the coordinator will call, and call it if
