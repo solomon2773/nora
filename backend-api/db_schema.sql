@@ -906,6 +906,184 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Logging control plane (Phase 1): events is already a full-scan hotspot with
+-- zero indexes, and the unified /app/logs Operator lens increases read load
+-- against it, so these land alongside the new tables below rather than later.
+CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type);
+CREATE INDEX IF NOT EXISTS idx_events_metadata_gin ON events USING GIN (metadata);
+
+-- Logging control plane: segment index. One row per flushed, compressed,
+-- encrypted log segment; the segment bytes themselves live in object storage
+-- (or the local driver), never in Postgres. storage_backend/storage_config
+-- are what make the installation's storage destination changeable after
+-- setup (reads resolve per-row against the driver that wrote them) and
+-- encryption_key_id is what makes NORA_LOG_ENCRYPTION_KEY rotatable — all
+-- three are unreconstructable once segments exist, so they land in Stage A
+-- rather than being bolted on later. storage_key is UNIQUE because a
+-- replayed flush after an ungraceful worker death re-derives the same
+-- window-based key; every insert against this table is an upsert on
+-- storage_key, never a bare insert.
+--
+-- agent_id deliberately carries no foreign key: the operator's keep/delete
+-- choice at agent-deletion time must not be pre-empted by a DB-level cascade
+-- (which would destroy kept logs the instant the agent row is removed), and
+-- a plain ON DELETE NO ACTION/RESTRICT FK would instead block deleting the
+-- agent row at all while kept logs still reference it. workspace_id uses
+-- ON DELETE SET NULL (not CASCADE) for the same reason applied to settings
+-- rather than data: a workspace deletion must not cascade into deleting log
+-- data out from under the operator's choice.
+CREATE TABLE IF NOT EXISTS log_segments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL,
+  agent_id UUID NOT NULL,
+  stream TEXT NOT NULL CHECK (stream IN ('runtime', 'gateway')),
+  ts_from TIMESTAMPTZ NOT NULL,
+  ts_to TIMESTAMPTZ NOT NULL,
+  storage_key TEXT NOT NULL UNIQUE,
+  storage_backend TEXT NOT NULL DEFAULT 'local',
+  storage_config JSONB NOT NULL DEFAULT '{}',
+  encryption_key_id TEXT NOT NULL,
+  bytes BIGINT NOT NULL DEFAULT 0,
+  lines INTEGER NOT NULL DEFAULT 0,
+  dropped_lines INTEGER NOT NULL DEFAULT 0,
+  level_counts JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_log_segments_workspace_ts
+  ON log_segments(workspace_id, ts_from DESC);
+
+CREATE INDEX IF NOT EXISTS idx_log_segments_agent_stream_ts
+  ON log_segments(agent_id, stream, ts_from DESC);
+
+-- Logging control plane: span storage. Aggregation (p95 tool latency, cost
+-- per trace, error rate by tool) is the entire point, so spans live in a real
+-- Postgres table rather than segment storage. agent_id carries no foreign
+-- key for the same keep/delete reason as log_segments.agent_id above.
+CREATE TABLE IF NOT EXISTS agent_spans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trace_id TEXT NOT NULL,
+  span_id TEXT NOT NULL,
+  parent_span_id TEXT,
+  workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL,
+  agent_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT,
+  started_at TIMESTAMPTZ NOT NULL,
+  duration_ms NUMERIC,
+  status TEXT,
+  model TEXT,
+  provider TEXT,
+  tokens_in INTEGER,
+  tokens_out INTEGER,
+  cost_usd NUMERIC,
+  attrs JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_spans_workspace_started
+  ON agent_spans(workspace_id, started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_agent_spans_trace
+  ON agent_spans(trace_id);
+
+CREATE INDEX IF NOT EXISTS idx_agent_spans_agent_name_started
+  ON agent_spans(agent_id, name, started_at DESC);
+
+-- Logging control plane: per-workspace logging policy. Every column resolves
+-- through a fallback chain at read time (workspace row when it exists,
+-- platform defaults otherwise) — an agent with no workspace has no row here
+-- by design, not by omission.
+CREATE TABLE IF NOT EXISTS workspace_log_settings (
+  workspace_id UUID PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+  runtime_retention_days INTEGER NOT NULL DEFAULT 30,
+  trace_retention_days INTEGER NOT NULL DEFAULT 30,
+  gateway_logs_enabled BOOLEAN NOT NULL DEFAULT true,
+  traces_enabled BOOLEAN NOT NULL DEFAULT false,
+  trace_sample_rate NUMERIC NOT NULL DEFAULT 1.0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Logging control plane: gateway `logs.tail` poll cursor. Cursors are not
+-- globally monotonic across source-kind transitions, so tracked per source
+-- kind rather than one cursor per agent. This is ephemeral collector state,
+-- not retained log data, so it cascades with the agent normally.
+CREATE TABLE IF NOT EXISTS agent_log_cursors (
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  source_kind TEXT NOT NULL CHECK (source_kind IN ('file', 'journal')),
+  cursor TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_id, source_kind)
+);
+
+-- Logging control plane: retained copies of a segment's old-destination
+-- object after a storage-destination migration, when the operator chose
+-- "keep" over "delete" for source copies. log_segment_id is a plain
+-- reference (no FK) because this row is deliberately decoupled from
+-- log_segments' lifecycle: the log_segments row it originated from has
+-- already been repointed to the new destination and may later be deleted by
+-- retention while this row's own, independently-snapshotted ts_to keeps it
+-- alive under its own expiry.
+CREATE TABLE IF NOT EXISTS log_segment_legacy_copies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  log_segment_id UUID NOT NULL,
+  storage_backend TEXT NOT NULL,
+  storage_config JSONB NOT NULL DEFAULT '{}',
+  ts_to TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_log_segment_legacy_copies_segment
+  ON log_segment_legacy_copies(log_segment_id);
+
+CREATE INDEX IF NOT EXISTS idx_log_segment_legacy_copies_ts_to
+  ON log_segment_legacy_copies(ts_to);
+
+-- Logging control plane: snapshot behind the admin-only recovery view for
+-- logs kept after an agent or workspace was deleted. source_id carries no FK
+-- since the source row is gone by the time this is written; the recovery
+-- view joins log_segments/agent_spans against this table by source_id,
+-- never against agents or workspaces.
+CREATE TABLE IF NOT EXISTS deleted_log_owners (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind TEXT NOT NULL CHECK (kind IN ('agent', 'workspace')),
+  source_id UUID NOT NULL,
+  display_name TEXT,
+  owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  retention_days INTEGER,
+  deleted_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_deleted_log_owners_source
+  ON deleted_log_owners(kind, source_id);
+
+-- Logging control plane: progress/resumability record for an in-progress or
+-- completed storage-destination change. checkpoint is the last processed
+-- log_segments.id, read back by the migration job on worker restart or a
+-- capacity pause so it resumes rather than reprocesses already-migrated
+-- segments. `paused` (distinct from `failed`) means a migration into `local`
+-- hit the installation's disk-budget cap and will resume on its own once
+-- usage drops back under it.
+CREATE TABLE IF NOT EXISTS storage_migration_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_backend TEXT NOT NULL,
+  to_backend TEXT NOT NULL,
+  keep_source BOOLEAN NOT NULL DEFAULT false,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'paused', 'completed', 'failed')),
+  segments_total INTEGER NOT NULL DEFAULT 0,
+  segments_migrated INTEGER NOT NULL DEFAULT 0,
+  checkpoint UUID,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_migration_jobs_status
+  ON storage_migration_jobs(status);
+
 CREATE TABLE IF NOT EXISTS subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
