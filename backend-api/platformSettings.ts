@@ -76,6 +76,20 @@ const DEFAULT_BACKUP_PLAN_LIMITS = Object.freeze({
     backup_retention_days: 180,
   }),
 });
+
+// Logging control plane (Phase 5): per-plan RETENTION CEILINGS — the maximum
+// number of days a workspace's `workspace_log_settings` value may be clamped
+// to. This is a ceiling, not the per-workspace value itself (that lives in
+// `workspace_log_settings`, per the manifest's Retention Model — the knob
+// tenants actually use). Mirrors DEFAULT_BACKUP_PLAN_LIMITS/BACKUP_PLAN_KEYS
+// exactly, including the same three plan tiers, so admins configure both
+// from one consistent mental model.
+const LOG_RETENTION_PLAN_KEYS = BACKUP_PLAN_KEYS;
+const DEFAULT_LOG_RETENTION_PLAN_LIMITS = Object.freeze({
+  free: Object.freeze({ log_retention_ceiling_days: 7 }),
+  pro: Object.freeze({ log_retention_ceiling_days: 30 }),
+  enterprise: Object.freeze({ log_retention_ceiling_days: 90 }),
+});
 const SYSTEM_BANNER_SEVERITIES = new Set(["warning", "critical"]);
 const SUPPORTED_LOCALE_SET = new Set(SUPPORTED_LOCALES);
 const AGENT_HUB_SHARE_TARGETS = new Set(["internal", "community", "both"]);
@@ -286,6 +300,133 @@ function normalizeBackupPlanLimits(input) {
     );
     return limits;
   }, {});
+}
+
+// Logging control plane: per-plan retention ceiling normalization, mirroring
+// normalizeBackupPlanLimitEntry/normalizeBackupPlanLimits exactly.
+
+function normalizeLogRetentionPlanLimitEntry(input = {}, fallback = {}) {
+  return {
+    log_retention_ceiling_days:
+      parseInteger(input.log_retention_ceiling_days ?? input.logRetentionCeilingDays) ??
+      fallback.log_retention_ceiling_days,
+  };
+}
+
+function normalizeLogRetentionPlanLimits(input) {
+  const source = parseJsonObject(input, {});
+  return LOG_RETENTION_PLAN_KEYS.reduce((limits, plan) => {
+    limits[plan] = normalizeLogRetentionPlanLimitEntry(
+      source[plan] || {},
+      DEFAULT_LOG_RETENTION_PLAN_LIMITS[plan],
+    );
+    return limits;
+  }, {});
+}
+
+function parseRequiredLogRetentionPlanLimits(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    const error = new Error("log retention plan limits payload must be an object");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const plans = parseJsonObject(
+    input.plans ?? input.logRetentionPlanLimits ?? input.log_retention_plan_limits,
+    {},
+  );
+  return LOG_RETENTION_PLAN_KEYS.reduce((limits, plan) => {
+    const entry = plans[plan];
+    if (entry == null) {
+      limits[plan] = { ...DEFAULT_LOG_RETENTION_PLAN_LIMITS[plan] };
+      return limits;
+    }
+    if (typeof entry !== "object" || Array.isArray(entry)) {
+      const error = new Error(`${plan} entry must be an object`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const ceilingDays = parseInteger(
+      entry.log_retention_ceiling_days ?? entry.logRetentionCeilingDays,
+    );
+    if (!Number.isSafeInteger(ceilingDays) || ceilingDays < 1) {
+      const error = new Error(
+        `${plan}.log_retention_ceiling_days must be an integer that is 1 or greater`,
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    limits[plan] = { log_retention_ceiling_days: ceilingDays };
+    return limits;
+  }, {});
+}
+
+/**
+ * Return the platform-wide log retention ceiling in days. In `selfhosted`
+ * mode this is a flat environment-configured value — there is no billing
+ * tier to key off of — mirroring exactly how `billing.ts`'s
+ * `SELFHOSTED_LIMITS.backup_retention_days` resolves
+ * (`parseInt(process.env.NORA_BACKUP_RETENTION_DAYS || "30", 10)`). In `paas`
+ * mode the ceiling is looked up per plan from the admin-configurable
+ * `log_retention_plan_limits` platform_settings column, falling back to
+ * `DEFAULT_LOG_RETENTION_PLAN_LIMITS` for an unknown/missing plan.
+ *
+ * @param {string} [plan="free"] - Billing plan key; ignored in selfhosted mode.
+ * @returns {Promise<number>} Retention ceiling in days.
+ */
+async function getLogRetentionCeilingDays(plan = "free") {
+  const platformMode = (process.env.PLATFORM_MODE || "selfhosted").toLowerCase();
+  if (platformMode !== "paas") {
+    return parseInt(process.env.NORA_LOG_RETENTION_CEILING_DAYS || "30", 10);
+  }
+  const limits = await getLogRetentionPlanLimits();
+  const key = LOG_RETENTION_PLAN_KEYS.includes(plan) ? plan : "free";
+  return limits[key].log_retention_ceiling_days;
+}
+
+async function getLogRetentionPlanLimits() {
+  const result = await db.query(
+    `SELECT log_retention_plan_limits
+       FROM platform_settings
+      WHERE singleton = TRUE
+      LIMIT 1`,
+  );
+  return normalizeLogRetentionPlanLimits(result.rows[0]?.log_retention_plan_limits);
+}
+
+/**
+ * Validate and replace per-plan log retention ceilings in one statement,
+ * mirroring `updateBackupPlanLimits` exactly.
+ *
+ * @param {Object} [input={}] - Plan retention ceiling settings.
+ * @returns {Promise<Object>} Normalized previous and next plan limits.
+ */
+async function updateLogRetentionPlanLimits(input = {}) {
+  const next = parseRequiredLogRetentionPlanLimits(input);
+  const result = await db.query(
+    `WITH prev AS (
+       SELECT log_retention_plan_limits AS old_limits
+         FROM platform_settings
+        WHERE singleton = TRUE
+     )
+     INSERT INTO platform_settings(singleton, log_retention_plan_limits, updated_at)
+     VALUES(TRUE, $1, NOW())
+     ON CONFLICT (singleton) DO UPDATE SET
+       log_retention_plan_limits = EXCLUDED.log_retention_plan_limits,
+       updated_at = NOW()
+     RETURNING
+       log_retention_plan_limits AS next_limits,
+       (SELECT old_limits FROM prev) AS previous_limits`,
+    [JSON.stringify(next)],
+  );
+
+  const row = result.rows[0] || {};
+  return {
+    previous: normalizeLogRetentionPlanLimits(row.previous_limits),
+    next: normalizeLogRetentionPlanLimits(row.next_limits || next),
+  };
 }
 
 function maskSecret(value) {
@@ -1468,12 +1609,14 @@ module.exports = {
   DEFAULT_BACKUP_PLAN_LIMITS,
   DEFAULT_BACKUP_SETTINGS,
   DEFAULT_LANGUAGE_SETTINGS,
+  DEFAULT_LOG_RETENTION_PLAN_LIMITS,
   DEFAULT_SMTP_SETTINGS,
   DEFAULT_SYSTEM_BANNER,
   AGENT_HUB_SHARE_TARGETS,
   BACKUP_PLAN_KEYS,
   BACKUP_SCHEDULE_FREQUENCIES,
   BACKUP_STORAGE_BACKENDS,
+  LOG_RETENTION_PLAN_KEYS,
   SYSTEM_BANNER_SEVERITIES,
   SUPPORTED_LOCALES,
   clampDeploymentDefaults,
@@ -1484,6 +1627,8 @@ module.exports = {
   getBackupStorageConfig,
   getDeploymentDefaults,
   getLanguageSettings,
+  getLogRetentionCeilingDays,
+  getLogRetentionPlanLimits,
   getSmtpDeliveryConfig,
   getSmtpSettings,
   getSystemBanner,
@@ -1494,6 +1639,7 @@ module.exports = {
   normalizeDeploymentDefaults,
   normalizeLanguageSettings,
   normalizeLocale,
+  normalizeLogRetentionPlanLimits,
   normalizeSmtpSettings,
   normalizeSystemBanner,
   parseRequiredAgentHubSettings,
@@ -1502,6 +1648,7 @@ module.exports = {
   parseRequiredDeploymentDefaults,
   parseRequiredLanguageSettings,
   parseRequiredLocale,
+  parseRequiredLogRetentionPlanLimits,
   parseRequiredSmtpSettings,
   parseRequiredSystemBanner,
   resolveBackupSettingsPayload,
@@ -1514,6 +1661,7 @@ module.exports = {
   updateBackupSettings,
   updateDeploymentDefaults,
   updateLanguageSettings,
+  updateLogRetentionPlanLimits,
   updateSmtpSettings,
   updateSystemBanner,
 };

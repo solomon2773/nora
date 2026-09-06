@@ -199,21 +199,32 @@ test("loadLogEncryptionKeys accepts a bare hex key as 'default'", () => {
   assert.deepEqual(keys.get("default"), Buffer.from(KEY_A, "hex"));
 });
 
-// ── checkLocalCapacity ───────────────────────────────────────────────────
+// ── checkLocalCapacity (Phase 5: delegates to the authoritative tracker) ──
+//
+// Phase 3 shipped this as a real-but-placeholder disk scan, explicitly
+// anticipating replacement once Phase 5's installation-wide usage tracker
+// (retentionSweeper.ts's localStorageUsage()) existed. This is that
+// replacement: checkLocalCapacity no longer walks a directory at all — it
+// delegates to whatever `localStorageUsage`-shaped function it's given
+// (production default: retentionSweeper.ts's real one, an O(1) Postgres
+// SUM), while keeping the exact same `{ usedBytes, limitBytes, atCapacity }`
+// contract every existing call site (createSegmentWriter's default
+// `checkCapacity` dep) already depends on.
 
-test("checkLocalCapacity sums file sizes under the given directory", async () => {
-  await withTempDir(async (dir) => {
-    await fsp.writeFile(path.join(dir, "a.txt"), Buffer.alloc(100));
-    await fsp.mkdir(path.join(dir, "sub"));
-    await fsp.writeFile(path.join(dir, "sub", "b.txt"), Buffer.alloc(50));
-    const result = checkLocalCapacity({ dir, limitBytes: 200 });
-    assert.equal(result.usedBytes, 150);
-    assert.equal(result.limitBytes, 200);
-    assert.equal(result.atCapacity, false);
-
-    const atLimit = checkLocalCapacity({ dir, limitBytes: 150 });
-    assert.equal(atLimit.atCapacity, true);
+test("checkLocalCapacity delegates to the authoritative usage function, not a disk scan", async () => {
+  const result = await checkLocalCapacity({
+    limitBytes: 200,
+    localStorageUsage: async () => 150,
   });
+  assert.equal(result.usedBytes, 150);
+  assert.equal(result.limitBytes, 200);
+  assert.equal(result.atCapacity, false);
+
+  const atLimit = await checkLocalCapacity({
+    limitBytes: 150,
+    localStorageUsage: async () => 150,
+  });
+  assert.equal(atLimit.atCapacity, true);
 });
 
 // ── createSegmentWriter: flush triggers ──────────────────────────────────
@@ -613,4 +624,91 @@ test("a flush at or past NORA_LOG_LOCAL_MAX_BYTES is skipped, not retried, and m
   // deletion also skips the write — but the point under test above (no
   // retry, marked paused) already holds regardless of this cleanup call.
   void flushed;
+});
+
+test("capacityPaused clears via the independent poll timer even with no pending lines (Phase 5 fix for a Phase 3 deadlock)", async () => {
+  // Phase 3's original placeholder only re-checked capacity INSIDE flush(),
+  // after an early "buffer.lines.length === 0" return. Once the collector
+  // detaches a capacity-paused stream (Phase 4 item 7), its buffer never
+  // receives new lines again, so it would sit at `lines.length === 0`
+  // forever and never re-run the check that clears the flag — a permanent
+  // deadlock. Phase 5 fixes this with an independent poll timer
+  // (capacityPollIntervalMs) that refreshes every open buffer's
+  // capacityPaused flag regardless of pending lines. This test proves the
+  // fix: capacity clears with NO flush ever attempted after the pause.
+  mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  try {
+    let atCapacity = true;
+    const deps = baseDeps({
+      logStorageConfig: async () => ({ storageBackend: "local", localPath: "/tmp/x" }),
+      checkLocalCapacity: () => ({ usedBytes: atCapacity ? 1000 : 0, limitBytes: 1000, atCapacity }),
+      capacityPollIntervalMs: 5000,
+    });
+    const writer = createSegmentWriter(deps);
+    const ctx = { agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" };
+    await writer.append(ctx, [line({ ts: "2026-01-01T00:00:00.000Z" })]);
+
+    // Simulate the pause: a flush attempt while at capacity marks the
+    // buffer paused (lines stay buffered, nothing written).
+    await writer.flush("agent-1:runtime");
+    assert.equal(writer.isCapacityPaused("agent-1", "runtime"), true);
+
+    // Usage drops back under the cap. No new lines are ever appended after
+    // this point (the collector has already detached the stream) and
+    // flush() is never called again — only the independent poll timer can
+    // clear the flag now.
+    atCapacity = false;
+    mock.timers.tick(5000);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.equal(
+      writer.isCapacityPaused("agent-1", "runtime"),
+      false,
+      "the poll timer must clear capacityPaused independent of any flush attempt",
+    );
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a capacity halt applies to every buffer sharing the shared gate, not only the one that filled it", async () => {
+  const deps = baseDeps({
+    logStorageConfig: async () => ({ storageBackend: "local", localPath: "/tmp/x" }),
+    checkLocalCapacity: () => ({ usedBytes: 1000, limitBytes: 1000, atCapacity: true }),
+  });
+  const writer = createSegmentWriter(deps);
+  await writer.append({ agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" }, [
+    line({ ts: "2026-01-01T00:00:00.000Z" }),
+  ]);
+  await writer.append({ agentId: "agent-2", stream: "runtime", ownerUserId: "user-2" }, [
+    line({ ts: "2026-01-01T00:00:00.000Z" }),
+  ]);
+
+  await writer.flush("agent-1:runtime");
+  await writer.flush("agent-2:runtime");
+
+  assert.equal(writer.isCapacityPaused("agent-1", "runtime"), true);
+  assert.equal(
+    writer.isCapacityPaused("agent-2", "runtime"),
+    true,
+    "the cap is a shared, installation-wide resource — every workspace's collection halts together",
+  );
+});
+
+test("capacity halt applies only to the local driver — s3 never halts collection regardless of usage", async () => {
+  const deps = baseDeps({
+    logStorageConfig: async () => ({ storageBackend: "s3", bucket: "b" }),
+    // This fake reports atCapacity even though the driver is s3, so this
+    // test would fail if the isLocal gate were ever accidentally dropped.
+    checkLocalCapacity: () => ({ usedBytes: 999999, limitBytes: 1000, atCapacity: true }),
+  });
+  const writer = createSegmentWriter(deps);
+  const ctx = { agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" };
+  await writer.append(ctx, [line({ ts: "2026-01-01T00:00:00.000Z" })]);
+
+  const result = await writer.flush("agent-1:runtime");
+  assert.equal(result.skipped, false, "an s3 flush must proceed regardless of the local capacity figure");
+  assert.equal(writer.isCapacityPaused("agent-1", "runtime"), false);
 });

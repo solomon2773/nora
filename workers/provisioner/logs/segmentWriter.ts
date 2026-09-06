@@ -53,9 +53,20 @@ const DEFAULT_GLOBAL_MAX_BYTES = 256 * 1024 * 1024;
 const DEFAULT_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 
 // Bounded local staging directory cap (Phase 3 item 16's "bounded"
-// requirement). This is a coarse, best-effort cap on parked bytes — like
-// checkLocalCapacity below, a real accounting mechanism is Phase 5's job.
+// requirement). This is a coarse, best-effort cap on parked bytes.
 const DEFAULT_STAGING_MAX_BYTES = 512 * 1024 * 1024;
+
+// Phase 5: how often the capacity gate is re-checked independent of any
+// flush attempt. This is what makes a capacity-paused stream resume
+// automatically (Phase 5 item 7 / Phase 4 item 7) rather than staying
+// wedged: a paused buffer that receives no new lines (because the collector
+// already detached it) would otherwise never re-enter the per-flush capacity
+// check inside flush(), since a buffer with zero pending lines returns early
+// before that check ever ran in the original Phase 3 placeholder. Polling
+// independently of flush activity, at a cadence comfortably faster than the
+// collector's 30s reconcile tick, is what lets `isCapacityPaused` actually
+// clear once usage drops back under the cap.
+const DEFAULT_CAPACITY_POLL_INTERVAL_MS = 10 * 1000;
 
 const LOG_ENCRYPTION_MAGIC = "NORA_LOG_SEGMENT_V1";
 
@@ -244,18 +255,34 @@ function buildStorageKey(tenant, agentId, stream, tsFrom, tsTo) {
 
 // ── checkLocalCapacity (Phase 3 item 22 / function list) ────────────────
 //
-// Phase 5 (a later, not-yet-built phase) owns the authoritative,
-// fully-accurate usage-tracking mechanism this gate is meant to delegate
-// to — see the manifest's "Disk-budget capacity halt" section, which names
-// `localStorageUsage()` as that future function. Until Phase 5 lands, this
-// is a real, working best-effort approximation: a recursive size sum of
-// `NORA_LOG_DIR` on every call. That is O(files-on-disk) rather than O(1),
-// which is why it is *not* wired to run per-line — it is only consulted
-// once per attempted local flush (Phase 3 item 22), a rate this trivially
-// supports for any installation-realistic segment count. Phase 5 can
-// replace the body of this function (e.g. with a maintained running
-// counter) without changing the `{ usedBytes, limitBytes, atCapacity }`
-// contract any call site here depends on.
+// Phase 5 owns the authoritative, installation-wide usage-tracking mechanism
+// this gate delegates to: `localStorageUsage()` in retentionSweeper.ts, an
+// O(1) `SELECT COALESCE(SUM(bytes),0) FROM log_segments WHERE
+// storage_backend = 'local'` rather than a per-call disk walk. The
+// `{ usedBytes, limitBytes, atCapacity }` contract this function returns is
+// unchanged from Phase 3's original placeholder, so every call site written
+// against that placeholder keeps working unmodified — only the body changed.
+//
+// Lazy-required (not `require`d at module load time) to avoid a load-order
+// dependency between the two sibling modules — retentionSweeper.ts does not
+// require this module back, so there is no real cycle, but requiring lazily
+// here keeps that invariant enforced by construction rather than by
+// convention.
+async function checkLocalCapacity({
+  limitBytes = Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity,
+  localStorageUsage: usageFn,
+} = {}) {
+  const usage = usageFn || require("./retentionSweeper.ts").localStorageUsage;
+  const usedBytes = await usage();
+  return { usedBytes, limitBytes, atCapacity: usedBytes >= limitBytes };
+}
+
+// Bounded local **staging** directory size (Phase 3 item 16's "bounded"
+// requirement for parked/failed remote uploads) — unrelated to the capacity
+// gate above, which now tracks live `log_segments` usage in Postgres, not
+// files on disk. Kept as a plain recursive disk walk since the staging
+// directory holds a handful of not-yet-uploaded files at most, never the
+// full retained history checkLocalCapacity used to scan.
 function sumDirectorySizeSync(dir) {
   let total = 0;
   let entries;
@@ -278,14 +305,6 @@ function sumDirectorySizeSync(dir) {
     }
   }
   return total;
-}
-
-function checkLocalCapacity({
-  dir = process.env.NORA_LOG_DIR || "/var/lib/nora-logs",
-  limitBytes = Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity,
-} = {}) {
-  const usedBytes = sumDirectorySizeSync(dir);
-  return { usedBytes, limitBytes, atCapacity: usedBytes >= limitBytes };
 }
 
 // ── Buffer bookkeeping ────────────────────────────────────────────────
@@ -346,6 +365,7 @@ function createSegmentWriter(deps = {}) {
   const retryDelaysMs = deps.retryDelaysMs || DEFAULT_RETRY_DELAYS_MS;
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const checkCapacity = deps.checkLocalCapacity || checkLocalCapacity;
+  const capacityPollIntervalMs = deps.capacityPollIntervalMs ?? DEFAULT_CAPACITY_POLL_INTERVAL_MS;
   const setIntervalFn = deps.setIntervalFn || setInterval;
   const clearIntervalFn = deps.clearIntervalFn || clearInterval;
   const logger = deps.logger || console;
@@ -359,6 +379,43 @@ function createSegmentWriter(deps = {}) {
   const buffers = new Map();
   let totalBufferedBytes = 0;
   let shuttingDown = false;
+
+  /**
+   * Refresh every open buffer's `capacityPaused` flag from the shared
+   * installation-wide capacity gate, independent of whether any buffer has
+   * pending lines to flush right now. See DEFAULT_CAPACITY_POLL_INTERVAL_MS's
+   * comment for why this exists as its own timer rather than piggybacking
+   * solely on flush() — a paused stream the collector has already detached
+   * (Phase 4 item 7) would otherwise never re-run the capacity check that
+   * clears the flag, because flush() only reaches that check when the
+   * buffer actually has lines to write.
+   */
+  async function pollCapacity() {
+    if (buffers.size === 0) return;
+    try {
+      const config = await resolveStorageConfig();
+      if (config.storageBackend !== "local") {
+        // Capacity halts are local-driver-only (Design Decision 2c/manifest
+        // "Object-storage drivers skip this step entirely") — clear any
+        // stale flag left over from a prior local-driver period.
+        for (const buffer of buffers.values()) buffer.capacityPaused = false;
+        return;
+      }
+      const capacity = await checkCapacity();
+      for (const buffer of buffers.values()) {
+        buffer.capacityPaused = capacity.atCapacity;
+      }
+    } catch (error) {
+      logger.warn(`[segmentWriter] capacity poll failed, leaving pause state unchanged: ${error.message}`);
+    }
+  }
+
+  let capacityPollTimer = setIntervalFn(() => {
+    pollCapacity().catch(() => {});
+  }, capacityPollIntervalMs);
+  if (typeof capacityPollTimer.unref === "function") capacityPollTimer.unref();
+  // Don't make every caller wait a full poll interval for the first reading.
+  pollCapacity().catch(() => {});
 
   function newBuffer(agentCtx) {
     const key = bufferKey(agentCtx.agentId, agentCtx.stream);
@@ -648,32 +705,47 @@ function createSegmentWriter(deps = {}) {
     if (buffer.flushing) return buffer.flushing;
 
     const run = (async () => {
-      if (buffer.lines.length === 0) {
-        return { skipped: true, reason: "empty" };
-      }
-
       const config = await resolveStorageConfig();
       const isLocal = config.storageBackend === "local";
 
       // Item 22: consult the capacity gate BEFORE admitting a flush on the
-      // local driver. This is a different, non-retryable path from item
-      // 16's retry-and-park, which is for transient remote failures — a
-      // capacity halt is a standing condition, not a blip, so we skip
-      // rather than retry, and leave the buffer untouched so no data is
-      // lost while paused.
+      // local driver, and BEFORE the empty-buffer early return below. This
+      // ordering matters (Phase 5's fix to a Phase 3 deadlock): a
+      // capacity-paused stream is detached by the collector (Phase 4 item
+      // 7), so its buffer stops receiving new lines and would otherwise sit
+      // at `lines.length === 0` forever, never reaching this check again to
+      // clear `capacityPaused` once usage drops. Checking capacity first —
+      // on every timer-triggered flush, even an empty one — means the
+      // 15-minute flush timer alone is enough to eventually clear the flag;
+      // the dedicated `pollCapacity` timer (see its own comment above)
+      // exists to clear it much sooner than that, at a cadence the
+      // collector's 30s reconcile tick can actually observe.
+      //
+      // This is a different, non-retryable path from item 16's
+      // retry-and-park, which is for transient remote failures — a capacity
+      // halt is a standing condition, not a blip, so we skip rather than
+      // retry, and leave the buffer untouched so no data is lost while
+      // paused.
       if (isLocal) {
-        const capacity = checkCapacity();
+        const capacity = await checkCapacity();
+        buffer.capacityPaused = capacity.atCapacity;
         if (capacity.atCapacity) {
-          buffer.capacityPaused = true;
-          logger.warn(
-            `[segmentWriter] local storage at capacity (${capacity.usedBytes}/${capacity.limitBytes} ` +
-              `bytes) — skipping flush for ${key} and marking it capacity-paused. Collection for ` +
-              `this stream should disconnect (Phase 4 item 7) until usage drops back under the cap.`,
-          );
+          if (buffer.lines.length > 0) {
+            logger.warn(
+              `[segmentWriter] local storage at capacity (${capacity.usedBytes}/${capacity.limitBytes} ` +
+                `bytes) — skipping flush for ${key} and marking it capacity-paused. Collection for ` +
+                `this stream should disconnect (Phase 4 item 7) until usage drops back under the cap.`,
+            );
+          }
           return { skipped: true, reason: "capacity" };
         }
+      } else {
+        buffer.capacityPaused = false;
       }
-      buffer.capacityPaused = false;
+
+      if (buffer.lines.length === 0) {
+        return { skipped: true, reason: "empty" };
+      }
 
       const snapshot = extractSnapshot(buffer);
       try {
@@ -815,6 +887,10 @@ function createSegmentWriter(deps = {}) {
    */
   async function shutdown() {
     shuttingDown = true;
+    if (capacityPollTimer) {
+      clearIntervalFn(capacityPollTimer);
+      capacityPollTimer = null;
+    }
     for (const buffer of buffers.values()) {
       clearIntervalFn(buffer.timer);
     }
@@ -881,4 +957,5 @@ module.exports = {
   DEFAULT_FLUSH_INTERVAL_MS,
   DEFAULT_MAX_BUFFER_BYTES,
   DEFAULT_GLOBAL_MAX_BYTES,
+  DEFAULT_CAPACITY_POLL_INTERVAL_MS,
 };
