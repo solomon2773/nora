@@ -4,6 +4,29 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
+## [v1.21.0](https://github.com/solomon2773/nora/releases/tag/v1.21.0) — 2026-09-07
+
+Domain migration release. The hosted platform moves from `nora.solomontsao.com` to
+**norafleet.ai**, and the documentation site from `noradocs.solomontsao.com` to
+**docs.norafleet.ai**. Old URLs keep working through edge redirects (301, with
+method-preserving 308 for `/api/*`).
+
+### Changed
+
+- **Platform domain → norafleet.ai** across every product-owned surface: marketing SEO
+  (canonical/OG URLs, sitemap, robots, JSON-LD), legal pages, installers, in-product
+  documentation links, Agent Hub template guides, MCP server metadata, press kit, and the
+  Cloudflare launch runbook. Contact addresses move to `privacy@` / `legal@` /
+  `support@norafleet.ai`.
+- **Agent Hub default URL → `https://norafleet.ai`.** New append-only migrations update the
+  column default and migrate settings rows still pointing at the old default; operators who
+  configured a custom hub URL are untouched. Self-hosted installs pointed at the old hosted
+  hub keep working via the API-path 308 redirect.
+- **Kubernetes managed-env tracking annotation renamed** to `norafleet.ai/managed-env-names`
+  with a read-compatibility fallback: Deployments provisioned under the legacy
+  `nora.solomontsao.com` key are read correctly and rewritten to the new key on their next
+  env update, so no fleet state is lost.
+
 ## [v1.20.0](https://github.com/solomon2773/nora/releases/tag/v1.20.0) — 2026-09-06
 
 Deploy-status integrity and signup control release. Every backend write that could still overwrite
