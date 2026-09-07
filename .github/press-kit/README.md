@@ -54,8 +54,8 @@ licensed for editorial use. Questions: open an issue on
 - **Security:** AES-256-GCM key encryption, bcrypt password hashing, constant-time auth,
   webhook SSRF guards, JWT sessions
 - **Repo:** https://github.com/solomon2773/nora
-- **Docs:** https://noradocs.solomontsao.com
-- **Site:** https://nora.solomontsao.com
+- **Docs:** https://docs.norafleet.ai
+- **Site:** https://norafleet.ai
 - **Contribute:** https://github.com/solomon2773/nora/blob/master/CONTRIBUTING.md
 - **Community:** https://github.com/solomon2773/nora/discussions
 
@@ -97,7 +97,7 @@ Product screenshots (12, operator + admin surfaces) live in
 [`../readme-assets/`](../readme-assets) — e.g. `proof-operator-dashboard.png`,
 `proof-operator-deploy-flow.png`, `proof-operator-fleet.png`, `proof-admin-agent-hub.png`.
 
-Demo video: [37-second walkthrough (MP4)](https://nora.solomontsao.com/walkthrough.mp4)
+Demo video: [37-second walkthrough (MP4)](https://norafleet.ai/walkthrough.mp4)
 
 ## Color palette
 

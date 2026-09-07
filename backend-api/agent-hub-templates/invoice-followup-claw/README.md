@@ -6,7 +6,7 @@ Drafts personalized payment reminders calibrated to where an invoice sits in the
 
 ## Setup
 
-Full walkthrough: **[Penny setup guide](https://noradocs.solomontsao.com/guides/penny-invoice-followup)**.
+Full walkthrough: **[Penny setup guide](https://docs.norafleet.ai/guides/penny-invoice-followup)**.
 
 ### 1. Install from Agent Hub
 

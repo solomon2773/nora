@@ -6,7 +6,7 @@ Designs multi-step email sequences that move subscribers toward a real outcome a
 
 ## Setup
 
-Full walkthrough: **[Cadence setup guide](https://noradocs.solomontsao.com/guides/cadence-email-nurture)**.
+Full walkthrough: **[Cadence setup guide](https://docs.norafleet.ai/guides/cadence-email-nurture)**.
 
 ### 1. Install from Agent Hub
 

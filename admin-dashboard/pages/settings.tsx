@@ -35,7 +35,7 @@ const DEFAULT_BANNER_FORM = {
 };
 const DEFAULT_AGENT_HUB_FORM = {
   defaultShareTarget: "both",
-  url: "https://nora.solomontsao.com",
+  url: "https://norafleet.ai",
   sourceApiKey: "",
   clearSourceApiKey: false,
 };
@@ -1316,7 +1316,7 @@ export default function AdminSettingsPage() {
                       type="url"
                       value={agentHubForm.url}
                       onChange={(event) => updateAgentHubField("url", event.target.value)}
-                      placeholder="https://nora.solomontsao.com"
+                      placeholder="https://norafleet.ai"
                       className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none focus:border-red-300"
                     />
                   </label>

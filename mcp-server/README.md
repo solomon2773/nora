@@ -66,13 +66,13 @@ Write: `deploy_agent`, `start_agent`, `stop_agent`, `restart_agent`, `redeploy_a
 
 Tool output is the raw Nora REST JSON; the server is a pure API client and stores nothing.
 
-Full guide: [noradocs.solomontsao.com/guides/mcp-server](https://noradocs.solomontsao.com/guides/mcp-server)
+Full guide: [docs.norafleet.ai/guides/mcp-server](https://docs.norafleet.ai/guides/mcp-server)
 
 ## Privacy Policy
 
 The Nora MCP connector runs locally and does not collect telemetry or persist credentials, tool inputs, or API responses. It sends each tool request and the configured API key directly to the Nora deployment identified by `NORA_API_URL`; no separate connector service or advertising network receives that data.
 
-The connector retains no data after its process exits. Your Nora operator controls the storage and retention of account, agent, log, metric, and integration data in that deployment, and connected providers may apply their own policies when Nora invokes them. See the full [Nora Privacy Policy](https://nora.solomontsao.com/privacy) or contact [privacy@solomontsao.com](mailto:privacy@solomontsao.com).
+The connector retains no data after its process exits. Your Nora operator controls the storage and retention of account, agent, log, metric, and integration data in that deployment, and connected providers may apply their own policies when Nora invokes them. See the full [Nora Privacy Policy](https://norafleet.ai/privacy) or contact [privacy@norafleet.ai](mailto:privacy@norafleet.ai).
 
 ## Contributing
 

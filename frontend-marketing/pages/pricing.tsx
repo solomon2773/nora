@@ -17,7 +17,7 @@ import { SignupGate } from "../components/SignupGate";
 
 const OSS_REPO_URL = "https://github.com/solomon2773/nora";
 const QUICKSTART_URL = `${OSS_REPO_URL}#quick-start`;
-const PUBLIC_SITE_URL = "https://nora.solomontsao.com";
+const PUBLIC_SITE_URL = "https://norafleet.ai";
 const LOGIN_URL = `${PUBLIC_SITE_URL}/login`;
 const SIGNUP_URL = `${PUBLIC_SITE_URL}/signup`;
 const RAW_REPO_BASE_URL = "https://raw.githubusercontent.com/solomon2773/nora/master";
@@ -61,7 +61,7 @@ const DEPLOYMENT_MODES = [
     title: "Keep the product, docs, and account paths easy to find.",
     body: "Use the public site to create an account, then use GitHub and the docs to understand how to self-host or extend Nora.",
     points: [
-      "Default public site: `nora.solomontsao.com`.",
+      "Default public site: `norafleet.ai`.",
       "Use `/login` and `/signup` for fast account entry.",
       "Use `/pricing` as the public OSS, license, and PaaS-mode explainer.",
     ],
@@ -92,9 +92,9 @@ const TRUST_SURFACES = [
 ];
 
 const ENTRY_LINKS = [
-  { label: "Public site", href: PUBLIC_SITE_URL, text: "nora.solomontsao.com" },
-  { label: "Log in", href: LOGIN_URL, text: "nora.solomontsao.com/login" },
-  { label: "Create account", href: SIGNUP_URL, text: "nora.solomontsao.com/signup" },
+  { label: "Public site", href: PUBLIC_SITE_URL, text: "norafleet.ai" },
+  { label: "Log in", href: LOGIN_URL, text: "norafleet.ai/login" },
+  { label: "Create account", href: SIGNUP_URL, text: "norafleet.ai/signup" },
   { label: "GitHub repo", href: OSS_REPO_URL, text: "github.com/solomon2773/nora" },
 ];
 

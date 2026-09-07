@@ -29,10 +29,10 @@ const STAR_URL = OSS_REPO_URL;
 const RELEASES_URL = `${OSS_REPO_URL}/releases/latest`;
 const CONTRIBUTING_URL = `${OSS_REPO_URL}/blob/master/CONTRIBUTING.md`;
 const COMMUNITY_URL = `${OSS_REPO_URL}/discussions`;
-const DOCS_URL = "https://noradocs.solomontsao.com";
+const DOCS_URL = "https://docs.norafleet.ai";
 const QUICKSTART_URL = `${DOCS_URL}/quickstart`;
 const DEMO_SIGNUP_PATH = "/signup?intent=demo";
-const SITE_URL = "https://nora.solomontsao.com/";
+const SITE_URL = "https://norafleet.ai/";
 const SEO_TITLE = "Nora — Run OpenClaw & Hermes on your infrastructure";
 const SEO_DESCRIPTION =
   "Try a zero-key demo, then deploy, monitor, and operate OpenClaw and Hermes fleets on Docker or Kubernetes with Nora's Apache-2.0 control plane.";

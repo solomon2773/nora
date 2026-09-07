@@ -6,7 +6,7 @@ Watches the chats you point it at, stays quiet on the noise, and surfaces only w
 
 ## Setup
 
-Full walkthrough: **[Sentry setup guide](https://noradocs.solomontsao.com/guides/sentry-communication-intelligence)**.
+Full walkthrough: **[Sentry setup guide](https://docs.norafleet.ai/guides/sentry-communication-intelligence)**.
 
 ### 1. Install from Agent Hub
 

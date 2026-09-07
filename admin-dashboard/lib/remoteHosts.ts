@@ -1,5 +1,5 @@
 export const REMOTE_DOCKER_GUIDE_URL =
-  "https://noradocs.solomontsao.com/configuration/provisioner-backends/remote-docker";
+  "https://docs.norafleet.ai/configuration/provisioner-backends/remote-docker";
 
 export const REMOTE_HOST_INPUT_CLASS =
   "w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-950 outline-none transition focus:border-brand-cyan focus:bg-white focus:ring-4 focus:ring-brand-cyan/20 disabled:cursor-not-allowed disabled:opacity-60";

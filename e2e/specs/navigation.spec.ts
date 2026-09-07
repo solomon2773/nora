@@ -16,7 +16,7 @@ test.describe("Public marketing pages", () => {
     const pricingLink = page.locator('a[href="/pricing"]').first();
     await expect(pricingLink).toBeVisible();
 
-    const docsLink = page.locator('a[href="https://noradocs.solomontsao.com/quickstart"]').first();
+    const docsLink = page.locator('a[href="https://docs.norafleet.ai/quickstart"]').first();
     await expect(docsLink).toBeVisible();
 
     await page.locator('a[href="#platform"]').first().click();

@@ -8,15 +8,15 @@
   "long_description": "Connect Claude Desktop to a Nora control plane you operate. Deploy and control OpenClaw or Hermes agents, inspect fleet health, and read metrics, events, and cost through Nora's workspace-scoped API.",
   "author": {
     "name": "Nora",
-    "email": "privacy@solomontsao.com",
-    "url": "https://nora.solomontsao.com"
+    "email": "privacy@norafleet.ai",
+    "url": "https://norafleet.ai"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/solomon2773/nora.git"
   },
-  "homepage": "https://nora.solomontsao.com",
-  "documentation": "https://noradocs.solomontsao.com/guides/mcp-server",
+  "homepage": "https://norafleet.ai",
+  "documentation": "https://docs.norafleet.ai/guides/mcp-server",
   "support": "https://github.com/solomon2773/nora/issues",
   "icon": "icon.png",
   "server": {
@@ -109,7 +109,7 @@
     "kubernetes"
   ],
   "license": "Apache-2.0",
-  "privacy_policies": ["https://nora.solomontsao.com/privacy"],
+  "privacy_policies": ["https://norafleet.ai/privacy"],
   "compatibility": {
     "platforms": ["darwin", "win32", "linux"],
     "runtimes": {

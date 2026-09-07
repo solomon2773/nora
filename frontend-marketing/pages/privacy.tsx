@@ -6,7 +6,7 @@ import { SignupGate } from "../components/SignupGate";
 // Have it reviewed by counsel and set a real contact address before launch.
 const LAST_UPDATED = "May 26, 2026";
 const REPO_URL = "https://github.com/solomon2773/nora";
-const CONTACT_EMAIL = "privacy@solomontsao.com";
+const CONTACT_EMAIL = "privacy@norafleet.ai";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -63,8 +63,8 @@ export default function Privacy() {
               <p>
                 Nora is open-source software you can run yourself. This Privacy Policy describes how
                 personal data is handled on the <strong>hosted reference deployment</strong>{" "}
-                operated at nora.solomontsao.com. If you run Nora on your own infrastructure, you
-                are the data controller for that instance and this policy does not apply to it.
+                operated at norafleet.ai. If you run Nora on your own infrastructure, you are the
+                data controller for that instance and this policy does not apply to it.
               </p>
             </Section>
 

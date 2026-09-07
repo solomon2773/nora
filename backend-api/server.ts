@@ -2443,6 +2443,9 @@ async function migrateDB(database = db, env = process.env) {
      )`,
     `DO $$ BEGIN ALTER TABLE agent_hub_listings ADD COLUMN runtime_family TEXT NOT NULL DEFAULT 'openclaw'; EXCEPTION WHEN duplicate_column THEN NULL; END $$`,
     `UPDATE agent_hub_listings SET runtime_family = 'openclaw' WHERE runtime_family IS NULL`,
+    `ALTER TABLE platform_settings ALTER COLUMN agent_hub_url SET DEFAULT 'https://norafleet.ai'`,
+    `UPDATE platform_settings SET agent_hub_url = 'https://norafleet.ai', updated_at = NOW()
+       WHERE agent_hub_url = 'https://nora.solomontsao.com'`,
   ];
 
   return runVersionedMigrations(database, migrations, {

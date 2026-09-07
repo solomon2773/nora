@@ -1783,7 +1783,7 @@ CAN_START_NORA=true
 case "$access_answer" in
   2|3)
     while true; do
-      printf "  Public domain (hosted default: nora.solomontsao.com; self-hosted: your own domain): "
+      printf "  Public domain (hosted default: norafleet.ai; self-hosted: your own domain): "
       read -r PUBLIC_DOMAIN < /dev/tty
       if [[ "$PUBLIC_DOMAIN" =~ ^[A-Za-z0-9.-]+$ ]] && [[ "$PUBLIC_DOMAIN" == *.* ]]; then
         break
@@ -2364,9 +2364,9 @@ echo ""
 info "Useful links:"
 echo "    Quick start:        https://github.com/solomon2773/nora#quick-start"
 echo "    Star Nora:          https://github.com/solomon2773/nora"
-echo "    Public site:        https://nora.solomontsao.com"
-echo "    Log in:             https://nora.solomontsao.com/login"
-echo "    Create account:     https://nora.solomontsao.com/signup"
-echo "    OSS / PaaS mode:    https://nora.solomontsao.com/pricing"
+echo "    Public site:        https://norafleet.ai"
+echo "    Log in:             https://norafleet.ai/login"
+echo "    Create account:     https://norafleet.ai/signup"
+echo "    OSS / PaaS mode:    https://norafleet.ai/pricing"
 echo "    Start paths:        https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
 echo ""

@@ -7,7 +7,7 @@ Use this page to pick the fastest open-source route for your situation.
 Start here if you want to self-host Nora and bring it online on your own infrastructure.
 
 - [README Quick Start](README.md#quick-start)
-- [Configuration & environment variables](https://noradocs.solomontsao.com/configuration/platform-modes)
+- [Configuration & environment variables](https://docs.norafleet.ai/configuration/platform-modes)
 - [`infra/setup-tls.sh`](infra/setup-tls.sh)
 
 Best fit:
@@ -33,9 +33,9 @@ Best fit:
 
 Use the default public browser entry when you want to see the reference deployment or create an operator account quickly.
 
-- [Public site](https://nora.solomontsao.com)
-- [Log in](https://nora.solomontsao.com/login)
-- [Create account](https://nora.solomontsao.com/signup)
+- [Public site](https://norafleet.ai)
+- [Log in](https://norafleet.ai/login)
+- [Create account](https://norafleet.ai/signup)
 
 Best fit:
 
@@ -61,7 +61,7 @@ Best fit:
 
 Use the public OSS and licensing page when you need the short version of what Apache 2.0 allows or when you want to run Nora in PaaS mode for your own business.
 
-- [Open source / license / PaaS mode](https://nora.solomontsao.com/pricing)
+- [Open source / license / PaaS mode](https://norafleet.ai/pricing)
 - [README Quick Start](README.md#quick-start)
 
 Best fit:
@@ -116,7 +116,7 @@ If the problem may be a vulnerability, use [SECURITY.md](SECURITY.md) instead of
 If you are unsure where to start:
 
 - choose [README Quick Start](README.md#quick-start) if you want to self-host
-- choose [signup](https://nora.solomontsao.com/signup) or [login](https://nora.solomontsao.com/login) if you want the default public browser entry
+- choose [signup](https://norafleet.ai/signup) or [login](https://norafleet.ai/login) if you want the default public browser entry
 - choose [GitHub Discussions](https://github.com/solomon2773/nora/discussions) if you want implementation discussion or setup guidance
 - choose [SECURITY.md](SECURITY.md) if the issue could expose systems, credentials, sessions, or users
-- choose [open source / license / PaaS mode](https://nora.solomontsao.com/pricing) if you want the short public explanation of OSS rights and hosted-user-owned deployment mode
+- choose [open source / license / PaaS mode](https://norafleet.ai/pricing) if you want the short public explanation of OSS rights and hosted-user-owned deployment mode
