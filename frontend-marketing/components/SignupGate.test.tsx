@@ -119,7 +119,7 @@ test("public signup destinations are all enclosed by SignupGate", () => {
       expectedCount: 3,
       destination: '"/signup"',
       dataDrivenDestination:
-        /\{\s*label:\s*"Create account",\s*href:\s*SIGNUP_URL,\s*text:\s*"nora\.solomontsao\.com\/signup"\s*\}/g,
+        /\{\s*label:\s*"Create account",\s*href:\s*SIGNUP_URL,\s*text:\s*"norafleet\.ai\/signup"\s*\}/g,
       gatedDataDrivenDestination:
         /item\.href\s*===\s*SIGNUP_URL\s*\?\s*\(\s*<SignupGate key=\{item\.label\}>\{entryLink\}<\/SignupGate>\s*\)\s*:\s*\(?\s*entryLink\s*\)?/g,
     },

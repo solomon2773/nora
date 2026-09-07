@@ -6,7 +6,7 @@ Turns conversations, ideas, and updates into owned execution: captures work, ass
 
 ## Setup
 
-Full walkthrough: **[Atlas setup guide](https://noradocs.solomontsao.com/guides/atlas-chief-of-staff)**.
+Full walkthrough: **[Atlas setup guide](https://docs.norafleet.ai/guides/atlas-chief-of-staff)**.
 
 ### 1. Install from Agent Hub
 

@@ -6,7 +6,7 @@ Answers customer questions from _your_ knowledge base, drafts support replies yo
 
 ## Setup
 
-Full walkthrough: **[Remy setup guide](https://noradocs.solomontsao.com/guides/remy-customer-support)**.
+Full walkthrough: **[Remy setup guide](https://docs.norafleet.ai/guides/remy-customer-support)**.
 
 ### 1. Install from Agent Hub
 
@@ -19,7 +19,7 @@ Open the agent → **Channels** tab → connect **one** way for Remy to reach yo
 - **WhatsApp** (recommended) - use Nora's **Link** action and scan the QR/pairing prompt.
 - Or **Telegram**, **Slack**, **Discord**, or another OpenClaw catalog channel.
 
-See the [channels guide](https://noradocs.solomontsao.com/guides/channels) for the per-channel fields.
+See the [channels guide](https://docs.norafleet.ai/guides/channels) for the per-channel fields.
 
 ### 3. (Optional) Connect a help desk — Integrations tab
 

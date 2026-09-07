@@ -6,7 +6,7 @@ Researches prospects, judges fit, and writes personalized first-touch messages p
 
 ## Setup
 
-Full walkthrough: **[Scout setup guide](https://noradocs.solomontsao.com/guides/scout-lead-outreach)**.
+Full walkthrough: **[Scout setup guide](https://docs.norafleet.ai/guides/scout-lead-outreach)**.
 
 ### 1. Install from Agent Hub
 

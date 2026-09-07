@@ -11,7 +11,7 @@ Agent Hub is the catalog of ready-to-run agent templates inside Nora. Instead of
 But the templates are only half the point. **Agent Hub is a shareable hub, not just a static template store.** Once an operator gets an agent working, they can publish it as a listing and share it — and that sharing works at three different reach levels:
 
 - **Reuse it yourself** — publish privately so anyone in your own workspace(s) can install the same agent with one click.
-- **Share with the community** — push the listing to the public upstream hub (`https://nora.solomontsao.com`), where, once approved, it appears in every Nora instance's **Community** filter.
+- **Share with the community** — push the listing to the public upstream hub (`https://norafleet.ai`), where, once approved, it appears in every Nora instance's **Community** filter.
 - **Run your own company hub** — self-hosters can point `NORA_AGENT_HUB_URL` at their **own** Agent Hub instead of the public one. Then "community" sharing stays entirely inside the company: every operator publishes to and installs from a private, org-internal catalog — the same reusable, shareable workflow, without anything leaving your infrastructure.
 
 This is the core value: an agent that one person builds becomes a one-click install for their teammates, their company, or the whole community — their choice.
@@ -118,7 +118,7 @@ Existing installs keep running their previous version. Any future install picks 
 
 ## Share to the community catalog
 
-Workspace listings published with share target `community` or `both` sync to the upstream Agent Hub at `NORA_AGENT_HUB_URL` (default `https://nora.solomontsao.com`). The flow:
+Workspace listings published with share target `community` or `both` sync to the upstream Agent Hub at `NORA_AGENT_HUB_URL` (default `https://norafleet.ai`). The flow:
 
 1. Listing is created locally with `centralShareStatus = pending`.
 2. Nora pushes the listing payload to the upstream hub using the workspace's source-catalog API key.

@@ -1,6 +1,6 @@
 # Nora documentation source
 
-This directory is the canonical source for **noradocs.solomontsao.com**, hosted on Mintlify.
+This directory is the canonical source for **docs.norafleet.ai**, hosted on Mintlify.
 
 Pages are written as MDX. `docs.json` defines navigation, theme, and colors. The schema reference lives at https://mintlify.com/docs.json.
 

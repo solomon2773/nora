@@ -138,7 +138,7 @@ Use the ownership map below before implementing in a subtree. Cross-cutting chan
 - `frontend-marketing/` — public site + auth entrypoints at `/`
 - `e2e/` — Playwright smoke coverage and local stack bootstrapping
 - `infra/` — public-domain nginx template (`nginx_public.conf.template`), TLS setup (`setup-tls.sh`), Kind config, backup image, public/prod compose overlays, and the official Helm chart for installing Nora on Kubernetes (`helm/nora`, with `helm/scripts/kind-smoke.sh`)
-- `docs/` — Mintlify source for the public docs site at `noradocs.solomontsao.com`
+- `docs/` — Mintlify source for the public docs site at `docs.norafleet.ai`
 - `.github/` — CI and deploy workflows
 
 Note: the **active** nginx configs (`nginx.conf`, `nginx.e2e.conf`, `nginx.public.conf`) live at the **repo root** — that's what compose mounts. `infra/nginx_public.conf.template` is a template used by `setup-tls.sh`.

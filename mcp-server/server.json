@@ -4,7 +4,7 @@
   "title": "Nora",
   "description": "Operate self-hosted OpenClaw and Hermes agent fleets on Docker or Kubernetes from MCP clients.",
   "version": "0.1.4",
-  "websiteUrl": "https://noradocs.solomontsao.com",
+  "websiteUrl": "https://docs.norafleet.ai",
   "repository": {
     "url": "https://github.com/solomon2773/nora",
     "source": "github",

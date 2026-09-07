@@ -26,7 +26,7 @@ One OpenClaw agent that runs your Instagram: content calendar, caption drafts, D
 
 ## Setup
 
-Full walkthrough with screenshots: **[Iris setup guide](https://noradocs.solomontsao.com/guides/iris-instagram)**.
+Full walkthrough with screenshots: **[Iris setup guide](https://docs.norafleet.ai/guides/iris-instagram)**.
 
 ### 1. Install Iris from Agent Hub
 
@@ -34,7 +34,7 @@ Install the **Iris Instagram Manager** listing into a workspace. Nora materializ
 
 ### 2. Connect Instagram — Integrations tab
 
-Open the agent → **Integrations** tab → connect **Instagram Graph**. It uses an Access Token + Business Account ID (form-based), and requires a **Creator or Business** account linked to a Facebook Page — not a Personal account. Without it, Iris can't pull analytics ([setup guide](https://noradocs.solomontsao.com/guides/integrations/instagram)).
+Open the agent → **Integrations** tab → connect **Instagram Graph**. It uses an Access Token + Business Account ID (form-based), and requires a **Creator or Business** account linked to a Facebook Page — not a Personal account. Without it, Iris can't pull analytics ([setup guide](https://docs.norafleet.ai/guides/integrations/instagram)).
 
 ### 3. Connect one channel — Channels tab
 
@@ -43,7 +43,7 @@ Open the agent → **Channels** tab → connect **one** way for Iris to reach yo
 - **WhatsApp** (recommended) - use Nora's **Link** action and scan the QR/pairing prompt.
 - Or **Telegram**, **Slack**, **Discord**, or another OpenClaw catalog channel.
 
-See the [channels guide](https://noradocs.solomontsao.com/guides/channels) for the per-channel fields.
+See the [channels guide](https://docs.norafleet.ai/guides/channels) for the per-channel fields.
 
 ### 4. Say hi
 

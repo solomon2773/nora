@@ -35,7 +35,7 @@ One agent that helps you ghostwrite for yourself on X and LinkedIn. Learns your 
 
 ## Setup
 
-Full walkthrough with screenshots: **[Echo setup guide](https://noradocs.solomontsao.com/guides/echo-personal-branding)**.
+Full walkthrough with screenshots: **[Echo setup guide](https://docs.norafleet.ai/guides/echo-personal-branding)**.
 
 ### 1. Install Echo from Agent Hub
 
@@ -45,8 +45,8 @@ Install the **Echo Personal Branding** listing into a workspace. Nora materializ
 
 Open the agent → **Integrations** tab. Connect the platform(s) you want to manage (at least one):
 
-- **Twitter / X** — click _Authorize with X_. Requires an X OAuth 2.0 app ([setup guide](https://noradocs.solomontsao.com/guides/integrations/twitter)).
-- **LinkedIn** — click _Authorize with LinkedIn_. Requires a LinkedIn developer app ([setup guide](https://noradocs.solomontsao.com/guides/integrations/linkedin)).
+- **Twitter / X** — click _Authorize with X_. Requires an X OAuth 2.0 app ([setup guide](https://docs.norafleet.ai/guides/integrations/twitter)).
+- **LinkedIn** — click _Authorize with LinkedIn_. Requires a LinkedIn developer app ([setup guide](https://docs.norafleet.ai/guides/integrations/linkedin)).
 
 You can start with just one and add the other later.
 
@@ -57,7 +57,7 @@ Open the agent → **Channels** tab and connect **at least one** way for Echo to
 - **WhatsApp** (recommended) - use Nora's **Link** action and scan the QR/pairing prompt.
 - Or **Telegram**, **Slack**, **Discord**, or another OpenClaw catalog channel.
 
-See the [channels guide](https://noradocs.solomontsao.com/guides/channels) for the per-channel fields.
+See the [channels guide](https://docs.norafleet.ai/guides/channels) for the per-channel fields.
 
 ### 4. Say hi
 

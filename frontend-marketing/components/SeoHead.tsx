@@ -2,7 +2,7 @@ import Head from "next/head";
 import { useRouter } from "next/router";
 import { LOCALES, localizePath, normalizeLocale } from "../lib/i18n";
 
-const SITE_ORIGIN = (process.env.NEXT_PUBLIC_SITE_URL || "https://nora.solomontsao.com").replace(
+const SITE_ORIGIN = (process.env.NEXT_PUBLIC_SITE_URL || "https://norafleet.ai").replace(
   /\/+$/,
   "",
 );

@@ -8,7 +8,7 @@ It is designed to keep important client context from getting lost between meetin
 
 ## Setup
 
-Full walkthrough: **[Mercer setup guide](https://noradocs.solomontsao.com/guides/mercer-client-intelligence)**.
+Full walkthrough: **[Mercer setup guide](https://docs.norafleet.ai/guides/mercer-client-intelligence)**.
 
 1. **Install from Agent Hub** — install the listing into a workspace.
 2. **Connect one channel** (**Channels** tab) so Mercer can reach you — **WhatsApp** recommended (QR/link pairing), or Telegram / Slack / Discord or another OpenClaw catalog channel. You only need one.

@@ -22,18 +22,18 @@ Putting **Cloudflare in front** is the fastest, cheapest launch mitigation:
 
 ## Prerequisites
 
-- The apex/subdomain (`nora.solomontsao.com`) is managed on Cloudflare nameservers.
+- The apex/subdomain (`norafleet.ai`) is managed on Cloudflare nameservers.
 - The origin already serves a **valid Let's Encrypt cert** (it does — `infra/setup-tls.sh`),
   which lets us use the strict TLS mode below.
 - You know the origin's public IP (the `DEPLOY_HOST`).
 
-`noradocs.solomontsao.com` is hosted by Mintlify and needs none of this.
+`docs.norafleet.ai` is hosted by Mintlify and needs none of this.
 
 ---
 
 ## Step 1 — DNS (proxy the origin)
 
-In **Cloudflare → DNS**, the record for `nora.solomontsao.com` (A → origin IPv4, and
+In **Cloudflare → DNS**, the record for `norafleet.ai` (A → origin IPv4, and
 AAAA if you have IPv6) must be **Proxied** (orange cloud), not "DNS only" (grey).
 
 Grey cloud = traffic bypasses Cloudflare entirely. Orange cloud = caching, WAF, and DDoS
@@ -66,7 +66,7 @@ regenerate + recreate nginx:
 
 ```bash
 # regenerate nginx.public.conf from the template and reload
-DOMAIN=nora.solomontsao.com ./infra/setup-tls.sh    # or re-run your deploy
+DOMAIN=norafleet.ai ./infra/setup-tls.sh    # or re-run your deploy
 docker compose --env-file .env -f docker-compose.yml \
   -f infra/docker-compose.public-prod.yml -f infra/docker-compose.public-tls.yml \
   up -d --force-recreate --no-deps nginx
@@ -92,7 +92,7 @@ cache-eligible again. See Cloudflare's [Cache Rules order guidance](https://deve
 **Rule 1 — "Nora homepage HTML":**
 
 ```text
-lower(http.host) eq "nora.solomontsao.com" and
+lower(http.host) eq "norafleet.ai" and
 http.request.uri.path eq "/" and
 http.request.method in {"GET" "HEAD"} and
 not (http.cookie contains "nora_auth=")
@@ -112,7 +112,7 @@ rule.
 **Rule 2 — "Nora dynamic and authenticated bypass" (place last):**
 
 ```text
-lower(http.host) eq "nora.solomontsao.com" and (
+lower(http.host) eq "norafleet.ai" and (
   http.request.uri.path eq "/api" or starts_with(http.request.uri.path, "/api/") or
   http.request.uri.path eq "/app" or starts_with(http.request.uri.path, "/app/") or
   http.request.uri.path eq "/admin" or starts_with(http.request.uri.path, "/admin/") or
@@ -147,7 +147,7 @@ If you protect the Admin dashboard with **Cloudflare Access**, cover both the ex
 defense in depth, but the Access application should still include both paths so policy remains
 correct if routing changes or another origin serves the hostname.
 
-> Verify with `curl -sI https://nora.solomontsao.com/ | grep -i cf-cache-status` →
+> Verify with `curl -sI https://norafleet.ai/ | grep -i cf-cache-status` →
 > should become `HIT` after the first request. The same header on `/api/...` must read
 > `BYPASS` or `DYNAMIC`.
 
@@ -167,7 +167,7 @@ path. For a public promotion, also enable Nora's Turnstile integration so distri
 low-rate signup bots cannot simply rotate IPs:
 
 1. In **Cloudflare → Turnstile**, create a **Managed** widget and add the specific hostname
-   `nora.solomontsao.com` (hostname only, with no scheme, path, or port).
+   `norafleet.ai` (hostname only, with no scheme, path, or port).
 2. Put the returned values directly in the production env or secret manager; never commit them:
 
    ```dotenv
@@ -199,9 +199,9 @@ the final dynamic/auth rule (correct — never cache these):
 
 Run these against the live site **before** you post anywhere:
 
-- [ ] `curl -sI https://nora.solomontsao.com/ | grep -i cf-cache-status` → `HIT` on a
+- [ ] `curl -sI https://norafleet.ai/ | grep -i cf-cache-status` → `HIT` on a
       second request.
-- [ ] `curl -sI https://nora.solomontsao.com/api/health | grep -i cf-cache-status` →
+- [ ] `curl -sI https://norafleet.ai/api/health | grep -i cf-cache-status` →
       `BYPASS`/`DYNAMIC` (never `HIT`).
 - [ ] Sign up for a fresh account end-to-end (no cached/stale auth page; cookie sets).
 - [ ] `/api/auth/bootstrap-status` reports signup bot protection enabled and configured.

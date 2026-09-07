@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://nora.solomontsao.com/sitemap.xml
+Sitemap: https://norafleet.ai/sitemap.xml

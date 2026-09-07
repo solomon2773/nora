@@ -1850,7 +1850,7 @@ $CAN_START_NORA = $true
 switch ($accessAnswer) {
     "2" {
         while ($true) {
-            $PUBLIC_DOMAIN = Read-Host "  Public domain (hosted default: nora.solomontsao.com; self-hosted: your own domain)"
+            $PUBLIC_DOMAIN = Read-Host "  Public domain (hosted default: norafleet.ai; self-hosted: your own domain)"
             if ($PUBLIC_DOMAIN -match '^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$') { break }
             Write-Warn "Enter a valid hostname without http:// or path segments."
         }
@@ -1875,7 +1875,7 @@ switch ($accessAnswer) {
     }
     "3" {
         while ($true) {
-            $PUBLIC_DOMAIN = Read-Host "  Public domain (hosted default: nora.solomontsao.com; self-hosted: your own domain)"
+            $PUBLIC_DOMAIN = Read-Host "  Public domain (hosted default: norafleet.ai; self-hosted: your own domain)"
             if ($PUBLIC_DOMAIN -match '^[A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$') { break }
             Write-Warn "Enter a valid hostname without http:// or path segments."
         }
@@ -2428,9 +2428,9 @@ Write-Host ""
 Write-Info "Useful links:"
 Write-Host "    Quick start:        https://github.com/solomon2773/nora#quick-start"
 Write-Host "    Star Nora:          https://github.com/solomon2773/nora"
-Write-Host "    Public site:        https://nora.solomontsao.com"
-Write-Host "    Log in:             https://nora.solomontsao.com/login"
-Write-Host "    Create account:     https://nora.solomontsao.com/signup"
-Write-Host "    OSS / PaaS mode:    https://nora.solomontsao.com/pricing"
+Write-Host "    Public site:        https://norafleet.ai"
+Write-Host "    Log in:             https://norafleet.ai/login"
+Write-Host "    Create account:     https://norafleet.ai/signup"
+Write-Host "    OSS / PaaS mode:    https://norafleet.ai/pricing"
 Write-Host "    Start paths:        https://github.com/solomon2773/nora/blob/master/SUPPORT.md"
 Write-Host ""

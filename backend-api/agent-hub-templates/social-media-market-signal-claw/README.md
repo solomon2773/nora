@@ -8,7 +8,7 @@ It is designed to filter noisy trends, identify signals that matter to a specifi
 
 ## Setup
 
-Full walkthrough: **[Signal setup guide](https://noradocs.solomontsao.com/guides/signal-market-signal)**.
+Full walkthrough: **[Signal setup guide](https://docs.norafleet.ai/guides/signal-market-signal)**.
 
 1. **Install from Agent Hub** — install the listing into a workspace.
 2. **Connect one channel** (**Channels** tab) so Signal can reach you — **WhatsApp** recommended (QR/link pairing), or Telegram / Slack / Discord or another OpenClaw catalog channel. You only need one. (This is separate from the social platforms you publish to.)

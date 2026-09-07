@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: production
-      url: https://nora.solomontsao.com
+      url: https://norafleet.ai
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -483,7 +483,7 @@ jobs:
           {
             echo "### Nora production deploy complete"
             echo ""
-            echo "- Site: \`https://nora.solomontsao.com\`"
+            echo "- Site: \`https://norafleet.ai\`"
             echo "- Ref: \`$TARGET_REF\`"
             echo "- Version: \`$TARGET_VERSION\`"
             echo "- Commit: \`$TARGET_COMMIT\`"

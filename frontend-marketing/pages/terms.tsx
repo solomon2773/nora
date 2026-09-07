@@ -7,7 +7,7 @@ import { SignupGate } from "../components/SignupGate";
 const LAST_UPDATED = "May 26, 2026";
 const REPO_URL = "https://github.com/solomon2773/nora";
 const LICENSE_URL = `${REPO_URL}/blob/master/LICENSE`;
-const CONTACT_EMAIL = "legal@solomontsao.com";
+const CONTACT_EMAIL = "legal@norafleet.ai";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -63,8 +63,8 @@ export default function Terms() {
             <Section title="Acceptance of terms">
               <p>
                 These terms govern your use of the <strong>hosted reference deployment</strong> of
-                Nora at nora.solomontsao.com. By creating an account or using the hosted service,
-                you agree to these terms. If you do not agree, do not use the hosted service.
+                Nora at norafleet.ai. By creating an account or using the hosted service, you agree
+                to these terms. If you do not agree, do not use the hosted service.
               </p>
             </Section>
 

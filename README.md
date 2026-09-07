@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://github.com/solomon2773/nora"><img src="https://img.shields.io/badge/%E2%98%85-Star_Nora-f2d7a1?style=for-the-badge&amp;labelColor=071018" alt="Star Nora on GitHub" /></a>
-  <a href="https://noradocs.solomontsao.com/quickstart"><img src="https://img.shields.io/badge/%E2%86%92-Quick_Start-8ae6ff?style=for-the-badge&amp;labelColor=071018" alt="Quick Start" /></a>
+  <a href="https://docs.norafleet.ai/quickstart"><img src="https://img.shields.io/badge/%E2%86%92-Quick_Start-8ae6ff?style=for-the-badge&amp;labelColor=071018" alt="Quick Start" /></a>
 </p>
 
 <p align="center">
@@ -24,10 +24,10 @@
 </p>
 
 <p align="center">
-  <a href="https://noradocs.solomontsao.com">📚 Documentation</a> ·
-  <a href="https://noradocs.solomontsao.com/self-hosting">Self-Hosting</a> ·
-  <a href="https://noradocs.solomontsao.com/concepts/architecture">Architecture</a> ·
-  <a href="https://noradocs.solomontsao.com/compare">How Nora Compares</a> ·
+  <a href="https://docs.norafleet.ai">📚 Documentation</a> ·
+  <a href="https://docs.norafleet.ai/self-hosting">Self-Hosting</a> ·
+  <a href="https://docs.norafleet.ai/concepts/architecture">Architecture</a> ·
+  <a href="https://docs.norafleet.ai/compare">How Nora Compares</a> ·
   <a href=".github/press-kit/README.md">Press Kit</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
@@ -35,12 +35,12 @@
 ---
 
 <p align="center">
-  <a href="https://nora.solomontsao.com/walkthrough.mp4">
+  <a href="https://norafleet.ai/walkthrough.mp4">
     <img src=".github/readme-assets/walkthrough.gif" alt="Watch the Nora walkthrough" width="900" />
   </a>
 </p>
 <p align="center">
-  <sub>▶ <b><a href="https://nora.solomontsao.com/walkthrough.mp4">Watch the walkthrough</a></b></sub>
+  <sub>▶ <b><a href="https://norafleet.ai/walkthrough.mp4">Watch the walkthrough</a></b></sub>
 </p>
 
 ## What Is Nora?
@@ -49,7 +49,7 @@ Nora is the self-hosted AI agent ops platform for running autonomous agent fleet
 
 Most teams running agents in production eventually rebuild the same layer around the runtime itself: deploy workflows, secrets, monitoring, logs, terminal, templates, and a separate admin surface. Nora exists so that layer doesn't have to be rewritten every time the runtime conversation changes. Operator workflows live under `/app`; platform-wide admin lives under `/admin`.
 
-→ [Why Nora](https://noradocs.solomontsao.com/introduction#positioning-pillars) · [Runtime model](https://noradocs.solomontsao.com/concepts/runtimes) · [Deployment footprint](https://noradocs.solomontsao.com/concepts/architecture#deployment-topologies)
+→ [Why Nora](https://docs.norafleet.ai/introduction#positioning-pillars) · [Runtime model](https://docs.norafleet.ai/concepts/runtimes) · [Deployment footprint](https://docs.norafleet.ai/concepts/architecture#deployment-topologies)
 
 ## Features
 
@@ -133,33 +133,33 @@ iwr -useb https://raw.githubusercontent.com/solomon2773/nora/master/setup.ps1 | 
 helm show chart oci://ghcr.io/solomon2773/nora
 ```
 
-The command resolves the latest published chart; pin the reported version for reproducible production installs. The public OCI chart installs the full Nora control plane. See the [Helm instructions](https://noradocs.solomontsao.com/self-hosting#kubernetes-helm) for the required secrets and Ingress options.
+The command resolves the latest published chart; pin the reported version for reproducible production installs. The public OCI chart installs the full Nora control plane. See the [Helm instructions](https://docs.norafleet.ai/self-hosting#kubernetes-helm) for the required secrets and Ingress options.
 
-The installer verifies prerequisites, generates or preserves secrets, optionally creates a bootstrap admin, picks free local ports when the defaults are busy, and starts the stack. Once it finishes, open the URL printed by setup. Local mode defaults to `http://localhost:8080`, but setup may select another port such as `8081` on a busy workstation. Then follow the [first-15-minutes walkthrough](https://noradocs.solomontsao.com/quickstart).
+The installer verifies prerequisites, generates or preserves secrets, optionally creates a bootstrap admin, picks free local ports when the defaults are busy, and starts the stack. Once it finishes, open the URL printed by setup. Local mode defaults to `http://localhost:8080`, but setup may select another port such as `8081` on a busy workstation. Then follow the [first-15-minutes walkthrough](https://docs.norafleet.ai/quickstart).
 
 > **No API key yet?** On installations with the local Docker target enabled, choose **Launch local Docker demo** on the Getting Started page. Nora deploys a working agent against its built-in deterministic demo provider, so you can validate chat and the operator workflow with zero keys and zero model-usage cost. Kubernetes-only installations start by adding a model provider and deploying to an enabled cluster target.
 
 For manual setup, environment variables, public-domain mode, TLS, Remote Docker, Kubernetes, NemoClaw, and experimental Proxmox LXC configuration, see the docs:
 
-- [Self-hosting guide](https://noradocs.solomontsao.com/self-hosting)
-- [Environment variables reference](https://noradocs.solomontsao.com/configuration/environment-variables)
-- [Provisioner backends](https://noradocs.solomontsao.com/configuration/provisioner-backends) (Docker and k3s/Kubernetes are GA; Remote Docker, NemoClaw, and Proxmox LXC are experimental)
-- [Remote Docker BYOC setup](https://noradocs.solomontsao.com/guides/remote-docker) — SSH registration, private networking, validation, sharing, and recovery
-- [TLS and public domains](https://noradocs.solomontsao.com/configuration/tls-domains)
+- [Self-hosting guide](https://docs.norafleet.ai/self-hosting)
+- [Environment variables reference](https://docs.norafleet.ai/configuration/environment-variables)
+- [Provisioner backends](https://docs.norafleet.ai/configuration/provisioner-backends) (Docker and k3s/Kubernetes are GA; Remote Docker, NemoClaw, and Proxmox LXC are experimental)
+- [Remote Docker BYOC setup](https://docs.norafleet.ai/guides/remote-docker) — SSH registration, private networking, validation, sharing, and recovery
+- [TLS and public domains](https://docs.norafleet.ai/configuration/tls-domains)
 - [Fronting a launch with Cloudflare](infra/cloudflare-launch.md) — edge caching, rate limiting, and spike absorption for the single-host deploy
 
 ## Documentation
 
-Full docs live at **[noradocs.solomontsao.com](https://noradocs.solomontsao.com)**. The MDX source is in [`docs/`](./docs).
+Full docs live at **[docs.norafleet.ai](https://docs.norafleet.ai)**. The MDX source is in [`docs/`](./docs).
 
 | Section                                                                        | What's there                                                                                           |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| [Quick Start](https://noradocs.solomontsao.com/quickstart)                     | Install and validate your first agent in 15 minutes                                                    |
-| [Concepts](https://noradocs.solomontsao.com/concepts/architecture)             | Architecture, agents, runtimes, workspaces, LLM providers, Agent Hub                                   |
-| [Configuration](https://noradocs.solomontsao.com/configuration/platform-modes) | Platform modes, env vars, provisioner backends, TLS / public domains                                   |
-| [Guides](https://noradocs.solomontsao.com/guides/deploy-agent)                 | Deploy agent, providers, integrations, channels, monitoring, alert rules, backups, Agent Hub, NemoClaw |
-| [API Reference](https://noradocs.solomontsao.com/api/overview)                 | Auth, workspaces, agents, channels, integrations, providers, monitoring, alert rules                   |
-| [Support](https://noradocs.solomontsao.com/support/faq)                        | FAQ, troubleshooting                                                                                   |
+| [Quick Start](https://docs.norafleet.ai/quickstart)                     | Install and validate your first agent in 15 minutes                                                    |
+| [Concepts](https://docs.norafleet.ai/concepts/architecture)             | Architecture, agents, runtimes, workspaces, LLM providers, Agent Hub                                   |
+| [Configuration](https://docs.norafleet.ai/configuration/platform-modes) | Platform modes, env vars, provisioner backends, TLS / public domains                                   |
+| [Guides](https://docs.norafleet.ai/guides/deploy-agent)                 | Deploy agent, providers, integrations, channels, monitoring, alert rules, backups, Agent Hub, NemoClaw |
+| [API Reference](https://docs.norafleet.ai/api/overview)                 | Auth, workspaces, agents, channels, integrations, providers, monitoring, alert rules                   |
+| [Support](https://docs.norafleet.ai/support/faq)                        | FAQ, troubleshooting                                                                                   |
 
 ## Architecture
 
@@ -177,7 +177,7 @@ Nginx
                        └── sandbox profiles        (standard · NemoClaw experimental)
 ```
 
-Full architecture write-up — system map, queue/worker boundaries, RBAC, migration contract, deployment topologies — is in [docs/concepts/architecture](https://noradocs.solomontsao.com/concepts/architecture).
+Full architecture write-up — system map, queue/worker boundaries, RBAC, migration contract, deployment topologies — is in [docs/concepts/architecture](https://docs.norafleet.ai/concepts/architecture).
 
 ## Tech Stack
 
@@ -203,7 +203,7 @@ export NORA_TOKEN="nora_..."
 curl -H "Authorization: Bearer $NORA_TOKEN" https://your-nora.example.com/api/agents
 ```
 
-A small CLI lives in [`cli/`](./cli) (`@noraai/cli`): run `nora login` once to save your host and API token, then `nora workspaces`, `nora agents`, and `nora monitoring` wrap the same REST surface. `nora doctor` runs an admin-only control-plane health check, and `nora mcp` launches the MCP stdio server. See the [API reference](https://noradocs.solomontsao.com/api/overview) for the supported endpoints and scopes.
+A small CLI lives in [`cli/`](./cli) (`@noraai/cli`): run `nora login` once to save your host and API token, then `nora workspaces`, `nora agents`, and `nora monitoring` wrap the same REST surface. `nora doctor` runs an admin-only control-plane health check, and `nora mcp` launches the MCP stdio server. See the [API reference](https://docs.norafleet.ai/api/overview) for the supported endpoints and scopes.
 
 **Operate Nora from Claude Code, Gemini CLI, Claude Desktop, or Cursor:** the [`mcp-server/`](./mcp-server) package (`@noraai/mcp-server`) exposes the same API as [Model Context Protocol](https://modelcontextprotocol.io) tools — deploy agents, control their lifecycle, and read fleet metrics, events, and per-agent cost from any MCP client. Destructive deletion stays disabled unless explicitly opted in.
 
@@ -220,14 +220,14 @@ Gemini CLI users can install the repository extension directly. The installer pr
 gemini extensions install https://github.com/solomon2773/nora
 ```
 
-See the [MCP guide](https://noradocs.solomontsao.com/guides/mcp-server) for Gemini CLI, Claude Desktop, and Cursor configuration, the tool list, and security notes.
+See the [MCP guide](https://docs.norafleet.ai/guides/mcp-server) for Gemini CLI, Claude Desktop, and Cursor configuration, the tool list, and security notes.
 
 ## Standards & isolation
 
 - **MCP — shipped.** A control-plane [MCP](https://modelcontextprotocol.io) server (`@noraai/mcp-server`, published to the official [MCP Registry](https://github.com/modelcontextprotocol/registry)) plus per-agent MCP server management — operate the fleet from Claude Code, Gemini CLI, Claude Desktop, or Cursor, and wire MCP tools into individual agents.
-- **OpenTelemetry GenAI — available.** [OTLP + Prometheus export](https://noradocs.solomontsao.com/guides/opentelemetry) of runtime telemetry under the `gen_ai.*` semantic conventions — per-exchange chat spans plus token/cost/resource metrics flow into the Grafana / Datadog / Langfuse stack you already run. (Per-tool-call sub-spans depend on runtime event streams and remain on the roadmap.)
+- **OpenTelemetry GenAI — available.** [OTLP + Prometheus export](https://docs.norafleet.ai/guides/opentelemetry) of runtime telemetry under the `gen_ai.*` semantic conventions — per-exchange chat spans plus token/cost/resource metrics flow into the Grafana / Datadog / Langfuse stack you already run. (Per-tool-call sub-spans depend on runtime event streams and remain on the roadmap.)
 - **A2A — on the roadmap.** Agent Cards / Agent-to-Agent discovery for managed OpenClaw and Hermes agents.
-- **Isolation, per deploy target.** Standard Docker runs use container namespaces plus operator-set CPU and RAM limits; `disk_gb` is metadata and operators must monitor Docker storage. Kubernetes adds workload resource limits and provisioned storage requests. The experimental **NemoClaw** profile hardens untrusted code with a non-root user, all Linux capabilities dropped, `no-new-privileges`, Landlock + seccomp, and default-deny egress. Experimental Proxmox placement uses unprivileged LXC, which remains a shared-kernel boundary and is not presented as VM-grade isolation. See the [isolation model](https://noradocs.solomontsao.com/concepts/security#runtime-isolation).
+- **Isolation, per deploy target.** Standard Docker runs use container namespaces plus operator-set CPU and RAM limits; `disk_gb` is metadata and operators must monitor Docker storage. Kubernetes adds workload resource limits and provisioned storage requests. The experimental **NemoClaw** profile hardens untrusted code with a non-root user, all Linux capabilities dropped, `no-new-privileges`, Landlock + seccomp, and default-deny egress. Experimental Proxmox placement uses unprivileged LXC, which remains a shared-kernel boundary and is not presented as VM-grade isolation. See the [isolation model](https://docs.norafleet.ai/concepts/security#runtime-isolation).
 
 ## Roadmap
 

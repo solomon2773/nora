@@ -6,7 +6,7 @@ Pulls the exact fields you need out of documents, emails, and forms and returns 
 
 ## Setup
 
-Full walkthrough: **[Dex setup guide](https://noradocs.solomontsao.com/guides/dex-document-extractor)**.
+Full walkthrough: **[Dex setup guide](https://docs.norafleet.ai/guides/dex-document-extractor)**.
 
 ### 1. Install from Agent Hub
 

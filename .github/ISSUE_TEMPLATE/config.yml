@@ -4,7 +4,7 @@ contact_links:
     url: https://github.com/solomon2773/nora/blob/master/CONTRIBUTING.md
     about: Development setup, targeted checks, extension scaffolds, and review expectations.
   - name: Documentation
-    url: https://noradocs.solomontsao.com
+    url: https://docs.norafleet.ai
     about: Quickstart, configuration, guides, and API reference. Check here first.
   - name: Security report
     url: https://github.com/solomon2773/nora/security/advisories/new
