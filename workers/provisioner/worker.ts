@@ -5679,6 +5679,29 @@ const segmentWriter = createSegmentWriter();
 const { startLogCollector } = require("./logs/logCollector");
 const logCollector = startLogCollector({ segmentWriter });
 
+// ── Gateway Log Collector (Logging Control Plane Phase 10) ────────────
+//
+// Sibling to `logCollector` above: polls OpenClaw's `logs.tail` gateway RPC
+// per agent (rather than following container stdout/stderr) and writes
+// `gateway`-stream segments through the SAME `segmentWriter` instance — see
+// logs/gatewayCollector.ts's module header for the full design rationale
+// (per-source-kind persisted cursors, cursor-advances-only-after-flush,
+// adaptive poll interval, retention-cutoff filtering at ingest, the second
+// pattern-based redaction pass, and the consoleLevel:warn config
+// reconciliation that keeps the runtime and gateway streams from
+// duplicating every line).
+//
+// Like `logCollector`, constructing this does not require any NORA_LOG_*
+// configuration to be present up front. `start()` begins its own 30s
+// reconcile timer immediately (the same cadence `logCollector` uses, though
+// the two reconcile independently of one another); `stopReconciler`/
+// `stopCollector` are combined with `logCollector`'s own hooks below, since
+// `registerLogPipelineHooks` only holds one slot for each — see that
+// combined registration for why calling it twice would silently drop
+// whichever collector registered first.
+const { startGatewayCollector } = require("./logs/gatewayCollector");
+const gatewayCollector = startGatewayCollector({ segmentWriter });
+
 // ── Storage Migration Resume (Logging Control Plane Phase 5b item 10) ────
 //
 // Pick up any `running` or `paused` storage_migration_jobs row left over
@@ -5826,9 +5849,32 @@ function registerShutdownCoordinator({
   return { runShutdown };
 }
 
+// Combined into a single registration (Phase 10): `registerLogPipelineHooks`
+// holds exactly one `stopReconciler`/`stopCollector` slot each, so a second,
+// separate call for `gatewayCollector` would silently overwrite
+// `logCollector`'s hooks rather than adding to them — leaving Phase 4's
+// container collector never stopped, and its buffers never given the chance
+// to stop accepting new lines before `flushAll()` runs at shutdown.
+//
+// Deliberately NOT declared `async`: an `async () => {...}` wrapper turns a
+// synchronous throw from the first call into a REJECTED PROMISE rather than
+// a synchronous exception, which forces `runShutdown`'s `await
+// hooks.stopReconciler()` to cross a real microtask boundary even when
+// nothing here is actually asynchronous. `shutdownCoordinator.test.js`
+// stubs every relative worker.ts require (including this module) down to a
+// no-op, so in that test both collectors are `undefined` and this function
+// is expected to throw synchronously (caught by runShutdown's own
+// try/catch) so the rest of shutdown — most importantly the `flushAll()`
+// call — proceeds within the same synchronous turn the test asserts on.
+// `Promise.resolve(...).then(...)` preserves that: a synchronous property
+// access on `undefined` still throws synchronously out of this plain
+// function, while a real, genuinely-async `stopReconciler`/`stopCollector`
+// still chains correctly.
 registerLogPipelineHooks({
-  stopReconciler: () => logCollector.stopReconciler(),
-  stopCollector: () => logCollector.stopCollector(),
+  stopReconciler: () =>
+    Promise.resolve(logCollector.stopReconciler()).then(() => gatewayCollector.stopReconciler()),
+  stopCollector: () =>
+    Promise.resolve(logCollector.stopCollector()).then(() => gatewayCollector.stopCollector()),
 });
 
 registerShutdownCoordinator();
@@ -5872,6 +5918,7 @@ module.exports = {
   loadHermesSkillJobAgent,
   segmentWriter,
   logCollector,
+  gatewayCollector,
   registerLogPipelineHooks,
   registerShutdownCoordinator,
 };
