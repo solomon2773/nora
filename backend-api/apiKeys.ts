@@ -30,6 +30,10 @@ const SCOPE_DEFINITIONS = [
     value: "admin:read",
     description: "Run read-only platform diagnostics as an issuing platform admin",
   },
+  {
+    value: "logs:read",
+    description: "Search and export a single agent's runtime/gateway logs",
+  },
 ];
 
 const KNOWN_SCOPES = new Set(SCOPE_DEFINITIONS.map((entry) => entry.value));

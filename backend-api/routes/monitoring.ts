@@ -8,6 +8,7 @@ const { asyncHandler } = require("../middleware/errorHandler");
 const {
   apiKeyWorkspaceId,
   findAccessibleAgent,
+  findWorkspaceMembership,
   requireAccessibleAgent,
 } = require("../middleware/ownership");
 const { requireAdmin, requireSession, scopeByMethod } = require("../middleware/auth");
@@ -136,14 +137,56 @@ router.get(
   }),
 );
 
+/**
+ * Resolve `workspaceId` for the session (browser, non-API-key) path of
+ * `GET /monitoring/events`. Item 10: this is the Operator lens gaining
+ * workspace filtering from a browser session — today only an API key can
+ * do this (`getApiKeyWorkspaceOrReject` above), because
+ * `buildUserEventScopeClause`'s `workspaceId` branch filters purely on
+ * `workspace_id`/`workspace_agents` membership with NO check that the
+ * requesting user actually belongs to that workspace — correct for an API
+ * key (already permanently bound to exactly one workspace by
+ * `enforceApiKeyWorkspace` before this ever runs) but NOT safe to expose
+ * to a session caller unchecked, since any authenticated user could
+ * otherwise pass an arbitrary workspaceId and read that workspace's
+ * events. `findWorkspaceMembership` (viewer-or-above) closes that gap —
+ * including for a platform admin, who gets no special bypass here: this is
+ * the actor-scoped Operator lens, not the fleet-wide `/admin/audit` view,
+ * so "I'm an admin" is not an argument for skipping workspace membership on
+ * this endpoint any more than it is for /logs/search (see the manifest's
+ * `/app/logs` workspace-scoping section, which this mirrors).
+ *
+ * @returns {Promise<string|null|false>} the workspaceId to scope by, `null`
+ *   when none was requested, or `false` after already writing a rejection
+ *   response.
+ */
+async function resolveSessionWorkspaceId(req, res) {
+  const raw = req.query.workspaceId;
+  const workspaceId = typeof raw === "string" && raw.trim() ? raw.trim() : null;
+  if (!workspaceId) return null;
+  const membership = await findWorkspaceMembership(workspaceId, req.user.id);
+  if (!membership) {
+    res.status(403).json({
+      error: "You are not a member of the requested workspace",
+      code: "wrong_workspace",
+    });
+    return false;
+  }
+  return workspaceId;
+}
+
 router.get(
   "/monitoring/events",
   asyncHandler(async (req, res) => {
     const { agentId, limit } = req.query;
     const filters = buildEventFilters(req.query);
     const scopedAgentId = typeof agentId === "string" && agentId.trim() ? agentId.trim() : null;
-    const workspaceId = getApiKeyWorkspaceOrReject(req, res);
+    let workspaceId = getApiKeyWorkspaceOrReject(req, res);
     if (workspaceId === false) return;
+    if (!req.apiKey && !workspaceId) {
+      workspaceId = await resolveSessionWorkspaceId(req, res);
+      if (workspaceId === false) return;
+    }
     let scopedAgent = null;
 
     if (scopedAgentId) {
