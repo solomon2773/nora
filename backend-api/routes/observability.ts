@@ -19,21 +19,34 @@
 // ── Section map ───────────────────────────────────────────────────────────
 //   1. Manual log deletion         — DELETE /logs                  (item 7b)
 //   2. Platform storage settings   — GET/PUT /admin/log-storage    (item 7a-ii)
+//   3. Storage migration progress  — GET /admin/log-storage/migration
+//   4. Search                      — GET /logs/search              (Phase 6)
+//   5. Export                      — GET /logs/export              (Phase 7)
 
 const express = require("express");
 const { decrypt, encrypt, ensureEncryptionConfigured } = require("../crypto");
 const monitoring = require("../monitoring");
-const { requireAdmin } = require("../middleware/auth");
-const { findAccessibleAgentForActor } = require("../middleware/ownership");
+const { requireAdmin, scopeByMethod } = require("../middleware/auth");
+const {
+  findAccessibleAgentForActor,
+  apiKeyWorkspaceId,
+  enforceApiKeyAgentScope,
+} = require("../middleware/ownership");
 const { asyncHandler } = require("../middleware/errorHandler");
 const objectStorage = require("../../agent-runtime/lib/objectStorage.ts");
 const { getEnabledBackends } = require("../../agent-runtime/lib/backendCatalog.ts");
 const retentionSweeper = require("../../workers/provisioner/logs/retentionSweeper.ts");
 const logStorageConfigModule = require("../../workers/provisioner/logs/logStorageConfig.ts");
 const storageMigration = require("../../workers/provisioner/logs/storageMigration.ts");
+const logSearch = require("../logSearch.ts");
 const db = require("../db");
 
 const router = express.Router();
+
+// Phase 6 item 9: logs:read gates both search and export for API-key
+// callers. Session callers (browser dashboards) pass through unchanged —
+// scopeByMethod only enforces scopes when `req.apiKey` is present.
+router.use(["/logs/search", "/logs/export"], scopeByMethod("logs:read", null));
 
 // Scope guards to this router's actual prefixes, matching adminMembers.ts's
 // convention, so an unrelated /admin/* request continues past this router to
@@ -464,6 +477,132 @@ router.get(
   asyncHandler(async (_req, res) => {
     const status = await storageMigration.getMigrationStatus({ db });
     res.json(status);
+  }),
+);
+
+// ─── 4. Search (Phase 6) ────────────────────────────────────────────────
+
+/**
+ * Accepts either a single query value or Express's array-parsed
+ * `?streams=a&streams=b` / `?streams[]=a` form, plus a comma-separated
+ * single value (`?streams=runtime,gateway`), for convenience across CLI and
+ * dashboard callers.
+ */
+function parseArrayParam(value) {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) return value.flatMap((entry) => String(entry).split(","));
+  return String(value)
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function sendLogError(res, error) {
+  const status = error.statusCode || 500;
+  res.status(status).json({ error: error.message, ...(error.code ? { code: error.code } : {}) });
+}
+
+/**
+ * GET /logs/search
+ * Query: workspaceId, agentId (required), streams[], levels[], from, to, q,
+ * traceId, cursor, limit, order.
+ *
+ * `agentId` is singular and required (item 2) — this endpoint serves one
+ * agent's timeline, never a merged cross-agent view (see the manifest's
+ * Non-Goals).
+ *
+ * Workspace/agent scoping for a session caller runs through
+ * `findAccessibleAgentForActor` plus `logSearch.enforceWorkspaceScope`
+ * (items 8/8a/8b/8c). An API-key caller is scoped BEFORE any of that, by
+ * `enforceApiKeyAgentScope` below — the same guard `requireAccessibleAgent`
+ * uses elsewhere — and its bound workspace is threaded straight through
+ * rather than trusting an arbitrary `workspaceId` query value.
+ */
+router.get(
+  "/logs/search",
+  asyncHandler(async (req, res) => {
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId.trim() : "";
+    if (!(await enforceApiKeyAgentScope(req, res, agentId))) return;
+
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      const result = await logSearch.searchLogs(
+        {
+          workspaceId,
+          agentId,
+          streams: parseArrayParam(req.query.streams),
+          levels: parseArrayParam(req.query.levels),
+          from: req.query.from,
+          to: req.query.to,
+          q: typeof req.query.q === "string" ? req.query.q : undefined,
+          traceId: req.query.traceId,
+          cursor: typeof req.query.cursor === "string" ? req.query.cursor : undefined,
+          limit: req.query.limit,
+          order: req.query.order,
+        },
+        req.user,
+      );
+      res.json(result);
+    } catch (error) {
+      sendLogError(res, error);
+    }
+  }),
+);
+
+// ─── 5. Export (Phase 7) ────────────────────────────────────────────────
+
+/**
+ * GET /logs/export
+ * Same filters as /logs/search, without pagination. Streams NDJSON
+ * (default) or CSV — pick with `?format=csv` or an `Accept: text/csv`
+ * header; anything else (including no preference at all) streams NDJSON.
+ * Requires `from`/`to` and rejects a range wider than the configured cap
+ * (item 4) with an actionable `export_range_too_large` error.
+ */
+router.get(
+  "/logs/export",
+  asyncHandler(async (req, res) => {
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId.trim() : "";
+    if (!(await enforceApiKeyAgentScope(req, res, agentId))) return;
+
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      await logSearch.streamLogExport(
+        {
+          workspaceId,
+          agentId,
+          streams: parseArrayParam(req.query.streams),
+          levels: parseArrayParam(req.query.levels),
+          from: req.query.from,
+          to: req.query.to,
+          q: typeof req.query.q === "string" ? req.query.q : undefined,
+          format: typeof req.query.format === "string" ? req.query.format : undefined,
+          accept: req.headers.accept,
+        },
+        req.user,
+        res,
+      );
+    } catch (error) {
+      if (res.headersSent) {
+        // Streaming had already started (headers/rows written) — there is
+        // no clean way to downgrade to a JSON error mid-stream, so just end
+        // the response after logging server-side.
+        console.error(`[observability] /logs/export failed mid-stream: ${error.message}`);
+        res.end();
+        return;
+      }
+      sendLogError(res, error);
+    }
   }),
 );
 

@@ -34,6 +34,7 @@ function loadSshClient() {
   return cachedSshClient;
 }
 
+
 /**
  * Backend-neutral storage failure. Callers that need HTTP semantics (e.g.
  * backend-api's backups module) translate `code` into their own status
@@ -235,7 +236,7 @@ async function s3Request(
   storageKey,
   body = null,
   rawConfig = {},
-  { signal, query = null, headers: extraHeaders = {} } = {},
+  { signal, query = null, headers: extraHeaders = {}, dispatcher = undefined } = {},
 ) {
   throwIfAborted(signal, "S3 request");
   const config = s3Config(rawConfig);
@@ -290,6 +291,17 @@ async function s3Request(
     method,
     headers,
     signal,
+    // Phase 6 (logging control plane): search/export fetch candidate
+    // segments at high configured concurrency (default 64). Node's fetch is
+    // undici under the hood, and undici's default global Agent applies a
+    // per-origin connection cap that can silently serialize requests back
+    // down to a much smaller effective concurrency than the caller asked
+    // for — passing an explicit `dispatcher` (an `undici.Agent`/`Pool` sized
+    // to the caller's concurrency) is how a caller guarantees the requested
+    // fan-out actually happens over the wire. `undefined` here is a no-op —
+    // every other caller of this function (backups, segment writes/deletes)
+    // is unaffected and keeps using the default global dispatcher.
+    ...(dispatcher !== undefined ? { dispatcher } : {}),
     ...(method === "PUT" || method === "POST" ? { body: payload } : {}),
   });
   if (!response.ok && !(method === "DELETE" && response.status === 404)) {
@@ -663,10 +675,10 @@ async function putStorageObject(storageKey, buffer, config = {}, { signal } = {}
   return putLocalObject(storageKey, buffer, resolved, { signal });
 }
 
-async function getStorageObject(storageKey, config = {}, { signal } = {}) {
+async function getStorageObject(storageKey, config = {}, { signal, dispatcher } = {}) {
   const resolved = normalizeStorageConfig(config);
   if (isS3Backend(resolved)) {
-    const response = await s3Request("GET", storageKey, null, resolved, { signal });
+    const response = await s3Request("GET", storageKey, null, resolved, { signal, dispatcher });
     return Buffer.from(await response.arrayBuffer());
   }
   if (resolved.storageBackend === "ssh") return getSshObject(storageKey, resolved, { signal });

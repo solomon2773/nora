@@ -305,6 +305,37 @@ test("a stream ending does not flush; a reattach appends to the same open buffer
   assert.equal(result.lines, 2, "one segment spans the restart, not two");
 });
 
+// ── peekBuffer (Phase 6 item 7: recency-gap internal endpoint) ───────────
+
+test("peekBuffer returns null when nothing is buffered for the pair", () => {
+  const writer = createSegmentWriter(baseDeps());
+  assert.equal(writer.peekBuffer("agent-1", "runtime"), null);
+});
+
+test("peekBuffer returns a non-destructive snapshot of the open buffer", async () => {
+  const deps = baseDeps();
+  const writer = createSegmentWriter(deps);
+  const ctx = { agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" };
+  await writer.append(ctx, [
+    line({ ts: "2026-01-01T00:00:00.000Z", message: "one" }),
+    line({ ts: "2026-01-01T00:00:05.000Z", message: "two" }),
+  ]);
+
+  const snapshot = writer.peekBuffer("agent-1", "runtime");
+  assert.equal(snapshot.lines.length, 2);
+  assert.equal(snapshot.tsFrom, "2026-01-01T00:00:00.000Z");
+  assert.equal(snapshot.tsTo, "2026-01-01T00:00:05.000Z");
+
+  // Non-destructive: no flush was triggered, and the buffer still has both
+  // lines when actually flushed afterward.
+  assert.equal(deps.putStorageObject.calls.length, 0);
+  const result = await writer.flush("agent-1:runtime");
+  assert.equal(result.lines, 2);
+
+  // Calling peekBuffer again after a real flush sees the now-empty buffer.
+  assert.equal(writer.peekBuffer("agent-1", "runtime"), null);
+});
+
 test("the flush timer is not reset by a reattach — a crash loop stays bounded at one segment per interval", async () => {
   mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   try {

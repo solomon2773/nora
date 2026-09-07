@@ -5622,10 +5622,87 @@ scheduleRunWorker.on("completed", (job) => {
 });
 
 // ── Health Check Server ──────────────────────────────────────────
+//
+// Logging control plane Phase 6 item 7 (recency gap): this same server also
+// exposes GET /internal/log-buffer, an internal-only endpoint backend-api's
+// searchLogs() calls to merge the last few not-yet-flushed minutes of a
+// live agent's logs into a search result. Extending this existing server —
+// rather than starting a second HTTP listener — is deliberate, per the
+// implementation plan's explicit instruction to reuse worker.ts's
+// established health-check server pattern.
+//
+// This endpoint is NOT published to the host by docker-compose (only
+// /health is probed, in-network, by the healthcheck directive) and no
+// Kubernetes Service exposes port 4001 outside the pod either — so in
+// practice it is reachable only from other containers on the same Compose
+// network today, and not at all from a Kubernetes backend-api pod until a
+// Service is added for worker-provisioner (out of scope here; searchLogs()
+// treats "unreachable" as an expected, gracefully-degraded case for exactly
+// this reason — see logSearch.ts). It still authenticates with a shared
+// secret (the same JWT_SECRET both services already require) rather than
+// relying solely on network placement, because a buffered gateway log line
+// can contain a secret value (see the manifest's "Encryption at rest"
+// section) and defense in depth costs nothing here.
+//
+// Replica-count caveat (flagged explicitly per the task brief, not silently
+// assumed): `infra/helm/nora/values.yaml` defaults `workerProvisioner.replicas`
+// to 1 and docker-compose runs a single container unless an operator passes
+// `--scale`, but neither is enforced by a hard validation anywhere in this
+// repo today (Design Decision 18 / Phase 14 item 8, the Helm validation that
+// would pin this, is not yet built as of this phase). This endpoint is
+// written defensively rather than assuming the pin holds: if backend-api's
+// request happens to land on a worker replica that does not hold the
+// requested agent's buffer, this simply returns `{ found: false }` — a safe,
+// silent "nothing buffered here" rather than a wrong answer — because
+// logSearch.ts's overlap rule only ever *adds* buffer lines strictly newer
+// than the newest segment actually read, never removes or overrides storage
+// results. There is no cross-replica routing here; if worker-provisioner
+// ever scales out for real, this degrades to "the recency gap is closed
+// only when the request happens to reach the right replica," not to
+// incorrect results.
 const http = require("http");
+const { timingSafeEqual } = require("crypto");
 const HEALTH_PORT = parseInt(process.env.WORKER_HEALTH_PORT || "4001");
+
+function isAuthorizedInternalRequest(req) {
+  const expected = String(process.env.JWT_SECRET || "");
+  if (!expected) return false;
+  const provided = String(req.headers["x-nora-internal-key"] || "");
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  if (expectedBuf.length !== providedBuf.length) return false;
+  return timingSafeEqual(expectedBuf, providedBuf);
+}
+
+function handleInternalLogBufferRequest(req, res) {
+  if (!isAuthorizedInternalRequest(req)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "unauthorized" }));
+    return;
+  }
+  const url = new URL(req.url, "http://internal");
+  const agentId = url.searchParams.get("agentId");
+  const stream = url.searchParams.get("stream");
+  if (!agentId || !stream) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "agentId and stream query params are required" }));
+    return;
+  }
+  let snapshot = null;
+  try {
+    snapshot = segmentWriter.peekBuffer(agentId, stream);
+  } catch (error) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: error.message }));
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(snapshot ? { found: true, ...snapshot } : { found: false }));
+}
+
 const healthServer = http.createServer((req, res) => {
-  if (req.url === "/health") {
+  const url = req.url || "";
+  if (url === "/health") {
     const isReady =
       worker.isRunning() &&
       clawhubJobsWorker.isRunning() &&
@@ -5634,6 +5711,8 @@ const healthServer = http.createServer((req, res) => {
       scheduleRunWorker.isRunning();
     res.writeHead(isReady ? 200 : 503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: isReady ? "ok" : "not_ready", uptime: process.uptime() }));
+  } else if (url.startsWith("/internal/log-buffer")) {
+    handleInternalLogBufferRequest(req, res);
   } else {
     res.writeHead(404);
     res.end();
@@ -5874,4 +5953,6 @@ module.exports = {
   logCollector,
   registerLogPipelineHooks,
   registerShutdownCoordinator,
+  isAuthorizedInternalRequest,
+  handleInternalLogBufferRequest,
 };

@@ -879,6 +879,37 @@ function createSegmentWriter(deps = {}) {
   }
 
   /**
+   * Phase 6 item 7 (recency gap): a non-destructive read of the current
+   * in-memory buffer for `(agentId, stream)`, exposed to backend-api over
+   * worker.ts's internal HTTP endpoint so `searchLogs` can merge the last
+   * few not-yet-flushed minutes into a search result. Deliberately does NOT
+   * flush, mutate, or clear anything — a search request must never be able
+   * to trigger a flush as a side effect, and the buffer must remain
+   * available for the next real flush regardless of how many times this is
+   * called.
+   *
+   * Returns `null` when no buffer is open for this (agentId, stream) pair
+   * (nothing buffered right now — not an error). Otherwise returns a plain
+   * snapshot: the lines as buffered so far (Phase 2 envelope, no `ord` yet
+   * — Phase 6's merge sorts on `(COALESCE(ts, observed_ts), stream)`
+   * exactly like it does for `ord`-bearing sealed-segment lines, so an
+   * unassigned `ord` on the buffer's tail is fine, see logSearch.ts) plus
+   * `tsFrom`/`tsTo` bookkeeping so the caller can apply the "storage wins
+   * on overlap" rule without re-deriving it from the raw lines.
+   */
+  function peekBuffer(agentId, stream) {
+    const buffer = buffers.get(bufferKey(agentId, stream));
+    if (!buffer || buffer.lines.length === 0) return null;
+    return {
+      agentId: buffer.agentId,
+      stream: buffer.stream,
+      lines: buffer.lines.slice(),
+      tsFrom: buffer.tsFrom,
+      tsTo: buffer.tsTo,
+    };
+  }
+
+  /**
    * Shutdown coordinator hook (Phase 3 item 6 / registerShutdownCoordinator
    * in worker.ts): stop accepting new lines and flush every open buffer.
    * The bounded deadline is enforced by the CALLER (registerShutdownCoordinator),
@@ -905,6 +936,7 @@ function createSegmentWriter(deps = {}) {
     deleteAgent,
     retryParkedSegments,
     isCapacityPaused,
+    peekBuffer,
   };
 }
 
