@@ -327,7 +327,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   system_banner_title TEXT NOT NULL DEFAULT '',
   system_banner_message TEXT NOT NULL DEFAULT '',
   agent_hub_default_share_target TEXT NOT NULL DEFAULT 'both',
-  agent_hub_url TEXT NOT NULL DEFAULT 'https://nora.solomontsao.com',
+  agent_hub_url TEXT NOT NULL DEFAULT 'https://norafleet.ai',
   agent_hub_api_key_encrypted TEXT,
   backup_storage_backend TEXT NOT NULL DEFAULT 'local',
   backup_local_path TEXT NOT NULL DEFAULT '/var/lib/nora-backups',

@@ -682,6 +682,58 @@ describe("provisioning runtime/gateway contracts", () => {
     expect(envOp.value.some((entry) => entry.name === "OPENAI_BASE_URL")).toBe(false);
   });
 
+  it("migrates the legacy managed-env annotation key to norafleet.ai on env update", async () => {
+    const K8sBackend = require("../../workers/provisioner/backends/k8s");
+    const backend = new K8sBackend(k8sProfile());
+
+    // Deployment provisioned before the domain migration: managed-env names
+    // tracked only under the legacy nora.solomontsao.com annotation key.
+    mockReadNamespacedDeployment.mockResolvedValue({
+      metadata: {
+        name: "nora-oclaw-nora-qa-123",
+        annotations: {
+          "nora.solomontsao.com/managed-env-names": JSON.stringify(["LEGACY_MANAGED"]),
+        },
+      },
+      spec: {
+        template: {
+          spec: {
+            containers: [
+              {
+                name: "agent",
+                env: [
+                  { name: "LEGACY_MANAGED", value: "old" },
+                  { name: "UNRELATED_SETTING", value: "keep-me" },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    mockReadNamespacedSecret.mockResolvedValue({
+      metadata: { name: "nora-oclaw-nora-qa-123-env", resourceVersion: "secret-rv" },
+      type: "Opaque",
+      data: {},
+    });
+
+    await backend.updateEnv(
+      "nora-oclaw-nora-qa-123",
+      { GEMINI_API_KEY: "gm-new" },
+      { managedEnvNames: ["GEMINI_API_KEY"] },
+    );
+
+    const patch = mockPatchNamespacedDeployment.mock.calls[0][0].body;
+    const annotationsOp = patch.find((op) => op.path === "/metadata/annotations");
+    // The legacy names must be read (fallback) and rewritten under the new key
+    // only — leaving the legacy key behind would fork the tracking state.
+    expect(JSON.parse(annotationsOp.value["norafleet.ai/managed-env-names"])).toEqual([
+      "GEMINI_API_KEY",
+      "LEGACY_MANAGED",
+    ]);
+    expect(annotationsOp.value["nora.solomontsao.com/managed-env-names"]).toBeUndefined();
+  });
+
   it("returns node-port endpoints for docker-hosted kind verification", async () => {
     mockCreateNamespacedService.mockResolvedValueOnce({
       body: {

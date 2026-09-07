@@ -19,7 +19,7 @@ const DEFAULT_LANGUAGE_SETTINGS = Object.freeze({
 });
 const DEFAULT_AGENT_HUB_SETTINGS = Object.freeze({
   defaultShareTarget: "both",
-  url: "https://nora.solomontsao.com",
+  url: "https://norafleet.ai",
   sourceApiKeyEncrypted: null,
 });
 const DEFAULT_BACKUP_SETTINGS = Object.freeze({

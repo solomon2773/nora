@@ -401,7 +401,7 @@ export default function RemoteHostsPage() {
                 : "Nora could not verify this installation's platform mode. Restore the public platform configuration endpoint before managing SSH credentials."}
             </p>
             <a
-              href="https://noradocs.solomontsao.com/configuration/provisioner-backends/remote-docker"
+              href="https://docs.norafleet.ai/configuration/provisioner-backends/remote-docker"
               target="_blank"
               rel="noreferrer"
               className="mt-6 inline-flex rounded-xl bg-brand-cyan px-4 py-2.5 text-sm font-black text-brand-ink transition hover:bg-brand-cyan/80 focus:outline-none focus:ring-2 focus:ring-brand-cyan/40"
@@ -526,7 +526,7 @@ export default function RemoteHostsPage() {
                 the provisioner worker, gateway routing, readiness, lifecycle, or backups.
               </p>
               <a
-                href="https://noradocs.solomontsao.com/configuration/provisioner-backends/remote-docker"
+                href="https://docs.norafleet.ai/configuration/provisioner-backends/remote-docker"
                 target="_blank"
                 rel="noreferrer"
                 className="mt-2 inline-flex text-sm font-black text-brand-ink underline decoration-brand-cyan decoration-2 underline-offset-2"

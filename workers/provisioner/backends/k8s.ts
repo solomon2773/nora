@@ -72,7 +72,11 @@ const K8S_UNAVAILABLE_CAPABILITIES = Object.freeze({
   pids: false,
 });
 const OPERATOR_POLICY_FAMILIES = Object.freeze(["openclaw", "hermes"]);
-const MANAGED_ENV_NAMES_ANNOTATION = "nora.solomontsao.com/managed-env-names";
+const MANAGED_ENV_NAMES_ANNOTATION = "norafleet.ai/managed-env-names";
+// Deployments provisioned before the norafleet.ai domain migration still carry
+// the old key; reads must fall back to it until every fleet member has been
+// env-updated at least once (each update rewrites to the new key).
+const LEGACY_MANAGED_ENV_NAMES_ANNOTATION = "nora.solomontsao.com/managed-env-names";
 const K8S_MANAGED_ENV_STATE_ENV = "NORA_K8S_MANAGED_ENV_B64";
 const SENSITIVE_ENV_PATTERNS = Object.freeze([
   /API_KEY/i,
@@ -210,6 +214,11 @@ function safeK8sName(name, fallback) {
 
 function isSensitiveEnvName(name) {
   return SENSITIVE_ENV_PATTERNS.some((pattern) => pattern.test(String(name || "")));
+}
+
+function readManagedEnvNamesAnnotation(annotations) {
+  const current = annotations?.[MANAGED_ENV_NAMES_ANNOTATION];
+  return current !== undefined ? current : annotations?.[LEGACY_MANAGED_ENV_NAMES_ANNOTATION];
 }
 
 function parseManagedEnvNamesAnnotation(value) {
@@ -2803,7 +2812,7 @@ class K8sBackend extends ProvisionerBackend {
     );
     const previousManagedEnvNames = new Set(
       parseManagedEnvNamesAnnotation(
-        deployment?.metadata?.annotations?.[MANAGED_ENV_NAMES_ANNOTATION],
+        readManagedEnvNamesAnnotation(deployment?.metadata?.annotations),
       ),
     );
     const containers = deployment?.spec?.template?.spec?.containers || [];
@@ -2848,6 +2857,7 @@ class K8sBackend extends ProvisionerBackend {
         ...(deployment?.metadata?.annotations || {}),
         [MANAGED_ENV_NAMES_ANNOTATION]: managedEnvNamesAnnotation([...nextManagedEnvNames]),
       };
+      delete nextAnnotations[LEGACY_MANAGED_ENV_NAMES_ANNOTATION];
       const patch = [];
       if (JSON.stringify(nextEnv) !== JSON.stringify(env)) {
         patch.push({
@@ -2947,6 +2957,7 @@ class K8sBackend extends ProvisionerBackend {
       ...(deployment?.metadata?.annotations || {}),
       [MANAGED_ENV_NAMES_ANNOTATION]: managedEnvNamesAnnotation([...nextManagedEnvNames]),
     };
+    delete annotations[LEGACY_MANAGED_ENV_NAMES_ANNOTATION];
     if (JSON.stringify(annotations) !== JSON.stringify(deployment?.metadata?.annotations || {})) {
       patch.push({
         op: deployment?.metadata?.annotations ? "replace" : "add",

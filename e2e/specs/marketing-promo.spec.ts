@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const REPO_URL = "https://github.com/solomon2773/nora";
-const DOCS_URL = "https://noradocs.solomontsao.com";
+const DOCS_URL = "https://docs.norafleet.ai";
 
 function collectPublicPageFailures(page) {
   const authFailures: string[] = [];
@@ -65,14 +65,14 @@ test.describe("Promo-ready marketing funnel", () => {
     await expect(page.getByRole("link", { name: /join the community/i })).toBeVisible();
 
     const canonical = page.locator('link[rel="canonical"]');
-    await expect(canonical).toHaveAttribute("href", "https://nora.solomontsao.com/");
+    await expect(canonical).toHaveAttribute("href", "https://norafleet.ai/");
     await expect(page.locator('meta[property="og:url"]')).toHaveAttribute(
       "content",
-      "https://nora.solomontsao.com/",
+      "https://norafleet.ai/",
     );
     await expect(page.locator('link[rel="alternate"][hreflang="es"]')).toHaveAttribute(
       "href",
-      "https://nora.solomontsao.com/es",
+      "https://norafleet.ai/es",
     );
 
     await page
@@ -93,7 +93,7 @@ test.describe("Promo-ready marketing funnel", () => {
     await page.goto("/pricing", { waitUntil: "domcontentloaded" });
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
       "href",
-      "https://nora.solomontsao.com/pricing",
+      "https://norafleet.ai/pricing",
     );
     await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
       "content",
@@ -103,11 +103,11 @@ test.describe("Promo-ready marketing funnel", () => {
     await page.goto("/login", { waitUntil: "domcontentloaded" });
     await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
       "href",
-      "https://nora.solomontsao.com/login",
+      "https://norafleet.ai/login",
     );
     await expect(page.locator('meta[property="og:url"]')).toHaveAttribute(
       "content",
-      "https://nora.solomontsao.com/login",
+      "https://norafleet.ai/login",
     );
   });
 });

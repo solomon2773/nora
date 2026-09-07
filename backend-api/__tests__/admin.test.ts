@@ -791,8 +791,8 @@ describe("admin routes", () => {
   it("returns the Agent Hub sharing settings for admins", async () => {
     mockGetAgentHubSettings.mockResolvedValueOnce({
       defaultShareTarget: "both",
-      url: "https://nora.solomontsao.com",
-      envUrl: "https://nora.solomontsao.com",
+      url: "https://norafleet.ai",
+      envUrl: "https://norafleet.ai",
       sourceApiKeyConfigured: true,
       sourceApiKeySource: "env",
       sourceApiKeyMasked: "nora_hub...test",
@@ -803,8 +803,8 @@ describe("admin routes", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       defaultShareTarget: "both",
-      url: "https://nora.solomontsao.com",
-      envUrl: "https://nora.solomontsao.com",
+      url: "https://norafleet.ai",
+      envUrl: "https://norafleet.ai",
       sourceApiKeyConfigured: true,
       sourceApiKeySource: "env",
       sourceApiKeyMasked: "nora_hub...test",
@@ -815,13 +815,13 @@ describe("admin routes", () => {
     const monitoringModule = require("../monitoring");
     mockGetAgentHubSettings.mockResolvedValueOnce({
       defaultShareTarget: "both",
-      url: "https://nora.solomontsao.com",
-      envUrl: "https://nora.solomontsao.com",
+      url: "https://norafleet.ai",
+      envUrl: "https://norafleet.ai",
     });
     mockUpdateAgentHubSettings.mockResolvedValueOnce({
       defaultShareTarget: "internal",
       url: "https://hub.internal.test",
-      envUrl: "https://nora.solomontsao.com",
+      envUrl: "https://norafleet.ai",
       sourceApiKeyConfigured: true,
       sourceApiKeySource: "database",
       sourceApiKeyMasked: "nora_hub...prod",
