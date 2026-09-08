@@ -540,12 +540,26 @@ export interface ListTracesParams {
 export interface ListTracesResult {
   traces: TraceSummary[];
   nextCursor: string | null;
+  // Reconciled against the real Phase 13 backend: `GET /traces` embeds the
+  // requesting agent's resolved `tracesEnabled`/`traceSampleRate` directly in
+  // its response (via `agentTracing.resolveWorkspaceLogSettings`), rather
+  // than requiring a separate call to `GET /workspaces/:id/log-settings`.
+  // That settings endpoint is guarded by `requireWorkspaceRole("admin", "id")`
+  // (Phase 12), so a plain workspace viewer/editor legitimately using the
+  // Traces lens would get a 403 from it and `getWorkspaceTracesEnabled`
+  // would incorrectly resolve to `null` ("unknown" -> CTA shown) even when
+  // tracing is genuinely on. Reading it off this response instead only
+  // requires the same per-agent viewer access this endpoint already needs.
+  // `getWorkspaceTracesEnabled` below is kept for admin-context callers
+  // (e.g. a future settings page) but the Traces lens itself must NOT use it.
+  tracesEnabled: boolean | null;
+  traceSampleRate: number | null;
 }
 
 /**
- * `GET /traces` — trace summaries for one agent's window. Mirrors
- * `searchLogs`'s error-handling shape (`jsonOrThrow`) exactly. See the
- * ASSUMED API CONTRACT block above for the field-name caveat.
+ * `GET /traces` — trace summaries for one agent's window, plus that agent's
+ * resolved tracing enablement (see `ListTracesResult.tracesEnabled` above).
+ * Mirrors `searchLogs`'s error-handling shape (`jsonOrThrow`) exactly.
  */
 export async function listTraces(params: ListTracesParams): Promise<ListTracesResult> {
   const query = new URLSearchParams();
@@ -558,9 +572,13 @@ export async function listTraces(params: ListTracesParams): Promise<ListTracesRe
   const res = await fetchWithAuth(`/api/traces?${query.toString()}`);
   const body = await jsonOrThrow<any>(res);
   const rawList = Array.isArray(body) ? body : Array.isArray(body?.traces) ? body.traces : [];
+  const rawTracesEnabled = body?.tracesEnabled ?? body?.traces_enabled;
+  const rawTraceSampleRate = body?.traceSampleRate ?? body?.trace_sample_rate;
   return {
     traces: rawList.map(normalizeTraceSummary),
     nextCursor: body?.nextCursor ?? null,
+    tracesEnabled: typeof rawTracesEnabled === "boolean" ? rawTracesEnabled : null,
+    traceSampleRate: typeof rawTraceSampleRate === "number" ? rawTraceSampleRate : null,
   };
 }
 
