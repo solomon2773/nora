@@ -23,6 +23,7 @@
 //   4. Search                      — GET /logs/search              (Phase 6)
 //   5. Export                      — GET /logs/export              (Phase 7)
 //   6. Workspace log settings      — GET/PUT /workspaces/:id/log-settings (Phase 12)
+//   7. Traces                      — GET /traces, GET /traces/:traceId (Phase 13)
 
 const express = require("express");
 const { decrypt, encrypt, ensureEncryptionConfigured } = require("../crypto");
@@ -42,6 +43,7 @@ const logStorageConfigModule = require("../../workers/provisioner/logs/logStorag
 const storageMigration = require("../../workers/provisioner/logs/storageMigration.ts");
 const logSearch = require("../logSearch.ts");
 const agentTracing = require("../agentTracing.ts");
+const traceQuery = require("../traceQuery.ts");
 const db = require("../db");
 
 const router = express.Router();
@@ -854,6 +856,94 @@ router.put(
       tracesEnabled: row.traces_enabled,
       traceSampleRate: Number(row.trace_sample_rate),
     });
+  }),
+);
+
+// ─── 7. Traces (Phase 13) ───────────────────────────────────────────────
+
+/**
+ * GET /traces
+ * Query: agentId (required), workspaceId?, from?, to?, limit?.
+ *
+ * Lists one agent's traces, aggregated from `agent_spans` — see
+ * `traceQuery.ts`'s module header for the full response shape (`agentId`,
+ * `workspaceId`, `tracesEnabled`, `traceSampleRate`, `traces[]`).
+ *
+ * Scoping (item 8): `traceQuery.listTraces` gates on
+ * `findAccessibleAgentForActor` first, then applies `workspaceId` as an
+ * additional narrowing via `logSearch.enforceWorkspaceScope` — the exact
+ * same two-step gate `logSearch.searchLogs` uses, reused rather than
+ * reimplemented so the Traces and Runtime lenses can never disagree about
+ * what "this agent's workspace" means.
+ */
+router.get(
+  "/traces",
+  asyncHandler(async (req, res) => {
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId.trim() : "";
+    if (!(await enforceApiKeyAgentScope(req, res, agentId))) return;
+
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      const result = await traceQuery.listTraces(
+        {
+          agentId,
+          workspaceId,
+          from: req.query.from,
+          to: req.query.to,
+          limit: req.query.limit,
+        },
+        req.user,
+      );
+      res.json(result);
+    } catch (error) {
+      sendLogError(res, error);
+    }
+  }),
+);
+
+/**
+ * GET /traces/:traceId
+ * Query: workspaceId? — same additional-narrowing semantics as GET /traces.
+ *
+ * Returns the span tree plus correlated logs for one trace — see
+ * `traceQuery.ts`'s module header for the full response shape (`trace`,
+ * `spans[]`, `correlatedLogs[]`).
+ *
+ * There is no `agentId` query param here — the trace's agent is resolved
+ * from its own `agent_spans` rows inside `traceQuery.getTraceDetail`, which
+ * is exactly why that function gates access AFTER reading those rows
+ * (using their `agent_id`) rather than requiring the caller to already
+ * know it.
+ *
+ * API-key callers cannot go through `enforceApiKeyAgentScope` here (unlike
+ * `/logs/search` and `/logs/export`) because that check needs an `agentId`
+ * up front, and this route only learns the agent after the trace lookup.
+ * Equivalent isolation still holds: `apiKeyWorkspaceId(req)` is passed as
+ * `workspaceId` below, so `getTraceDetail`'s `enforceWorkspaceScope` call
+ * rejects the request with the same `wrong_workspace` 403 the moment the
+ * resolved agent's actual workspace doesn't match the key's bound one.
+ */
+router.get(
+  "/traces/:traceId",
+  asyncHandler(async (req, res) => {
+    const traceId = typeof req.params.traceId === "string" ? req.params.traceId.trim() : "";
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      const result = await traceQuery.getTraceDetail(traceId, req.user, { workspaceId });
+      res.json(result);
+    } catch (error) {
+      sendLogError(res, error);
+    }
   }),
 );
 
