@@ -92,6 +92,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - nora_upgrade_state:/var/lib/nora-upgrade
       - nora_backups:/var/lib/nora-backups
+      - nora_logs:/var/lib/nora-logs
     command: sh -c "npm install && npm start"
     # Compatibility bridge for the first update from legacy copied overlays.
     # Hardened prod/TLS overlays override this back to uid/gid 1000 after they
@@ -146,6 +147,7 @@ services:
       - ./backend-api:/backend-api:ro
       - ./tsconfig.base.json:/tsconfig.base.json:ro
       - /var/run/docker.sock:/var/run/docker.sock
+      - nora_logs:/var/lib/nora-logs
     command: sh -c "npm install --no-audit --no-fund --no-update-notifier --loglevel=error && npm start"
     user: "0:0"
     cap_drop: [ALL]
@@ -294,6 +296,7 @@ volumes:
   pgdata:
   backups:
   nora_backups:
+  nora_logs:
   nora_upgrade_state:
     name: ${NORA_UPGRADE_STATE_VOLUME:-nora_upgrade_state}
 

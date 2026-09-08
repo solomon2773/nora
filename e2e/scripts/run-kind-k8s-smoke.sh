@@ -91,6 +91,136 @@ if [[ -z "${NORA_K8S_RUNTIME_HOST:-}" ]]; then
   )"
 fi
 
+# Logging control plane Phase 14 item 6: the Kubernetes deploy path requires
+# s3/r2 (the `local` driver has no shared disk across kind nodes and is
+# rejected outright per Design Decision 2d / the Helm chart guard in
+# configmap-env.yaml). An in-cluster MinIO gives this smoke test a real S3
+# target so a Kind-deployed agent's log collection can be asserted against
+# actual segment writes, not just mocked in unit tests.
+MINIO_NAMESPACE="${MINIO_NAMESPACE:-nora-minio}"
+MINIO_BUCKET="${MINIO_BUCKET:-nora-logs-smoke}"
+MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-noraminio}"
+MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-noraminiosecret}"
+MINIO_NODE_PORT="${MINIO_NODE_PORT:-30900}"
+
+"$KUBECTL_BIN" create namespace "$MINIO_NAMESPACE" --dry-run=client -o yaml | "$KUBECTL_BIN" apply -f -
+
+cat <<EOF | "$KUBECTL_BIN" apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: ${MINIO_NAMESPACE}
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-04-08T15-41-24Z
+          args: ["server", "/data"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: "${MINIO_ACCESS_KEY}"
+            - name: MINIO_ROOT_PASSWORD
+              value: "${MINIO_SECRET_KEY}"
+          ports:
+            - containerPort: 9000
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: ${MINIO_NAMESPACE}
+spec:
+  type: NodePort
+  selector:
+    app: minio
+  ports:
+    - port: 9000
+      targetPort: 9000
+      nodePort: ${MINIO_NODE_PORT}
+EOF
+
+"$KUBECTL_BIN" rollout status deployment/minio -n "$MINIO_NAMESPACE" --timeout=180s >/dev/null
+
+# One-shot bucket creation via the mc client image — minio/minio itself does
+# not bundle mc. Re-running `mc mb` against an already-existing bucket is a
+# harmless no-op (mc returns non-zero, `|| true` absorbs it) so this step is
+# safe to repeat across cluster/script re-runs.
+"$KUBECTL_BIN" delete job minio-mb -n "$MINIO_NAMESPACE" --ignore-not-found=true >/dev/null 2>&1 || true
+cat <<EOF | "$KUBECTL_BIN" apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-mb
+  namespace: ${MINIO_NAMESPACE}
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mc
+          image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+          command:
+            - /bin/sh
+            - -c
+            - |-
+              set -eu
+              mc alias set smoke http://minio.${MINIO_NAMESPACE}.svc.cluster.local:9000 "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+              mc mb --ignore-existing smoke/${MINIO_BUCKET}
+EOF
+"$KUBECTL_BIN" wait --for=condition=complete job/minio-mb -n "$MINIO_NAMESPACE" --timeout=120s
+
+export NORA_K8S_LOG_STORAGE_ENDPOINT="http://${NORA_K8S_RUNTIME_HOST}:${MINIO_NODE_PORT}"
+export K8S_SMOKE_ASSERT_LOG_SEGMENTS="true"
+
+# Layer the S3/MinIO log-storage settings onto the smoke run's own env file
+# rather than mutating the caller's $NORA_ENV_FILE in place — same
+# not-mutating-the-input convention docker-entrypoint-style overlays use
+# elsewhere in this repo. `docker compose --env-file` only affects variable
+# interpolation IN the compose YAML; the values a service actually sees come
+# from its own `env_file:` entry (docker-compose.yml's
+# `env_file: - ${NORA_ENV_FILE:-.env}`), so this is what needs to grow.
+LOG_STORAGE_ENV_FILE="$(mktemp)"
+cp "$NORA_ENV_FILE" "$LOG_STORAGE_ENV_FILE"
+{
+  echo "NORA_LOG_STORAGE=s3"
+  echo "NORA_LOG_S3_BUCKET=${MINIO_BUCKET}"
+  echo "NORA_LOG_S3_REGION=us-east-1"
+  echo "NORA_LOG_S3_ENDPOINT=${NORA_K8S_LOG_STORAGE_ENDPOINT}"
+  echo "NORA_LOG_S3_ACCESS_KEY_ID=${MINIO_ACCESS_KEY}"
+  echo "NORA_LOG_S3_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY}"
+} >>"$LOG_STORAGE_ENV_FILE"
+export NORA_ENV_FILE="$LOG_STORAGE_ENV_FILE"
+COMPOSE_ARGS=(--env-file "$NORA_ENV_FILE" "${COMPOSE_FILES[@]}")
+
+cleanup_log_storage_env_file() {
+  rm -f "$LOG_STORAGE_ENV_FILE"
+}
+trap 'cleanup_log_storage_env_file; cleanup' EXIT INT TERM
+
 docker compose "${COMPOSE_ARGS[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 docker compose "${COMPOSE_ARGS[@]}" up -d --build postgres redis backend-api worker-provisioner
 

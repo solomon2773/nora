@@ -17,7 +17,7 @@
     "ci:license-check": "node .github/workflows/scripts/license-check.mjs",
     "ci:lint": "eslint --ext .js,.jsx,.ts,.tsx,.cjs,.mjs --max-warnings=0",
     "ci:secret-scan": "node .github/workflows/scripts/scan-sensitive-config.mjs && node .github/workflows/scripts/scan-secrets.mjs && node --test .github/workflows/scripts/scan-secrets.test.mjs",
-    "ci:validate-infra": "node .github/workflows/scripts/validate-infra.mjs && node --test scripts/infra-security.test.mjs"
+    "ci:validate-infra": "node .github/workflows/scripts/validate-infra.mjs && node --test scripts/infra-security.test.mjs && node --test infra/helm/nora/__tests__/log-storage-and-replicas.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
