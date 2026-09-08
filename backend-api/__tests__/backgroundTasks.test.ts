@@ -2,6 +2,7 @@
 const mockDb = { query: jest.fn() };
 const mockContainerManager = { status: jest.fn() };
 const mockCollectTelemetry = jest.fn();
+const mockReconcileTracingConfig = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("../db", () => mockDb);
 jest.mock("../containerManager", () => mockContainerManager);
@@ -11,6 +12,15 @@ jest.mock("../agentTelemetry", () => ({
 // Mocked so backgroundTasks doesn't pull in the real gatewayProxy chain; the
 // external reconcile tests inject their own healthProbe anyway.
 jest.mock("../externalHealth", () => ({ probeExternalAgentHealth: jest.fn() }));
+// Phase 12: reconcileBackgroundAgentStatuses also drives agentTracing's own
+// reconcile sweep (see the dedicated describe block below). Mocked here so
+// every pre-existing test in this file — which asserts exact mockDb.query
+// call counts for the STATUS reconcile path — is unaffected by it; the real
+// agentTracing.reconcileTracingConfig would otherwise issue its own db
+// queries against these same shared mocks.
+jest.mock("../agentTracing", () => ({
+  reconcileTracingConfig: mockReconcileTracingConfig,
+}));
 
 const {
   collectBackgroundTelemetry,
@@ -23,6 +33,7 @@ describe("background tasks", () => {
     mockDb.query.mockReset();
     mockContainerManager.status.mockReset();
     mockCollectTelemetry.mockReset();
+    mockReconcileTracingConfig.mockReset().mockResolvedValue(undefined);
   });
 
   it("reconciles supported non-docker backends through containerManager status", async () => {
@@ -285,6 +296,44 @@ describe("background tasks", () => {
         "UPDATE agents SET status = $1 WHERE id = $2 AND status = $3",
         ["running", "ext-race", "stopped"],
       );
+    });
+  });
+
+  describe("Phase 12: agent-side tracing self-heal hook", () => {
+    it("reconciles tracing config on every status-reconcile tick", async () => {
+      mockDb.query.mockResolvedValueOnce({ rows: [] });
+
+      await reconcileBackgroundAgentStatuses();
+
+      expect(mockReconcileTracingConfig).toHaveBeenCalledTimes(1);
+      expect(mockReconcileTracingConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ dbClient: mockDb }),
+      );
+    });
+
+    it("still reconciles tracing config even when status reconciliation itself fails", async () => {
+      mockDb.query.mockRejectedValueOnce(new Error("db unavailable"));
+
+      await reconcileBackgroundAgentStatuses();
+
+      expect(mockReconcileTracingConfig).toHaveBeenCalledTimes(1);
+    });
+
+    it("a tracing-reconcile failure never propagates out of reconcileBackgroundAgentStatuses", async () => {
+      mockDb.query.mockResolvedValueOnce({ rows: [] });
+      mockReconcileTracingConfig.mockRejectedValueOnce(new Error("tracing reconcile boom"));
+
+      await expect(reconcileBackgroundAgentStatuses()).resolves.toBeUndefined();
+    });
+
+    it("honors an injected tracingReconciler override", async () => {
+      mockDb.query.mockResolvedValueOnce({ rows: [] });
+      const customReconciler = jest.fn().mockResolvedValue(undefined);
+
+      await reconcileBackgroundAgentStatuses({ tracingReconciler: customReconciler });
+
+      expect(customReconciler).toHaveBeenCalledTimes(1);
+      expect(mockReconcileTracingConfig).not.toHaveBeenCalled();
     });
   });
 });
