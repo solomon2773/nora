@@ -344,3 +344,408 @@ export function computeVirtualRange(
   const endIndex = Math.min(totalCount, firstVisible + visibleCount + overscan);
   return { startIndex, endIndex };
 }
+
+// ── Traces lens (Phase 13) — ASSUMED API CONTRACT ───────────────────────
+//
+// IMPORTANT: this section is written against the CONTRACT documented in the
+// Phase 13 frontend implementation brief, not against real backend code —
+// the backend half of this phase (`GET /traces`, `GET /traces/:traceId`,
+// `backend-api/traceQuery.ts`) is being built concurrently in a different
+// git worktree from the same plan section
+// (`plans/logging_control_plane/logging-control-plane-implementation-plan-v2.md`,
+// "Phase 13: Traces Lens And Cross-Lens Correlation"). This file never saw
+// that code. When both halves land on the same branch, diff the shapes
+// below against what actually shipped — this comment block plus
+// `normalizeTraceSummary` / `normalizeTraceDetail` / `normalizeSpanRow` /
+// `normalizeCorrelatedLog` are the ONLY places a field-name mismatch should
+// need touching; every component reads through those.
+//
+// Assumed shapes:
+//
+//   GET /traces?workspaceId=&agentId=&from=&to=&cursor=&limit=
+//     -> TraceSummary[] (defensively also accepts `{ traces: [...],
+//        nextCursor }`, mirroring how `searchLogs` above tolerates a bare
+//        array vs. an enveloped result)
+//     TraceSummary: { traceId, startedAt, agentId, rootSpanName,
+//       durationMs, spanCount, status, tokensIn, tokensOut, costUsd }
+//
+//   GET /traces/:traceId
+//     -> { trace: { traceId, agentId, workspaceId, startedAt, durationMs,
+//            status },
+//          spans: SpanRow[],
+//          correlatedLogs: CorrelatedLogRow[] }
+//     SpanRow: { spanId, parentSpanId, name, kind, startedAt, durationMs,
+//       status, model, provider, tokensIn, tokensOut, costUsd }
+//     CorrelatedLogRow: { ts, observedTs, tsSource, stream, level, message,
+//       traceId, spanId, inTrace } — `inTrace: false` marks an untraced
+//       runtime line included because it's in the same agent+time window,
+//       NOT because it belongs to the trace (see Phase 13 spec item 4/9).
+//
+// The normalizers below accept both the assumed camelCase field names and
+// their snake_case equivalents (`trace_id`, `started_at`, `span_id`,
+// `parent_span_id`, `tokens_in`, `tokens_out`, `cost_usd`,
+// `observed_ts`/`ts_source`, `in_trace`), since this codebase's other
+// endpoints (`/logs/search`) use snake_case for exactly these concepts —
+// there is a real chance the traces endpoints land snake_case too despite
+// the plan spec's camelCase. Whichever it actually is, this file keeps
+// working without a component-level change.
+
+/** `GET /workspaces/:id/log-settings` — Phase 12, assumed already built. */
+export interface WorkspaceLogSettings {
+  tracesEnabled: boolean;
+}
+
+export interface TraceSummary {
+  traceId: string;
+  startedAt: string;
+  agentId: string;
+  rootSpanName: string | null;
+  durationMs: number;
+  spanCount: number;
+  status: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+}
+
+export interface SpanRow {
+  spanId: string;
+  parentSpanId: string | null;
+  name: string;
+  kind: string | null;
+  startedAt: string;
+  durationMs: number;
+  status: string | null;
+  model: string | null;
+  provider: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+}
+
+export interface CorrelatedLogRow {
+  ts: string | null;
+  observedTs: string;
+  tsSource: TsSource;
+  stream: LogStream | string;
+  level: string | null;
+  message: string;
+  traceId: string | null;
+  spanId: string | null;
+  /** false = untraced runtime line included for context (same agent+window), not part of the trace. */
+  inTrace: boolean;
+}
+
+export interface TraceDetail {
+  trace: {
+    traceId: string;
+    agentId: string;
+    workspaceId: string | null;
+    startedAt: string;
+    durationMs: number;
+    status: string | null;
+  };
+  spans: SpanRow[];
+  correlatedLogs: CorrelatedLogRow[];
+}
+
+function num(...candidates: unknown[]): number {
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function str(...candidates: unknown[]): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  return null;
+}
+
+function normalizeTraceSummary(raw: any): TraceSummary {
+  return {
+    traceId: str(raw.traceId, raw.trace_id) || "",
+    startedAt: str(raw.startedAt, raw.started_at) || "",
+    agentId: str(raw.agentId, raw.agent_id) || "",
+    rootSpanName: str(raw.rootSpanName, raw.root_span_name),
+    durationMs: num(raw.durationMs, raw.duration_ms),
+    spanCount: num(raw.spanCount, raw.span_count),
+    status: str(raw.status),
+    tokensIn: num(raw.tokensIn, raw.tokens_in),
+    tokensOut: num(raw.tokensOut, raw.tokens_out),
+    costUsd: num(raw.costUsd, raw.cost_usd),
+  };
+}
+
+function normalizeSpanRow(raw: any): SpanRow {
+  return {
+    spanId: str(raw.spanId, raw.span_id) || "",
+    parentSpanId: str(raw.parentSpanId, raw.parent_span_id),
+    name: str(raw.name) || "(unnamed span)",
+    kind: str(raw.kind),
+    startedAt: str(raw.startedAt, raw.started_at) || "",
+    durationMs: num(raw.durationMs, raw.duration_ms),
+    status: str(raw.status),
+    model: str(raw.model),
+    provider: str(raw.provider),
+    tokensIn: num(raw.tokensIn, raw.tokens_in),
+    tokensOut: num(raw.tokensOut, raw.tokens_out),
+    costUsd: num(raw.costUsd, raw.cost_usd),
+  };
+}
+
+function normalizeCorrelatedLog(raw: any): CorrelatedLogRow {
+  return {
+    ts: str(raw.ts),
+    observedTs: str(raw.observedTs, raw.observed_ts) || raw.ts || "",
+    tsSource: (str(raw.tsSource, raw.ts_source) as TsSource) || "collector",
+    stream: str(raw.stream) || "runtime",
+    level: str(raw.level),
+    message: str(raw.message) || "",
+    traceId: str(raw.traceId, raw.trace_id),
+    spanId: str(raw.spanId, raw.span_id),
+    inTrace: raw.inTrace ?? raw.in_trace ?? false,
+  };
+}
+
+function normalizeTraceDetail(raw: any): TraceDetail {
+  const rawTrace = raw?.trace || {};
+  return {
+    trace: {
+      traceId: str(rawTrace.traceId, rawTrace.trace_id) || "",
+      agentId: str(rawTrace.agentId, rawTrace.agent_id) || "",
+      workspaceId: str(rawTrace.workspaceId, rawTrace.workspace_id),
+      startedAt: str(rawTrace.startedAt, rawTrace.started_at) || "",
+      durationMs: num(rawTrace.durationMs, rawTrace.duration_ms),
+      status: str(rawTrace.status),
+    },
+    spans: Array.isArray(raw?.spans) ? raw.spans.map(normalizeSpanRow) : [],
+    correlatedLogs: Array.isArray(raw?.correlatedLogs)
+      ? raw.correlatedLogs.map(normalizeCorrelatedLog)
+      : [],
+  };
+}
+
+export interface ListTracesParams {
+  workspaceId?: string | null;
+  agentId: string;
+  from?: string;
+  to?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ListTracesResult {
+  traces: TraceSummary[];
+  nextCursor: string | null;
+}
+
+/**
+ * `GET /traces` — trace summaries for one agent's window. Mirrors
+ * `searchLogs`'s error-handling shape (`jsonOrThrow`) exactly. See the
+ * ASSUMED API CONTRACT block above for the field-name caveat.
+ */
+export async function listTraces(params: ListTracesParams): Promise<ListTracesResult> {
+  const query = new URLSearchParams();
+  query.set("agentId", params.agentId);
+  if (params.workspaceId) query.set("workspaceId", params.workspaceId);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit) query.set("limit", String(params.limit));
+  const res = await fetchWithAuth(`/api/traces?${query.toString()}`);
+  const body = await jsonOrThrow<any>(res);
+  const rawList = Array.isArray(body) ? body : Array.isArray(body?.traces) ? body.traces : [];
+  return {
+    traces: rawList.map(normalizeTraceSummary),
+    nextCursor: body?.nextCursor ?? null,
+  };
+}
+
+/**
+ * `GET /traces/:traceId` — span tree plus correlated log lines for one
+ * trace. Mirrors `searchLogs`'s error-handling shape exactly. See the
+ * ASSUMED API CONTRACT block above for the field-name caveat.
+ */
+export async function getTraceDetail(traceId: string): Promise<TraceDetail> {
+  const res = await fetchWithAuth(`/api/traces/${encodeURIComponent(traceId)}`);
+  const body = await jsonOrThrow<any>(res);
+  return normalizeTraceDetail(body);
+}
+
+/**
+ * `GET /workspaces/:id/log-settings` (Phase 12, assumed already built and
+ * merged into the spine this worktree is based on) — used ONLY to read
+ * `tracesEnabled` so the Traces lens can show an "enable tracing" CTA
+ * instead of a misleadingly empty list (Phase 13 spec item 7/6). Best-effort
+ * like `getCurrentCapacityStatus` above: returns `null` (== "unknown") on
+ * any transport failure, 404 (endpoint not yet present), or non-boolean
+ * field, rather than guessing. `resolveTracesLensView` below treats `null`
+ * the same as `false` — the "false/unset" language in the spec — so an
+ * unreachable settings endpoint conservatively shows the CTA rather than
+ * silently pretending tracing is on.
+ *
+ * No workspace selected ("My agents (no workspace)") has no workspace-level
+ * setting to check, so this returns `null` immediately in that case too.
+ */
+export async function getWorkspaceTracesEnabled(
+  workspaceId: string | null | undefined,
+): Promise<boolean | null> {
+  if (!workspaceId) return null;
+  try {
+    const res = await fetchWithAuth(`/api/workspaces/${encodeURIComponent(workspaceId)}/log-settings`);
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    const raw =
+      body?.tracesEnabled ??
+      body?.traces_enabled ??
+      body?.logSettings?.tracesEnabled ??
+      body?.logSettings?.traces_enabled;
+    return typeof raw === "boolean" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Traces lens view resolution (item 6/7) ──────────────────────────────
+
+export type TracesLensView = "enable_cta" | "empty" | "list";
+
+export interface TracesLensViewInput {
+  /** `null` = unknown (settings fetch failed, 404'd, or no workspace selected). */
+  tracesEnabled: boolean | null;
+  traceCount: number;
+}
+
+/**
+ * Pure: decides which of the three Traces-lens states to render for an
+ * agent that's already selected (the "no agent selected yet" state is
+ * handled separately, one layer up, the same way the Runtime lens does it).
+ * `tracesEnabled !== true` (i.e. `false` OR `null`/unknown) always wins —
+ * that is the literal "false/unset" language in the Phase 13 spec — so a
+ * workspace this frontend can't confirm has tracing on gets the CTA rather
+ * than an empty list that looks like a bug.
+ */
+export function resolveTracesLensView(input: TracesLensViewInput): TracesLensView {
+  if (input.tracesEnabled !== true) return "enable_cta";
+  if (input.traceCount === 0) return "empty";
+  return "list";
+}
+
+// ── Correlated log partitioning (item 4) ────────────────────────────────
+
+export interface PartitionedCorrelatedLogs {
+  inTrace: CorrelatedLogRow[];
+  inWindowOnly: CorrelatedLogRow[];
+}
+
+/**
+ * Pure: splits a trace detail's correlated log lines into the ones that
+ * actually belong to the trace vs. the untraced-but-same-window runtime
+ * lines included for context (`inTrace: false` — see the ASSUMED API
+ * CONTRACT block). Order within each group is preserved.
+ */
+export function partitionCorrelatedLogs(logs: CorrelatedLogRow[]): PartitionedCorrelatedLogs {
+  const inTrace: CorrelatedLogRow[] = [];
+  const inWindowOnly: CorrelatedLogRow[] = [];
+  for (const log of logs) {
+    (log.inTrace ? inTrace : inWindowOnly).push(log);
+  }
+  return { inTrace, inWindowOnly };
+}
+
+// ── Span waterfall layout math (item 3) ─────────────────────────────────
+
+const WATERFALL_MIN_WIDTH_PCT = 0.75;
+
+export interface WaterfallSpan {
+  spanId: string;
+  parentSpanId: string | null;
+  name: string;
+  /** Nesting depth from the span's trace root (root = 0). */
+  depth: number;
+  /** Left offset, as a percentage of the trace's total duration. */
+  offsetPct: number;
+  /** Bar width, as a percentage of the trace's total duration. */
+  widthPct: number;
+  startedAt: string;
+  durationMs: number;
+  status: string | null;
+  model: string | null;
+  provider: string | null;
+}
+
+/**
+ * Pure: lays out a trace's span tree for the waterfall visualization —
+ * each span's horizontal offset/width relative to the trace's start and
+ * total duration, plus its nesting depth for indentation. Returns spans in
+ * depth-first, chronological-sibling order (so the array itself is a
+ * legible render order — parent immediately followed by its children,
+ * children ordered by start time), which is why `TraceWaterfall` maps this
+ * array directly into rows rather than re-sorting it.
+ *
+ * A span whose `parentSpanId` doesn't resolve to another span in the same
+ * list (missing, or pointing outside this trace) is treated as a root —
+ * this keeps one malformed row from hiding the rest of the tree.
+ */
+export function computeWaterfallLayout(
+  spans: SpanRow[],
+  traceStartedAt: string,
+  traceDurationMs: number,
+): WaterfallSpan[] {
+  const traceStart = new Date(traceStartedAt).getTime();
+  // Guard divide-by-zero for a zero/negative/unparseable trace duration —
+  // every span collapses to offset 0 rather than NaN/Infinity.
+  const safeDuration = Number.isFinite(traceDurationMs) && traceDurationMs > 0 ? traceDurationMs : 1;
+
+  const byId = new Map(spans.map((span) => [span.spanId, span]));
+  const childrenByParent = new Map<string, SpanRow[]>();
+  const roots: SpanRow[] = [];
+  for (const span of spans) {
+    const parentId = span.parentSpanId && byId.has(span.parentSpanId) ? span.parentSpanId : null;
+    if (parentId) {
+      const siblings = childrenByParent.get(parentId) || [];
+      siblings.push(span);
+      childrenByParent.set(parentId, siblings);
+    } else {
+      roots.push(span);
+    }
+  }
+
+  const byStartTime = (a: SpanRow, b: SpanRow) =>
+    new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime();
+  roots.sort(byStartTime);
+  for (const siblings of childrenByParent.values()) siblings.sort(byStartTime);
+
+  const result: WaterfallSpan[] = [];
+
+  function visit(span: SpanRow, depth: number) {
+    const startOffsetMs = new Date(span.startedAt).getTime() - traceStart;
+    const offsetPct = Math.min(100, Math.max(0, (startOffsetMs / safeDuration) * 100));
+    const rawWidthPct = (Math.max(0, span.durationMs) / safeDuration) * 100;
+    const widthPct = Math.max(WATERFALL_MIN_WIDTH_PCT, Math.min(rawWidthPct, 100 - offsetPct));
+
+    result.push({
+      spanId: span.spanId,
+      parentSpanId: span.parentSpanId,
+      name: span.name,
+      depth,
+      offsetPct,
+      widthPct,
+      startedAt: span.startedAt,
+      durationMs: span.durationMs,
+      status: span.status,
+      model: span.model,
+      provider: span.provider,
+    });
+
+    for (const child of childrenByParent.get(span.spanId) || []) {
+      visit(child, depth + 1);
+    }
+  }
+
+  for (const root of roots) visit(root, 0);
+  return result;
+}

@@ -37,15 +37,23 @@ import {
   exportLogs,
   fetchCapacityHaltWindows,
   getCurrentCapacityStatus,
+  getTraceDetail,
+  getWorkspaceTracesEnabled,
+  listTraces,
   resolveRuntimeLensCapability,
+  resolveTracesLensView,
   searchLogs,
   type CapacityHaltWindow,
   type LogLine,
   type LogStream,
+  type TraceDetail,
+  type TraceSummary,
 } from "../../lib/observabilityClient";
 import { runtimeSupportsGateway } from "../../lib/runtime";
 import LogFilterBar from "../../components/logs/LogFilterBar";
 import LogTable from "../../components/logs/LogTable";
+import TraceList from "../../components/logs/TraceList";
+import TraceWaterfall from "../../components/logs/TraceWaterfall";
 
 const PAGE_SIZE_OPTIONS = [10, 30, 50, 100];
 
@@ -1034,19 +1042,166 @@ function RuntimeLens({
   );
 }
 
-// ── Traces lens (placeholder — Phase 13) ─────────────────────────────────
-
-function TracesLens() {
+// ── Traces lens (Phase 13) ────────────────────────────────────────────────
+//
+// List on the left (TraceList), split-pane detail on the right
+// (TraceWaterfall: span waterfall above, correlated logs below). Built
+// against the ASSUMED API CONTRACT documented at the top of the Traces
+// section in observabilityClient.ts — the backend half of this phase
+// (`GET /traces`, `GET /traces/:traceId`) is being built concurrently in a
+// different worktree from the same plan section, so this component has
+// never seen that code. See this file's Phase 13 completion report for the
+// exact contract to diff against the real implementation once merged.
+function TracesLens({
+  agent,
+  workspaceId,
+  from,
+  to,
+}: {
+  agent: NormalizedAgentOption | null;
+  workspaceId: string | null;
+  from: string;
+  to: string;
+}) {
   const { t } = useI18n();
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [tracesEnabled, setTracesEnabled] = useState<boolean | null>(null);
+  const [traces, setTraces] = useState<TraceSummary[]>([]);
+  const [tracesLoading, setTracesLoading] = useState(false);
+  const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<TraceDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  // Item 6/7: check `tracesEnabled` via the Phase 12 log-settings endpoint,
+  // scoped to the active workspace. "My agents (no workspace)" has no
+  // workspace-level setting to check — getWorkspaceTracesEnabled resolves
+  // to `null` (unknown) immediately in that case, which resolveTracesLensView
+  // treats the same as "disabled" (see that function's doc comment).
+  useEffect(() => {
+    let active = true;
+    setSettingsLoading(true);
+    getWorkspaceTracesEnabled(workspaceId).then((enabled) => {
+      if (!active) return;
+      setTracesEnabled(enabled);
+      setSettingsLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!agent) {
+      setTraces([]);
+      return;
+    }
+    let active = true;
+    setTracesLoading(true);
+    listTraces({ workspaceId, agentId: agent.id, from, to, limit: 100 })
+      .then((result) => {
+        if (active) setTraces(result.traces);
+      })
+      .catch((error) => {
+        console.error("Failed to list traces:", error);
+        if (active) setTraces([]);
+      })
+      .finally(() => {
+        if (active) setTracesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [agent, workspaceId, from, to]);
+
+  useEffect(() => {
+    setSelectedTraceId(null);
+    setDetail(null);
+    setDetailError(null);
+  }, [agent?.id, workspaceId]);
+
+  useEffect(() => {
+    if (!selectedTraceId) {
+      setDetail(null);
+      setDetailError(null);
+      return;
+    }
+    let active = true;
+    setDetailLoading(true);
+    setDetailError(null);
+    getTraceDetail(selectedTraceId)
+      .then((result) => {
+        if (active) setDetail(result);
+      })
+      .catch((error) => {
+        console.error("Failed to load trace detail:", error);
+        if (active) {
+          setDetail(null);
+          setDetailError(error?.message || "Failed to load trace detail");
+        }
+      })
+      .finally(() => {
+        if (active) setDetailLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedTraceId]);
+
+  if (!agent) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center text-slate-400">
+        <Waypoints size={28} className="opacity-60" />
+        <p className="text-sm font-semibold">{t("Select an agent above to view its traces.")}</p>
+      </div>
+    );
+  }
+
+  if (settingsLoading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Loader2 size={24} className="animate-spin text-blue-500" />
+      </div>
+    );
+  }
+
+  const view = resolveTracesLensView({ tracesEnabled, traceCount: traces.length });
+
+  if (view === "enable_cta") {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-slate-500">
+        <Waypoints size={28} className="opacity-60" />
+        <p className="text-sm font-bold text-slate-700">{t("Tracing is not enabled for this workspace")}</p>
+        <p className="max-w-md text-xs text-slate-400">
+          {t(
+            "Turn on tracing in this workspace's log settings to start collecting spans for its agents. Once enabled, new traces appear here as agents run.",
+          )}
+        </p>
+      </div>
+    );
+  }
+
+  if (view === "empty" && !tracesLoading) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center text-slate-400">
+        <Waypoints size={28} className="opacity-60" />
+        <p className="text-sm font-semibold">{t("No traces in this range.")}</p>
+        <p className="max-w-sm text-xs text-slate-400">
+          {t("Tracing is enabled, but no spans were recorded for this agent in the selected time range.")}
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center text-slate-400">
-      <Waypoints size={28} className="opacity-60" />
-      <p className="text-sm font-semibold">{t("Traces are coming soon.")}</p>
-      <p className="max-w-sm text-xs text-slate-400">
-        {t(
-          "Cross-lens correlation between logs and OTLP spans ships in a later phase of the logging control plane.",
-        )}
-      </p>
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[380px_1fr]">
+      <TraceList
+        traces={traces}
+        selectedTraceId={selectedTraceId}
+        onSelect={setSelectedTraceId}
+        loading={tracesLoading}
+      />
+      <TraceWaterfall detail={detail} loading={detailLoading} error={detailError} />
     </div>
   );
 }
@@ -1058,7 +1213,7 @@ type LensId = "operator" | "runtime" | "traces";
 const LENSES: { id: LensId; label: string; disabled?: boolean }[] = [
   { id: "operator", label: "Operator" },
   { id: "runtime", label: "Runtime" },
-  { id: "traces", label: "Traces", disabled: true },
+  { id: "traces", label: "Traces" },
 ];
 
 function LensTabBar({
@@ -1304,7 +1459,9 @@ export default function LogsPage() {
         {activeLens === "runtime" ? (
           <RuntimeLens agent={selectedAgent} workspaceId={workspaceId} from={from} to={to} />
         ) : null}
-        {activeLens === "traces" ? <TracesLens /> : null}
+        {activeLens === "traces" ? (
+          <TracesLens agent={selectedAgent} workspaceId={workspaceId} from={from} to={to} />
+        ) : null}
       </div>
     </Layout>
   );
