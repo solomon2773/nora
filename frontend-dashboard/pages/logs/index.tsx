@@ -38,7 +38,6 @@ import {
   fetchCapacityHaltWindows,
   getCurrentCapacityStatus,
   getTraceDetail,
-  getWorkspaceTracesEnabled,
   listTraces,
   resolveRuntimeLensCapability,
   resolveTracesLensView,
@@ -1073,41 +1072,43 @@ function TracesLens({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  // Item 6/7: check `tracesEnabled` via the Phase 12 log-settings endpoint,
-  // scoped to the active workspace. "My agents (no workspace)" has no
-  // workspace-level setting to check — getWorkspaceTracesEnabled resolves
-  // to `null` (unknown) immediately in that case, which resolveTracesLensView
-  // treats the same as "disabled" (see that function's doc comment).
-  useEffect(() => {
-    let active = true;
-    setSettingsLoading(true);
-    getWorkspaceTracesEnabled(workspaceId).then((enabled) => {
-      if (!active) return;
-      setTracesEnabled(enabled);
-      setSettingsLoading(false);
-    });
-    return () => {
-      active = false;
-    };
-  }, [workspaceId]);
-
+  // Item 6/7: `tracesEnabled` is read off `GET /traces`'s own response
+  // (resolved server-side for the requested agent), not a separate call to
+  // the admin-gated `GET /workspaces/:id/log-settings` — see
+  // `ListTracesResult.tracesEnabled`'s doc comment in observabilityClient.ts
+  // for why: that settings endpoint requires workspace-admin, which would
+  // make this lens show the "enable tracing" CTA for a plain viewer/editor
+  // even when tracing is genuinely on. No agent selected means nothing to
+  // resolve yet, so `tracesEnabled` stays `null` ("unknown" -> CTA per
+  // `resolveTracesLensView`) until one is.
   useEffect(() => {
     if (!agent) {
       setTraces([]);
+      setTracesEnabled(null);
+      setSettingsLoading(false);
       return;
     }
     let active = true;
     setTracesLoading(true);
+    setSettingsLoading(true);
     listTraces({ workspaceId, agentId: agent.id, from, to, limit: 100 })
       .then((result) => {
-        if (active) setTraces(result.traces);
+        if (!active) return;
+        setTraces(result.traces);
+        setTracesEnabled(result.tracesEnabled);
       })
       .catch((error) => {
         console.error("Failed to list traces:", error);
-        if (active) setTraces([]);
+        if (active) {
+          setTraces([]);
+          setTracesEnabled(null);
+        }
       })
       .finally(() => {
-        if (active) setTracesLoading(false);
+        if (active) {
+          setTracesLoading(false);
+          setSettingsLoading(false);
+        }
       });
     return () => {
       active = false;
