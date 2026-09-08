@@ -3,11 +3,16 @@ import test from "node:test";
 
 import {
   computeVirtualRange,
+  computeWaterfallLayout,
   extractFilenameFromContentDisposition,
   isApproximateTimestamp,
   pairCapacityHaltWindows,
+  partitionCorrelatedLogs,
   resolveRuntimeLensCapability,
+  resolveTracesLensView,
   windowOverlapsRange,
+  type CorrelatedLogRow,
+  type SpanRow,
 } from "./observabilityClient";
 
 // ── extractFilenameFromContentDisposition ──────────────────────────────
@@ -191,4 +196,164 @@ test("virtual range clamps to the total count near the end of a long list", () =
 
 test("an empty list yields an empty range", () => {
   assert.deepEqual(computeVirtualRange(0, 600, 24, 0), { startIndex: 0, endIndex: 0 });
+});
+
+// ── resolveTracesLensView (Phase 13 item 6/7) ────────────────────────────
+
+test("tracing disabled gets the enable-CTA state, regardless of trace count", () => {
+  assert.equal(resolveTracesLensView({ tracesEnabled: false, traceCount: 0 }), "enable_cta");
+  assert.equal(resolveTracesLensView({ tracesEnabled: false, traceCount: 5 }), "enable_cta");
+});
+
+test("unknown tracing state (settings fetch failed/unavailable) also gets the enable-CTA state", () => {
+  assert.equal(resolveTracesLensView({ tracesEnabled: null, traceCount: 0 }), "enable_cta");
+});
+
+test("tracing enabled with zero traces in range gets the empty state, not the CTA", () => {
+  assert.equal(resolveTracesLensView({ tracesEnabled: true, traceCount: 0 }), "empty");
+});
+
+test("tracing enabled with traces present gets the list state", () => {
+  assert.equal(resolveTracesLensView({ tracesEnabled: true, traceCount: 3 }), "list");
+});
+
+// ── partitionCorrelatedLogs (Phase 13 item 4) ────────────────────────────
+
+function correlatedLog(overrides: Partial<CorrelatedLogRow>): CorrelatedLogRow {
+  return {
+    ts: "2026-01-01T00:00:00.000Z",
+    observedTs: "2026-01-01T00:00:00.000Z",
+    tsSource: "source",
+    stream: "gateway",
+    level: "INFO",
+    message: "line",
+    traceId: "trace-1",
+    spanId: "span-1",
+    inTrace: true,
+    ...overrides,
+  };
+}
+
+test("partitionCorrelatedLogs splits traced lines from in-window-only lines", () => {
+  const logs = [
+    correlatedLog({ message: "a", inTrace: true }),
+    correlatedLog({ message: "b", inTrace: false, spanId: null }),
+    correlatedLog({ message: "c", inTrace: true }),
+    correlatedLog({ message: "d", inTrace: false, spanId: null }),
+  ];
+  const { inTrace, inWindowOnly } = partitionCorrelatedLogs(logs);
+  assert.deepEqual(inTrace.map((l) => l.message), ["a", "c"]);
+  assert.deepEqual(inWindowOnly.map((l) => l.message), ["b", "d"]);
+});
+
+test("partitionCorrelatedLogs handles an all-traced or all-in-window list", () => {
+  const allTraced = [correlatedLog({ message: "a" }), correlatedLog({ message: "b" })];
+  assert.equal(partitionCorrelatedLogs(allTraced).inWindowOnly.length, 0);
+
+  const allWindowOnly = [
+    correlatedLog({ message: "a", inTrace: false }),
+    correlatedLog({ message: "b", inTrace: false }),
+  ];
+  assert.equal(partitionCorrelatedLogs(allWindowOnly).inTrace.length, 0);
+});
+
+// ── computeWaterfallLayout (Phase 13 item 3) ─────────────────────────────
+
+function span(overrides: Partial<SpanRow>): SpanRow {
+  return {
+    spanId: "root",
+    parentSpanId: null,
+    name: "span",
+    kind: null,
+    startedAt: "2026-01-01T00:00:00.000Z",
+    durationMs: 1000,
+    status: "ok",
+    model: null,
+    provider: null,
+    tokensIn: 0,
+    tokensOut: 0,
+    costUsd: 0,
+    ...overrides,
+  };
+}
+
+test("computeWaterfallLayout places a span starting halfway through the trace at 50% offset", () => {
+  const spans = [
+    span({
+      spanId: "root",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      durationMs: 1000,
+    }),
+    span({
+      spanId: "child",
+      parentSpanId: "root",
+      startedAt: "2026-01-01T00:00:00.500Z",
+      durationMs: 250,
+    }),
+  ];
+  const layout = computeWaterfallLayout(spans, "2026-01-01T00:00:00.000Z", 1000);
+  const root = layout.find((s) => s.spanId === "root")!;
+  const child = layout.find((s) => s.spanId === "child")!;
+  assert.equal(root.offsetPct, 0);
+  assert.equal(root.widthPct, 100);
+  assert.equal(child.offsetPct, 50);
+  assert.equal(child.widthPct, 25);
+});
+
+test("computeWaterfallLayout reflects parent/child nesting depth", () => {
+  const spans = [
+    span({ spanId: "root", startedAt: "2026-01-01T00:00:00.000Z", durationMs: 1000 }),
+    span({
+      spanId: "mid",
+      parentSpanId: "root",
+      startedAt: "2026-01-01T00:00:00.100Z",
+      durationMs: 800,
+    }),
+    span({
+      spanId: "leaf",
+      parentSpanId: "mid",
+      startedAt: "2026-01-01T00:00:00.200Z",
+      durationMs: 400,
+    }),
+  ];
+  const layout = computeWaterfallLayout(spans, "2026-01-01T00:00:00.000Z", 1000);
+  assert.equal(layout.find((s) => s.spanId === "root")!.depth, 0);
+  assert.equal(layout.find((s) => s.spanId === "mid")!.depth, 1);
+  assert.equal(layout.find((s) => s.spanId === "leaf")!.depth, 2);
+});
+
+test("computeWaterfallLayout treats a span with an unresolvable parentSpanId as a root", () => {
+  const spans = [span({ spanId: "orphan", parentSpanId: "does-not-exist" })];
+  const layout = computeWaterfallLayout(spans, "2026-01-01T00:00:00.000Z", 1000);
+  assert.equal(layout[0].depth, 0);
+});
+
+test("computeWaterfallLayout orders siblings chronologically within a parent", () => {
+  const spans = [
+    span({ spanId: "root", startedAt: "2026-01-01T00:00:00.000Z", durationMs: 1000 }),
+    span({
+      spanId: "second",
+      parentSpanId: "root",
+      startedAt: "2026-01-01T00:00:00.600Z",
+      durationMs: 100,
+    }),
+    span({
+      spanId: "first",
+      parentSpanId: "root",
+      startedAt: "2026-01-01T00:00:00.100Z",
+      durationMs: 100,
+    }),
+  ];
+  const layout = computeWaterfallLayout(spans, "2026-01-01T00:00:00.000Z", 1000);
+  assert.deepEqual(
+    layout.map((s) => s.spanId),
+    ["root", "first", "second"],
+  );
+});
+
+test("computeWaterfallLayout guards against a zero trace duration instead of producing NaN", () => {
+  const spans = [span({ spanId: "root", startedAt: "2026-01-01T00:00:00.000Z", durationMs: 0 })];
+  const layout = computeWaterfallLayout(spans, "2026-01-01T00:00:00.000Z", 0);
+  assert.equal(Number.isFinite(layout[0].offsetPct), true);
+  assert.equal(Number.isFinite(layout[0].widthPct), true);
 });
