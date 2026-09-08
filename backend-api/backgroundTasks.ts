@@ -5,6 +5,7 @@ const { reconcileAgentStatus } = require("./agentStatus");
 const { collectAgentTelemetrySample } = require("./agentTelemetry");
 const { probeExternalAgentHealth } = require("./externalHealth");
 const { isRemoteHostAccessRevokedError } = require("./remoteHosts");
+const agentTracing = require("./agentTracing");
 
 const REMOTE_HOST_STATUS_PRESERVING_ERRORS = new Set([
   "REMOTE_HOST_RETEST_REQUIRED",
@@ -95,6 +96,7 @@ async function collectBackgroundTelemetry({
 async function reconcileBackgroundAgentStatuses({
   dbClient = db,
   statusResolver = (agent) => containerManager.status(agent),
+  tracingReconciler = agentTracing.reconcileTracingConfig,
 } = {}) {
   try {
     const agents = await dbClient.query(
@@ -125,6 +127,21 @@ async function reconcileBackgroundAgentStatuses({
     }
   } catch {
     // Reconciliation is best-effort only.
+  }
+
+  // Phase 12 item 5c: self-heal agent-side tracing config on the same 30s
+  // tick this function already runs on, the same way Phase 10 keeps the
+  // gateway collector's `consoleLevel: warn` correctly applied. A running
+  // container's config-merge has no persistence of its own across a real
+  // restart, so an agent that restarted since the last tick would otherwise
+  // silently drop its `diagnostics.otel` config until something else pokes
+  // it. Deliberately outside the try/catch above and best-effort on its own
+  // (reconcileTracingConfig never throws) so a tracing failure can never
+  // affect status reconciliation, and vice versa.
+  try {
+    await tracingReconciler({ dbClient });
+  } catch {
+    // Tracing reconciliation is best-effort only.
   }
 }
 
