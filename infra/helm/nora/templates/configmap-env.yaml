@@ -33,6 +33,39 @@
 {{- if has "docker" $enabledBackends -}}
 {{- fail "enabledBackends must not include docker for the Helm deployment; no Docker socket is mounted in-cluster" -}}
 {{- end -}}
+{{- /*
+Logging control plane Phase 14 item 4: a Helm install is unambiguously a
+Kubernetes install (unlike a mixed Docker/k8s backend-api install, which is
+legitimate and only gets a boot-time warning per Phase 3 item 20 /
+workers/provisioner/logs/logStorageConfig.ts's assertDriverSupportsTargets).
+There is no local disk for logs in-cluster, so the `local` segment storage
+driver — the application's own default when NORA_LOG_STORAGE is unset — must
+be rejected at render time rather than silently collecting nothing. This
+mirrors the exact rule enforced at runtime by PUT /admin/log-storage
+(routes/observability.ts, `code: "local_unsupported_with_k8s"`): only
+`local` is rejected, `ssh` remains allowed alongside k8s.
+*/ -}}
+{{- $logStorageBackend := "local" -}}
+{{- if hasKey .Values.backendEnv "NORA_LOG_STORAGE" -}}
+{{- $logStorageBackend = trim (lower (toString (index .Values.backendEnv "NORA_LOG_STORAGE"))) -}}
+{{- if not $logStorageBackend -}}
+{{- $logStorageBackend = "local" -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $logStorageBackend "local" -}}
+{{- fail "backendEnv.NORA_LOG_STORAGE must not be \"local\" (or unset, which defaults to \"local\") for the Helm deployment; there is no persistent local disk for log segments in-cluster and the local driver is unsupported on Kubernetes (Design Decision 2d). Set backendEnv.NORA_LOG_STORAGE to \"s3\" or \"r2\" along with the matching NORA_LOG_S3_*/NORA_LOG_R2_* credentials." -}}
+{{- end -}}
+{{- /*
+Phase 14 item 8: the log collector's in-memory per-agent buffer lives on
+exactly one worker-provisioner replica (Phase 3/4), and nothing routes a
+backend-api buffer read to the correct replica among several — scaling this
+service would cause silent, intermittent duplicate/missing collection with
+no error pointing at the cause. Fail the render rather than let an operator
+hit that. No-op today since workerProvisioner.replicas already defaults to 1.
+*/ -}}
+{{- if gt (int .Values.workerProvisioner.replicas) 1 -}}
+{{- fail (printf "workerProvisioner.replicas is %d; it must stay 1. The log collector's in-memory buffer for a given agent lives on exactly one worker-provisioner replica, and nothing in this design routes a backend-api buffer read to the correct replica among several. Scaling this service would silently duplicate or drop log collection with no error pointing at the cause — building real multi-replica support (claims table, lease protocol, routing) is a separately-scoped project." (int .Values.workerProvisioner.replicas)) -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

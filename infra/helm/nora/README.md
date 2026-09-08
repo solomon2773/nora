@@ -119,6 +119,19 @@ admin.
   same node (k3s/Kind/single-node). On multi-node clusters use a
   `ReadWriteMany` storage class or configure S3/SSH backup storage and set
   `backupsVolume.enabled=false`.
+- **`local` log storage is unsupported and rejected at render time.** There is
+  no PVC or shared disk for log segments in-cluster (unlike backups above) —
+  set `backendEnv.NORA_LOG_STORAGE=s3` or `r2` with the matching
+  `NORA_LOG_S3_*`/`NORA_LOG_R2_*` credentials in `backendEnv`. Omitting it
+  defaults to the application's own `local` default, which the chart fails
+  the render for with an actionable message rather than installing something
+  that silently collects no logs.
+- **`workerProvisioner.replicas` must stay `1`** (the chart default). The log
+  collector's in-memory per-agent buffer lives on exactly one
+  worker-provisioner replica, and nothing routes a backend-api buffer read to
+  the correct replica among several — the chart fails the render above `1`
+  rather than let this scale silently into duplicate or missing log
+  collection.
 
 ## Validation
 

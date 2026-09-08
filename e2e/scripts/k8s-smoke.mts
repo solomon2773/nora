@@ -42,6 +42,19 @@ const SMOKE_CELLS = (process.env.K8S_SMOKE_CELLS || "")
   .map((value) => value.trim())
   .filter(Boolean);
 const NEMOCLAW_MODEL = process.env.NEMOCLAW_DEFAULT_MODEL || "nvidia/nemotron-3-super-120b-a12b";
+// Logging control plane Phase 14 item 6: run-kind-k8s-smoke.sh sets this once
+// it has deployed an in-cluster MinIO and pointed NORA_LOG_STORAGE=s3 at it —
+// see that script's "Logging control plane Phase 14 item 6" comment. Left
+// off by default so run-cloud-k8s-smoke.sh (which calls this same script and
+// does not stand up MinIO) is unaffected.
+const ASSERT_LOG_SEGMENTS = String(process.env.K8S_SMOKE_ASSERT_LOG_SEGMENTS || "") === "true";
+// Segment flush is interval-based (segmentWriter.ts), not immediate on
+// write, so this needs real wall-clock headroom beyond the default poll
+// timeout used for HTTP readiness checks.
+const LOG_SEGMENT_POLL_TIMEOUT_MS = Number.parseInt(
+  process.env.K8S_SMOKE_LOG_SEGMENT_TIMEOUT_MS || "180000",
+  10,
+);
 
 const RUNTIMES = {
   openclaw: {
@@ -437,6 +450,43 @@ function isHttpUrl(value) {
   return /^https?:\/\//i.test(String(value || ""));
 }
 
+/**
+ * Logging control plane Phase 14 item 6: poll GET /logs/search until the
+ * Kind-deployed agent's runtime stream has at least one line, proving the
+ * k8s adapter's log collector (workers/provisioner/logs/logCollector.ts +
+ * K8sBackend.logs()) actually followed the pod's logs and flushed a real
+ * segment to the in-cluster MinIO — not merely that the collector attached
+ * without erroring. Polled past the segment writer's flush interval, so a
+ * result only shows up once a line has actually landed in a persisted
+ * segment on the destination.
+ */
+async function assertLogSegmentsProduced(token, agentId) {
+  const startedAt = Date.now();
+  let lastError = null;
+  let lastBody = null;
+
+  while (Date.now() - startedAt < LOG_SEGMENT_POLL_TIMEOUT_MS) {
+    try {
+      const { body } = await api(
+        `/logs/search?agentId=${encodeURIComponent(agentId)}&streams=runtime&limit=1`,
+        { token },
+      );
+      lastBody = body;
+      if (Array.isArray(body?.lines) && body.lines.length > 0) return body.lines[0];
+    } catch (error) {
+      lastError = error?.message || String(error);
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `No log segments were produced for agent ${agentId} within ${LOG_SEGMENT_POLL_TIMEOUT_MS}ms ` +
+      `(NORA_LOG_STORAGE=s3 against the in-cluster MinIO); last response: ${JSON.stringify(
+        lastBody,
+      )}${lastError ? `; last error: ${lastError}` : ""}`,
+  );
+}
+
 async function fetchRuntimeEmbed(runtimeFamily, agentId, token) {
   const runtime = RUNTIMES[runtimeFamily];
   const startedAt = Date.now();
@@ -582,6 +632,10 @@ async function main() {
       await waitForRuntimeSurface(token, runningAgent);
       await fetchRuntimeEmbed(runtimeFamily, agentId, token);
       assertPeerPodBlocked(runtimeFamily, runningAgent);
+
+      if (ASSERT_LOG_SEGMENTS) {
+        await assertLogSegmentsProduced(token, agentId);
+      }
 
       await retryApi(`/agents/${agentId}/stop`, { method: "POST", token });
       await waitForAgentStatus(token, agentId, ["stopped"]);
