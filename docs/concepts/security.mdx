@@ -79,7 +79,7 @@ Proxmox places standard OpenClaw or a prepared Hermes image in an **unprivileged
 ## Standards and protocols
 
 - **MCP is first-class and shipped** — Nora publishes a control-plane MCP server (`@noraai/mcp-server`, in the official MCP Registry) and supports per-agent MCP server management. See [Operating Nora over MCP](https://github.com/solomon2773/nora/tree/master/mcp-server).
-- **OpenTelemetry GenAI (`gen_ai.*` / OTLP + Prometheus export)** — available: export runtime telemetry under the OTel GenAI semantic conventions so per-exchange chat spans and per-agent token/cost/resource metrics flow into your existing observability backend. Disabled by default and fail-open. See the [OpenTelemetry export guide](/guides/opentelemetry). (Per-tool-call sub-spans depend on runtime event streams and remain on the roadmap.)
+- **OpenTelemetry GenAI (`gen_ai.*` / OTLP + Prometheus export)** — available: export runtime telemetry under the OTel GenAI semantic conventions so per-exchange chat spans and per-agent token/cost/resource metrics flow into your existing observability backend. Disabled by default and fail-open. See the [OpenTelemetry export guide](/guides/opentelemetry). (Per-tool-call sub-spans are a separate, OpenClaw-only capability — agents push real traces into Nora's own OTLP receiver, viewable in the Traces lens on `/app/logs`; see the [logging control plane guide](/guides/logging#otlp-trace-ingest-and-the-traces-lens).)
 - **A2A (Agent-to-Agent)** — on the roadmap: serve Agent Cards / A2A discovery for managed OpenClaw and Hermes agents.
 
 ## Backups and audit

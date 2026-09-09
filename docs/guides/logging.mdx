@@ -1,0 +1,260 @@
+# Logging control plane
+
+> Persisted, searchable, retention-bounded runtime logs for every agent — pluggable storage, changeable destinations, per-workspace retention, and deletion controls.
+
+Nora captures every running agent's container log stream (stdout/stderr — entrypoint output, crashes, stack traces, OOM kills) and persists it into compressed, encrypted segments in object storage, indexed in Postgres for fast time-range search. This closes the gap where the live log viewer's stream was the only copy of an agent's history: close the tab and it was gone.
+
+<Note>
+  This guide covers **runtime container logs** first — the `stream: "runtime"` source, available for every runtime family and deploy target — then OpenClaw's structured **gateway logs** and **native OTLP trace ingest** in their own sections below. All of it is reachable from the three-lens `/app/logs` operator page (Operator / Runtime / Traces) as well as the REST API and the admin-only recovery page (`/admin/log-recovery`).
+</Note>
+
+## How it works
+
+`worker-provisioner` reconciles every 30 seconds against running agents, attaches a follow stream per `(agent, stream)` via the same adapter `logs()` contract the live viewer uses, and buffers parsed lines in memory. A buffer flushes to a compressed (`zstd`), encrypted segment at **15 minutes, an internal size threshold, or `SIGTERM`** — never on stream end, so a crash-looping agent produces one segment per interval instead of one per restart. `backend-api` reads segments back out for search and export.
+
+## Storage driver selection
+
+`NORA_LOG_STORAGE` selects exactly one destination for the whole installation — there is no tiering, no mirroring, and no per-workspace destination.
+
+| Driver  | Status                                    | Typical use                                                      |
+| ------- | ------------------------------------------ | ----------------------------------------------------------------- |
+| `local` | **Default, fully supported in production** | Docker Compose installs with no cloud credentials — not a dev-only fallback |
+| `s3`    | GA                                         | AWS S3, or any S3-compatible endpoint (MinIO, Backblaze B2, Wasabi, DigitalOcean Spaces, Ceph RadosGW) |
+| `r2`    | GA                                         | Cloudflare R2 — zero egress fees, which suits repeated log reads |
+| `ssh`   | Inherited from managed backups; untested for logs | Off-box durability without a cloud account |
+
+Set the driver and credentials via `NORA_LOG_STORAGE` / `NORA_LOG_S3_*` / `NORA_LOG_R2_*` / `NORA_LOG_SSH_*` / `NORA_LOG_DIR` — see the [environment variable reference](/configuration/environment-variables). These env values only seed the **initial** destination; once the platform is running, the database becomes authoritative (see below).
+
+<Warning>
+  `NORA_LOG_ENCRYPTION_KEY` must be set before the first segment flushes. The log collector starts automatically with `worker-provisioner` and attempts a flush roughly every 15 minutes per running agent — without this key, each flush fails (logged, not fatal to the process) and no logs are persisted.
+</Warning>
+
+## Changing the storage destination
+
+Storage settings are managed through `GET`/`PUT /admin/log-storage` (platform-admin only). There is no dedicated settings page yet — call the API directly, or from a script:
+
+```http theme={null}
+PUT /api/admin/log-storage
+{
+  "storageBackend": "s3",
+  "s3Bucket": "nora-logs-prod",
+  "s3Region": "us-east-1",
+  "s3AccessKeyId": "...",
+  "s3SecretAccessKey": "...",
+  "keepSourceCopies": true
+}
+```
+
+Two rules are enforced server-side:
+
+- **`storageBackend: "local"` is rejected outright if `k8s` is an enabled deploy target** (`local_unsupported_with_k8s`) — there's no boot-time restart left at which a warning would be seen once this is a runtime setting, so it's a hard validation error instead.
+- **Every change writes an `events` row.** Changing what other operators can see is an auditable action.
+
+### The background migration this triggers
+
+New segments go to the new destination immediately. Every segment already written under the old destination is copied over by an async, resumable job (`storage_migration_jobs`) — the response to `PUT /admin/log-storage` includes `migration: { jobId, segmentsTotal, status }`, and progress is readable at any time from:
+
+```http theme={null}
+GET /api/admin/log-storage/migration
+```
+
+returning `{ status: "running" | "paused" | "completed" | "failed", segmentsTotal, segmentsMigrated, checkpoint }`. A `paused` job isn't an error — it means the migration is copying *into* `local` and hit the disk-budget cap (see below); it resumes on its own once usage drops, from its last checkpoint. Only one migration can run at a time; a second `PUT` while one is in progress is rejected with `log_storage_migration_in_progress`.
+
+**The keep-or-delete choice.** `keepSourceCopies` in the `PUT` body decides what happens to each old-destination object once its new-destination copy is confirmed:
+
+- **`false` (delete)** — the old-destination object is removed as soon as the copy succeeds. Once every segment has migrated, the old driver's credentials are no longer needed.
+- **`true` (keep)** — the old-destination object is left in place and tracked in `log_segment_legacy_copies`. This is **not** indefinite retention: a kept copy still expires on the segment's originally-resolved retention window, on the same hourly sweep as everything else — see [Operational bounds](#operational-bounds-worth-knowing-up-front) below. The old driver's credentials must stay configured until the last legacy copy expires; `PUT /admin/log-storage` refuses to let you clear S3/R2 or SSH credentials while a migration or a kept legacy copy still references that destination (`log_storage_credentials_in_use`).
+
+The index row is only repointed to the new destination after the new copy is confirmed written, so an interruption mid-copy leaves the segment readable from wherever it actually still lives — there is no window where a segment is unreadable from both places at once.
+
+## Retention configuration
+
+Retention has two independent mechanisms — don't confuse them:
+
+1. **Time-based retention** (all drivers) — segments and spans expire on **content time** (`ts_to`), not write time, matching the search path. A platform ceiling bounds how long anything can be kept; per-workspace values are clamped to it.
+2. **Disk-budget capacity halt** (`local` driver only) — a completely separate concept covered under [Operational bounds](#operational-bounds-worth-knowing-up-front).
+
+The platform ceiling comes from `NORA_LOG_RETENTION_CEILING_DAYS` (selfhosted mode, default 30 days) or the free/pro/enterprise plan presets (PaaS mode) — the same shape `backup_retention_days` already uses. Per-workspace retention lives in `workspace_log_settings.runtime_retention_days` / `trace_retention_days`, resolved through a fallback chain (workspace row when one exists, platform default otherwise — an agent with no workspace has no row and always uses the platform default).
+
+<Note>
+  There is no API or UI to set a per-workspace override yet in this release — every workspace currently runs at the platform ceiling. The schema and sweeper enforcement are in place; a settings surface to actually choose a lower value per workspace is planned.
+</Note>
+
+The sweeper runs **hourly** in `worker-provisioner` (deliberately not the 5-second `container_stats` cadence) — it batch-deletes expired segment objects, then their index rows, then expired spans, then a daily reconciliation diffs storage against the index to reclaim orphans (checking `log_segment_legacy_copies` first, so a kept migration copy is never mistaken for garbage).
+
+## Encryption key rotation
+
+Every segment is encrypted at rest with `NORA_LOG_ENCRYPTION_KEY`, framed with a **key id** — unlike the backup archive format, which has no key identifier and can't be rotated without destroying history. To rotate:
+
+1. Prepend a new `keyId:hexkey` pair to `NORA_LOG_ENCRYPTION_KEY` (comma-separated, first entry is current — e.g. `k2:<new-hex>,k1:<old-hex>`).
+2. Restart `worker-provisioner` (writes under the new key going forward) and `backend-api` (needs both keys available to decrypt old and new segments).
+3. Once no live segment still references the old key id — `SELECT 1 FROM log_segments WHERE encryption_key_id = '<old-id>' LIMIT 1` returns no rows, i.e. the old key's segments have all expired under retention — drop the old pair from the value.
+
+A segment always decrypts by the key id recorded in its own header and index row, so segments written under different keys coexist safely during and after a rotation.
+
+## Manual log deletion
+
+There is no automatic deletion beyond time-based retention — reclaiming disk space (particularly on the `local` driver) is a deliberate operator action:
+
+```http theme={null}
+DELETE /api/logs
+{ "agentId": "<agent-id>", "from": "2026-08-01T00:00:00Z", "to": "2026-08-31T00:00:00Z" }
+```
+
+Requires editor-or-above access to the agent's workspace. Removes matching `log_segments` (and their storage objects) plus any `log_segment_legacy_copies` in range.
+
+## Agent and workspace deletion: keep or delete
+
+Deleting an agent or a workspace never implicitly deletes its logs. Both the agent-delete and workspace-delete endpoints **require** an explicit `deleteLogs` boolean in the request body — there is no default, so a script or integration can't silently pick one:
+
+```http theme={null}
+DELETE /api/agents/:id
+{ "deleteLogs": false }
+```
+
+- **`deleteLogs: true`** — segments, spans, and (for a workspace) every member agent's logs are removed asynchronously as part of the deletion flow.
+- **`deleteLogs: false`** — the agent or workspace row is still deleted (this is not a soft-delete), but its log data is left in place. Before the row is removed, Nora snapshots a `deleted_log_owners` record (display name, owner, retention setting, deletion actor and timestamp — captured because the source row won't exist to join against afterward).
+
+Kept logs are **not reachable through the normal log search API** once the agent or workspace is gone — that access model depends on the row still resolving. They're reachable only through the admin-only recovery surface:
+
+```http theme={null}
+GET /api/admin/log-recovery                  # list deleted owners with kept logs
+GET /api/admin/log-recovery/:id/logs          # paginated log lines
+GET /api/admin/log-recovery/:id/export        # NDJSON or CSV (?format=csv)
+DELETE /api/admin/log-recovery/:id            # purge manually
+```
+
+or the `/admin/log-recovery` page in the admin dashboard. Kept logs still expire on the retention window that was in effect at deletion time — snapshotted onto the `deleted_log_owners` record rather than re-read live, since a deleted workspace's own settings row may no longer exist.
+
+`log_segments.agent_id` and `agent_spans.agent_id` carry no cascading foreign-key delete against `agents(id)` specifically so that a database-level `CASCADE` can never silently destroy kept logs the instant the agent row disappears — the keep/delete choice is enforced in the application, before the agent row is deleted.
+
+## Search and export
+
+```http theme={null}
+GET /api/logs/search?agentId=<id>&workspaceId=<id>&streams=runtime&from=...&to=...&q=timeout&limit=200
+GET /api/logs/export?agentId=<id>&from=...&to=...&format=csv
+```
+
+Both require a single `agentId` — this is a per-agent timeline, never a merged cross-agent view (Nora's existing `GET /monitoring/events` already covers "what happened across my fleet"; see the [monitoring guide](/guides/monitoring)). Search supports `streams[]`, `levels[]`, a text filter (`q`), cursor pagination, and — because the collector's most recent up-to-15-minutes of buffered lines haven't flushed to storage yet — transparently merges in the live buffer from `worker-provisioner` so a search doesn't miss the last few minutes; if the worker is unreachable, results still return with an explicit "recent lines unavailable" marker rather than failing. Export streams NDJSON (default) or CSV and requires an explicit `from`/`to` range.
+
+Requires the `logs:read` API key scope for programmatic callers; browser sessions authenticate normally and are additionally scoped by workspace membership.
+
+## Gateway structured logs
+
+Alongside container stdout/stderr, `worker-provisioner` also polls OpenClaw's `logs.tail` gateway RPC for every running OpenClaw agent whose workspace has `gateway_logs_enabled`, and writes the results as `stream: "gateway"` segments — same storage, retention, search, and export machinery as runtime logs, just a second source. Gateway lines carry `traceId`/`spanId`/`sessionId`/`channel` fields that runtime lines don't, which is what makes trace correlation (below) possible.
+
+A few things worth knowing:
+
+- **Polling is adaptive, not fixed-interval.** It runs fast while lines are actively flowing and backs off toward 5-10 seconds when an agent goes quiet, snapping back to fast polling the moment new lines appear — so a fleet of idle agents doesn't generate a constant stream of empty round-trips.
+- **The poll cursor is tracked per source kind** (`agent_log_cursors`, keyed by `(agent_id, source_kind)`), not one cursor per agent, since OpenClaw's own log rotation is a source-kind transition. The cursor only advances after a successful flush, for the same crash-safety reason as the runtime collector.
+- **A second, independent redaction pass runs on every gateway line at ingest**, on top of whatever OpenClaw's own redaction already caught — defense in depth against known gaps (like a `config.get` call echoing a secret value into transcript JSONL) before it lands in what may be long-retention, third-party storage.
+- **`consoleLevel: warn` is set on every OpenClaw agent** (at provisioning, and self-healed on the existing 30-second agent-status reconcile loop) specifically to stop the runtime and gateway streams from duplicating the same console output across both.
+- A Hermes agent is skipped entirely and silently — there's no gateway RPC to poll.
+
+## OTLP trace ingest and the Traces lens
+
+OpenClaw agents can export real OpenTelemetry traces — per-model-call and per-tool-call spans, with token counts and cost pulled from the GenAI semantic-convention attributes — to Nora's own native OTLP receiver, no external collector required.
+
+### Enabling tracing
+
+Tracing is a per-workspace toggle, resolved through the same fallback chain as retention (a workspace's own `workspace_log_settings.traces_enabled` row when one exists, the platform default otherwise — an agent with no workspace still gets a resolved value rather than silently never exporting):
+
+```http theme={null}
+PUT /api/workspaces/:id/log-settings
+{ "tracesEnabled": true }
+```
+
+Turning it on pushes a live config merge to every running agent in that workspace via the same mechanism used for gateway `consoleLevel` — no container restart. The same 30-second reconcile loop that self-heals `consoleLevel` also re-applies (or removes) the tracing config for agents that restarted or whose workspace setting changed, so this never depends on catching every agent at the exact moment of a toggle.
+
+Three things are intentionally fixed and not operator-configurable in this release:
+
+- **Transport is always `http/protobuf`** — OpenClaw has retired gRPC, and its own `doctor --fix` rewrites a legacy `grpc` value if it finds one.
+- **`captureContent` is always `false`** — enabling it would put actual prompt and tool-output content into span attributes, a real data-sensitivity concern rather than a configuration preference.
+- **The sample rate ships at `1.0` and has no UI/API to change it.** Sub-1.0 sampling would silently break two things the Traces lens promises: fleet cost aggregates would become sampled sums instead of real spend, and gateway log lines would carry `trace_id`s pointing at traces that were never actually exported. The `workspace_log_settings.trace_sample_rate` column exists for when volume genuinely warrants a lever here — it's just not wired to anything yet.
+
+### How ingest is secured
+
+Agents push spans to `POST /otlp/v1/traces`, authenticated by an `x-nora-ingest-key` header — an HMAC-SHA256 of the agent's own ID, keyed by `NORA_OTLP_INGEST_SECRET`. The agent ID travels in its own `x-nora-agent-id` header rather than being read out of the payload, and **the workspace a span is stored under is always resolved server-side from the authenticated agent, never trusted from anything in the request** — this is the entire tenant-isolation mechanism for the endpoint, and the reason Nora runs its own receiver rather than a bundled OTel collector. An agent with no workspace authenticates exactly as rigorously as any other and its spans are stored with a null workspace, reachable through the same owner-access path as its runtime logs. Rotating `NORA_OTLP_INGEST_SECRET` revokes every previously-issued key at once.
+
+Spans are queued (BullMQ `span-ingest`) rather than written inline on the request path, and drained into `agent_spans` in `worker-provisioner`.
+
+### The Traces lens
+
+The Traces tab on `/app/logs` lists traces for the selected agent — started-at, root span name, duration, span count, status, token totals, cost — and a split-pane detail view for a selected trace: a waterfall of its span tree above, correlated log lines below. Correlated logs are pruned by **agent and time window**, not by trace id (there's no `trace_ids[]` column anywhere in the schema, deliberately — a segment is only 15 minutes wide, so a time-range prune already returns at most one or two candidates). The result includes both the gateway lines that actually carry that `trace_id` and the untraced runtime lines from the same agent and window, visibly marked apart from each other — a crash or OOM kill often has no `trace_id` of its own but is exactly the evidence a failed trace needs.
+
+When a workspace has tracing off, the Traces lens shows an enable-tracing call to action rather than an empty list.
+
+## Capability matrix
+
+**By runtime family** — container log collection uses the same adapter `logs()` contract every deploy target already implements, so it works uniformly. Gateway logs and traces are OpenClaw-only, since both depend on OpenClaw-specific mechanisms (`logs.tail`, `diagnostics.otel`) Hermes has no equivalent for:
+
+| Family                     | Container logs | Gateway logs | Traces |
+| -------------------------- | --------------- | ------------- | ------ |
+| OpenClaw                   | yes             | yes           | yes    |
+| NemoClaw (sandbox profile) | yes             | yes           | yes    |
+| Hermes                     | yes             | no — no `logs.tail` equivalent | no — no native OTel export |
+
+**By deploy target and storage driver** — this is the matrix that actually gates what works today:
+
+| Deploy target  | Container logs | `local` driver | `s3`/`r2` |
+| -------------- | --------------- | -------------- | --------- |
+| Docker         | yes             | **yes (default)** | yes |
+| Remote Docker  | yes             | yes            | yes |
+| Proxmox LXC    | yes (adapter-level; Proxmox remains an experimental deploy target platform-wide) | yes | yes |
+| Kubernetes     | yes             | **never — hard-blocked** | **required** |
+
+### The `local` driver is Kubernetes-only-unsupported, deliberately
+
+The reason is structural, not arbitrary: segments are files, and the **writer** (`worker-provisioner`) and **reader** (`backend-api`) are different processes. On Docker Compose that's one host and a shared named volume — no issue. On Kubernetes they're separate pods that may land on separate nodes, and every option to share a filesystem between them (RWO block storage pins both to one node and one replica each; RWX network filesystems like EFS/NFS aren't present by default and add a stateful system to operate) is worse than just requiring object storage, which Kubernetes operators are typically already provisioning anyway.
+
+This is enforced at three layers, not just documented:
+
+1. **Boot warning** — `worker-provisioner` warns at startup if `ENABLED_BACKENDS` includes `k8s` while `NORA_LOG_STORAGE` is `local`.
+2. **API validation** — `PUT /admin/log-storage` rejects switching to `local` outright (`local_unsupported_with_k8s`) once `k8s` is enabled, since there's no later boot at which the warning would be seen.
+3. **Helm install/upgrade hard failure** — the chart's render-time guard fails the install if `backendEnv.NORA_LOG_STORAGE` resolves to `local` (including the unset default). There is no log PVC in the chart at all.
+
+A Kubernetes agent that somehow ends up under the `local` driver is skipped by the collector (not retried in a loop) and reported with a `storage_unsupported_for_target` capability reason.
+
+## Operational bounds worth knowing up front
+
+These are intentional design tradeoffs, not bugs — each is the kind of thing an operator who hits it without warning would reasonably file as broken.
+
+### The `local` driver halts collection installation-wide at capacity — it never evicts
+
+`NORA_LOG_LOCAL_MAX_BYTES` caps total local segment storage for the **whole installation**, not per workspace. There is no automatic deletion of any kind at this boundary. A configurable warning threshold (80% of the cap) surfaces a banner and an `events` row while collection continues normally. At the cap itself, **log collection halts for every workspace on the installation** — not just the one that filled the volume — until the operator raises `NORA_LOG_LOCAL_MAX_BYTES` or deletes logs via `DELETE /logs`. This is a real multi-tenant tradeoff, chosen deliberately over the alternative (oldest-first or fair-share eviction), because eviction's failure mode — quietly deleting data a workspace believed was retained — is worse than an honest, visible halt.
+
+Collection **resumes automatically** once usage drops back under the cap, on the collector's normal 30-second reconcile tick — no restart, no manual "resume" action. It replays from each paused agent's last flushed cursor exactly like it does after a crash.
+
+Object-storage drivers (`s3`, `r2`, `ssh`) ignore this entirely — there's no cap to reach, and collection never halts for capacity reasons on them.
+
+### An ungracefully killed worker replays, rather than loses, its buffered window — usually
+
+The collection cursor for each agent advances **only after a successful flush**, never when a line is received. If `worker-provisioner` dies ungracefully (a crash, an OOM kill, `SIGKILL` — not the graceful `SIGTERM`/`SIGINT` shutdown path, which flushes everything before exiting), the collector resumes on restart from the last flushed point, and the source — Docker's `json-file` log driver, or the kubelet — replays the intervening lines from its own retained logs. Replay is idempotent: the recovered flush's object key is derived from the time window, so it upserts the existing `storage_key` rather than duplicating.
+
+This assumes **the source still holds the lines.** Docker's `json-file` driver retains them unless `max-size` rotation is configured tightly; the kubelet keeps 10 MB × 5 by default. Both comfortably cover a 15-minute window in normal operation — neither is guaranteed under a flood of log output or unusually aggressive log rotation. If that assumption is ever violated in your environment, the failure mode is losing that window's lines, not a crash or a stuck agent.
+
+### A migration's kept legacy copies still expire on their original retention window
+
+Choosing "keep" (`keepSourceCopies: true`) when changing storage destination is not a promise of indefinite retention. A kept old-destination copy is tracked in `log_segment_legacy_copies` with the `ts_to` it had at migration time, and expires on the exact same hourly sweep, using the exact same content-time rule, as every other segment. "Kept" means "not deleted immediately as part of the migration" — not "exempt from retention."
+
+## Why `worker-provisioner` cannot run more than one replica
+
+The log collector's in-memory buffer for a given agent's unflushed lines lives on exactly **one** `worker-provisioner` process. There is no ownership, lease, or routing mechanism today that would let `backend-api` — for example, to fetch the live-buffer tail that closes the search recency gap — find the *correct* replica among several if there were more than one. Running two replicas today would silently produce one of two bad outcomes depending on which replica a given agent's reconcile tick landed on: duplicate collection for some agents, or missing recent data for others, with nothing pointing at the cause.
+
+Rather than allow that intermittent, hard-to-diagnose failure mode, the Helm chart fails install/upgrade outright if `workerProvisioner.replicas` is set above `1`, with an error naming the actual reason (not just "unsupported value").
+
+Scaling `worker-provisioner` beyond one replica is a legitimate future need — but the pressure for it is expected to come from BullMQ provisioning-queue throughput at large fleet sizes, not from log collection. If and when that happens, it requires building a real claims/lease/routing mechanism (a claims table, a lease protocol, and routing backend-api's buffer reads to the right replica) as its own separately-scoped project — not a configuration change or a quick patch to this feature.
+
+## Live tail keeps its own stream, on purpose
+
+Opening an agent's live logs in the browser (the existing log viewer on the agent detail page) attaches a **second, independent** follow stream against the same container, alongside the collector's own persistent stream — doubling the Docker/Kubernetes API load for that specific agent while the viewer is open. This is an accepted v1 tradeoff, not an oversight:
+
+- It's **usage-gated**, not a standing cost — the second stream exists only while a human actually has a viewer open on that specific agent, not per agent in the fleet.
+- Rewiring the live viewer to subscribe to the collector's buffer instead would make the browser's live-tail path depend on `worker-provisioner` reachability, for a feature that works today without it.
+- It's explicitly planned to be revisited once there's real usage data on how often viewers are actually left open concurrently across a fleet — not deferred indefinitely by default.
+
+Two independent parsers reading the same byte stream can format a line cosmetically differently between the persisted copy and the live-tail copy — this is tolerable and not a correctness issue.
+
+## Environment variables
+
+See the [environment variable reference](/configuration/environment-variables) for the full `NORA_LOG_*` list, or `.env.example`'s "Logging Control Plane" section for inline documentation matching the managed-backups block's format.

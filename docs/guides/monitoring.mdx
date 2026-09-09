@@ -122,6 +122,12 @@ To filter events to a specific agent:
 GET /api/monitoring/events?agentId=<agent-id>
 ```
 
+To scope the browser (session) path to one workspace — the same filter a workspace switcher applies — pass `workspaceId`; Nora checks that you're a member before applying it:
+
+```http theme={null}
+GET /api/monitoring/events?workspaceId=<workspace-id>
+```
+
 You can also control the number of results returned:
 
 ```http theme={null}
@@ -129,6 +135,10 @@ GET /api/monitoring/events?limit=100
 ```
 
 The default limit is 50 events, ordered by `created_at` descending (newest first).
+
+<Note>
+  This is the **Operator lens** — Nora's audit-shaped activity log, scoped to actions taken on and by your agents. It's a different data source from **runtime container logs** (raw container stdout/stderr, persisted separately with search, export, and retention) — see the [logging guide](/guides/logging) for that surface.
+</Note>
 
 ## Agent metrics summary
 
