@@ -490,6 +490,59 @@ Use `NORA_BACKUP_STORAGE=ssh`.
 | `NORA_BACKUP_SSH_PRIVATE_KEY` | No       | —       | PEM-encoded private key for SSH auth.              |
 | `NORA_BACKUP_SSH_PASSWORD`    | No       | —       | Password fallback when key auth is not configured. |
 
+## Logging control plane
+
+`NORA_LOG_STORAGE` selects the destination for persisted runtime log segments — same driver set and code path as managed backups. These values only seed the *initial* destination; `GET`/`PUT /admin/log-storage` reads and writes the database afterward, which becomes authoritative. **`local` is unsupported on Kubernetes** — the Helm chart fails install/upgrade if it resolves to `local` with `k8s` enabled. See the [logging guide](/guides/logging) for storage selection, destination migration, retention, and key rotation.
+
+| Variable                          | Required                        | Default | Description                                                                                                                                    |
+| ---------------------------------- | -------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NORA_LOG_STORAGE`                 | No                                | `local` | Destination type. One of `local`, `s3`, `r2`, `ssh`. Not `local` when `k8s` is an enabled deploy target.                                        |
+| `NORA_LOG_DIR`                     | No                                | —       | Override path for the `local` destination. Defaults to the `nora_logs` Docker volume.                                                          |
+| `NORA_LOG_LOCAL_MAX_BYTES`         | No                                | `53687091200` (50 GiB) | Installation-wide disk budget for the `local` driver. No eviction at this cap — collection halts for every workspace until raised or logs are deleted. Ignored by `s3`/`r2`/`ssh`. |
+| `NORA_LOG_RETENTION_CEILING_DAYS`  | No                                | `30`    | Platform-wide retention ceiling in days (selfhosted mode; PaaS uses plan presets instead). Per-workspace retention is clamped to this.          |
+| `NORA_LOG_ENCRYPTION_KEY`          | Yes, before the first log flushes | —       | 32-byte hex key(s) encrypting log segments at rest, separate from `NORA_BACKUP_ENCRYPTION_KEY`. Comma-separated `keyId:hexkey` pairs support rotation (first entry is current); a bare 64-char hex value is treated as key id `default`. |
+| `NORA_OTLP_INGEST_SECRET`          | Yes, before enabling tracing      | —       | HMAC key used to mint and verify per-agent OTLP trace-ingest keys (`x-nora-ingest-key`). Rotating it revokes every previously issued key at once. |
+| `NORA_OTLP_PUBLIC_ENDPOINT`        | No                                | —       | Overrides the OTLP endpoint agents export traces to; defaults to `BACKEND_API_URL`. Set this for Kubernetes, remote-Docker, and Proxmox agents that reach the control plane at a different address than `BACKEND_API_URL` from their own network position. |
+
+### S3-compatible
+
+Use `NORA_LOG_STORAGE=s3` for AWS S3 or any S3-compatible service. Set `NORA_LOG_S3_ENDPOINT` for non-AWS providers.
+
+| Variable                        | Required | Default | Description                             |
+| -------------------------------- | -------- | ------- | --------------------------------------- |
+| `NORA_LOG_S3_BUCKET`            | No       | —       | S3 bucket name.                         |
+| `NORA_LOG_S3_REGION`            | No       | —       | AWS region or compatible region string. |
+| `NORA_LOG_S3_ENDPOINT`          | No       | —       | Custom endpoint for non-AWS providers.  |
+| `NORA_LOG_S3_ACCESS_KEY_ID`     | No       | —       | Access key.                             |
+| `NORA_LOG_S3_SECRET_ACCESS_KEY` | No       | —       | Secret access key.                      |
+| `NORA_LOG_S3_SESSION_TOKEN`     | No       | —       | Optional STS session token.             |
+
+### Cloudflare R2
+
+Use `NORA_LOG_STORAGE=r2`. Set `NORA_LOG_R2_ENDPOINT` to your account endpoint, e.g. `https://<account-id>.r2.cloudflarestorage.com`. R2's zero egress fees suit repeated log reads.
+
+| Variable                        | Required | Default | Description                       |
+| -------------------------------- | -------- | ------- | ---------------------------------- |
+| `NORA_LOG_R2_BUCKET`            | No       | —       | R2 bucket name.                   |
+| `NORA_LOG_R2_REGION`            | No       | —       | Region.                           |
+| `NORA_LOG_R2_ENDPOINT`          | No       | —       | Account-specific R2 endpoint URL. |
+| `NORA_LOG_R2_ACCESS_KEY_ID`     | No       | —       | R2 access key.                    |
+| `NORA_LOG_R2_SECRET_ACCESS_KEY` | No       | —       | R2 secret access key.             |
+| `NORA_LOG_R2_SESSION_TOKEN`     | No       | —       | Optional session token.           |
+
+### SSH / SFTP
+
+Use `NORA_LOG_STORAGE=ssh`. Inherited from managed backups; untested for log segments specifically.
+
+| Variable                    | Required | Default | Description                                        |
+| ---------------------------- | -------- | ------- | --------------------------------------------------- |
+| `NORA_LOG_SSH_HOST`        | No       | —       | SSH host.                                          |
+| `NORA_LOG_SSH_PORT`        | No       | `22`    | SSH port.                                          |
+| `NORA_LOG_SSH_USERNAME`    | No       | —       | SSH user.                                          |
+| `NORA_LOG_SSH_REMOTE_PATH` | No       | —       | Remote path where log segments are uploaded.       |
+| `NORA_LOG_SSH_PRIVATE_KEY` | No       | —       | PEM-encoded private key for SSH auth.              |
+| `NORA_LOG_SSH_PASSWORD`    | No       | —       | Password fallback when key auth is not configured. |
+
 ## Security
 
 | Variable       | Required | Default                 | Description                                                                                                                                         |

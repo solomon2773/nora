@@ -34,7 +34,7 @@ If you want to build an app visually, use a builder. If you need to **run agent 
 
 _Laminar, OpenLIT, LangWatch_
 
-Those platforms own tracing, evaluations, datasets, and guardrails at the LLM-call level. Nora's monitoring is **runtime operations monitoring**: agent health, queue state, container metrics, live logs, runtime events, and cost visibility. Nora does not currently provide span-level traces, eval suites, or dataset management — treat trace/eval platforms as adjacent integrations, not something Nora replaces.
+Those platforms own evaluations, datasets, and guardrails at the LLM-call level. Nora's monitoring is **runtime operations monitoring**: agent health, queue state, container metrics, live logs, runtime events, and cost visibility — and, for OpenClaw agents, native OTLP span-level traces correlated against runtime logs (see the [logging guide](/guides/logging)), captured for operational debugging rather than evaluation. Nora does not provide eval suites or dataset management — treat eval platforms as adjacent integrations, not something Nora replaces.
 
 ## Nora vs. sandbox infrastructure
 

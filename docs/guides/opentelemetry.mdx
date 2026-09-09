@@ -24,10 +24,15 @@ It is **disabled by default** and **fail-open**: a collector outage or misconfig
 | `nora.agent.memory.usage`   | gauge     | Latest sampled container memory (MB) per running agent                                          |
 
 <Note>
-  Nora observes telemetry at the **exchange** granularity it actually receives from the runtimes.
-  Per-LLM-call and per-tool-call sub-spans depend on event streams OpenClaw and Hermes do not
-  currently expose to the control plane, and are tracked as a future enhancement. A2A Agent Cards
-  are likewise on the roadmap.
+  This guide covers Nora's own **backend-level** telemetry — the exchange-granularity spans and
+  metrics above, exported *from* the control plane to *your* observability stack. Per-LLM-call and
+  per-tool-call sub-spans are a separate, OpenClaw-specific capability: agents push real
+  OpenTelemetry traces *into* Nora's own native OTLP receiver, where they're stored, searched, and
+  shown in the Traces lens on `/app/logs` — see the [logging control plane
+  guide](/guides/logging#otlp-trace-ingest-and-the-traces-lens) for enabling it per workspace. It's
+  OpenClaw-only (Hermes has no equivalent OTel export) and doesn't currently forward into the
+  external stack this guide configures — the two systems are independent today. A2A Agent Cards
+  remain on the roadmap.
 </Note>
 
 ## Enable it
