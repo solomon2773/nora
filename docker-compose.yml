@@ -86,6 +86,16 @@ services:
       - ./backend-api:/app
       - ./workers:/workers:ro
       - ./workers/provisioner/backends:/app/backends
+      # Logging control plane: routes/agents.ts, routes/workspaces.ts,
+      # routes/admin.ts, routes/observability.ts, and logSearch.ts all
+      # require workers/provisioner/logs/*.ts modules (segment read/delete/
+      # migration logic). Those modules in turn require backend-api's own
+      # db.ts/monitoring.ts/platformSettings.ts/middleware via
+      # `../../../backend-api/*.ts` — the exact mirror of how
+      # worker-provisioner already self-mounts backend-api at /backend-api
+      # for the reverse direction. Without this, those requires resolve
+      # against nothing and the process crash-loops at boot.
+      - ./backend-api:/backend-api:ro
       - ./agent-runtime:/agent-runtime:ro
       - ./tsconfig.base.json:/tsconfig.base.json:ro
       - ${NORA_HOST_REPO_DIR:-.}:/nora-host-repo:ro
@@ -106,6 +116,11 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      # Lets modules loaded from /backend-api (see the /backend-api mount
+      # above) resolve npm packages (pg, etc.) via this container's own
+      # installed node_modules — mirrors worker-provisioner's identical fix
+      # for the same cross-mount require pattern in the other direction.
+      NODE_PATH: /app/node_modules
       NORA_ENV_FILE: ${NORA_ENV_FILE:-.env}
       NORA_UPGRADE_COMPOSE_FILES: ${NORA_UPGRADE_COMPOSE_FILES:-}
       NORA_UPGRADE_PUBLIC_HEALTH_URL: ${NORA_UPGRADE_PUBLIC_HEALTH_URL:-}
