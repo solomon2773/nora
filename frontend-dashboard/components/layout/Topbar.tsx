@@ -30,7 +30,7 @@ const PAGE_META = {
   },
   "/logs": {
     title: "Logs",
-    subtitle: "Review account activity, request failures, and runtime events.",
+    subtitle: "Operator activity, per-agent runtime logs, and trace correlation in one place.",
   },
   "/workspaces": {
     title: "Workspaces",

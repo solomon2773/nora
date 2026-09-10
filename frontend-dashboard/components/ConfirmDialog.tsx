@@ -1,6 +1,26 @@
 import { AlertTriangle, X } from "lucide-react";
 
-export default function ConfirmDialog({ open, title, message, confirmLabel, onConfirm, onCancel }) {
+/**
+ * Generic confirm dialog, used across the app for a variety of destructive
+ * (and non-destructive) confirmations.
+ *
+ * `children` and `confirmDisabled` exist for Phase 5c/8 item 11: the agent
+ * and workspace delete flows must not let an operator confirm without an
+ * explicit keep-or-delete-logs choice — the backend rejects a delete
+ * request missing that boolean outright, with no default. Callers that
+ * don't need this (the vast majority) simply omit both props and get the
+ * original behavior unchanged.
+ */
+export default function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+  children = null,
+  confirmDisabled = false,
+}) {
   if (!open) return null;
 
   return (
@@ -28,6 +48,8 @@ export default function ConfirmDialog({ open, title, message, confirmLabel, onCo
           </button>
         </div>
 
+        {children}
+
         <div className="flex items-center justify-end gap-3 pt-2">
           <button
             onClick={onCancel}
@@ -37,7 +59,8 @@ export default function ConfirmDialog({ open, title, message, confirmLabel, onCo
           </button>
           <button
             onClick={onConfirm}
-            className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-sm font-bold text-white rounded-xl transition-all shadow-lg shadow-red-500/20"
+            disabled={confirmDisabled}
+            className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-sm font-bold text-white rounded-xl transition-all shadow-lg shadow-red-500/20 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-red-600"
           >
             {confirmLabel || "Delete"}
           </button>

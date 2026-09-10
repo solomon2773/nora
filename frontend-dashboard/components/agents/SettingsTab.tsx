@@ -25,6 +25,12 @@ export default function SettingsTab({
   const [envVars, setEnvVars] = useState("");
   const [agentName, setAgentName] = useState(agent.name || "");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Phase 5c item 1 / Phase 8 item 11: the backend rejects a delete request
+  // that omits `deleteLogs` outright, with no default. `null` here means
+  // "no explicit choice yet" — deliberately distinct from `false`, so the
+  // confirm button stays disabled until the operator actually clicks one of
+  // the two options below, never a pre-selected radio state.
+  const [deleteLogsChoice, setDeleteLogsChoice] = useState<boolean | null>(null);
   const toast = useToast();
   const runtimeFamilyLabel = formatRuntimeFamilyLabel(agent.runtime_family);
   const supportsAgentHub = runtimeSupportsAgentHubSharing(agent);
@@ -66,12 +72,52 @@ export default function SettingsTab({
             : "Are you sure you want to permanently delete this agent? This will destroy the container and all data. This action cannot be undone."
         }
         confirmLabel={isExternal ? "Deregister" : "Delete Agent"}
+        confirmDisabled={deleteLogsChoice === null}
         onConfirm={() => {
+          if (deleteLogsChoice === null) return;
           setShowDeleteConfirm(false);
-          onDelete();
+          onDelete(deleteLogsChoice);
+          setDeleteLogsChoice(null);
         }}
-        onCancel={() => setShowDeleteConfirm(false)}
-      />
+        onCancel={() => {
+          setShowDeleteConfirm(false);
+          setDeleteLogsChoice(null);
+        }}
+      >
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+            This agent's logs
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Choose whether to keep or delete this agent's runtime logs. There is no default —
+            pick one before deleting.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setDeleteLogsChoice(false)}
+              className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${
+                deleteLogsChoice === false
+                  ? "border-blue-500 bg-blue-50 text-blue-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Keep logs
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteLogsChoice(true)}
+              className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${
+                deleteLogsChoice === true
+                  ? "border-red-500 bg-red-50 text-red-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Delete logs
+            </button>
+          </div>
+        </div>
+      </ConfirmDialog>
 
       {/* Agent Name */}
       <section className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
