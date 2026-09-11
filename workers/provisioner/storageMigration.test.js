@@ -13,6 +13,7 @@ const {
   startStorageMigration,
   migrateSegmentBatch,
   resumeStorageMigration,
+  retryStorageMigration,
   getMigrationStatus,
   backendsRequiringRetainedCredentials,
   stopCapacityResumeTimer,
@@ -75,6 +76,13 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
 
       if (sql.includes("SELECT id FROM storage_migration_jobs WHERE status = 'paused'")) {
         return { rows: jobs.filter((j) => j.status === "paused").map((j) => ({ id: j.id })) };
+      }
+
+      if (sql.includes("SELECT id FROM storage_migration_jobs WHERE status = 'failed' ORDER BY started_at DESC LIMIT 1")) {
+        const failed = jobs
+          .filter((j) => j.status === "failed")
+          .sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
+        return { rows: failed.length ? [{ id: failed[0].id }] : [] };
       }
 
       if (sql.includes("SELECT from_backend, to_backend FROM storage_migration_jobs")) {
@@ -828,5 +836,97 @@ test("startStorageMigration rejects starting a second migration while one is alr
       assert.equal(error.code, "MIGRATION_ALREADY_RUNNING");
       return true;
     },
+  );
+});
+
+// ── retryStorageMigration ─────────────────────────────────────────────────
+//
+// Regression coverage for the real bug this closes: after a failed
+// migration, `PUT /admin/log-storage` already wrote the new destination to
+// `platform_settings` BEFORE the migration ran (item 1's ordering), so
+// simply fixing bad credentials and re-saving the same destination never
+// re-triggers `startStorageMigration` (it only fires on an actual backend
+// change) — the job just sits `failed` forever with no way back in. These
+// tests are against `retryStorageMigration` directly, the recovery path.
+
+function failedJob(overrides = {}) {
+  return {
+    id: "job-failed-1",
+    from_backend: "local",
+    to_backend: "s3",
+    keep_source: false,
+    status: "failed",
+    segments_total: 2,
+    segments_migrated: 1,
+    checkpoint: "seg-01",
+    started_at: new Date(Date.now() - 60000).toISOString(),
+    completed_at: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+test("retryStorageMigration rejects with no failed job to retry", async () => {
+  const db = fakeDb({ jobs: [] });
+  const deps = baseDeps({ db, store: fakeObjectStore() });
+
+  await assert.rejects(() => retryStorageMigration(deps), (error) => {
+    assert.equal(error.code, "NO_FAILED_MIGRATION");
+    assert.equal(error.statusCode, 404);
+    return true;
+  });
+});
+
+test("retryStorageMigration rejects while another migration is running or paused", async () => {
+  const db = fakeDb({
+    jobs: [
+      failedJob({ id: "job-failed-1" }),
+      {
+        id: "job-running-1",
+        from_backend: "local",
+        to_backend: "r2",
+        keep_source: false,
+        status: "running",
+        segments_total: 0,
+        segments_migrated: 0,
+        checkpoint: null,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+      },
+    ],
+  });
+  const deps = baseDeps({ db, store: fakeObjectStore() });
+
+  await assert.rejects(() => retryStorageMigration(deps), (error) => {
+    assert.equal(error.code, "MIGRATION_ALREADY_RUNNING");
+    assert.equal(error.statusCode, 409);
+    return true;
+  });
+});
+
+test("retryStorageMigration flips the failed job back to running and finishes migrating the remaining segments, resuming from its checkpoint", async () => {
+  // seg-01 already succeeded before the failure (reflected in checkpoint /
+  // segments_migrated); only seg-02 should actually get migrated on retry.
+  const segments = [makeSegment({ id: "seg-01" }), makeSegment({ id: "seg-02" })];
+  const db = fakeDb({ segments, jobs: [failedJob()] });
+  const store = fakeObjectStore(
+    Object.fromEntries(segments.map((s) => [`local:${s.storage_key}`, Buffer.from(s.id)])),
+  );
+  const deps = baseDeps({ db, store, toBackend: "s3" });
+
+  const { jobId } = await retryStorageMigration(deps);
+  assert.equal(jobId, "job-failed-1");
+  assert.equal(db.jobs.find((j) => j.id === jobId).status, "running");
+
+  const outcome = await migrateSegmentBatch(jobId, deps);
+  assert.equal(outcome.status, "running");
+  assert.equal(outcome.migrated, 1, "only the not-yet-migrated segment is processed");
+
+  const done = await migrateSegmentBatch(jobId, deps);
+  assert.equal(done.status, "completed");
+
+  assert.deepEqual(
+    store.putCalls.map((c) => c.key),
+    [segments[1].storage_key],
+    "the already-succeeded segment must not be re-migrated",
   );
 });

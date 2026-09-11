@@ -14,6 +14,7 @@ const {
   deleteStorageObject,
   listStorageObjects,
   deleteStorageObjects,
+  probeStorageDestination,
   s3Request,
 } = objectStorage;
 
@@ -269,10 +270,125 @@ describe("s3 backend (mocked HTTP, MinIO-shaped path-style config)", () => {
     await expect(getStorageObject("missing.txt", s3TestConfig())).rejects.toThrow(StorageError);
   });
 
+  it("extracts a clean message from an S3 error XML body instead of surfacing the raw XML", async () => {
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      "<Error><Code>SignatureDoesNotMatch</Code>" +
+      "<Message>The request signature we calculated does not match the signature you provided. " +
+      "Check your key and signing method.</Message>" +
+      "<Key>.nora-connectivity-probe-1789062705365-eedf0279</Key>" +
+      "<BucketName>nora-logs-local</BucketName>" +
+      "<RequestId>18D4070D3ABCE517</RequestId><HostId>abc123</HostId></Error>";
+    global.fetch = jest.fn(async () => new Response(xml, { status: 403 }));
+    await expect(getStorageObject("missing.txt", s3TestConfig())).rejects.toMatchObject({
+      message:
+        "The request signature we calculated does not match the signature you provided. " +
+        "Check your key and signing method. (SignatureDoesNotMatch)",
+      code: "STORAGE_REQUEST_FAILED",
+    });
+  });
+
+  it("falls back to the raw body for a non-XML error response (a non-AWS S3-compatible service)", async () => {
+    global.fetch = jest.fn(async () => new Response("access denied", { status: 403 }));
+    await expect(getStorageObject("missing.txt", s3TestConfig())).rejects.toMatchObject({
+      message: "access denied",
+    });
+  });
+
   it("throws STORAGE_S3_NOT_CONFIGURED when required S3 fields are missing", async () => {
     await expect(
       putStorageObject("a.txt", Buffer.from("x"), { storageBackend: "s3" }),
     ).rejects.toMatchObject({ code: "STORAGE_S3_NOT_CONFIGURED" });
+  });
+});
+
+describe("probeStorageDestination", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function s3TestConfig(overrides = {}) {
+    return {
+      storageBackend: "s3",
+      bucket: "test-bucket",
+      region: "us-east-1",
+      endpoint: "http://127.0.0.1:9000",
+      accessKeyId: "minioadmin",
+      secretAccessKey: "minioadmin",
+      ...overrides,
+    };
+  }
+
+  it("skips the probe for a local destination — no remote credentials to verify", async () => {
+    let fetchCalled = false;
+    global.fetch = jest.fn(async () => {
+      fetchCalled = true;
+      throw new Error("must not be called");
+    });
+    const result = await probeStorageDestination({ storageBackend: "local", localPath: "/tmp/nora-probe-unused" });
+    expect(result).toEqual({ ok: true });
+    expect(fetchCalled).toBe(false);
+  });
+
+  it("writes, reads back, and cleans up a probe object against s3, leaving nothing behind", async () => {
+    const store = new Map();
+    const calls = [];
+    global.fetch = jest.fn(async (url, init) => {
+      const parsed = new URL(url);
+      const method = init.method;
+      calls.push(method);
+      const key = decodeURIComponent(parsed.pathname.replace(/^\/test-bucket\//, ""));
+
+      if (method === "PUT") {
+        store.set(key, Buffer.from(init.body));
+        return new Response(null, { status: 200 });
+      }
+      if (method === "GET") {
+        if (!store.has(key)) return new Response("not found", { status: 404 });
+        return new Response(store.get(key), { status: 200 });
+      }
+      if (method === "DELETE") {
+        store.delete(key);
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    });
+
+    const result = await probeStorageDestination(s3TestConfig());
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual(["PUT", "GET", "DELETE"]);
+    expect(store.size).toBe(0); // cleaned up — no probe object left behind
+  });
+
+  it("rejects with a StorageError when the write is refused (e.g. bad credentials) and never leaves a partial object", async () => {
+    global.fetch = jest.fn(async () => new Response("access denied", { status: 403 }));
+    await expect(probeStorageDestination(s3TestConfig())).rejects.toThrow(StorageError);
+  });
+
+  it("still attempts cleanup when the write succeeds but the read-back fails, without masking the real error", async () => {
+    global.fetch = jest.fn(async (url, init) => {
+      if (init.method === "PUT") return new Response(null, { status: 200 });
+      if (init.method === "GET") return new Response("not found", { status: 404 });
+      if (init.method === "DELETE") return new Response(null, { status: 204 });
+      throw new Error("unexpected");
+    });
+    await expect(probeStorageDestination(s3TestConfig())).rejects.toThrow(StorageError);
+    // The DELETE cleanup attempt happened even though GET failed above it.
+    expect(global.fetch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("throws STORAGE_S3_NOT_CONFIGURED (never touching the network) when credentials are missing — the original bug this exists to catch pre-flight", async () => {
+    let fetchCalled = false;
+    global.fetch = jest.fn(async () => {
+      fetchCalled = true;
+      throw new Error("must not be called");
+    });
+    await expect(
+      probeStorageDestination({ storageBackend: "s3", bucket: "b" }),
+    ).rejects.toMatchObject({ code: "STORAGE_S3_NOT_CONFIGURED" });
+    expect(fetchCalled).toBe(false);
   });
 });
 

@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Clock, Loader2 } from "lucide-react";
 import {
-  computeVirtualRange,
+  computeVirtualRangeFromOffsets,
   isApproximateTimestamp,
   type CapacityHaltWindow,
   type LogLine,
@@ -17,15 +17,22 @@ import {
 // `@tanstack/react-virtual` dependency today (checked package.json and
 // existing component usage before reaching for a new one — see
 // observabilityClient.ts's comment on `computeVirtualRange`). Rather than
-// add a new dependency for a single fixed-row-height list, this hand-rolls
-// a minimal windowed list: a tall spacer div sized to the full row count so
-// native scrolling behaves normally, with only the rows in the current
-// scroll window actually mounted. This is a well-understood, small amount
-// of code and keeps the dependency surface unchanged; if a second
-// virtualized list shows up elsewhere in this app, that's the point at
-// which pulling in a real library stops being premature.
+// add a new dependency for a single list, this hand-rolls a minimal windowed
+// list: a tall spacer div sized to the full (measured) row extent so native
+// scrolling behaves normally, with only the rows in the current scroll
+// window actually mounted. This is a well-understood, small amount of code
+// and keeps the dependency surface unchanged; if a second virtualized list
+// shows up elsewhere in this app, that's the point at which pulling in a
+// real library stops being premature.
+//
+// Rows wrap (no truncation) since a log message can be any length, so row
+// height is variable rather than fixed. Each mounted row reports its actual
+// rendered height via ResizeObserver; `ESTIMATED_ROW_HEIGHT` is only the
+// placeholder used for rows that haven't been measured yet (off-screen ones,
+// and the initial paint), so the scrollbar doesn't jump around as real
+// measurements come in.
 
-const ROW_HEIGHT = 28;
+const ESTIMATED_ROW_HEIGHT = 28;
 const OVERSCAN = 12;
 
 const LEVEL_STYLES: Record<string, string> = {
@@ -130,12 +137,74 @@ export default function LogTable({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
 
+  // Measured heights, keyed by position in `lines` (not by row identity —
+  // when live-tail prepends new rows the positions shift, so a stale
+  // measurement briefly applies to the wrong content; it self-corrects on
+  // the next measurement pass, which is a fine trade for not re-measuring
+  // everything on every live-tail frame).
+  const heightsRef = useRef<Map<number, number>>(new Map());
+  const elementIndexRef = useRef<Map<Element, number>>(new Map());
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const [heightsVersion, setHeightsVersion] = useState(0);
+
+  const recordHeight = useCallback((index: number, measured: number) => {
+    const rounded = Math.round(measured);
+    if (rounded <= 0 || heightsRef.current.get(index) === rounded) return;
+    heightsRef.current.set(index, rounded);
+    setHeightsVersion((v) => v + 1);
+  }, []);
+
+  const getResizeObserver = useCallback(() => {
+    if (!resizeObserverRef.current) {
+      resizeObserverRef.current = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const index = elementIndexRef.current.get(entry.target);
+          if (index !== undefined) {
+            recordHeight(index, entry.target.getBoundingClientRect().height);
+          }
+        }
+      });
+    }
+    return resizeObserverRef.current;
+  }, [recordHeight]);
+
+  const rowRef = useCallback(
+    (index: number) => (el: HTMLDivElement | null) => {
+      if (!el) return undefined;
+      const observer = getResizeObserver();
+      elementIndexRef.current.set(el, index);
+      observer.observe(el);
+      recordHeight(index, el.getBoundingClientRect().height);
+      return () => {
+        observer.unobserve(el);
+        elementIndexRef.current.delete(el);
+      };
+    },
+    [getResizeObserver, recordHeight],
+  );
+
+  // Cumulative offsets: offsets[i] is the top of row i, offsets[n] is the
+  // total (measured-or-estimated) content height.
+  const offsets = useMemo(() => {
+    const result = new Array<number>(lines.length + 1);
+    result[0] = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const measured = heightsRef.current.get(i);
+      result[i + 1] = result[i] + (measured ?? ESTIMATED_ROW_HEIGHT);
+    }
+    return result;
+    // heightsVersion is a trigger, not a value read here — it bumps whenever
+    // a real measurement lands so offsets recompute with fresh data.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines.length, heightsVersion]);
+
   const range = useMemo(
-    () => computeVirtualRange(scrollTop, height, ROW_HEIGHT, lines.length, OVERSCAN),
-    [scrollTop, height, lines.length],
+    () => computeVirtualRangeFromOffsets(offsets, scrollTop, height, OVERSCAN),
+    [offsets, scrollTop, height],
   );
 
   const visibleLines = lines.slice(range.startIndex, range.endIndex);
+  const totalHeight = offsets[offsets.length - 1];
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -177,21 +246,21 @@ export default function LogTable({
         ) : lines.length === 0 ? (
           <CapabilityMessage capability={capability} />
         ) : (
-          <div style={{ height: lines.length * ROW_HEIGHT, position: "relative" }}>
+          <div style={{ height: totalHeight, position: "relative" }}>
             {visibleLines.map((line, i) => {
               const absoluteIndex = range.startIndex + i;
               const approximate = isApproximateTimestamp(line);
               return (
                 <div
                   key={`${absoluteIndex}-${line.ord ?? ""}-${line.ts || line.observed_ts}`}
+                  ref={rowRef(absoluteIndex)}
                   style={{
                     position: "absolute",
-                    top: absoluteIndex * ROW_HEIGHT,
-                    height: ROW_HEIGHT,
+                    top: offsets[absoluteIndex],
                     left: 0,
                     right: 0,
                   }}
-                  className={`flex items-center gap-2 border-b border-slate-50 px-3 ${line._live ? "bg-emerald-50/40" : ""}`}
+                  className={`flex items-start gap-2 border-b border-slate-50 px-3 py-1.5 ${line._live ? "bg-emerald-50/40" : ""}`}
                 >
                   <span
                     className={`w-24 shrink-0 tabular-nums ${approximate ? "text-amber-600" : "text-slate-400"}`}
@@ -206,7 +275,7 @@ export default function LogTable({
                   </span>
                   <StreamBadge stream={line.stream} />
                   <LevelBadge level={line.level} />
-                  <span className="min-w-0 flex-1 truncate text-slate-800" title={line.message}>
+                  <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-slate-800">
                     {line.message}
                   </span>
                 </div>

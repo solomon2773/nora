@@ -41,6 +41,16 @@ export function formatRateMb(value) {
   return `${numeric.toFixed(numeric >= 10 ? 1 : 2)} MB/s`;
 }
 
+export function formatBytes(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return "—";
+  if (numeric === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(Math.floor(Math.log(numeric) / Math.log(1024)), units.length - 1);
+  const scaled = numeric / Math.pow(1024, exponent);
+  return `${scaled.toFixed(exponent === 0 || scaled >= 100 ? 0 : 1)} ${units[exponent]}`;
+}
+
 export function formatDurationSeconds(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) return "—";

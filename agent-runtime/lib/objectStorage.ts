@@ -305,11 +305,20 @@ async function s3Request(
     ...(method === "PUT" || method === "POST" ? { body: payload } : {}),
   });
   if (!response.ok && !(method === "DELETE" && response.status === 404)) {
-    const message = await response.text().catch(() => "");
-    throw new StorageError(
-      message || `S3 storage request failed with ${response.status}`,
-      "STORAGE_REQUEST_FAILED",
-    );
+    const rawBody = await response.text().catch(() => "");
+    const parsed = parseS3ErrorBody(rawBody);
+    const displayMessage = parsed
+      ? parsed.message && parsed.code
+        ? `${parsed.message} (${parsed.code})`
+        : parsed.message || parsed.code
+      : rawBody || `S3 storage request failed with ${response.status}`;
+    const error = new StorageError(displayMessage, "STORAGE_REQUEST_FAILED");
+    // The specific S3 error code (e.g. "SignatureDoesNotMatch"), separate
+    // from `displayMessage` above, so a caller can branch on it — e.g. to
+    // map it onto an even shorter plain-language message — without having
+    // to re-parse it back out of the message string.
+    if (parsed?.code) error.remoteCode = parsed.code;
+    throw error;
   }
   if (method === "GET" || method === "POST") return response;
   return null;
@@ -340,6 +349,26 @@ function xmlEscape(text = "") {
 function xmlTag(block, tag) {
   const match = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
   return match ? xmlUnescape(match[1]) : null;
+}
+
+/**
+ * S3's error responses are an XML body shaped like
+ * `<Error><Code>SignatureDoesNotMatch</Code><Message>...</Message>
+ * <RequestId>...</RequestId><HostId>...</HostId></Error>` — useful for AWS
+ * support tickets, useless (and actively confusing) surfaced verbatim to an
+ * operator. Pulls out `Code`/`Message` as separate fields so a caller can
+ * either show them as-is (still far more readable than the raw XML) or map
+ * `code` onto a short, plain-language message for well-known cases (see
+ * `FRIENDLY_S3_ERROR_MESSAGES` in observability.ts's probe handler).
+ * Returns `null` for a response that isn't this shape at all, e.g. a
+ * non-AWS S3-compatible service returning plain text or JSON.
+ */
+function parseS3ErrorBody(bodyText) {
+  if (!bodyText || !bodyText.includes("<Error>")) return null;
+  const code = xmlTag(bodyText, "Code");
+  const message = xmlTag(bodyText, "Message");
+  if (!code && !message) return null;
+  return { code, message };
 }
 
 /**
@@ -721,9 +750,63 @@ async function deleteStorageObjects(keys, config = {}, { signal } = {}) {
   return deleteLocalObjects(keys, resolved, { signal });
 }
 
+/**
+ * Verify a storage config actually works — writes a small marker object,
+ * reads it back to confirm round-trip integrity, then deletes it — instead
+ * of trusting untested credentials. Exists so a caller can validate a
+ * destination BEFORE committing to it (persisting it as the active
+ * destination, or kicking off a migration against it), rather than only
+ * discovering bad credentials/network/permissions when something that
+ * actually matters (a live log flush, a migration job) fails against them.
+ *
+ * `local` is skipped — no remote credentials to validate, and its
+ * writability/capacity are already covered by the caller's own
+ * capacity-gate checks at actual write time, so a duplicate check here
+ * would add nothing.
+ *
+ * Always attempts cleanup of the probe object, even when the write or
+ * read-back failed partway through, so a failed probe never leaves litter
+ * in the bucket/path being tested. Throws the same plain `StorageError` any
+ * other operation in this module throws — never HTTP-shaped — letting the
+ * caller decide how to surface it.
+ *
+ * @param {Object} config - a storage config, same shape as every other
+ *   function in this module takes.
+ * @returns {Promise<{ok: true}>}
+ */
+async function probeStorageDestination(config = {}, { signal } = {}) {
+  const resolved = normalizeStorageConfig(config);
+  if (resolved.storageBackend === "local") {
+    return { ok: true };
+  }
+
+  const probeKey = `.nora-connectivity-probe-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  const probeBody = Buffer.from("nora-log-storage-connectivity-probe");
+  try {
+    await putStorageObject(probeKey, probeBody, resolved, { signal });
+    const readBack = await getStorageObject(probeKey, resolved, { signal });
+    if (!Buffer.isBuffer(readBack) || !readBack.equals(probeBody)) {
+      throw new StorageError(
+        "Wrote a test object successfully, but reading it back returned different content.",
+        "STORAGE_PROBE_READBACK_MISMATCH",
+      );
+    }
+    return { ok: true };
+  } finally {
+    // Best-effort cleanup — a delete failure here must never mask (or
+    // replace) whatever the write/read outcome above actually was.
+    try {
+      await deleteStorageObject(probeKey, resolved, { signal });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 module.exports = {
   StorageError,
   normalizeStorageConfig,
+  probeStorageDestination,
   throwIfAborted,
   // local
   putLocalObject,

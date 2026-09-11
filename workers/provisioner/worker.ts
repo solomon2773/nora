@@ -5739,7 +5739,19 @@ healthServer.listen(HEALTH_PORT, () => {
 // block yet still boots exactly as before. Phase 4 (not yet built) is what
 // will call `.append()` on this instance from a real container log
 // collector; until then `flushAll()` below is a no-op over zero buffers.
-const segmentWriter = createSegmentWriter();
+//
+// NORA_LOG_FLUSH_INTERVAL_MS overrides the 15-minute default flush timer —
+// unset in normal operation, useful for exercising the segment/retention/
+// migration path on a short local dev cycle without waiting 15 minutes.
+const segmentWriter = createSegmentWriter(
+  process.env.NORA_LOG_FLUSH_INTERVAL_MS
+    ? { flushIntervalMs: Number(process.env.NORA_LOG_FLUSH_INTERVAL_MS) }
+    : {},
+);
+// Re-upload segments parked to local staging during a remote-destination
+// outage (Phase 3 item 16). Previously built but never scheduled, so parked
+// segments stayed stranded on disk forever after the destination recovered.
+segmentWriter?.startParkedSegmentRetry?.();
 
 // ── Log Collector (Logging Control Plane Phase 4) ─────────────────────
 //
@@ -5774,6 +5786,23 @@ Promise.resolve()
   .catch((error) => {
     console.error(`[worker] resumeStorageMigration failed at boot: ${error.message}`);
   });
+
+// ── Retention Sweeper (Logging Control Plane Phase 5 item 3) ─────────────
+//
+// Starts the hourly retention sweep, the daily storage reconciliation, and
+// the capacity-state check that `GET /admin/log-storage`'s `capacity.state`
+// (and the admin dashboard's storage-capacity banner) reads. This was
+// built in retentionSweeper.ts but never actually called from anywhere in
+// this file — every one of those three loops was dead code in production:
+// expired logs were never swept, orphaned storage objects were never
+// reconciled, and `capacity.state` stayed frozen at its "ok" initial value
+// forever regardless of real usage, since only `checkCapacityState()` (the
+// third loop) ever updates it and nothing was invoking that either. All
+// three timers are `.unref()`'d internally (see startRetentionSweeper's
+// own doc comment), so — like the log collector above — this never blocks
+// graceful shutdown and needs no shutdown-coordinator hook.
+const { startRetentionSweeper } = require("./logs/retentionSweeper");
+startRetentionSweeper();
 
 // This is the stop-hook registry item 6(a) asks for: "there may be no
 // collector/reconciler wired up yet since Phase 4 builds the collector —
@@ -5858,12 +5887,22 @@ function registerShutdownCoordinator({
     }
 
     let deadlineHit = false;
-    const flushPromise =
-      writer && typeof writer.flushAll === "function"
-        ? writer.flushAll().catch((error) => {
-            logger.error(`[shutdown] flushAll rejected: ${error.message}`);
-          })
-        : Promise.resolve();
+    // Prefer the writer's own shutdown(): besides flushing every buffer, it
+    // stops new appends and cuts remote-upload retry backoff short so a flush
+    // during a destination outage parks to local staging inside the deadline
+    // instead of being abandoned mid-retry. Plain flushAll() is the fallback
+    // for writers that don't expose shutdown().
+    const drain =
+      writer && typeof writer.shutdown === "function"
+        ? () => writer.shutdown()
+        : writer && typeof writer.flushAll === "function"
+          ? () => writer.flushAll()
+          : null;
+    const flushPromise = drain
+      ? drain().catch((error) => {
+          logger.error(`[shutdown] flushAll rejected: ${error.message}`);
+        })
+      : Promise.resolve();
     const timeoutPromise = new Promise((resolve) => {
       const timer = setTimeout(() => {
         deadlineHit = true;

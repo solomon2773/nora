@@ -463,6 +463,73 @@ async function resumeStorageMigration(deps = {}) {
   return { resumed: jobs.length, jobIds: jobs.map((j) => j.id) };
 }
 
+// ── retryStorageMigration ─────────────────────────────────────────────
+//
+// A `failed` job is otherwise a dead end: `resumeStorageMigration` above
+// only ever looks at `running`/`paused` jobs, and `PUT /admin/log-storage`
+// only starts a NEW migration when `storageBackend` actually changes from
+// what's already in `platform_settings` — but that column is written
+// BEFORE the migration is attempted (item 1's ordering), so it already
+// reads as the failed migration's target destination. Fixing the bad
+// credentials and re-saving the SAME destination looks, from that check's
+// perspective, like "nothing changed" — no new job gets created, and the
+// stale `failed` job keeps being what `GET /admin/log-storage/migration`
+// reports forever. This is the operator's actual recovery path: retry the
+// existing failed job from its own checkpoint (which already reflects
+// whatever segments succeeded before the failure — see item 5's per-batch
+// partial-credit guarantee) rather than requiring a real backend flip
+// (e.g. bounce through `local`) just to get `startStorageMigration` to
+// notice.
+
+/**
+ * Re-drive the most recent `failed` job from its checkpoint — functionally
+ * identical to resuming a `paused` job (same `driveMigrationJob` /
+ * `migrateSegmentBatch` machinery), just re-entered from `failed` instead
+ * of `paused`. Rejects if a migration is already `running`/`paused` (same
+ * one-at-a-time rule `startStorageMigration` enforces), and if there is no
+ * `failed` job to retry.
+ */
+async function retryStorageMigration(deps = {}) {
+  const db = lazyDb(deps);
+
+  const activeJob = await db.query(
+    `SELECT id FROM storage_migration_jobs WHERE status IN ('running','paused') LIMIT 1`,
+  );
+  if (activeJob.rows[0]) {
+    const error = new Error("A storage migration is already in progress");
+    error.statusCode = 409;
+    error.code = "MIGRATION_ALREADY_RUNNING";
+    throw error;
+  }
+
+  const failedJobResult = await db.query(
+    `SELECT id FROM storage_migration_jobs WHERE status = 'failed' ORDER BY started_at DESC LIMIT 1`,
+  );
+  const job = failedJobResult.rows[0];
+  if (!job) {
+    const error = new Error("No failed migration to retry");
+    error.statusCode = 404;
+    error.code = "NO_FAILED_MIGRATION";
+    throw error;
+  }
+
+  await db.query(
+    `UPDATE storage_migration_jobs SET status = 'running', completed_at = NULL WHERE id = $1`,
+    [job.id],
+  );
+
+  ensureCapacityResumeTimer(deps);
+  if (deps.autoAdvance !== false) {
+    driveMigrationJob(job.id, deps).catch((error) => {
+      (deps.logger || console).error(
+        `[storageMigration] retry of job ${job.id} failed: ${error.message}`,
+      );
+    });
+  }
+
+  return { jobId: job.id };
+}
+
 // ── Migration progress (GET /admin/log-storage/migration) ───────────────
 
 /**
@@ -527,6 +594,7 @@ module.exports = {
   startStorageMigration,
   migrateSegmentBatch,
   resumeStorageMigration,
+  retryStorageMigration,
   getMigrationStatus,
   backendsRequiringRetainedCredentials,
   driveMigrationJob,

@@ -50,7 +50,7 @@
 // mode this design exists to avoid, in exchange for occasionally duplicating
 // a handful of lines across a transient reconnect.
 
-const { parseContainerLogChunk } = require("../../../agent-runtime/lib/logLine.ts");
+const { createLogChunkStreamParser } = require("../../../agent-runtime/lib/logLine.ts");
 const {
   resolveAgentBackendType,
 } = require("../../../agent-runtime/lib/agentRuntimeFields.ts");
@@ -111,8 +111,8 @@ async function lastFlushedCursor(agentId, stream, { db } = {}) {
  *   defaults to logStorageConfig.ts's `logStorageConfig()`.
  * @param {Function} [deps.resolveAgentBackendType] - defaults to the shared
  *   agent-runtime helper; overridable for tests.
- * @param {Function} [deps.parseContainerLogChunk] - defaults to Phase 2's
- *   shared parser; overridable for tests.
+ * @param {Function} [deps.createLogChunkStreamParser] - defaults to Phase 2's
+ *   shared stateful stream parser; overridable for tests.
  * @param {number} [deps.reconcileIntervalMs]
  * @param {Function} [deps.setIntervalFn] / {Function} [deps.clearIntervalFn]
  *   - injectable timer functions for deterministic tests.
@@ -129,7 +129,7 @@ function createLogCollector(deps = {}) {
   const resolveStorageConfig =
     deps.logStorageConfig || require("./logStorageConfig.ts").logStorageConfig;
   const resolveBackendType = deps.resolveAgentBackendType || resolveAgentBackendType;
-  const parseChunk = deps.parseContainerLogChunk || parseContainerLogChunk;
+  const makeChunkParser = deps.createLogChunkStreamParser || createLogChunkStreamParser;
   const reconcileIntervalMs = deps.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS;
   const setIntervalFn = deps.setIntervalFn || setInterval;
   const clearIntervalFn = deps.clearIntervalFn || clearInterval;
@@ -210,17 +210,16 @@ function createLogCollector(deps = {}) {
 
     const held = { stream: rawStream, dead: false, tenant };
 
-    rawStream.on("data", (chunk) => {
-      if (held.dead) return;
-      let lines;
-      try {
-        lines = parseChunk(chunk, { stream: RUNTIME_STREAM });
-      } catch (error) {
-        logger.warn(
-          `[logCollector] failed to parse a log chunk for agent ${agentId}: ${error.message}`,
-        );
-        return;
-      }
+    // One stateful parser per attach — never per chunk. A `data` chunk from
+    // a live follow stream lands at an arbitrary byte offset, so parsing
+    // each chunk independently (the stateless `parseContainerLogChunk`) can
+    // split a multi-byte character or a Docker frame header across two
+    // chunks and corrupt whichever byte(s) straddled the split (surfacing
+    // as a stray `�` in a persisted line). The stateful parser carries that
+    // partial state across chunks instead.
+    const chunkParser = makeChunkParser({ stream: RUNTIME_STREAM });
+
+    function appendLines(lines) {
       if (!lines || lines.length === 0) return;
       Promise.resolve(
         segmentWriter.append(
@@ -235,16 +234,41 @@ function createLogCollector(deps = {}) {
       ).catch((error) => {
         logger.error(`[logCollector] segmentWriter.append failed for agent ${agentId}: ${error.message}`);
       });
+    }
+
+    rawStream.on("data", (chunk) => {
+      if (held.dead) return;
+      let lines;
+      try {
+        lines = chunkParser.push(chunk);
+      } catch (error) {
+        logger.warn(
+          `[logCollector] failed to parse a log chunk for agent ${agentId}: ${error.message}`,
+        );
+        return;
+      }
+      appendLines(lines);
     });
 
     // Item 4: end/error mark the stream dead so the NEXT reconcile tick
     // reattaches it — this is what turns a one-shot stream lifecycle into
-    // real reconnect behavior. Deliberately does NOT flush here: Phase 3's
-    // buffer stays open across a stream end, and a subsequent reattach
-    // resumes appending to the same buffer (bufferKey is (agentId, stream),
-    // independent of any particular attach).
+    // real reconnect behavior. Deliberately does NOT flush Phase 3's
+    // segment buffer here: it stays open across a stream end, and a
+    // subsequent reattach resumes appending to the same buffer (bufferKey
+    // is (agentId, stream), independent of any particular attach). This IS
+    // where the chunk parser's own `flush()` belongs, though — unrelated to
+    // the segment buffer — since a final line with no trailing newline
+    // would otherwise sit forever in this attach's now-discarded parser
+    // instance instead of ever reaching the segment buffer.
     rawStream.on("end", () => {
       held.dead = true;
+      try {
+        appendLines(chunkParser.flush());
+      } catch (error) {
+        logger.warn(
+          `[logCollector] failed to flush trailing log data for agent ${agentId}: ${error.message}`,
+        );
+      }
     });
     rawStream.on("error", (error) => {
       held.dead = true;

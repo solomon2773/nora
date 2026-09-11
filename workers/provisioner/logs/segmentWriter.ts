@@ -56,6 +56,11 @@ const DEFAULT_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 // requirement). This is a coarse, best-effort cap on parked bytes.
 const DEFAULT_STAGING_MAX_BYTES = 512 * 1024 * 1024;
 
+// How often parked segments are re-attempted once `startParkedSegmentRetry()`
+// is running. Short enough that a recovered destination is caught up within
+// a minute; each tick is a cheap readdir when nothing is parked.
+const DEFAULT_PARKED_RETRY_INTERVAL_MS = 30 * 1000;
+
 // Phase 5: how often the capacity gate is re-checked independent of any
 // flush attempt. This is what makes a capacity-paused stream resume
 // automatically (Phase 5 item 7 / Phase 4 item 7) rather than staying
@@ -379,6 +384,25 @@ function createSegmentWriter(deps = {}) {
   const buffers = new Map();
   let totalBufferedBytes = 0;
   let shuttingDown = false;
+
+  // Backoff sleeps for putWithRetryOrPark, wakeable by shutdown(). The full
+  // retry schedule (~15.5s by default) is longer than the shutdown
+  // coordinator's 10s deadline, so a flush caught mid-backoff by a SIGTERM
+  // would otherwise be abandoned before it ever reached the parking write —
+  // losing the segment outright. Once shutting down, retries stop and the
+  // segment parks immediately (a local disk write, well inside the deadline).
+  const pendingBackoffWakeups = new Set();
+  function retrySleep(ms) {
+    if (shuttingDown) return Promise.resolve();
+    return new Promise((resolve) => {
+      const wake = () => {
+        pendingBackoffWakeups.delete(wake);
+        resolve();
+      };
+      pendingBackoffWakeups.add(wake);
+      Promise.resolve(sleep(ms)).then(wake, wake);
+    });
+  }
 
   /**
    * Refresh every open buffer's `capacityPaused` flag from the shared
@@ -793,7 +817,8 @@ function createSegmentWriter(deps = {}) {
             payload: encrypted,
             config,
             retryDelaysMs,
-            sleep,
+            sleep: retrySleep,
+            shouldStopRetrying: () => shuttingDown,
             logger,
             put: putObj,
             park: (meta) => parkSegment(storageKey, encrypted, meta),
@@ -925,7 +950,47 @@ function createSegmentWriter(deps = {}) {
     for (const buffer of buffers.values()) {
       clearIntervalFn(buffer.timer);
     }
+    // Cut short any in-flight retry backoff so those flushes park now.
+    for (const wake of Array.from(pendingBackoffWakeups)) wake();
+    if (parkedRetryTimer) {
+      clearIntervalFn(parkedRetryTimer);
+      parkedRetryTimer = null;
+    }
     return flushAll();
+  }
+
+  /**
+   * Schedule `retryParkedSegments()` on a fixed interval (Phase 3 item 16's
+   * "later re-upload"). Without this, a segment parked during a remote
+   * outage stays in the staging directory forever — never indexed, never
+   * searchable — even after the destination recovers. Overlapping runs are
+   * skipped rather than queued, and the timer is `.unref()`'d so it never
+   * holds the process open; `shutdown()` stops it.
+   */
+  let parkedRetryTimer = null;
+  let parkedRetryInFlight = false;
+  function startParkedSegmentRetry(intervalMs = DEFAULT_PARKED_RETRY_INTERVAL_MS) {
+    if (parkedRetryTimer || shuttingDown) return;
+    const tick = () => {
+      if (parkedRetryInFlight || shuttingDown) return;
+      parkedRetryInFlight = true;
+      retryParkedSegments()
+        .then((result) => {
+          if (result.reuploaded > 0) {
+            logger.log(
+              `[segmentWriter] re-uploaded ${result.reuploaded} parked segment(s); ${result.remaining} still parked`,
+            );
+          }
+        })
+        .catch((error) => {
+          logger.warn(`[segmentWriter] parked-segment retry tick failed: ${error.message}`);
+        })
+        .finally(() => {
+          parkedRetryInFlight = false;
+        });
+    };
+    parkedRetryTimer = setIntervalFn(tick, intervalMs);
+    if (typeof parkedRetryTimer.unref === "function") parkedRetryTimer.unref();
   }
 
   return {
@@ -935,6 +1000,7 @@ function createSegmentWriter(deps = {}) {
     shutdown,
     deleteAgent,
     retryParkedSegments,
+    startParkedSegmentRetry,
     isCapacityPaused,
     peekBuffer,
   };
@@ -951,21 +1017,26 @@ async function putWithRetryOrPark({
   config,
   retryDelaysMs,
   sleep,
+  shouldStopRetrying = () => false,
   logger,
   put,
   park,
   indexMeta,
 }) {
-  const attempts = retryDelaysMs.length + 1;
+  const maxAttempts = retryDelaysMs.length + 1;
+  let attempts = 0;
   let lastError;
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    attempts += 1;
     try {
       await put(storageKey, payload, config);
       return { parked: false };
     } catch (error) {
       lastError = error;
+      if (shouldStopRetrying()) break;
       if (attempt < retryDelaysMs.length) {
         await sleep(retryDelaysMs[attempt]);
+        if (shouldStopRetrying()) break;
       }
     }
   }
@@ -990,4 +1061,5 @@ module.exports = {
   DEFAULT_MAX_BUFFER_BYTES,
   DEFAULT_GLOBAL_MAX_BYTES,
   DEFAULT_CAPACITY_POLL_INTERVAL_MS,
+  DEFAULT_PARKED_RETRY_INTERVAL_MS,
 };

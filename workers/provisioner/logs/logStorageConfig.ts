@@ -5,23 +5,13 @@
 // 19; see the logging-control-plane manifest's "Destination is
 // platform-wide, and changeable after setup" section).
 //
-// Two things this module deliberately does NOT do yet:
-//
-//   1. It does not add columns to `platform_settings`. That migration, plus
-//      the `GET`/`PUT /admin/log-storage` mutation surface, is Phase 5's
-//      job (see the implementation plan's Phase 5 changes list). Until that
-//      migration lands, `readPlatformLogStorageRow()` below queries for
-//      columns that do not exist yet and treats "column doesn't exist" the
-//      same as "no settings row" — i.e. it falls back to the NORA_LOG_* env
-//      block, which is exactly the fallback behaviour item 19 asks for
-//      anyway. Once Phase 5 adds the columns, this starts reading them with
-//      zero changes at this call site.
-//   2. It does not decrypt credentials — the platform_settings columns this
-//      will read (once Phase 5 adds them) follow the same
-//      encrypted-under-ENCRYPTION_KEY convention as
-//      backup_s3_secret_access_key_encrypted etc., and decryption is
-//      deferred to that same future migration's reader, matching how
-//      backupStorageConfig() only exists once the backup columns exist.
+// Phase 5's platform_settings columns and the `GET`/`PUT /admin/log-storage`
+// mutation surface (backend-api/routes/observability.ts) exist and encrypt
+// credentials under ENCRYPTION_KEY on write, matching
+// backup_s3_secret_access_key_encrypted's convention. This module decrypts
+// them on read below (safeDecrypt) — env-sourced secrets (NORA_LOG_S3_*
+// etc.) still win as a fallback when a column is absent/unreadable, exactly
+// mirroring backupStorageConfig()'s env-fallback behavior.
 //
 // Platform-wide only: this module takes no workspace argument anywhere, per
 // Design Decision 2b (one destination per installation).
@@ -40,6 +30,30 @@ let _db = null;
 function getDb() {
   if (!_db) _db = require("../../../backend-api/db.ts");
   return _db;
+}
+
+// Same lazy-require reasoning as getDb() above — backend-api/crypto.ts pulls
+// in its own internal requires that don't resolve the same way under
+// `node --test` as they do under `tsx worker.ts`.
+let _crypto = null;
+function getCrypto() {
+  if (!_crypto) _crypto = require("../../../backend-api/crypto.ts");
+  return _crypto;
+}
+
+// Decrypt a *_encrypted column, tolerating an unreadable value (e.g.
+// ENCRYPTION_KEY rotated/removed since the value was written) by falling
+// back to "" rather than throwing and taking the whole config resolution
+// down with it — the caller's own env-var fallback still applies on top of
+// this, same as resolveLogStoragePayload()'s masking logic in
+// observability.ts handles the same failure mode for the admin-facing read.
+function safeDecrypt(encryptedValue, deps = {}) {
+  if (!encryptedValue) return "";
+  try {
+    return (deps.decrypt || getCrypto().decrypt)(encryptedValue) || "";
+  } catch {
+    return "";
+  }
 }
 
 // Postgres "undefined_column" — thrown when Phase 5's platform_settings
@@ -90,9 +104,10 @@ function resolveEnvLogStorageConfig(env = process.env) {
  * changed the destination (a real "unset" state Phase 5 will also produce)
  * or, today, because Phase 5's migration hasn't landed at all.
  */
-async function readPlatformLogStorageRow() {
+async function readPlatformLogStorageRow(deps = {}) {
   try {
-    const result = await getDb().query(
+    const db = deps.db || getDb();
+    const result = await db.query(
       `SELECT log_storage_backend,
               log_storage_local_path,
               log_storage_s3_bucket,
@@ -136,33 +151,51 @@ let cachedConfigPromise = null;
  * `invalidateLogStorageConfigCache()` whenever the destination changes
  * (Phase 5b's mutation endpoint calls this).
  */
-async function logStorageConfig() {
+async function resolveLogStorageConfig(deps) {
+  const row = await readPlatformLogStorageRow(deps);
+  const envConfig = resolveEnvLogStorageConfig();
+  const raw = row
+    ? {
+        storageBackend: row.log_storage_backend || envConfig.storageBackend,
+        localPath: row.log_storage_local_path || envConfig.localPath,
+        bucket: row.log_storage_s3_bucket || envConfig.bucket,
+        region: row.log_storage_s3_region || envConfig.region,
+        endpoint: row.log_storage_s3_endpoint || envConfig.endpoint,
+        sshHost: row.log_storage_ssh_host || envConfig.sshHost,
+        sshPort: row.log_storage_ssh_port || envConfig.sshPort,
+        sshUsername: row.log_storage_ssh_username || envConfig.sshUsername,
+        sshRemotePath: row.log_storage_ssh_remote_path || envConfig.sshRemotePath,
+        // Decrypted DB-stored credential wins when present; env is the
+        // fallback (e.g. the row exists for other fields but this
+        // particular secret was never saved to it, or decryption failed).
+        // There's no DB column for a session token — S3 session tokens
+        // aren't part of the admin settings surface — so that one is
+        // env-only.
+        accessKeyId:
+          safeDecrypt(row.log_storage_s3_access_key_id_encrypted, deps) || envConfig.accessKeyId,
+        secretAccessKey:
+          safeDecrypt(row.log_storage_s3_secret_access_key_encrypted, deps) || envConfig.secretAccessKey,
+        sessionToken: envConfig.sessionToken,
+        sshPrivateKey:
+          safeDecrypt(row.log_storage_ssh_private_key_encrypted, deps) || envConfig.sshPrivateKey,
+        sshPassword: safeDecrypt(row.log_storage_ssh_password_encrypted, deps) || envConfig.sshPassword,
+      }
+    : envConfig;
+  return objectStorage.normalizeStorageConfig(raw);
+}
+
+/**
+ * @param {Object} [deps] - injectable `{ db, decrypt }` for tests. Passing
+ *   any deps bypasses the module-level cache below (tests want a fresh
+ *   resolve per call, not the production memoization); the real production
+ *   call site — always zero-arg — keeps using the cache exactly as before.
+ */
+async function logStorageConfig(deps = {}) {
+  if (Object.keys(deps).length > 0) {
+    return resolveLogStorageConfig(deps);
+  }
   if (!cachedConfigPromise) {
-    cachedConfigPromise = (async () => {
-      const row = await readPlatformLogStorageRow();
-      const envConfig = resolveEnvLogStorageConfig();
-      const raw = row
-        ? {
-            storageBackend: row.log_storage_backend || envConfig.storageBackend,
-            localPath: row.log_storage_local_path || envConfig.localPath,
-            bucket: row.log_storage_s3_bucket || envConfig.bucket,
-            region: row.log_storage_s3_region || envConfig.region,
-            endpoint: row.log_storage_s3_endpoint || envConfig.endpoint,
-            sshHost: row.log_storage_ssh_host || envConfig.sshHost,
-            sshPort: row.log_storage_ssh_port || envConfig.sshPort,
-            sshUsername: row.log_storage_ssh_username || envConfig.sshUsername,
-            sshRemotePath: row.log_storage_ssh_remote_path || envConfig.sshRemotePath,
-            // Secrets: env always wins over an unreadable *_encrypted column
-            // until Phase 5 wires up decrypt() for these columns.
-            accessKeyId: envConfig.accessKeyId,
-            secretAccessKey: envConfig.secretAccessKey,
-            sessionToken: envConfig.sessionToken,
-            sshPrivateKey: envConfig.sshPrivateKey,
-            sshPassword: envConfig.sshPassword,
-          }
-        : envConfig;
-      return objectStorage.normalizeStorageConfig(raw);
-    })().catch((error) => {
+    cachedConfigPromise = resolveLogStorageConfig(deps).catch((error) => {
       // Don't cache a rejected promise — a transient DB hiccup shouldn't
       // permanently wedge every future flush onto a failure.
       cachedConfigPromise = null;
