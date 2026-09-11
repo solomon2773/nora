@@ -137,6 +137,23 @@ const agentScheduleQueue = new Queue("agent-schedules", {
   },
 });
 
+// Trace-ingest span persistence (logging control plane, Phase 11). One job
+// per accepted OTLP export request, carrying the already-decoded spans plus
+// the authenticated agent's already-resolved workspace_id (never trusted
+// from the payload — see routes/otlp.ts). Drained in worker-provisioner by
+// spanDrain.ts, which batch-inserts into agent_spans. Kept off the request
+// path entirely since a burst of trace exports should never block or slow
+// the ingest response.
+const spanIngestQueue = new Queue("span-ingest", {
+  connection,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: { count: 500, age: 3600 },
+    removeOnFail: { count: 500, age: 86400 },
+  },
+});
+
 if (IS_TEST_ENV) {
   for (const queue of [
     deployQueue,
@@ -145,6 +162,7 @@ if (IS_TEST_ENV) {
     backupsQueue,
     alertDeliveryQueue,
     agentScheduleQueue,
+    spanIngestQueue,
   ]) {
     if (typeof queue.removeAllListeners === "function" && typeof queue.on === "function") {
       queue.removeAllListeners("error");
@@ -252,6 +270,19 @@ async function addClawhubJob(payload) {
 async function addBackupJob(payload) {
   const jobId = payload?.jobId || payload?.backupId || randomUUID();
   return backupsQueue.add("run-backup", { ...payload, jobId }, { jobId });
+}
+
+/**
+ * Enqueue one decoded OTLP export request's spans for async persistence.
+ * No caller-provided job ID: unlike deploys/backups, replaying the same
+ * export twice is harmless (spans have no uniqueness constraint to violate),
+ * so there is nothing to deduplicate against.
+ *
+ * @param {{agentId: string, workspaceId: string|null, spans: object[]}} payload
+ * @returns {Promise<Object>} BullMQ job.
+ */
+async function addSpanIngestJob(payload) {
+  return spanIngestQueue.add("ingest-spans", payload);
 }
 
 /**
@@ -462,12 +493,14 @@ module.exports = {
   backupsQueue,
   alertDeliveryQueue,
   agentScheduleQueue,
+  spanIngestQueue,
   addDeploymentJob,
   cancelDeploymentJobsForAgent,
   addScheduleRunJob,
   addClawhubJob,
   addClawhubInstallJob,
   addBackupJob,
+  addSpanIngestJob,
   addKubernetesPolicyReconcileJob,
   addAlertDeliveryJob,
   findInFlightClawhubJob,
