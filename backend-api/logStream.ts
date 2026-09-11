@@ -8,7 +8,7 @@ const { resolveAgentBackendType } = require("./agentRuntimeFields");
 const { extractSessionTokenFromUpgrade } = require("./authCookie");
 const { findAccessibleAgentForActor } = require("./middleware/ownership");
 const { assertRemoteHostAgentUse, isRemoteHostAccessRevokedError } = require("./remoteHosts");
-const { parseContainerLogChunk } = require("../agent-runtime/lib/logLine");
+const { createLogChunkStreamParser } = require("../agent-runtime/lib/logLine");
 
 const ACCESS_RECHECK_MS = Math.max(
   250,
@@ -256,24 +256,32 @@ function attachLogStream(server) {
         // sent to the browser — { type, timestamp, level, message } — is
         // unchanged; `timestamp` prefers the parsed source timestamp and
         // falls back to the collector's observed time, exactly as before.
+        //
+        // One stateful parser per connection: a `data` chunk lands at an
+        // arbitrary byte offset, so a multi-byte character or a Docker
+        // frame header can straddle two chunks. Parsing each chunk in
+        // isolation (the stateless `parseContainerLogChunk`) corrupted
+        // whichever byte(s) straddled the split into a stray `�`.
+        const streamParser = createLogChunkStreamParser({ stream: "runtime" });
+        const sendLine = (line) => {
+          ws.send(
+            JSON.stringify({
+              type: "log",
+              timestamp: line.ts ?? line.observed_ts,
+              level: line.level,
+              message: line.message,
+            }),
+          );
+        };
+
         logStream.on("data", (chunk) => {
           if (ws.readyState !== 1) return;
-
-          const lines = parseContainerLogChunk(chunk, { stream: "runtime" });
-          for (const line of lines) {
-            ws.send(
-              JSON.stringify({
-                type: "log",
-                timestamp: line.ts ?? line.observed_ts,
-                level: line.level,
-                message: line.message,
-              }),
-            );
-          }
+          streamParser.push(chunk).forEach(sendLine);
         });
 
         logStream.on("end", () => {
           if (ws.readyState === 1) {
+            streamParser.flush().forEach(sendLine);
             ws.send(
               JSON.stringify({
                 type: "system",

@@ -345,6 +345,49 @@ export function computeVirtualRange(
   return { startIndex, endIndex };
 }
 
+/**
+ * Variable-height counterpart to `computeVirtualRange`, for rows that wrap
+ * (log messages can be any length, so a fixed row height forces either
+ * truncation or overlapping rows). `offsets` is a cumulative-sum array of
+ * length `totalCount + 1` where `offsets[i]` is the top position of row `i`
+ * and `offsets[totalCount]` is the total content height — rows not yet
+ * measured should contribute an estimated height so the array stays
+ * monotonically non-decreasing. Binary search keeps this O(log n) per call
+ * regardless of row count, same bound as the fixed-height version.
+ */
+export function computeVirtualRangeFromOffsets(
+  offsets: number[],
+  scrollTop: number,
+  viewportHeight: number,
+  overscan = 8,
+): VirtualRange {
+  const totalCount = offsets.length - 1;
+  if (totalCount <= 0) return { startIndex: 0, endIndex: 0 };
+
+  const firstVisible = findRowIndexForOffset(offsets, scrollTop, totalCount);
+  const lastVisible = findRowIndexForOffset(offsets, scrollTop + viewportHeight, totalCount);
+
+  const startIndex = Math.max(0, firstVisible - overscan);
+  const endIndex = Math.min(totalCount, lastVisible + 1 + overscan);
+  return { startIndex, endIndex };
+}
+
+// Returns the row index i such that target falls within [offsets[i], offsets[i+1]),
+// clamped to [0, totalCount - 1] for targets outside the measured range.
+function findRowIndexForOffset(offsets: number[], target: number, totalCount: number): number {
+  let lo = 0;
+  let hi = totalCount - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid + 1] <= target) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
 // ── Traces lens (Phase 13) — ASSUMED API CONTRACT ───────────────────────
 //
 // IMPORTANT: this section is written against the CONTRACT documented in the

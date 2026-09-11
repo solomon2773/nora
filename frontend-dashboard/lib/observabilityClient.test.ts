@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   computeVirtualRange,
+  computeVirtualRangeFromOffsets,
   computeWaterfallLayout,
   extractFilenameFromContentDisposition,
   isApproximateTimestamp,
@@ -196,6 +197,56 @@ test("virtual range clamps to the total count near the end of a long list", () =
 
 test("an empty list yields an empty range", () => {
   assert.deepEqual(computeVirtualRange(0, 600, 24, 0), { startIndex: 0, endIndex: 0 });
+});
+
+// ── computeVirtualRangeFromOffsets (variable/wrapped row heights) ───────
+
+function buildOffsets(rowHeights: number[]): number[] {
+  const offsets = [0];
+  for (const h of rowHeights) offsets.push(offsets[offsets.length - 1] + h);
+  return offsets;
+}
+
+test("uniform offsets behave like the fixed-height computation", () => {
+  const offsets = buildOffsets(new Array(50000).fill(24));
+  const range = computeVirtualRangeFromOffsets(offsets, 24 * 10000, 600, 12);
+  const fixed = computeVirtualRange(24 * 10000, 600, 24, 50000, 12);
+  // Not required to match exactly — the two implementations round viewport
+  // coverage at the boundary differently (ceil'd row count vs. the exact
+  // offset the viewport bottom falls in) — but they should stay within a
+  // row of each other on both ends.
+  assert.ok(Math.abs(range.startIndex - fixed.startIndex) <= 1);
+  assert.ok(Math.abs(range.endIndex - fixed.endIndex) <= 1);
+});
+
+test("mixed row heights (wrapped multi-line rows) still bound the mount count", () => {
+  // Every 10th row is a long, multi-line-wrapped message (200px); the rest
+  // are single-line (24px) — mirrors a real log stream.
+  const heights = Array.from({ length: 10000 }, (_, i) => (i % 10 === 0 ? 200 : 24));
+  const offsets = buildOffsets(heights);
+  const range = computeVirtualRangeFromOffsets(offsets, 0, 600, 12);
+  const mounted = range.endIndex - range.startIndex;
+  assert.ok(mounted < 100, `expected a bounded mount count, got ${mounted}`);
+});
+
+test("scrolling past tall rows still lands on the row actually under the viewport", () => {
+  // Rows 0-4 are 200px tall each (1000px total), then uniform 24px rows.
+  const heights = [200, 200, 200, 200, 200, ...new Array(1000).fill(24)];
+  const offsets = buildOffsets(heights);
+  // Scroll to 1000 + 24*10 = 1240 — should land just past row 5 + 10 more rows.
+  const range = computeVirtualRangeFromOffsets(offsets, 1240, 300, 0);
+  assert.equal(range.startIndex, 15);
+});
+
+test("clamps to the end of the list when scrolled past all measured content", () => {
+  const offsets = buildOffsets(new Array(20).fill(24));
+  const range = computeVirtualRangeFromOffsets(offsets, 100000, 600, 4);
+  assert.equal(range.endIndex, 20);
+  assert.ok(range.startIndex <= 20);
+});
+
+test("an empty offsets array yields an empty range", () => {
+  assert.deepEqual(computeVirtualRangeFromOffsets([0], 0, 600, 8), { startIndex: 0, endIndex: 0 });
 });
 
 // ── resolveTracesLensView (Phase 13 item 6/7) ────────────────────────────

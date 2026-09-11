@@ -36,6 +36,8 @@
 // flushed window's contents, computed once by Phase 3's segment writer at
 // flush time. Callers must not add one upstream of that.
 
+const { StringDecoder } = require("string_decoder");
+
 // Docker prefixes each line it timestamps with an RFC3339-ish string
 // followed by whitespace, e.g. "2024-01-15T12:34:56.789123456Z <message>".
 const RFC3339_PREFIX = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)\s+([\s\S]*)$/;
@@ -110,15 +112,62 @@ function inferLevel(message, parsed) {
   return "INFO";
 }
 
+// Shared per-line normalization used by both the stateless (single-chunk)
+// and stateful (long-lived stream) parsers below, so the two never drift on
+// timestamp extraction, JSON detection, or level inference.
+function normalizeRawLine(rawLine, ctx) {
+  const line = rawLine.trim();
+  if (!line) return null;
+
+  // Docker timestamp format: 2024-01-15T12:34:56.789Z <message>
+  let ts = null;
+  let tsSource = "collector";
+  let message = line;
+  const tsMatch = line.match(RFC3339_PREFIX);
+  if (tsMatch) {
+    ts = tsMatch[1];
+    tsSource = "source";
+    message = tsMatch[2];
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(message);
+  } catch {
+    parsed = undefined;
+  }
+
+  const level = inferLevel(message, parsed);
+
+  return {
+    ts,
+    observed_ts: nowIso(ctx),
+    ts_source: tsSource,
+    stream: ctx.stream || "runtime",
+    level,
+    message,
+  };
+}
+
 /**
- * Parse one chunk of a container's stdout/stderr stream (as delivered by
- * `containerManager.logs()`) into normalized `LogLine` objects.
+ * Parse one *standalone* chunk of a container's stdout/stderr stream into
+ * normalized `LogLine` objects. Handles the Docker multiplexed-stream
+ * framing (an 8-byte header per frame — stream type byte, three zero
+ * bytes, then a 4-byte big-endian length) transparently: a chunk carrying
+ * that header has it stripped, a raw stream (Kubernetes, Proxmox
+ * `journalctl`, remote-Docker demuxed upstream) is left untouched.
  *
- * Handles the Docker multiplexed-stream framing (an 8-byte header per
- * frame — stream type byte, three zero bytes, then a 4-byte big-endian
- * length) transparently: a chunk carrying that header has it stripped, a
- * raw stream (Kubernetes, Proxmox `journalctl`, remote-Docker demuxed
- * upstream) is left untouched.
+ * This function is stateless and decodes/demuxes only within the one
+ * chunk it's given — correct for a single self-contained chunk (a test
+ * fixture, a one-shot log fetch), but NOT for a long-lived stream: a real
+ * `data` event lands at an arbitrary byte offset with no relation to frame
+ * or UTF-8 character boundaries, so calling this once per chunk on a live
+ * stream can split a multi-byte character or a frame header across two
+ * chunks and corrupt the byte(s) that straddle them (typically surfacing
+ * as a stray U+FFFD `�` character). For any open stream — the WebSocket
+ * live viewer, the log collector — use `createLogChunkStreamParser`
+ * instead, which carries partial frames and partial characters across
+ * chunk boundaries.
  *
  * @param {Buffer} chunk
  * @param {{ stream?: string, now?: () => string }} [ctx]
@@ -139,44 +188,123 @@ function parseContainerLogChunk(chunk, ctx = {}) {
   const text = payload.toString("utf8").trim();
   if (!text) return [];
 
-  const streamLabel = ctx.stream || "runtime";
   const lines = [];
-
   for (const rawLine of text.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
+    const normalized = normalizeRawLine(rawLine, ctx);
+    if (normalized) lines.push(normalized);
+  }
+  return lines;
+}
 
-    // Docker timestamp format: 2024-01-15T12:34:56.789Z <message>
-    let ts = null;
-    let tsSource = "collector";
-    let message = line;
-    const tsMatch = line.match(RFC3339_PREFIX);
-    if (tsMatch) {
-      ts = tsMatch[1];
-      tsSource = "source";
-      message = tsMatch[2];
-    }
+/**
+ * Stateful counterpart to `parseContainerLogChunk`, for a long-lived
+ * container log stream. Create one instance per open stream attach (one
+ * per WebSocket connection, one per log-collector attach — never share an
+ * instance across streams), feed it every `data` chunk via `push()`, and
+ * call `flush()` once on stream end/close to emit any trailing line that
+ * never saw its terminating newline.
+ *
+ * Carries two kinds of state across chunk boundaries that
+ * `parseContainerLogChunk` cannot, because a stream `data` event can split
+ * either of them at an arbitrary byte offset:
+ *
+ *   1. A Docker multiplexed-stream frame (8-byte header + payload) whose
+ *      header or payload spans two chunks — resolved by buffering
+ *      undecided raw bytes (`frameBuffer`) until a complete frame arrives.
+ *   2. A multi-byte UTF-8 character split across two chunks — resolved by
+ *      decoding through a single persistent `StringDecoder`, which (unlike
+ *      `Buffer#toString('utf8')` called separately per chunk) holds an
+ *      incomplete trailing byte sequence until the rest of it arrives
+ *      instead of immediately replacing it with U+FFFD.
+ *
+ * Whether the stream is multiplexed at all is decided once, from the first
+ * chunk — it's a per-stream property (whether the container was created
+ * with a TTY), not something that can change mid-stream.
+ *
+ * @param {{ stream?: string, now?: () => string }} [ctx]
+ * @returns {{ push: (chunk: Buffer) => Array<object>, flush: () => Array<object> }}
+ */
+function createLogChunkStreamParser(ctx = {}) {
+  const decoder = new StringDecoder("utf8");
+  let frameBuffer = null;
+  let demuxed = null;
+  let textBuffer = "";
 
-    let parsed;
-    try {
-      parsed = JSON.parse(message);
-    } catch {
-      parsed = undefined;
-    }
-
-    const level = inferLevel(message, parsed);
-
-    lines.push({
-      ts,
-      observed_ts: nowIso(ctx),
-      ts_source: tsSource,
-      stream: streamLabel,
-      level,
-      message,
-    });
+  function decideDemuxed() {
+    // Only ever called once `frameBuffer` holds > 8 bytes — deciding from a
+    // shorter prefix would misread a chunk that just happens to be tiny
+    // (e.g. the frame header itself split across two chunks) as "no
+    // header," permanently disabling demuxing for the rest of the stream.
+    demuxed =
+      frameBuffer[0] <= 2 && frameBuffer[1] === 0 && frameBuffer[2] === 0 && frameBuffer[3] === 0;
   }
 
-  return lines;
+  function extractPayload(chunk) {
+    if (demuxed === null) {
+      frameBuffer = frameBuffer ? Buffer.concat([frameBuffer, chunk]) : chunk;
+      if (frameBuffer.length <= 8) return null; // not enough bytes to decide yet
+      decideDemuxed();
+      if (!demuxed) {
+        const buffered = frameBuffer;
+        frameBuffer = null;
+        return buffered;
+      }
+      // demuxed === true: fall through to the frame walk below, which
+      // consumes the already-accumulated `frameBuffer`.
+    } else if (!demuxed) {
+      return chunk;
+    } else {
+      frameBuffer = frameBuffer ? Buffer.concat([frameBuffer, chunk]) : chunk;
+    }
+
+    const payloads = [];
+    while (frameBuffer.length >= 8) {
+      const frameLength = frameBuffer.readUInt32BE(4);
+      if (frameBuffer.length < 8 + frameLength) break; // frame not fully arrived yet
+      payloads.push(frameBuffer.subarray(8, 8 + frameLength));
+      frameBuffer = frameBuffer.subarray(8 + frameLength);
+    }
+    return payloads.length ? Buffer.concat(payloads) : null;
+  }
+
+  function consumeText(newText) {
+    textBuffer += newText;
+    if (!textBuffer.includes("\n")) return [];
+    const parts = textBuffer.split("\n");
+    textBuffer = parts.pop();
+    const lines = [];
+    for (const rawLine of parts) {
+      const normalized = normalizeRawLine(rawLine, ctx);
+      if (normalized) lines.push(normalized);
+    }
+    return lines;
+  }
+
+  return {
+    push(chunk) {
+      if (!chunk || chunk.length === 0) return [];
+      const payload = extractPayload(chunk);
+      if (!payload || payload.length === 0) return [];
+      return consumeText(decoder.write(payload));
+    },
+    flush() {
+      // The stream ended before enough bytes ever arrived to decide
+      // whether it was Docker-multiplexed (extractPayload's >8-byte
+      // threshold) — too short to have carried a meaningful frame anyway,
+      // so treat whatever's left as raw rather than silently dropping it.
+      if (demuxed === null && frameBuffer && frameBuffer.length > 0) {
+        textBuffer += decoder.write(frameBuffer);
+        frameBuffer = null;
+      }
+      const lines = consumeText(decoder.end());
+      if (textBuffer) {
+        const normalized = normalizeRawLine(textBuffer, ctx);
+        if (normalized) lines.push(normalized);
+        textBuffer = "";
+      }
+      return lines;
+    },
+  };
 }
 
 /**
@@ -228,6 +356,7 @@ function normalizeGatewayLogLine(record, ctx = {}) {
 
 module.exports = {
   parseContainerLogChunk,
+  createLogChunkStreamParser,
   normalizeGatewayLogLine,
   inferLevel,
   mapLevelName,

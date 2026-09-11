@@ -35,6 +35,11 @@ const mockStartStorageMigration = jest.fn().mockResolvedValue({
   bytesToMigrate: 0,
 });
 const mockGetMigrationStatus = jest.fn().mockResolvedValue({ status: "none" });
+// Defaults to success so every existing test — none of which are actually
+// testing destination validation — keeps behaving as if the destination
+// checked out fine. The dedicated "pre-flight probe" describe block below
+// overrides this per-test to exercise the reject path.
+const mockProbeStorageDestination = jest.fn().mockResolvedValue({ ok: true });
 
 jest.mock("../db", () => mockDb);
 jest.mock("../redisQueue", () => ({
@@ -73,6 +78,9 @@ jest.mock("../../workers/provisioner/logs/storageMigration.ts", () => ({
   startStorageMigration: mockStartStorageMigration,
   getMigrationStatus: mockGetMigrationStatus,
 }));
+jest.mock("../../agent-runtime/lib/objectStorage.ts", () => ({
+  probeStorageDestination: mockProbeStorageDestination,
+}));
 
 const app = require("../server");
 const adminToken = jwt.sign({ id: "admin-1", role: "admin" }, JWT_SECRET, { expiresIn: "1h" });
@@ -93,6 +101,7 @@ beforeEach(() => {
     bytesToMigrate: 0,
   });
   mockGetMigrationStatus.mockReset().mockResolvedValue({ status: "none" });
+  mockProbeStorageDestination.mockReset().mockResolvedValue({ ok: true });
   delete process.env.ENABLED_BACKENDS;
   delete process.env.NORA_LOG_LOCAL_MAX_BYTES;
 });
@@ -336,6 +345,88 @@ describe("PUT /admin/log-storage — Phase 5b storage migration integration", ()
         .send({ storageBackend: "local", clearS3AccessKey: true }),
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe("PUT /admin/log-storage — pre-flight destination probe", () => {
+  // Regression coverage for the mechanism the credential-decryption bug and
+  // the migration-retry gap both exposed: a bad/untested credential must
+  // never get persisted as the active destination in the first place —
+  // catching it only when the (async, easy-to-miss) migration job fails is
+  // too late, since live log writes flip to the new destination immediately
+  // on save, before the migration even runs.
+
+  it("rejects the save and writes nothing when the destination fails verification", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    mockProbeStorageDestination.mockRejectedValueOnce(new Error("S3 storage is not fully configured"));
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] }) // current row read
+      .mockResolvedValueOnce({ rows: [] }); // no active migration job
+    const res = await asAdmin(
+      request(app)
+        .put("/admin/log-storage")
+        .send({ storageBackend: "s3", s3Bucket: "b", s3AccessKeyId: "bad", s3SecretAccessKey: "bad" }),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("log_storage_probe_failed");
+    expect(res.body.error).toContain("S3 storage is not fully configured");
+    // Exactly the two reads above — no upsert attempted, no cache flip, no
+    // migration ever started.
+    expect(mockDb.query).toHaveBeenCalledTimes(2);
+    expect(mockStartStorageMigration).not.toHaveBeenCalled();
+    expect(mockLogEvent).not.toHaveBeenCalled();
+  });
+
+  it("maps a known S3 error code onto a short, plain-language message instead of AWS's raw wording", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    const rejection = new Error(
+      "The request signature we calculated does not match the signature you provided. " +
+        "Check your key and signing method. (SignatureDoesNotMatch)",
+    );
+    rejection.remoteCode = "SignatureDoesNotMatch";
+    mockProbeStorageDestination.mockRejectedValueOnce(rejection);
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await asAdmin(
+      request(app)
+        .put("/admin/log-storage")
+        .send({ storageBackend: "s3", s3Bucket: "b", s3AccessKeyId: "bad", s3SecretAccessKey: "bad" }),
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Destination check failed: Invalid access key ID or secret access key.");
+  });
+
+  it("skips the probe entirely for a local destination (no remote credentials to verify)", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ bytes: "0" }] })
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] });
+    const res = await asAdmin(
+      request(app).put("/admin/log-storage").send({ storageBackend: "local" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockProbeStorageDestination).not.toHaveBeenCalled();
+  });
+
+  it("saves normally when the destination verifies successfully", async () => {
+    process.env.ENABLED_BACKENDS = "docker";
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3", log_storage_s3_bucket: "b" }] });
+    const res = await asAdmin(
+      request(app)
+        .put("/admin/log-storage")
+        .send({ storageBackend: "s3", s3Bucket: "b", s3AccessKeyId: "good", s3SecretAccessKey: "good" }),
+    );
+    expect(res.status).toBe(200);
+    expect(mockProbeStorageDestination).toHaveBeenCalledWith(
+      expect.objectContaining({ storageBackend: "s3", bucket: "b", accessKeyId: "good", secretAccessKey: "good" }),
+    );
+    expect(mockStartStorageMigration).toHaveBeenCalled();
   });
 });
 

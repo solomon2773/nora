@@ -96,6 +96,21 @@ router.delete(
 
 const LOG_STORAGE_BACKENDS = new Set(["local", "s3", "r2", "ssh"]);
 
+// Plain-language messages for the S3/R2 error codes an operator is actually
+// likely to hit while setting up a destination (bad/mismatched keys, wrong
+// bucket, wrong region) — AWS's own `Message` text for these is accurate
+// but written for developers debugging a signing implementation, not for
+// someone who just needs to know "your secret key is wrong." Anything not
+// in this map still gets a real, specific message (objectStorage.ts's
+// parsed `Code (Message)` form) — this only shortens the handful of common
+// cases, never hides an error behind a generic one.
+const FRIENDLY_S3_ERROR_MESSAGES = {
+  SignatureDoesNotMatch: "Invalid access key ID or secret access key.",
+  InvalidAccessKeyId: "Invalid access key ID.",
+  AccessDenied: "Access denied — check the credentials' permissions on this bucket.",
+  NoSuchBucket: "Bucket not found.",
+};
+
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -361,6 +376,40 @@ router.put(
     const sshRemotePath =
       normalizeText(body.sshRemotePath) || current.log_storage_ssh_remote_path || "";
 
+    // Verify the destination actually works BEFORE committing to it — never
+    // persist untested credentials as the active destination. Without this,
+    // a typo'd secret key would get written to platform_settings and the
+    // resolved-config cache flipped immediately (see the cache-invalidation
+    // call below), meaning every live log flush from that moment on
+    // silently starts failing against a destination nobody ever confirmed
+    // works — not just the historical migration, which is the only thing
+    // that visibly failed before this check existed.
+    if (storageBackend !== "local") {
+      const candidateConfig = {
+        storageBackend,
+        bucket: s3Bucket,
+        region: s3Region,
+        endpoint: s3Endpoint,
+        accessKeyId: s3AccessKeyIdEncrypted ? decrypt(s3AccessKeyIdEncrypted) : "",
+        secretAccessKey: s3SecretAccessKeyEncrypted ? decrypt(s3SecretAccessKeyEncrypted) : "",
+        sshHost,
+        sshPort,
+        sshUsername,
+        sshRemotePath,
+        sshPrivateKey: sshPrivateKeyEncrypted ? decrypt(sshPrivateKeyEncrypted) : "",
+        sshPassword: sshPasswordEncrypted ? decrypt(sshPasswordEncrypted) : "",
+      };
+      try {
+        await objectStorage.probeStorageDestination(candidateConfig);
+      } catch (error) {
+        const message = FRIENDLY_S3_ERROR_MESSAGES[error.remoteCode] || error.message;
+        return res.status(400).json({
+          error: `Destination check failed: ${message}`,
+          code: "log_storage_probe_failed",
+        });
+      }
+    }
+
     const result = await db.query(
       `INSERT INTO platform_settings(
          singleton,
@@ -477,6 +526,35 @@ router.get(
   asyncHandler(async (_req, res) => {
     const status = await storageMigration.getMigrationStatus({ db });
     res.json(status);
+  }),
+);
+
+/**
+ * POST /admin/log-storage/migration/retry
+ *
+ * Re-drives the most recent `failed` migration job from its checkpoint.
+ * Exists because `PUT /admin/log-storage` only starts a new migration when
+ * `storageBackend` actually changes — but that column is written before the
+ * migration is attempted, so after a failure it already reads as the failed
+ * migration's target. Simply fixing credentials and re-saving the same
+ * destination looks like a no-op to that check, so it silently never
+ * retries. This is the actual recovery path.
+ */
+router.post(
+  "/admin/log-storage/migration/retry",
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await storageMigration.retryStorageMigration({ db });
+      await monitoring.logEvent(
+        "admin_log_storage_migration_retried",
+        `Admin retried failed storage migration job ${result.jobId}`,
+        { actorId: req.user?.id, jobId: result.jobId },
+      );
+      res.json({ status: "running", jobId: result.jobId });
+    } catch (error) {
+      const status = error.statusCode || 500;
+      res.status(status).json({ error: error.message, code: error.code });
+    }
   }),
 );
 

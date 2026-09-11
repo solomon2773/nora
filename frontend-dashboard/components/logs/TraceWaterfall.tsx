@@ -74,7 +74,7 @@ function CorrelatedLogRowView({ log }: { log: CorrelatedLogRow }) {
   return (
     <div
       className={clsx(
-        "flex items-center gap-2 border-b border-slate-50 px-3 py-1.5 text-xs",
+        "flex items-start gap-2 border-b border-slate-50 px-3 py-1.5 text-xs",
         !log.inTrace && "bg-slate-50/60",
       )}
     >
@@ -89,7 +89,7 @@ function CorrelatedLogRowView({ log }: { log: CorrelatedLogRow }) {
       >
         {log.stream}
       </span>
-      <span className="min-w-0 flex-1 truncate text-slate-800" title={log.message}>
+      <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-slate-800">
         {log.message}
       </span>
       {!log.inTrace ? (

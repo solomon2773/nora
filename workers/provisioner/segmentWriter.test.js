@@ -610,6 +610,81 @@ test("a parked segment is re-uploaded successfully on the next attempt", async (
   });
 });
 
+test("shutdown() cuts an in-flight retry backoff short and parks the segment immediately", async () => {
+  await withTempDir(async (stagingDir) => {
+    const put = fakePutStorageObject({ failTimes: 999 }); // remote is down
+    let backoffStarted;
+    const backoffStartedPromise = new Promise((resolve) => {
+      backoffStarted = resolve;
+    });
+    const deps = baseDeps({
+      putStorageObject: put,
+      logStorageConfig: async () => ({ storageBackend: "s3", bucket: "b" }),
+      stagingDir,
+      // Far longer than the shutdown coordinator's 10s deadline: without the
+      // shutdown wakeup, this test would hang on the first backoff.
+      retryDelaysMs: [60000, 60000, 60000],
+      sleep: () => {
+        backoffStarted();
+        return new Promise(() => {}); // never resolves on its own
+      },
+    });
+    const writer = createSegmentWriter(deps);
+    await writer.append({ agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" }, [
+      line({ ts: "2026-01-01T00:00:00.000Z" }),
+    ]);
+    const inFlight = writer.flush("agent-1:runtime"); // timer-style flush, now backing off
+    await backoffStartedPromise;
+
+    const results = await writer.shutdown();
+    assert.equal(results[0].parked, true);
+    assert.equal((await inFlight).parked, true);
+    assert.equal(put.calls.length, 1); // no further attempts once shutting down
+
+    const staged = await fsp.readdir(stagingDir);
+    assert.ok(staged.some((f) => f.endsWith(".seg")));
+  });
+});
+
+test("startParkedSegmentRetry re-uploads parked segments on its own timer", async () => {
+  await withTempDir(async (stagingDir) => {
+    let currentPut = fakePutStorageObject({ failTimes: 999 });
+    const intervals = [];
+    const deps = baseDeps({
+      putStorageObject: (...args) => currentPut(...args),
+      logStorageConfig: async () => ({ storageBackend: "s3", bucket: "b" }),
+      stagingDir,
+      retryDelaysMs: [1],
+      setIntervalFn: (fn, ms) => {
+        intervals.push({ fn, ms });
+        return { unref() {} };
+      },
+      clearIntervalFn: () => {},
+    });
+    const writer = createSegmentWriter(deps);
+    await writer.append({ agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" }, [
+      line({ ts: "2026-01-01T00:00:00.000Z" }),
+    ]);
+    assert.equal((await writer.flush("agent-1:runtime")).parked, true);
+
+    writer.startParkedSegmentRetry(1234);
+    const retryTimer = intervals.find((entry) => entry.ms === 1234);
+    assert.ok(retryTimer, "a parked-segment retry interval was scheduled");
+
+    currentPut = fakePutStorageObject(); // destination recovers
+    retryTimer.fn();
+    // The tick is fire-and-forget; wait for the staging directory to drain.
+    for (let i = 0; i < 50 && (await fsp.readdir(stagingDir)).length > 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal((await fsp.readdir(stagingDir)).length, 0);
+    assert.equal(
+      deps.db.calls.filter((c) => c.sql.includes("INSERT INTO log_segments")).length,
+      1,
+    );
+  });
+});
+
 test("on the local driver, a write failure surfaces immediately — no retry, no park", async () => {
   let currentPut = fakePutStorageObject({ failTimes: 999 });
   const deps = baseDeps({

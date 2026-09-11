@@ -241,3 +241,36 @@ test("a second signal while already shutting down is a no-op (doesn't double-exi
   await done;
   assert.deepEqual(proc.exitCalls, [0]);
 });
+
+test("the coordinator prefers the writer's shutdown() over a bare flushAll()", async () => {
+  const proc = fakeProcess();
+  const calls = [];
+  const writer = {
+    shutdown: async () => {
+      calls.push("shutdown");
+      return [];
+    },
+    flushAll: async () => {
+      calls.push("flushAll");
+      return [];
+    },
+  };
+  let completed;
+  const done = new Promise((resolve) => {
+    completed = resolve;
+  });
+
+  registerShutdownCoordinator({
+    process: proc,
+    segmentWriter: writer,
+    deadlineMs: 1000,
+    logger: silentLogger(),
+    onShutdownComplete: (info) => completed(info),
+  });
+
+  proc.emit("SIGTERM");
+  const info = await done;
+  assert.deepEqual(calls, ["shutdown"]);
+  assert.equal(info.deadlineHit, false);
+  assert.deepEqual(proc.exitCalls, [0]);
+});

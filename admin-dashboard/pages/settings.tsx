@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import AdminLayout from "../components/AdminLayout";
 import NotificationsSettingsCard from "../components/NotificationsSettingsCard";
+import LogStorageSettingsCard from "../components/LogStorageSettingsCard";
 import { useToast } from "../components/Toast";
 import { fetchWithAuth } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -1562,6 +1563,10 @@ export default function AdminSettingsPage() {
 
             <div className="mt-6">
               <NotificationsSettingsCard />
+            </div>
+
+            <div id="log-storage" className="mt-6 scroll-mt-6">
+              <LogStorageSettingsCard />
             </div>
           </div>
         )}
