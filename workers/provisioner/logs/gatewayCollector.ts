@@ -345,7 +345,34 @@ async function pollAgentGatewayLogs(agent, cursorState, deps = {}) {
   }
 
   const response = await callTail(client, { cursor, limit: pollLimit, maxBytes: pollMaxBytes });
-  const records = Array.isArray(response.lines) ? response.lines : [];
+  // The real gateway's `logs.tail` hands back `lines` as an array of RAW
+  // JSON-encoded strings (one per log-file line) — not pre-parsed objects.
+  // Confirmed empirically against a real OpenClaw gateway: every element of
+  // `response.lines` was a JSON string like `'{"message":"...","_meta":{...}}'`.
+  // Every unit test in gatewayCollector.test.js hands `lines` as an array of
+  // ALREADY-PARSED objects via its fake client, which is why this went
+  // unnoticed there — parse defensively here so both shapes work: an
+  // already-parsed object passes through unchanged (keeps the unit-test
+  // fakes valid), a string gets JSON.parse'd, and a string that fails to
+  // parse falls back to a synthetic `{ message: <raw text> }` record rather
+  // than being silently dropped. Before this fix, EVERY real-gateway record
+  // was a bare string, so `normalizeGatewayLogLine`'s own
+  // `typeof record !== "object"` guard rejected it — every real poll parsed
+  // as "0 records normalized", so no `gateway`-stream segment had ever been
+  // written in this stack's history despite the collector actively polling
+  // and persisting a real, advancing cursor the whole time.
+  const rawRecords = Array.isArray(response.lines) ? response.lines : [];
+  const records = rawRecords
+    .map((line) => {
+      if (line && typeof line === "object") return line;
+      if (typeof line !== "string") return null;
+      try {
+        return JSON.parse(line);
+      } catch {
+        return { message: line };
+      }
+    })
+    .filter(Boolean);
   const responseSourceKind =
     response.sourceKind && KNOWN_SOURCE_KINDS.includes(response.sourceKind)
       ? response.sourceKind
