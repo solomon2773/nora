@@ -3142,6 +3142,8 @@ module.exports = {
   buildSafeIntegrationSummary,
   buildIntegrationSkillMarkdown,
   buildIntegrationToolExecutionMetadata,
+  deriveGatewayDeviceIdentity,
+  buildGatewayConnectDevice,
   assertEmailTransportSecurity,
   executeIntegrationToolInvocation,
   getExecutableIntegrationTools,
