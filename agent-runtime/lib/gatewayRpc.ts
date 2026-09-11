@@ -23,6 +23,7 @@ const dns = require("node:dns").promises;
 const net = require("node:net");
 
 const { gatewayUrlForAgent, buildRuntimeAuthHeaders } = require("./agentEndpoints.ts");
+const { deriveGatewayDeviceIdentity, buildGatewayConnectDevice } = require("./integrationTools.ts");
 
 // ─── Errors ──────────────────────────────────────────────────────
 
@@ -244,6 +245,12 @@ function createGatewayClient(agent, opts = {}) {
   const bearerToken = authHeaders.Authorization
     ? authHeaders.Authorization.replace(/^Bearer\s+/i, "")
     : null;
+  // The device identity is a deterministic function of the token alone
+  // (see integrationTools.ts's deriveGatewayDeviceIdentity), so it's safe
+  // and cheap to compute once per client rather than per connect attempt.
+  // Null when there's no token to derive from — connectOnce falls back to
+  // a password-only connect in that case (see the challenge handler).
+  const deviceIdentity = bearerToken ? deriveGatewayDeviceIdentity(bearerToken) : null;
 
   let socket = null;
   let connected = false;
@@ -331,12 +338,55 @@ function createGatewayClient(agent, opts = {}) {
           }
           socket = sock;
 
-          onOpen = () => {
+          // The gateway's connect handshake is two-phase, not a single
+          // eager send-on-open: it sends a `connect.challenge` event
+          // carrying a nonce, and only grants the full operator scope set
+          // (including operator.read, which logs.tail needs) to a connect
+          // frame that includes a device signature built from that nonce.
+          // A password-only connect (no device signature) IS accepted at
+          // the protocol level — no schema error — but is silently capped
+          // at a reduced scope set that excludes operator.read, confirmed
+          // empirically against a real gateway. This mirrors
+          // gatewayProxy.ts's own "Phase 1: Challenge" handler, reusing
+          // its exact device-identity derivation and signing recipe via
+          // integrationTools.ts (deriveGatewayDeviceIdentity /
+          // buildGatewayConnectDevice) rather than reimplementing it.
+          //
+          // Values mirror backend-api's own working gateway client
+          // (gatewayProxy.ts's GATEWAY_MIN_PROTOCOL_VERSION /
+          // GATEWAY_MAX_PROTOCOL_VERSION and connect frame shape), which
+          // must stay in step with these if the gateway's protocol bounds
+          // ever change. `client.id` is validated against a fixed
+          // allow-list on the gateway side (confirmed empirically: an
+          // invented id was rejected with "/client/id: must be equal to
+          // one of the allowed values") — reuse the exact literal
+          // backend-api already sends rather than guessing at another
+          // allowed value.
+          let challengeHandled = false;
+          const sendConnectFrame = (nonce) => {
+            const built = deviceIdentity
+              ? buildGatewayConnectDevice(deviceIdentity, nonce || "")
+              : null;
             const connectFrame = {
               type: "req",
               id: "__connect__",
               method: "connect",
-              params: { auth: bearerToken ? { token: bearerToken } : {} },
+              params: {
+                minProtocol: 3,
+                maxProtocol: 4,
+                client: {
+                  id: "gateway-client",
+                  version: "1.0.0",
+                  platform: "linux",
+                  mode: "backend",
+                },
+                role: built?.role || "operator",
+                scopes: built?.scopes || [],
+                caps: [],
+                commands: [],
+                auth: bearerToken ? { password: bearerToken } : {},
+                ...(built ? { device: built.device } : {}),
+              },
             };
             try {
               sock.send(JSON.stringify(connectFrame));
@@ -347,11 +397,30 @@ function createGatewayClient(agent, opts = {}) {
             }
           };
 
+          onOpen = () => {
+            // No-op: the gateway drives the handshake by sending
+            // `connect.challenge` first (handled in onMessage below).
+            // Without a device identity to sign a challenge with (no
+            // token), fall back to sending an unsigned connect frame
+            // immediately — this only grants a reduced scope set, but
+            // matches this client's prior no-token behavior rather than
+            // hanging forever waiting for a challenge response it has
+            // nothing to sign.
+            if (!deviceIdentity) sendConnectFrame(null);
+          };
+
           onMessage = (event) => {
             let msg;
             try {
               msg = JSON.parse(typeof event?.data === "string" ? event.data : String(event?.data));
             } catch {
+              return;
+            }
+
+            if (msg.type === "event" && msg.event === "connect.challenge") {
+              if (challengeHandled || !deviceIdentity) return;
+              challengeHandled = true;
+              sendConnectFrame(msg.payload?.nonce || "");
               return;
             }
 
@@ -550,7 +619,40 @@ function createGatewayClient(agent, opts = {}) {
 // log collector has one obvious, documented entry point rather than needing
 // to know the gateway's raw method name and payload shape.
 async function callLogsTail(client, { cursor, limit, maxBytes } = {}) {
-  const payload = await client.call("logs.tail", { cursor, limit, maxBytes });
+  // The gateway's `logs.tail` schema types `cursor` as an integer with no
+  // null/absent variant — sending the JSON literal `null` (the collector's
+  // own "no prior cursor yet" sentinel on an agent's first-ever poll, see
+  // gatewayCollector.ts's loadCursor) fails schema validation ("must be
+  // integer"), confirmed empirically against a real gateway. Omitting the
+  // key entirely is what the RPC actually wants for "start fresh" — `??`
+  // above only guards undefined, not null, so this can't be folded into
+  // the destructuring default.
+  //
+  // A second, distinct instance of the same schema mismatch: `cursor` is
+  // stored in `agent_log_cursors.cursor`, a `text` column (correctly
+  // generic — this table's cursor is an opaque per-source-kind token, not
+  // guaranteed numeric for every possible source). Postgres round-trips
+  // it back as a JS string, so a persisted cursor loaded on a later poll
+  // hits the exact same "must be integer" rejection the null case did,
+  // just via a numeric-looking string instead of `null` — confirmed
+  // empirically by a real stack restart: the first-ever poll (null
+  // cursor, omitted) succeeded, but the next poll after a restart (a real
+  // persisted cursor, loaded as a string) failed the same way. Coerce to
+  // a real number here, at the RPC boundary, rather than changing the
+  // column's storage type — a non-numeric cursor from some other source
+  // kind should surface as a clear error here, not silently corrupt into
+  // NaN.
+  const params = { limit, maxBytes };
+  if (cursor !== null && cursor !== undefined) {
+    const numericCursor = typeof cursor === "number" ? cursor : Number(cursor);
+    if (!Number.isFinite(numericCursor)) {
+      throw new GatewayRpcError(`logs.tail cursor is not numeric: ${JSON.stringify(cursor)}`, {
+        code: "GATEWAY_INVALID_CURSOR",
+      });
+    }
+    params.cursor = numericCursor;
+  }
+  const payload = await client.call("logs.tail", params);
   return {
     lines: payload?.lines ?? [],
     cursor: payload?.cursor ?? null,
