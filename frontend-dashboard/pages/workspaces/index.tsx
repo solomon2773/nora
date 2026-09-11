@@ -40,7 +40,10 @@ export default function Workspaces() {
 
   const create = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      toast.error("Enter a workspace name first");
+      return;
+    }
     setCreating(true);
     try {
       const res = await fetchWithAuth("/api/workspaces", {
@@ -51,6 +54,9 @@ export default function Workspaces() {
       if (res.ok) {
         setName("");
         load();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error || "Failed to create workspace");
       }
     } catch (err) {
       console.error(err);
