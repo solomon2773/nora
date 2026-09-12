@@ -79,6 +79,16 @@ if [ "$pre_count" -ne 0 ]; then
 fi
 
 log_step "computing the real ingest key (routes/otlp.ts's own computeIngestKey — HMAC-SHA256 under NORA_OTLP_INGEST_SECRET) and building a real OTLP/JSON batch of $SPAN_COUNT spans, both via node_call so this exactly mirrors production code rather than a bash re-implementation"
+# Real bug found running this script for the first time against a live stack:
+# requiring routes/otlp.ts pulls in ../redisQueue.ts, which opens live BullMQ
+# Queue objects (real ioredis connections) at MODULE SCOPE. Those are active
+# handles that keep the spawned node process's event loop alive forever —
+# node_call's own header says the caller must make sure the process actually
+# exits (e.g. `process.exit(0)`), and this snippet originally didn't, so it
+# silently turned an instant HMAC computation into a 10-20 MINUTE stall per
+# invocation (confirmed empirically: identical call returns in ~1s with an
+# explicit process.exit(0), vs. never returning inside a reasonable window
+# without one). The trailing process.exit(0) below is the fix.
 _INGEST_INFO="$(node_call "
   const { computeIngestKey } = require('../backend-api/routes/otlp.ts');
   const crypto = require('crypto');
@@ -103,6 +113,7 @@ _INGEST_INFO="$(node_call "
     resourceSpans: [{ resource: { attributes: [] }, scopeSpans: [{ scope: {}, spans }] }],
   };
   console.log(JSON.stringify(payload));
+  process.exit(0);
 ")"
 INGEST_KEY="$(echo "$_INGEST_INFO" | sed -n '1p')"
 PAYLOAD="$(echo "$_INGEST_INFO" | sed -n '2p')"

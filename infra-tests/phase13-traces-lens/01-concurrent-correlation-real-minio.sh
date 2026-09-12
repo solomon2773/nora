@@ -58,27 +58,36 @@ source "$SCRIPT_DIR/../lib/minio_ctl.sh"
 #
 # Same shape/rationale as lib/node_call.sh's node_call (see its header for
 # the full explanation of why `docker compose exec` alone can't see
-# secrets, and why /app not /tmp), targeting the backend-api container
-# instead of worker-provisioner. backend-api's WORKDIR is also /app (see
-# backend-api/Dockerfile: `WORKDIR /app`), and its compose service mounts
-# `./backend-api` there writably in dev mode, so the same docker-cp-then-
-# docker-exec pattern applies unchanged.
+# secrets), targeting the backend-api container instead of worker-provisioner.
+#
+# Real bug found running this script for the first time against a live
+# stack: unlike worker-provisioner (node_call.sh's target, which writes its
+# scratch script to /app and works fine there), backend-api's container in
+# THIS stack runs with a read-only root filesystem (confirmed via `docker
+# inspect` — HostConfig.ReadonlyRootfs=true, and empirically: `docker cp`
+# into /app failed outright with "container rootfs is marked read-only").
+# lib/auth.sh's mint_jwt already hit and solved this exact problem for this
+# exact container (see its header) — piping the script over stdin to `sh -c
+# 'cat > /tmp/...'` writes into the one writable path (a tmpfs mount at
+# /tmp) instead of routing through `docker cp`'s root-FS-driver path. This
+# helper originally used the worker-provisioner-style docker-cp-to-/app
+# pattern unchanged, which is wrong for backend-api specifically — fixed to
+# match auth.sh's already-proven approach.
 node_call_backend_api() {
   local js="$1"
-  local cid tmp_host
+  local cid
   cid="$(container_id_for backend-api)"
   if [ -z "$cid" ]; then
     echo "node_call_backend_api: backend-api is not running" >&2
     return 1
   fi
 
-  tmp_host="$(mktemp)"
-  {
+  local js_source
+  js_source="$(
     echo "require('tsx/cjs');"
     printf '%s\n' "$js"
-  } > "$tmp_host"
-  docker cp "$tmp_host" "${cid}:/app/.infra-test-call-backend.js" >/dev/null
-  rm -f "$tmp_host"
+  )"
+  printf '%s\n' "$js_source" | docker exec -i "$cid" sh -c "cat > /tmp/.infra-test-call-backend.js"
 
   local -a secret_env_args=()
   local secret_name secret_value
@@ -87,9 +96,13 @@ node_call_backend_api() {
     secret_env_args+=(-e "${secret_name}=${secret_value}")
   done
 
-  docker exec "${secret_env_args[@]}" -w /app "$cid" node /app/.infra-test-call-backend.js
+  # cwd stays -w /app (backend-api's real app root, same as auth.sh's
+  # mint_jwt) so `require("./db.ts")`/relative requires inside the script
+  # resolve the same way production code does, even though the script file
+  # itself physically lives under /tmp.
+  docker exec "${secret_env_args[@]}" -w /app "$cid" node /tmp/.infra-test-call-backend.js
   local status=$?
-  docker exec "$cid" rm -f /app/.infra-test-call-backend.js >/dev/null 2>&1 || true
+  docker exec "$cid" rm -f /tmp/.infra-test-call-backend.js >/dev/null 2>&1 || true
   return $status
 }
 
@@ -132,11 +145,20 @@ RESULT_JSON="$(node_call_backend_api "
 (async () => {
   const zlib = require('zlib');
   const crypto = require('crypto');
-  const db = require('./db.ts');
-  const objectStorage = require('../agent-runtime/lib/objectStorage.ts');
-  const segmentWriter = require('../workers/provisioner/logs/segmentWriter.ts');
-  const logStorageConfigModule = require('../workers/provisioner/logs/logStorageConfig.ts');
-  const traceQuery = require('./traceQuery.ts');
+  // Absolute paths, not relative ('./db.ts', '../agent-runtime/...'): this
+  // script file is written to /tmp (see node_call_backend_api's header —
+  // backend-api's rootfs is read-only, so /app isn't writable), and a
+  // relative require() resolves against the REQUIRING FILE's own directory,
+  // not the process cwd — so a relative path here would resolve against
+  // /tmp, not /app, and fail with MODULE_NOT_FOUND. These absolute paths are
+  // exactly what the original relative paths resolved to when this script
+  // still lived under /app (backend-api's real app root, and the /agent-runtime
+  // and /workers read-only mount points CLAUDE.md documents).
+  const db = require('/app/db.ts');
+  const objectStorage = require('/agent-runtime/lib/objectStorage.ts');
+  const segmentWriter = require('/workers/provisioner/logs/segmentWriter.ts');
+  const logStorageConfigModule = require('/workers/provisioner/logs/logStorageConfig.ts');
+  const traceQuery = require('/app/traceQuery.ts');
 
   const AGENT_ID = '${AGENT_ID}';
   const TRACE_ID = '${TRACE_ID}';

@@ -78,9 +78,16 @@ AGENT_ID="$(echo "$_AGENT_INFO" | sed -n '1p')"
 CONTAINER_NAME="$(echo "$_AGENT_INFO" | sed -n '2p')"
 log_info "agent_id=$AGENT_ID container=$CONTAINER_NAME"
 
+# Real bug found running phase11's 01 script for the first time against a
+# live stack (see its comment near the same node_call pattern): requiring
+# routes/otlp.ts opens live BullMQ/ioredis connections at module scope
+# (../redisQueue.ts) that keep the spawned node process alive indefinitely
+# without an explicit exit — turning this instant HMAC computation into a
+# 10-20 minute stall. The trailing process.exit(0) is the fix.
 INGEST_KEY="$(node_call "
   const { computeIngestKey } = require('../backend-api/routes/otlp.ts');
   console.log(computeIngestKey('${AGENT_ID}'));
+  process.exit(0);
 ")"
 if [ -z "$INGEST_KEY" ]; then
   test_fail "could not compute a real ingest key via node_call — cannot proceed"
