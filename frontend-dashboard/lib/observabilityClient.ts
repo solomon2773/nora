@@ -263,6 +263,61 @@ export function isApproximateTimestamp(line: Pick<LogLine, "ts_source">): boolea
   return line.ts_source === "collector";
 }
 
+// ── Row timestamp display ────────────────────────────────────────────────
+
+// Formats a row timestamp as HH:MM:SS.mmm in either the viewer's local zone
+// or UTC. The runtime writes UTC into its own message text, so the lens lets
+// operators line the column up with it instead of silently mixing zones.
+export function formatLogTime(value: string | null | undefined, utc: boolean): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+  const h = utc ? date.getUTCHours() : date.getHours();
+  const m = utc ? date.getUTCMinutes() : date.getMinutes();
+  const s = utc ? date.getUTCSeconds() : date.getSeconds();
+  const ms = utc ? date.getUTCMilliseconds() : date.getMilliseconds();
+  return `${pad(h)}:${pad(m)}:${pad(s)}.${pad(ms, 3)}`;
+}
+
+// Short zone name for the column header ("EDT", "GMT+2"); "UTC" when utc.
+export function logTimeZoneLabel(utc: boolean, at: Date = new Date()): string {
+  if (utc) return "UTC";
+  const part = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+    .formatToParts(at)
+    .find((p) => p.type === "timeZoneName");
+  return part?.value || "Local";
+}
+
+// Leading ISO-8601 timestamp with an explicit zone, optionally bracketed,
+// e.g. "2026-09-14T18:44:09.085+00:00 " or "[2026-09-14 18:44:09Z] ".
+// Zone-less stamps are left alone: their zone is ambiguous, so they can't be
+// proven redundant with the row's `ts`.
+const LEADING_ISO_TIMESTAMP =
+  /^\[?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))\]?\s+/;
+
+export const REDUNDANT_TIMESTAMP_TOLERANCE_MS = 1000;
+
+// Display-only: drops a message's leading timestamp when it is within
+// tolerance of the row's source `ts`, since the time column already shows
+// it. The stored/searched/exported message is never modified. Collector-
+// stamped rows keep the prefix — there the embedded time is the best source
+// timestamp the operator has.
+export function stripRedundantTimestamp(
+  line: Pick<LogLine, "message" | "ts" | "ts_source">,
+  toleranceMs: number = REDUNDANT_TIMESTAMP_TOLERANCE_MS,
+): string {
+  const { message } = line;
+  if (!message || !line.ts || isApproximateTimestamp(line)) return message;
+  const match = LEADING_ISO_TIMESTAMP.exec(message);
+  if (!match) return message;
+  const embedded = Date.parse(match[1].replace(" ", "T"));
+  const rowTs = Date.parse(line.ts);
+  if (Number.isNaN(embedded) || Number.isNaN(rowTs)) return message;
+  if (Math.abs(embedded - rowTs) > toleranceMs) return message;
+  return message.slice(match[0].length);
+}
+
 // ── Capability-state resolution (item 8) ─────────────────────────────────
 
 export type RuntimeLensCapability =
@@ -370,6 +425,48 @@ export function computeVirtualRangeFromOffsets(
   const startIndex = Math.max(0, firstVisible - overscan);
   const endIndex = Math.min(totalCount, lastVisible + 1 + overscan);
   return { startIndex, endIndex };
+}
+
+// Row index under a vertical position (e.g. the viewport's top edge); -1 for
+// an empty list. Used to record the scroll anchor the lens restores when rows
+// are added or removed above an operator who has scrolled up.
+export function rowIndexAtOffset(offsets: number[], y: number): number {
+  const totalCount = offsets.length - 1;
+  if (totalCount <= 0) return -1;
+  return findRowIndexForOffset(offsets, y, totalCount);
+}
+
+// ── Runtime lens ordering / follow-bottom ────────────────────────────────
+
+// Pixels from the bottom that still count as "at the bottom", so sub-pixel
+// rounding or a small trackpad nudge doesn't silently stop following.
+export const FOLLOW_BOTTOM_THRESHOLD_PX = 40;
+
+export function isScrolledToBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  threshold: number = FOLLOW_BOTTOM_THRESHOLD_PX,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+// Runtime lens rows run oldest → newest (newest at the bottom, like a
+// terminal). Search results arrive newest-first (`order: "desc"`) and live
+// tail lines newest-last, so the search page is reversed and live lines
+// follow it.
+export function orderRuntimeLensLines(searchDesc: LogLine[], live: LogLine[]): LogLine[] {
+  const ordered = new Array<LogLine>(searchDesc.length + live.length);
+  for (let i = 0; i < searchDesc.length; i++) ordered[i] = searchDesc[searchDesc.length - 1 - i];
+  for (let i = 0; i < live.length; i++) ordered[searchDesc.length + i] = live[i];
+  return ordered;
+}
+
+// Best-effort stable identity for a row across list changes (live-tail
+// appends, buffer trimming, re-renders). Not guaranteed unique — callers
+// that need uniqueness (React keys) must add a disambiguator.
+export function logRowIdentity(line: LogLine): string {
+  return `${line._live ? "live" : "search"}:${line.stream}:${line.ord ?? ""}:${line.ts || line.observed_ts}`;
 }
 
 // Returns the row index i such that target falls within [offsets[i], offsets[i+1]),
@@ -597,6 +694,18 @@ export interface ListTracesResult {
   // (e.g. a future settings page) but the Traces lens itself must NOT use it.
   tracesEnabled: boolean | null;
   traceSampleRate: number | null;
+  // Per-AGENT fact (not a setting): whether the last attempt to enable OTel
+  // tracing on this specific agent's own OpenClaw install actually
+  // succeeded. Distinct from `tracesEnabled` above, which is only the
+  // workspace-level policy ("should Nora try") -- an agent can have
+  // `tracesEnabled: true` and still be `tracingCapability: "unsupported"`
+  // if its OpenClaw version is too old for the required plugin.
+  // 'unknown' before Nora has attempted this at least once for the agent.
+  tracingCapability: "unknown" | "supported" | "unsupported";
+  // Raw detected `openclaw --version` output, diagnostic-only (see backend
+  // comment) -- `null` when never captured (agent never checked, or an
+  // older backend response with no such field).
+  tracingOpenclawVersion: string | null;
 }
 
 /**
@@ -617,11 +726,18 @@ export async function listTraces(params: ListTracesParams): Promise<ListTracesRe
   const rawList = Array.isArray(body) ? body : Array.isArray(body?.traces) ? body.traces : [];
   const rawTracesEnabled = body?.tracesEnabled ?? body?.traces_enabled;
   const rawTraceSampleRate = body?.traceSampleRate ?? body?.trace_sample_rate;
+  const rawTracingCapability = body?.tracingCapability ?? body?.tracing_capability;
+  const rawTracingOpenclawVersion = body?.tracingOpenclawVersion ?? body?.tracing_openclaw_version;
   return {
     traces: rawList.map(normalizeTraceSummary),
     nextCursor: body?.nextCursor ?? null,
     tracesEnabled: typeof rawTracesEnabled === "boolean" ? rawTracesEnabled : null,
     traceSampleRate: typeof rawTraceSampleRate === "number" ? rawTraceSampleRate : null,
+    tracingCapability:
+      rawTracingCapability === "supported" || rawTracingCapability === "unsupported"
+        ? rawTracingCapability
+        : "unknown",
+    tracingOpenclawVersion: typeof rawTracingOpenclawVersion === "string" ? rawTracingOpenclawVersion : null,
   };
 }
 
@@ -630,8 +746,14 @@ export async function listTraces(params: ListTracesParams): Promise<ListTracesRe
  * trace. Mirrors `searchLogs`'s error-handling shape exactly. See the
  * ASSUMED API CONTRACT block above for the field-name caveat.
  */
-export async function getTraceDetail(traceId: string): Promise<TraceDetail> {
-  const res = await fetchWithAuth(`/api/traces/${encodeURIComponent(traceId)}`);
+export async function getTraceDetail(
+  traceId: string,
+  workspaceId?: string | null,
+): Promise<TraceDetail> {
+  const query = new URLSearchParams();
+  if (workspaceId) query.set("workspaceId", workspaceId);
+  const qs = query.toString();
+  const res = await fetchWithAuth(`/api/traces/${encodeURIComponent(traceId)}${qs ? `?${qs}` : ""}`);
   const body = await jsonOrThrow<any>(res);
   return normalizeTraceDetail(body);
 }
@@ -672,27 +794,47 @@ export async function getWorkspaceTracesEnabled(
 
 // ── Traces lens view resolution (item 6/7) ──────────────────────────────
 
-export type TracesLensView = "enable_cta" | "empty" | "list";
+export type TracesLensView = "enable_cta" | "unsupported" | "unverified" | "empty" | "list";
 
 export interface TracesLensViewInput {
   /** `null` = unknown (settings fetch failed, 404'd, or no workspace selected). */
   tracesEnabled: boolean | null;
   traceCount: number;
+  /** Per-agent capability — see `ListTracesResult.tracingCapability`. */
+  tracingCapability?: "unknown" | "supported" | "unsupported";
 }
 
 /**
- * Pure: decides which of the three Traces-lens states to render for an
+ * Pure: decides which of the five Traces-lens states to render for an
  * agent that's already selected (the "no agent selected yet" state is
  * handled separately, one layer up, the same way the Runtime lens does it).
  * `tracesEnabled !== true` (i.e. `false` OR `null`/unknown) always wins —
  * that is the literal "false/unset" language in the Phase 13 spec — so a
  * workspace this frontend can't confirm has tracing on gets the CTA rather
- * than an empty list that looks like a bug.
+ * than an empty list that looks like a bug. Only once the workspace-level
+ * policy is confirmed on does the per-agent capability get a say: an agent
+ * whose OpenClaw install can't run the required plugin shows `"unsupported"`
+ * — a distinct, actionable message — rather than an empty list
+ * indistinguishable from "tracing is on, this agent just hasn't done
+ * anything yet".
+ *
+ * `traceCount > 0` wins over `tracingCapability === "unknown"` -- spans
+ * already landed, so capability is proven regardless of what the persisted
+ * verdict currently says. `"unknown"` only produces `"unverified"` (a third
+ * distinct state, separate from both `"unsupported"` and the ordinary
+ * `"empty"`) when there is also nothing to show yet: the capability check
+ * only ever runs against a *running* agent (see `reconcileTracingConfig`'s
+ * `status IN ('running','warning')` filter in agentTracing.ts) -- a stopped
+ * or never-started agent can sit at the `"unknown"` default indefinitely,
+ * which must not look identical to a confirmed-working agent that simply
+ * hasn't produced a trace yet.
  */
 export function resolveTracesLensView(input: TracesLensViewInput): TracesLensView {
   if (input.tracesEnabled !== true) return "enable_cta";
-  if (input.traceCount === 0) return "empty";
-  return "list";
+  if (input.tracingCapability === "unsupported") return "unsupported";
+  if (input.traceCount > 0) return "list";
+  if (input.tracingCapability === "unknown") return "unverified";
+  return "empty";
 }
 
 // ── Correlated log partitioning (item 4) ────────────────────────────────

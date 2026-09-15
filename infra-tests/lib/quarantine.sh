@@ -86,3 +86,49 @@ restore_quarantined_local_segments() {
     QUARANTINED_ACTIVE=""
   fi
 }
+
+# ── Backend-generic quarantine ─────────────────────────────────────────────
+#
+# The functions above only hide `local` segments, which is enough for a
+# local -> X migration. A migration INTO local reads from another backend,
+# and this stack has foreign `s3` segments too, so those need hiding as well.
+# The sentinel is always "<backend>__infra_test_quarantined" — for `local`
+# that is exactly QUARANTINE_SENTINEL above, so both families of helpers
+# restore each other's rows.
+
+QUARANTINE_SUFFIX="__infra_test_quarantined"
+
+# quarantine_foreign_segments <backend> <agent-id> [<agent-id> ...]
+quarantine_foreign_segments() {
+  local backend="$1"
+  shift
+  local ids_sql="" id
+  for id in "$@"; do
+    ids_sql="${ids_sql}${ids_sql:+,}'${id}'"
+  done
+  local count
+  count="$(db_query "SELECT COUNT(*) FROM log_segments WHERE storage_backend = '${backend}' AND agent_id NOT IN (${ids_sql});")"
+  if [ "$count" -gt 0 ]; then
+    log_warn "quarantining ${count} '${backend}' segment(s) belonging to OTHER agents for the duration of this test — restored automatically on exit"
+    db_exec "UPDATE log_segments SET storage_backend = '${backend}${QUARANTINE_SUFFIX}' WHERE storage_backend = '${backend}' AND agent_id NOT IN (${ids_sql});" >/dev/null
+    QUARANTINED_ACTIVE=1
+  fi
+}
+
+# restore_all_quarantined_segments — reverses quarantine_foreign_segments (and
+# quarantine_foreign_local_segments) for every backend. Safe to call always.
+restore_all_quarantined_segments() {
+  db_exec "UPDATE log_segments SET storage_backend = left(storage_backend, length(storage_backend) - length('${QUARANTINE_SUFFIX}')) WHERE right(storage_backend, length('${QUARANTINE_SUFFIX}')) = '${QUARANTINE_SUFFIX}';" >/dev/null 2>&1 || true
+  QUARANTINED_ACTIVE=""
+}
+
+# restore_any_stuck_quarantined_segments_all_backends — start-of-script safety
+# net for a crashed earlier run, covering every backend's sentinel.
+restore_any_stuck_quarantined_segments_all_backends() {
+  local stuck
+  stuck="$(db_query "SELECT COUNT(*) FROM log_segments WHERE right(storage_backend, length('${QUARANTINE_SUFFIX}')) = '${QUARANTINE_SUFFIX}';")"
+  if [ "$stuck" -gt 0 ]; then
+    log_warn "found ${stuck} segment(s) still quarantined from a previous run — restoring them now"
+    restore_all_quarantined_segments
+  fi
+}

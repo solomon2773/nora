@@ -47,7 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   },
   { name: "Workspaces", icon: FolderOpen, href: "/app/workspaces" },
   { name: "Monitoring", icon: BarChart3, href: "/app/monitoring" },
-  { name: "Logs", icon: ScrollText, href: "/app/logs" },
+  { name: "Logging", icon: ScrollText, href: "/app/logs" },
 ];
 
 export default function Sidebar({

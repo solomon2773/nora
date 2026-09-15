@@ -164,3 +164,35 @@ restore_storage_destination() {
     WHERE singleton = TRUE;" >/dev/null
   restart_log_storage_consumers
 }
+
+# set_minio_credentials_keep_backend — writes working MinIO bucket, endpoint,
+# and encrypted credentials into platform_settings WITHOUT changing
+# log_storage_backend, then restarts both consumers.
+#
+# A migration INTO local still has to read its source objects from MinIO, and
+# storageConfigForSegment takes credentials from the current platform
+# settings, not from the segment row. So tests migrating s3 -> local need
+# MinIO credentials configured while the destination stays local. Capture the
+# row with capture_storage_destination first and restore it in cleanup.
+set_minio_credentials_keep_backend() {
+  node_call "
+    const db = require('../backend-api/db.ts');
+    const { encrypt } = require('../backend-api/crypto.ts');
+    (async () => {
+      const accessKey = encrypt('${MINIO_ACCESS_KEY:-noraminio}');
+      const secretKey = encrypt('${MINIO_SECRET_KEY:-noraminiosecret}');
+      await db.query(
+        \"UPDATE platform_settings SET \" +
+        \"log_storage_s3_bucket = '${MINIO_BUCKET:-nora-logs-local}', \" +
+        \"log_storage_s3_region = 'us-east-1', \" +
+        \"log_storage_s3_endpoint = 'http://minio:9000', \" +
+        \"log_storage_s3_access_key_id_encrypted = '\" + accessKey + \"', \" +
+        \"log_storage_s3_secret_access_key_encrypted = '\" + secretKey + \"' \" +
+        \"WHERE singleton = TRUE\"
+      );
+      console.log('OK');
+      process.exit(0);
+    })().catch((e) => { console.error(e); process.exit(1); });
+  " >/dev/null
+  restart_log_storage_consumers
+}

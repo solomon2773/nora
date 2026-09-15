@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
 # Phase 12, test 3: reconciliation re-applies tracing config to an agent
-# that actually restarted (not the mocked "restarted" state
-# agentTracing.test.ts simulates).
+# whose config drifted while it was already running.
 #
-# The scenario this proves: a real container restart is not itself what
-# discards the config (confirmed empirically in 02-real-span-ingest.sh's
-# development — /root/.openclaw/openclaw.json genuinely persists across a
-# plain `docker restart`, since that only restarts the process, not the
-# container filesystem). What COULD discard it is anything that rewrites
-# openclaw.json without the diagnostics section between the restart and
-# the next reconcile tick — this script manufactures exactly that
-# (clearing diagnostics.otel from the on-disk config directly, the
-# simplest reliable stand-in for "this agent's config no longer has
-# tracing applied") and confirms `reconcileTracingConfig` (the real
-# function, on the real 30s `backgroundTasks.ts` timer already running
-# inside the real backend-api process — NOT called directly via
-# node_call, so this is the actual production timer catching it) puts it
-# back with zero manual intervention.
+# This used to strip diagnostics.otel and then `docker restart` the
+# container, on the assumption that a plain restart only restarts the
+# process (not the filesystem) and so couldn't itself be the thing putting
+# the config back. That assumption about the FILESYSTEM was right, but it
+# missed a second real actor: the agent container's own entrypoint/
+# bootstrap sequence (agent-runtime/lib/runtimeBootstrap.ts) also runs on
+# every container start, independent of Nora's backend-side reconciler,
+# and it re-applies expected config as part of coming up. Confirmed live:
+# after strip -> restart -> sleep 8, diagnostics.otel was ALREADY back,
+# well before backgroundTasks.ts's 30s RECONCILE_INTERVAL could plausibly
+# have ticked. That's not a bug -- the agent doing the right thing on its
+# own boot is fine -- but it means a bare restart can never isolate
+# reconcileTracingConfig specifically: bootstrap wins the race every time.
+#
+# Fixed approach: never restart the container at all. Strip
+# diagnostics.otel from the on-disk config of an agent that is already
+# running and has been stable for a while (so bootstrap has long since
+# finished and cannot be a candidate explanation), then wait for the real
+# 30s reconcile loop -- and ONLY that loop, since nothing else touches a
+# running container's config file outside of a restart or an explicit
+# apply -- to notice the drift and fix it with zero manual trigger from
+# this script. `docker inspect`'s StartedAt/Pid are checked before and
+# after to prove no restart happened, the same technique
+# 01-live-merge-no-restart.sh already uses for the same purpose.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -49,10 +58,8 @@ ORIGINAL_CONFIG=""
 cleanup() {
   test_trap_incomplete
   if [ -n "$ORIGINAL_CONFIG" ]; then
-    log_step "restoring agent5's original openclaw.json (whatever it held before this test) and restarting so the running process matches it"
+    log_step "restoring agent5's original openclaw.json (whatever it held before this test) directly, no restart needed"
     printf '%s' "$ORIGINAL_CONFIG" | docker exec -i "$CONTAINER_NAME" sh -c "cat > ${CONFIG_PATH}.infra-restore.tmp && mv ${CONFIG_PATH}.infra-restore.tmp ${CONFIG_PATH}"
-    docker restart "$CONTAINER_NAME" >/dev/null 2>&1 || true
-    sleep 5
   fi
 }
 trap cleanup EXIT
@@ -68,7 +75,12 @@ if ! echo "$ORIGINAL_CONFIG" | grep -q '"otel"'; then
   exit 0
 fi
 
-log_step "writing a version of openclaw.json with diagnostics.otel removed entirely (simulating an agent that restarted and lost its tracing config), then restarting the container for real"
+log_step "recording StartedAt/Pid before the strip, so a restart happening (by accident, or from something else in the stack) is caught rather than silently invalidating the isolation this test depends on"
+started_at_before="$(docker inspect "$CONTAINER_NAME" --format '{{.State.StartedAt}}')"
+pid_before="$(docker inspect "$CONTAINER_NAME" --format '{{.State.Pid}}')"
+log_info "container has been running since $started_at_before (pid $pid_before) — no restart will be issued by this script"
+
+log_step "stripping diagnostics.otel from the on-disk config of the already-running container (simulating config drift while live, not a restart)"
 # Strip with a small inline node script executed directly inside the
 # agent's own container (it already has node), rather than piping the
 # multi-KB JSON blob through node_call/another container — no cross-
@@ -92,27 +104,7 @@ if echo "$after_strip" | grep -q '"otel"'; then
   test_fail "diagnostics.otel is still present after the strip — test setup itself failed"
   exit 0
 fi
-log_info "confirmed diagnostics.otel removed from agent5's on-disk config"
-
-log_step "restarting agent5's container for real (a genuine restart, not the unit test's mocked 'restarted' state)"
-docker restart "$CONTAINER_NAME" >/dev/null
-sleep 8
-restart_status="$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}')"
-if [ "$restart_status" != "running" ]; then
-  test_fail "agent5's container did not come back up running after the restart (status: ${restart_status})"
-  exit 0
-fi
-log_info "agent5 container restarted and is running again"
-
-# Confirm the stripped state genuinely survived the restart (i.e. this
-# test isn't accidentally validating against a config OpenClaw itself
-# regenerated at boot) before waiting on reconciliation.
-post_restart_config="$(docker exec "$CONTAINER_NAME" sh -c "cat ${CONFIG_PATH}" 2>/dev/null)"
-if echo "$post_restart_config" | grep -q '"otel"'; then
-  test_fail "diagnostics.otel reappeared immediately after the restart, before reconciliation could have run — something other than reconcileTracingConfig restored it, invalidating this test's premise"
-  exit 0
-fi
-log_info "confirmed diagnostics.otel is still absent immediately post-restart — the real 30s reconcile loop (not container boot) is what must restore it"
+log_info "confirmed diagnostics.otel removed from agent5's on-disk config, container never restarted"
 
 log_step "waiting for the real backend-api reconcile loop (backgroundTasks.ts's 30s RECONCILE_INTERVAL, calling the real reconcileTracingConfig -> applyTracingConfig) to notice and re-apply, without any manual trigger from this script"
 waited=0
@@ -128,11 +120,20 @@ while [ "$waited" -lt 75 ]; do
 done
 
 if [ "$reconciled" -ne 1 ]; then
-  test_fail "diagnostics.otel did not reappear in agent5's config within ${waited}s of the real restart — reconcileTracingConfig's 30s self-healing loop did not recover it"
+  test_fail "diagnostics.otel did not reappear in agent5's config within ${waited}s of the drift — reconcileTracingConfig's 30s self-healing loop did not recover it"
   exit 0
 fi
 
 log_info "diagnostics.otel reappeared within ${waited}s, with no manual applyTracingConfig call from this script — the real 30s reconcile loop restored it"
+
+log_step "confirming the container genuinely never restarted during the wait — otherwise bootstrap (not the reconciler) could still be the real explanation"
+started_at_after="$(docker inspect "$CONTAINER_NAME" --format '{{.State.StartedAt}}')"
+pid_after="$(docker inspect "$CONTAINER_NAME" --format '{{.State.Pid}}')"
+if [ "$started_at_after" != "$started_at_before" ] || [ "$pid_after" != "$pid_before" ]; then
+  test_fail "container restarted during the test (StartedAt $started_at_before -> $started_at_after, pid $pid_before -> $pid_after) — this invalidates the isolation this test depends on; something else in the stack restarted agent5 mid-run, re-run once nothing else is touching it"
+  exit 0
+fi
+log_info "confirmed no restart occurred (StartedAt/Pid unchanged) — the reconcile loop, not container bootstrap, is what restored the config"
 
 final_config="$(docker exec "$CONTAINER_NAME" sh -c "cat ${CONFIG_PATH}")"
 otel_enabled_ok=0
@@ -141,7 +142,7 @@ echo "$final_config" | grep -q '"enabled": true' && otel_enabled_ok=1
 echo "$final_config" | grep -q '"protocol": "http/protobuf"' && protocol_ok=1
 
 if [ "$otel_enabled_ok" -eq 1 ] && [ "$protocol_ok" -eq 1 ]; then
-  test_pass "after a real container restart wiped diagnostics.otel from disk, the real 30s reconcileTracingConfig loop (backgroundTasks.ts, no manual trigger) restored it within ${waited}s: enabled=true, protocol=http/protobuf"
+  test_pass "after diagnostics.otel drifted off an already-running agent's on-disk config (no restart, StartedAt/Pid unchanged throughout), the real 30s reconcileTracingConfig loop (backgroundTasks.ts, no manual trigger) restored it within ${waited}s: enabled=true, protocol=http/protobuf"
 else
   test_fail "diagnostics.otel reappeared but with unexpected shape: ${final_config}"
 fi

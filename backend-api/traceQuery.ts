@@ -96,19 +96,22 @@
 //   }
 //
 // ── Correlation rule (items 3/4) ──────────────────────────────────────────
-// correlatedLogs = (gateway-stream lines whose trace_id === this traceId)
-//                 UNION (ALL runtime-stream lines in the same agent_id and
-//                        the trace's own [startedAt, endedAt] time window,
-//                        regardless of trace_id -- runtime lines never carry
-//                        one in the first place, since they come from
-//                        container stdout/stderr, not gateway RPC).
-// A gateway line from a DIFFERENT trace_id is excluded entirely -- it is
-// never included "in-window" the way a runtime line is, because gateway
-// lines are the ones that DO carry reliable trace_id, so trace_id is the
-// correct, non-lossy filter for that stream. Segments are only pruned by
-// AGENT + TIME (item 3) -- there is deliberately no `trace_ids[]` column
-// anywhere to filter segments by trace directly; per-line trace_id
-// filtering happens after segment lines are already in memory.
+// correlatedLogs = ALL gateway- and runtime-stream lines in the same
+//                   agent_id and the trace's own [startedAt, endedAt] time
+//                   window, regardless of trace_id.
+// A gateway line's own `trace_id` field is OpenClaw's internal per-request
+// correlation id, confirmed empirically to be a DIFFERENT id space than the
+// OTel trace_id exported to `agent_spans` -- it essentially never matches,
+// so it cannot be used as the primary inclusion filter (an earlier version
+// of this function did exactly that, exclude-by-default on trace_id
+// mismatch, and it silently hid every gateway line for every real trace).
+// A gateway line whose trace_id DOES happen to equal this trace's id is
+// still marked with the stronger `inTrace: true`/`category: "trace"`
+// signal; every other gateway/runtime line in-window gets `category:
+// "window"`. Segments are only pruned by AGENT + TIME (item 3) -- there is
+// deliberately no `trace_ids[]` column anywhere to filter segments by trace
+// directly; per-line filtering happens after segment lines are already in
+// memory.
 //
 // ── "tracing disabled" vs "enabled but empty" (item 7) ────────────────────
 // Chosen approach: `GET /traces` resolves and returns `tracesEnabled` /
@@ -361,13 +364,20 @@ async function correlatedLogsForTrace(spanRows, deps = {}) {
   for (const lines of fetched) {
     for (const rawLine of lines) {
       if (rawLine.stream === "gateway") {
-        // Item 4: a gateway line is included ONLY when its own trace_id
-        // matches -- gateway lines carry a reliable trace_id, so trace_id
-        // is the correct filter for this stream (unlike runtime, below).
+        // A gateway line's own `trace_id` is OpenClaw's internal per-request
+        // correlation id (used to pair its own "start"/"response" log lines)
+        // -- confirmed empirically against a real agent to be a DIFFERENT id
+        // space than the OTel trace_id exported to `agent_spans`, so it can
+        // never be relied on to match this trace's id. Fall back to the same
+        // window-based inclusion runtime lines use below, so real gateway
+        // activity during the trace is never silently hidden. If a line's
+        // trace_id DOES happen to equal this trace's id, still mark it
+        // `inTrace: true`/`category: "trace"` -- a strictly stronger signal
+        // than the window match, worth keeping if it's ever available.
         if (rawLine.trace_id === traceId) {
           correlated.push({ ...rawLine, inTrace: true, category: "trace" });
+          continue;
         }
-        continue;
       }
 
       // Item 4: EVERY runtime line in the agent+time window is included,
@@ -415,7 +425,7 @@ async function listTraces(params, actor, deps = {}) {
   if (!agent) throw notFoundError("Agent not found");
 
   const workspaceId = typeof params.workspaceId === "string" ? params.workspaceId : null;
-  await logSearch.enforceWorkspaceScope({ agentId, workspaceId }, { db });
+  await logSearch.enforceWorkspaceScope({ agentId, workspaceId, actor }, { db });
 
   const actualWorkspaceId = await resolveWorkspaceIdFn(agentId, { db });
   const settings = await resolveSettingsFn(actualWorkspaceId, { db });
@@ -448,6 +458,16 @@ async function listTraces(params, actor, deps = {}) {
     agentId,
     workspaceId: actualWorkspaceId,
     tracesEnabled: Boolean(settings.traces_enabled),
+    // The workspace-level POLICY toggle above says whether Nora should try.
+    // This says whether trying actually works on THIS agent's own OpenClaw
+    // install -- 'unknown' until applyTracingConfig has run against it at
+    // least once (e.g. tracesEnabled just turned on and the 30s reconcile
+    // tick hasn't reached this agent yet).
+    tracingCapability: agent.tracing_capability || "unknown",
+    // Diagnostic-only, alongside tracingCapability -- see the migration
+    // comment in server.ts for why this is never the trigger for the
+    // supported/unsupported verdict itself.
+    tracingOpenclawVersion: agent.tracing_openclaw_version || null,
     traceSampleRate: Number(settings.trace_sample_rate),
     traces: traces.slice(0, limit),
   };
@@ -485,7 +505,7 @@ async function getTraceDetail(traceId, actor, params = {}, deps = {}) {
   if (!agent) throw notFoundError("Trace not found");
 
   const workspaceId = typeof params.workspaceId === "string" ? params.workspaceId : null;
-  await logSearch.enforceWorkspaceScope({ agentId, workspaceId }, { db });
+  await logSearch.enforceWorkspaceScope({ agentId, workspaceId, actor }, { db });
 
   const trace = summarizeTrace(spanRows);
   const spans = buildSpanTree(spanRows);

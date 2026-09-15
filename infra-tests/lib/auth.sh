@@ -47,13 +47,34 @@ fi
 
 # mint_jwt [role]
 #
-# role: "user" (default) or "platform_admin" — selects which real user row
-# to mint against ("platform_admin" resolves to the real `role = 'admin'`
-# DB value — see header). Prints the JWT to stdout, nothing else. Fails
-# loudly (no JWT-shaped output) if no matching user exists — callers must
-# check for a non-empty, well-formed result rather than assuming success.
+# role: "user" (default) or "platform_admin". Prints the JWT to stdout,
+# nothing else. Fails loudly (no JWT-shaped output) if no matching user
+# exists — callers must check for a non-empty, well-formed result rather
+# than assuming success.
+#
+# The claimed role in the minted token is ALWAYS the literal requested
+# value ("user" or "admin" — see below), never whatever role the backing
+# DB row actually has. This is deliberate, not a simplification: a fresh
+# dev install typically has exactly one user row, and it's the platform
+# admin created by setup — there is no separate non-admin account to
+# query for. `authenticateToken` (backend-api/middleware/auth.ts) sets
+# `req.user` directly from the verified JWT's decoded claims with no
+# per-request DB re-check, so a token honestly claiming role:"user" is
+# indistinguishable, from the app's point of view, from a real non-admin
+# session — it's the same trust boundary a real login already relies on.
+# Confirmed the hard way: this function used to pick "the first user row,
+# any role" for the non-platform_admin case, which silently minted an
+# ADMIN token every time on a single-user dev DB — a real test (phase5c's
+# "rejects non-admin" check) passed for the wrong reason, because the
+# "non-admin" caller was actually an admin the whole time.
 mint_jwt() {
   local want_role="${1:-user}"
+  local claimed_role="user"
+  local db_role_filter="1=1"
+  if [ "$want_role" = "platform_admin" ]; then
+    claimed_role="admin"
+    db_role_filter="role = 'admin'"
+  fi
   local cid
   cid="$(container_id_for backend-api)"
   if [ -z "$cid" ]; then
@@ -62,11 +83,7 @@ mint_jwt() {
   fi
 
   local user_row
-  if [ "$want_role" = "platform_admin" ]; then
-    user_row="$(db_query "SELECT id, email, role FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1;")"
-  else
-    user_row="$(db_query "SELECT id, email, role FROM users ORDER BY created_at LIMIT 1;")"
-  fi
+  user_row="$(db_query "SELECT id, email FROM users WHERE ${db_role_filter} ORDER BY created_at LIMIT 1;")"
   # db.sh's db_query runs psql with -A (unaligned), whose default field
   # separator is a pipe ('|') — confirmed by reading lib/db.sh (`psql -qtAc`)
   # and psql's own docs for -A/-F. Split on '|', not a guessed delimiter.
@@ -75,10 +92,9 @@ mint_jwt() {
     return 1
   fi
 
-  local user_id user_email user_db_role
+  local user_id user_email
   user_id="$(echo "$user_row" | cut -d'|' -f1)"
   user_email="$(echo "$user_row" | cut -d'|' -f2)"
-  user_db_role="$(echo "$user_row" | cut -d'|' -f3)"
   if [ -z "$user_id" ]; then
     echo "mint_jwt: could not parse id from user row: $user_row" >&2
     return 1
@@ -102,7 +118,7 @@ mint_jwt() {
   js_source="$(cat <<EOF
 const jwt = require('jsonwebtoken');
 console.log(jwt.sign(
-  { id: '${user_id}', email: '${user_email}', role: '${user_db_role}' },
+  { id: '${user_id}', email: '${user_email}', role: '${claimed_role}' },
   process.env.JWT_SECRET,
   { expiresIn: '7d', algorithm: 'HS256' }
 ));
@@ -137,6 +153,58 @@ EOF
 
   if [ "$status" -ne 0 ] || [ -z "$token" ]; then
     echo "mint_jwt: jwt.sign failed inside backend-api — check JWT_SECRET resolution" >&2
+    return 1
+  fi
+  echo "$token"
+}
+
+# mint_jwt_for_user <user_id> <email> [claimed_role]
+#
+# Like mint_jwt, but for an explicit user row rather than "the first user."
+#
+# mint_jwt cannot express a non-owner actor. provision_test_agent assigns
+# every test agent to the first user, so a token for that user reaches every
+# test agent through findAccessibleAgent's ownership fast path — which would
+# make any "this actor must NOT see that agent" assertion pass or fail for the
+# wrong reason. Isolation tests need a second, real user who owns nothing.
+#
+# A separate function rather than a new parameter on mint_jwt, so no existing
+# caller's behavior changes. Same signing and secret-resolution approach as
+# mint_jwt; see its header for why each step is shaped the way it is.
+mint_jwt_for_user() {
+  local user_id="$1" user_email="$2" claimed_role="${3:-user}"
+  if [ -z "$user_id" ] || [ -z "$user_email" ]; then
+    echo "mint_jwt_for_user: user_id and email are required" >&2
+    return 1
+  fi
+  local cid
+  cid="$(container_id_for backend-api)"
+  if [ -z "$cid" ]; then
+    echo "mint_jwt_for_user: backend-api is not running" >&2
+    return 1
+  fi
+
+  printf '%s\n' "const jwt = require('jsonwebtoken');
+console.log(jwt.sign(
+  { id: '${user_id}', email: '${user_email}', role: '${claimed_role}' },
+  process.env.JWT_SECRET,
+  { expiresIn: '7d', algorithm: 'HS256' }
+));" | docker exec -i "$cid" sh -c "cat > /tmp/.infra-test-mint-jwt-user.js"
+
+  local -a secret_env_args=()
+  local secret_name secret_value
+  for secret_name in $(docker exec "$cid" sh -c 'ls /run/secrets 2>/dev/null'); do
+    secret_value="$(docker exec "$cid" sh -c "cat /run/secrets/${secret_name} 2>/dev/null")"
+    secret_env_args+=(-e "${secret_name}=${secret_value}")
+  done
+
+  local token rc
+  token="$(docker exec ${secret_env_args[@]+"${secret_env_args[@]}"} -w /app "$cid" node /tmp/.infra-test-mint-jwt-user.js)"
+  rc=$?
+  docker exec "$cid" rm -f /tmp/.infra-test-mint-jwt-user.js >/dev/null 2>&1 || true
+
+  if [ "$rc" -ne 0 ] || [ -z "$token" ]; then
+    echo "mint_jwt_for_user: jwt.sign failed inside backend-api — check JWT_SECRET resolution" >&2
     return 1
   fi
   echo "$token"

@@ -118,3 +118,37 @@ cleanup_orphaned_test_agents() {
     db_exec "DELETE FROM agents WHERE id = '${id}';" >/dev/null 2>&1 || true
   done <<< "$stale_ids"
 }
+
+# provision_logless_test_agent <name-suffix>
+#
+# An agents row with no container, marked stopped, so the log collector never
+# attaches to it and never flushes anything under it. Migration and capacity
+# tests build their own segments with lib/segment_fixtures.sh and need byte
+# counts to be exactly what they built; an emitting container would add
+# segments of its own mid-test. Prints the agent id. The `infra-test-` name
+# prefix means cleanup_orphaned_test_agents still catches a crashed run.
+provision_logless_test_agent() {
+  local suffix="$1"
+  local owner_user_id
+  owner_user_id="$(db_query "SELECT id FROM users ORDER BY created_at LIMIT 1;")"
+  if [ -z "$owner_user_id" ]; then
+    echo "provision_logless_test_agent: no user row exists to own the test agent" >&2
+    return 1
+  fi
+  db_query "
+    INSERT INTO agents (user_id, name, status, backend_type, deploy_target, runtime_family)
+    VALUES ('${owner_user_id}', 'infra-test-${suffix}', 'stopped', 'docker', 'docker', 'openclaw')
+    RETURNING id;
+  "
+}
+
+# teardown_logless_test_agent <agent-id> — index rows only, as teardown_test_agent
+# does; objects the test wrote are left for reconciliation.
+teardown_logless_test_agent() {
+  local agent_id="$1"
+  [ -n "$agent_id" ] || return 0
+  db_exec "DELETE FROM log_segment_legacy_copies WHERE log_segment_id IN (SELECT id FROM log_segments WHERE agent_id = '${agent_id}');" >/dev/null 2>&1 || true
+  db_exec "DELETE FROM log_segments WHERE agent_id = '${agent_id}';" >/dev/null 2>&1 || true
+  db_exec "DELETE FROM agent_log_cursors WHERE agent_id = '${agent_id}';" >/dev/null 2>&1 || true
+  db_exec "DELETE FROM agents WHERE id = '${agent_id}';" >/dev/null 2>&1 || true
+}
