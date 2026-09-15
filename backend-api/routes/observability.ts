@@ -51,7 +51,7 @@ const router = express.Router();
 // Phase 6 item 9: logs:read gates both search and export for API-key
 // callers. Session callers (browser dashboards) pass through unchanged —
 // scopeByMethod only enforces scopes when `req.apiKey` is present.
-router.use(["/logs/search", "/logs/export"], scopeByMethod("logs:read", null));
+router.use(["/logs/search", "/logs/export", "/logs/agents"], scopeByMethod("logs:read", null));
 
 // Scope guards to this router's actual prefixes, matching adminMembers.ts's
 // convention, so an unrelated /admin/* request continues past this router to
@@ -637,6 +637,28 @@ router.get(
   }),
 );
 
+/**
+ * GET /logs/agents
+ * The agents the Logging page may offer the caller — see
+ * `logSearch.listLoggingAgents` for the per-actor rules. An API key is
+ * limited to its bound workspace, never the issuer's wider access.
+ */
+router.get(
+  "/logs/agents",
+  asyncHandler(async (req, res) => {
+    let workspaceId = null;
+    if (req.apiKey) {
+      workspaceId = apiKeyWorkspaceId(req);
+      if (!workspaceId) {
+        return res
+          .status(403)
+          .json({ error: "API key has no workspace binding", code: "wrong_workspace" });
+      }
+    }
+    res.json(await logSearch.listLoggingAgents(req.user, { workspaceId }));
+  }),
+);
+
 // ─── 5. Export (Phase 7) ────────────────────────────────────────────────
 
 /**
@@ -839,7 +861,12 @@ router.put(
         );
         for (const agent of agentsResult.rows) {
           try {
-            await agentTracing.applyTracingConfig(agent);
+            // A deliberate operator toggle bypasses the 30s reconcile
+            // loop's throttle (see TRACING_CAPABILITY_RECHECK_INTERVAL_MS in
+            // agentTracing.ts) -- this fires once per actual settings
+            // change, not on a recurring timer, so it can't reproduce the
+            // repeated-check pile-up that throttle exists to prevent.
+            await agentTracing.applyTracingConfig(agent, {}, { forceCapabilityCheck: true });
           } catch {
             // Best-effort — the 30s reconcile loop will retry.
           }

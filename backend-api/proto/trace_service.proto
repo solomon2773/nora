@@ -57,7 +57,12 @@ message Span {
   bytes span_id = 2;
   string trace_state = 3;
   bytes parent_span_id = 4;
-  uint32 flags = 16;
+  // Upstream declares this fixed32, not uint32 — real exporters (confirmed
+  // against OpenClaw's diagnostics-otel plugin) encode it wire-type 5.
+  // Declaring it uint32 here made protobufjs's reflection-based decoder
+  // call the varint reader for a fixed32 field, desyncing every field after
+  // it and corrupting the rest of the message.
+  fixed32 flags = 16;
   string name = 5;
 
   enum SpanKind {
@@ -91,7 +96,8 @@ message Span {
     string trace_state = 3;
     repeated KeyValue attributes = 4;
     uint32 dropped_attributes_count = 5;
-    uint32 flags = 6;
+    // Same fixed32-not-uint32 correction as Span.flags above.
+    fixed32 flags = 6;
   }
   repeated Link links = 13;
   uint32 dropped_links_count = 14;

@@ -27,10 +27,7 @@ import { useI18n } from "../../lib/i18n";
 import {
   getActiveWorkspaceId,
   listWorkspaceAgents,
-  listWorkspaces,
-  setActiveWorkspaceId,
   subscribeToActiveWorkspace,
-  type Workspace,
   type WorkspaceAgent,
 } from "../../lib/workspaceClient";
 import {
@@ -39,6 +36,7 @@ import {
   getCurrentCapacityStatus,
   getTraceDetail,
   listTraces,
+  orderRuntimeLensLines,
   resolveRuntimeLensCapability,
   resolveTracesLensView,
   searchLogs,
@@ -775,13 +773,24 @@ function OperatorLens() {
   );
 }
 
-// ── Runtime lens ────────────────────────────────────────────────────────
-
 type NormalizedAgentOption = {
   id: string;
   name: string;
   runtimeFamily: string | null;
   deployTarget: string | null;
+  // The agent's OWN actual workspace -- distinct from this page's workspace
+  // *filter* state. Populated even while browsing "My agents (no workspace)"
+  // (that filter means "no workspace filter applied", not "these agents
+  // have no workspace" -- GET /api/agents returns every accessible agent
+  // regardless of workspace, each carrying its real `workspaces[]`). Needed
+  // because every workspace-scoped call below (searchLogs, listTraces,
+  // getTraceDetail) enforces that an explicit workspaceId, if the agent
+  // belongs to one, must match it exactly -- omitting it entirely does NOT
+  // mean "unscoped", it fails closed. Using the page-level filter's
+  // workspaceId there is only correct by coincidence when a specific
+  // workspace is selected; for an agent picked while filter-less, it must
+  // be sourced from the agent itself.
+  workspaceId: string | null;
 };
 
 const DEFAULT_LIVE_TAIL_BUFFER = 5000;
@@ -833,6 +842,12 @@ function RuntimeLens({
   const wsRef = useRef<WebSocket | null>(null);
   const liveIdRef = useRef(0);
 
+  // The agent's OWN workspace, not this page's workspace *filter* -- see the
+  // NormalizedAgentOption type comment. Falls back to the page-level
+  // workspaceId when the agent doesn't carry one of its own (defensive:
+  // should only matter for a genuinely workspace-less agent).
+  const effectiveWorkspaceId = agent?.workspaceId ?? workspaceId;
+
   const runSearch = useCallback(async () => {
     if (!agent) {
       setLines([]);
@@ -841,7 +856,7 @@ function RuntimeLens({
     setLoading(true);
     try {
       const result = await searchLogs({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         agentId: agent.id,
         streams: streams.length ? streams : undefined,
         levels: levels.length ? levels : undefined,
@@ -860,7 +875,7 @@ function RuntimeLens({
     } finally {
       setLoading(false);
     }
-  }, [agent, workspaceId, streams, levels, from, to, deferredQ]);
+  }, [agent, effectiveWorkspaceId, streams, levels, from, to, deferredQ]);
 
   useEffect(() => {
     runSearch();
@@ -964,13 +979,23 @@ function RuntimeLens({
     setLiveLines([]);
   }, [agent?.id]);
 
-  const combinedLines = useMemo(() => {
-    if (!liveTail || liveLines.length === 0) return lines;
-    // Live lines are newest-last; search results are newest-first (desc).
-    // Put live lines at the top so the freshest activity stays visible
-    // without re-sorting the whole persisted result set on every frame.
-    return [...[...liveLines].reverse(), ...lines];
-  }, [lines, liveLines, liveTail]);
+  // Oldest → newest, newest at the bottom; LogTable follows the bottom while
+  // the operator is parked there and holds position once they scroll up.
+  const combinedLines = useMemo(
+    () => orderRuntimeLensLines(lines, liveTail ? liveLines : []),
+    [lines, liveLines, liveTail],
+  );
+
+  // A new result set (different agent, filters, range, or query) re-pins the
+  // table to the bottom; live-tail appends deliberately do not.
+  const resultSetKey = [
+    agent?.id ?? "",
+    streams.join(","),
+    levels.join(","),
+    from,
+    to,
+    deferredQ,
+  ].join("|");
 
   const capability = useMemo(
     () =>
@@ -989,7 +1014,7 @@ function RuntimeLens({
     setExporting(true);
     try {
       await exportLogs({
-        workspaceId,
+        workspaceId: effectiveWorkspaceId,
         agentId: agent.id,
         streams: streams.length ? streams : undefined,
         levels: levels.length ? levels : undefined,
@@ -1015,7 +1040,7 @@ function RuntimeLens({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <LogFilterBar
         q={q}
         onQChange={setQ}
@@ -1029,14 +1054,17 @@ function RuntimeLens({
         onExport={handleExport}
         exporting={exporting}
       />
-      <LogTable
-        lines={combinedLines}
-        loading={loading}
-        capability={capability}
-        warning={warning}
-        capacityWindows={capacityWindows}
-        height={520}
-      />
+      <div className="min-h-0 flex-1">
+        <LogTable
+          lines={combinedLines}
+          resultSetKey={resultSetKey}
+          loading={loading}
+          capability={capability}
+          warning={warning}
+          capacityWindows={capacityWindows}
+          height={520}
+        />
+      </div>
     </div>
   );
 }
@@ -1063,8 +1091,16 @@ function TracesLens({
   to: string;
 }) {
   const { t } = useI18n();
+  // The agent's OWN workspace, not this page's workspace *filter* -- see the
+  // NormalizedAgentOption type comment. Every call below is agent-scoped and
+  // must use this, not the raw `workspaceId` prop.
+  const effectiveWorkspaceId = agent?.workspaceId ?? workspaceId;
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [tracesEnabled, setTracesEnabled] = useState<boolean | null>(null);
+  const [tracingCapability, setTracingCapability] = useState<
+    "unknown" | "supported" | "unsupported"
+  >("unknown");
+  const [tracingOpenclawVersion, setTracingOpenclawVersion] = useState<string | null>(null);
   const [traces, setTraces] = useState<TraceSummary[]>([]);
   const [tracesLoading, setTracesLoading] = useState(false);
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
@@ -1091,17 +1127,21 @@ function TracesLens({
     let active = true;
     setTracesLoading(true);
     setSettingsLoading(true);
-    listTraces({ workspaceId, agentId: agent.id, from, to, limit: 100 })
+    listTraces({ workspaceId: effectiveWorkspaceId, agentId: agent.id, from, to, limit: 100 })
       .then((result) => {
         if (!active) return;
         setTraces(result.traces);
         setTracesEnabled(result.tracesEnabled);
+        setTracingCapability(result.tracingCapability);
+        setTracingOpenclawVersion(result.tracingOpenclawVersion);
       })
       .catch((error) => {
         console.error("Failed to list traces:", error);
         if (active) {
           setTraces([]);
           setTracesEnabled(null);
+          setTracingCapability("unknown");
+          setTracingOpenclawVersion(null);
         }
       })
       .finally(() => {
@@ -1113,13 +1153,13 @@ function TracesLens({
     return () => {
       active = false;
     };
-  }, [agent, workspaceId, from, to]);
+  }, [agent, effectiveWorkspaceId, from, to]);
 
   useEffect(() => {
     setSelectedTraceId(null);
     setDetail(null);
     setDetailError(null);
-  }, [agent?.id, workspaceId]);
+  }, [agent?.id, effectiveWorkspaceId]);
 
   useEffect(() => {
     if (!selectedTraceId) {
@@ -1130,7 +1170,7 @@ function TracesLens({
     let active = true;
     setDetailLoading(true);
     setDetailError(null);
-    getTraceDetail(selectedTraceId)
+    getTraceDetail(selectedTraceId, effectiveWorkspaceId)
       .then((result) => {
         if (active) setDetail(result);
       })
@@ -1166,7 +1206,11 @@ function TracesLens({
     );
   }
 
-  const view = resolveTracesLensView({ tracesEnabled, traceCount: traces.length });
+  const view = resolveTracesLensView({
+    tracesEnabled,
+    traceCount: traces.length,
+    tracingCapability,
+  });
 
   if (view === "enable_cta") {
     return (
@@ -1176,6 +1220,47 @@ function TracesLens({
         <p className="max-w-md text-xs text-slate-400">
           {t(
             "Turn on tracing in this workspace's log settings to start collecting spans for its agents. Once enabled, new traces appear here as agents run.",
+          )}
+        </p>
+      </div>
+    );
+  }
+
+  if (view === "unsupported") {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-amber-200 bg-amber-50 px-6 text-center">
+        <AlertCircle size={28} className="text-amber-500" />
+        <p className="text-sm font-bold text-amber-800">
+          {t("Tracing isn't available for this agent yet")}
+        </p>
+        <p className="max-w-md text-xs text-amber-700">
+          {t(
+            // Deliberately no call-to-action here: this agent's OpenClaw
+            // version doesn't support the tracing plugin, and there is
+            // currently no supported, safe way to change that -- manually
+            // updating OpenClaw on an agent is known to be unreliable and
+            // can break the agent (corrupted installs, broken auth). This
+            // is a platform limitation, not something to try to fix.
+            "This agent's OpenClaw version doesn't support tracing yet. No action needed.",
+          )}
+        </p>
+        {tracingOpenclawVersion ? (
+          <p className="rounded-lg bg-amber-100 px-3 py-1 font-mono text-[11px] text-amber-800">
+            {t("Detected")}: {tracingOpenclawVersion}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  if (view === "unverified" && !tracesLoading) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-slate-500">
+        <Waypoints size={28} className="opacity-60" />
+        <p className="text-sm font-bold text-slate-700">{t("Tracing support not yet verified for this agent")}</p>
+        <p className="max-w-md text-xs text-slate-400">
+          {t(
+            "Nora only checks OpenClaw's tracing compatibility while an agent is running. Start this agent and it will be checked automatically within about 30 seconds.",
           )}
         </p>
       </div>
@@ -1195,61 +1280,75 @@ function TracesLens({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[380px_1fr]">
-      <TraceList
-        traces={traces}
-        selectedTraceId={selectedTraceId}
-        onSelect={setSelectedTraceId}
-        loading={tracesLoading}
-      />
-      <TraceWaterfall detail={detail} loading={detailLoading} error={detailError} />
+    <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
+      <div className="min-h-0 flex-1 lg:w-[380px] lg:flex-none">
+        <TraceList
+          traces={traces}
+          selectedTraceId={selectedTraceId}
+          onSelect={setSelectedTraceId}
+          loading={tracesLoading}
+        />
+      </div>
+      <div className="min-h-0 flex-1">
+        <TraceWaterfall detail={detail} loading={detailLoading} error={detailError} />
+      </div>
     </div>
   );
 }
 
-// ── Shared page: tabs + header ────────────────────────────────────────────
+// ── Shared page: two navigation levels ─────────────────────────────────────
+//
+// One page, "Logging". Top level: Operator (fleet-wide, no agent/workspace
+// filter at all) vs. Agent Logs (single-agent-scoped). Only within Agent
+// Logs does a second level exist: the workspace+agent+time-range picker,
+// plus a Runtime/Traces sub-tab choosing which single-agent view to show --
+// both share the exact same selection, which is why they're nested under
+// one section instead of sitting as flat peers next to Operator.
 
-type LensId = "operator" | "runtime" | "traces";
+type SectionId = "operator" | "agent-logs";
 
-const LENSES: { id: LensId; label: string; disabled?: boolean }[] = [
+const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "operator", label: "Operator" },
-  { id: "runtime", label: "Runtime" },
-  { id: "traces", label: "Traces" },
+  { id: "agent-logs", label: "Agent Logs" },
 ];
 
-function LensTabBar({
+function SectionTabBar({
   active,
   onChange,
 }: {
-  active: LensId;
-  onChange: (id: LensId) => void;
+  active: SectionId;
+  onChange: (id: SectionId) => void;
 }) {
   const { t } = useI18n();
   return (
     <div className="flex w-full items-center gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1 scrollbar-hide">
-      {LENSES.map((lens) => (
+      {SECTIONS.map((section) => (
         <button
-          key={lens.id}
+          key={section.id}
           type="button"
-          disabled={lens.disabled}
-          onClick={() => onChange(lens.id)}
+          onClick={() => onChange(section.id)}
           className={clsx(
             "shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-xs font-bold transition-all",
-            lens.disabled
-              ? "cursor-not-allowed text-slate-300"
-              : active === lens.id
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
+            active === section.id
+              ? "bg-white text-slate-900 shadow-sm"
+              : "text-slate-500 hover:text-slate-700",
           )}
         >
-          {t(lens.label)}
-          {lens.disabled ? <span className="ml-1.5 text-[9px] uppercase">{t("Soon")}</span> : null}
+          {t(section.label)}
         </button>
       ))}
     </div>
   );
 }
 
+type LensId = "runtime" | "traces";
+
+const LENSES: { id: LensId; label: string; disabled?: boolean }[] = [
+  { id: "runtime", label: "Runtime" },
+  { id: "traces", label: "Traces" },
+];
+
+// Sub-tab within the "Agent Logs" section only -- see the module note above.
 const TIME_RANGE_OPTIONS = [
   { label: "1h", hours: 1 },
   { label: "6h", hours: 6 },
@@ -1258,24 +1357,38 @@ const TIME_RANGE_OPTIONS = [
 ];
 
 /**
- * Shared header above all three lenses: workspace selector, single-agent
- * selector, time-range picker. Deliberately single-select for both
- * workspace and agent (Phase 8 spec item 2 / the manifest's Non-Goals) —
- * this page answers "what did this one agent do," never "what happened
- * across my agents." The Operator lens (unchanged, above) and
- * `GET /admin/audit` already serve the fleet-wide question.
+ * Shared header above both lenses: view switch (Runtime/Traces), single-
+ * agent selector, time-range picker. Deliberately single-select for agent
+ * (Phase 8 spec item 2 / the manifest's Non-Goals) — this page answers
+ * "what did this one agent do," never "what happened across my agents."
+ * The Operator lens (its own tab, same page) and `GET /admin/audit` already
+ * serve the fleet-wide question.
+ *
+ * The view switch lives here, as the first control in this same card,
+ * rather than as its own separate tab bar above it -- two stacked pill-tab
+ * bars (section tabs, then lens tabs) read as two competing nav levels with
+ * no visual cue that the second is nested under "Agent Logs". A vertical
+ * divider sets it apart from Agent/Time range (a mode switch, not a filter
+ * narrowing the same view) without giving it a whole row of its own.
+ *
+ * Deliberately no workspace picker here -- the top-bar WorkspaceSwitcher
+ * already owns that exact state (same getActiveWorkspaceId/
+ * setActiveWorkspaceId/subscribeToActiveWorkspace this page's own
+ * workspaceId reacts to, see LoggingPage below), so a second dropdown here
+ * would just be two controls fighting over one value. Change the workspace
+ * globally; this page's agent list updates on its own.
  */
 function SharedHeader({
-  workspaceId,
-  onWorkspaceChange,
+  activeLens,
+  onLensChange,
   agent,
   agentOptions,
   onAgentChange,
   rangeHours,
   onRangeChange,
 }: {
-  workspaceId: string | null;
-  onWorkspaceChange: (id: string | null) => void;
+  activeLens: LensId;
+  onLensChange: (id: LensId) => void;
   agent: NormalizedAgentOption | null;
   agentOptions: NormalizedAgentOption[];
   onAgentChange: (agentId: string) => void;
@@ -1283,43 +1396,36 @@ function SharedHeader({
   onRangeChange: (hours: number) => void;
 }) {
   const { t } = useI18n();
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-
-  useEffect(() => {
-    let active = true;
-    listWorkspaces()
-      .then((rows) => {
-        if (active) setWorkspaces(rows);
-      })
-      .catch(() => {
-        if (active) setWorkspaces([]);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   return (
-    <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-3">
-      <label className="block">
+    <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:grid-cols-[auto_1fr_1fr] sm:divide-x sm:divide-slate-100">
+      <label className="block sm:pr-4">
         <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
-          {t("Workspace")}
+          {t("View")}
         </span>
-        <select
-          value={workspaceId || ""}
-          onChange={(event) => onWorkspaceChange(event.target.value || null)}
-          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-medium text-slate-900 outline-none focus:border-blue-200 focus:bg-white"
-        >
-          <option value="">{t("My agents (no workspace)")}</option>
-          {workspaces.map((workspace) => (
-            <option key={workspace.id} value={workspace.id}>
-              {workspace.name}
-            </option>
+        <div className="flex items-center gap-1 rounded-xl bg-slate-100 p-1">
+          {LENSES.map((lens) => (
+            <button
+              key={lens.id}
+              type="button"
+              disabled={lens.disabled}
+              onClick={() => onLensChange(lens.id)}
+              className={clsx(
+                "shrink-0 whitespace-nowrap rounded-lg px-4 py-1.5 text-xs font-bold transition-all",
+                lens.disabled
+                  ? "cursor-not-allowed text-slate-300"
+                  : activeLens === lens.id
+                    ? "bg-white text-slate-900 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700",
+              )}
+            >
+              {t(lens.label)}
+            </button>
           ))}
-        </select>
+        </div>
       </label>
 
-      <label className="block">
+      <label className="block sm:pl-4">
         <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
           {t("Agent")}
         </span>
@@ -1337,7 +1443,7 @@ function SharedHeader({
         </select>
       </label>
 
-      <label className="block">
+      <label className="block sm:pl-4">
         <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
           {t("Time range")}
         </span>
@@ -1363,28 +1469,20 @@ function SharedHeader({
   );
 }
 
-export default function LogsPage() {
-  const { t } = useI18n();
-  const [activeLens, setActiveLens] = useState<LensId>("operator");
+export default function LoggingPage() {
+  const [section, setSection] = useState<SectionId>("operator");
+  const [activeLens, setActiveLens] = useState<LensId>("runtime");
 
-  // Shared filter state — persists across lens switches by construction:
-  // it lives in this parent component, not inside whichever lens happens
-  // to be mounted, so switching tabs never resets it.
+  // Agent Logs' own selection -- workspace, agent, time range. Lives here
+  // (not inside RuntimeLens/TracesLens) so switching between those two
+  // sub-tabs never resets it. Irrelevant while on Operator, but cheap to
+  // keep mounted so it doesn't reset every time you switch sections either.
   const [workspaceId, setWorkspaceId] = useState<string | null>(() => getActiveWorkspaceId());
   const [agentOptions, setAgentOptions] = useState<NormalizedAgentOption[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [rangeHours, setRangeHours] = useState(1);
 
-  // Item 5: wire into the global active-workspace mechanism. This is the
-  // first page in this codebase to scope its own API calls by the active
-  // workspace — see observabilityClient.ts / this file's header comments.
   useEffect(() => subscribeToActiveWorkspace(setWorkspaceId), []);
-
-  const handleWorkspaceChange = useCallback((id: string | null) => {
-    setActiveWorkspaceId(id);
-    setWorkspaceId(id);
-    setSelectedAgentId(null);
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1399,10 +1497,11 @@ export default function LogsPage() {
               name: row.agentName || row.name || row.agentId,
               runtimeFamily: row.runtime_family || null,
               deployTarget: row.deploy_target || null,
+              workspaceId,
             })),
           );
         } else {
-          const res = await fetchWithAuth("/api/agents");
+          const res = await fetchWithAuth("/api/logs/agents");
           const body = res.ok ? await res.json().catch(() => []) : [];
           if (!active) return;
           const rows = Array.isArray(body) ? body : Array.isArray(body?.agents) ? body.agents : [];
@@ -1412,6 +1511,13 @@ export default function LogsPage() {
               name: row.name || row.id,
               runtimeFamily: row.runtime_family || null,
               deployTarget: row.deploy_target || null,
+              // GET /api/agents returns every accessible agent regardless of
+              // workspace, each carrying its real workspaces[] -- see the
+              // NormalizedAgentOption type comment for why this must not be
+              // left null just because no workspace FILTER is selected.
+              workspaceId: Array.isArray(row.workspaces) && row.workspaces[0]?.id
+                ? row.workspaces[0].id
+                : null,
             })),
           );
         }
@@ -1441,29 +1547,41 @@ export default function LogsPage() {
 
   return (
     <Layout>
-      <div className="flex flex-col gap-6">
-        <LensTabBar active={activeLens} onChange={setActiveLens} />
+      <div className="flex h-full min-h-0 flex-col gap-6">
+        <div className="shrink-0">
+          <SectionTabBar active={section} onChange={setSection} />
+        </div>
 
-        {activeLens !== "operator" ? (
-          <SharedHeader
-            workspaceId={workspaceId}
-            onWorkspaceChange={handleWorkspaceChange}
-            agent={selectedAgent}
-            agentOptions={agentOptions}
-            onAgentChange={setSelectedAgentId}
-            rangeHours={rangeHours}
-            onRangeChange={setRangeHours}
-          />
-        ) : null}
-
-        {activeLens === "operator" ? <OperatorLens /> : null}
-        {activeLens === "runtime" ? (
-          <RuntimeLens agent={selectedAgent} workspaceId={workspaceId} from={from} to={to} />
-        ) : null}
-        {activeLens === "traces" ? (
-          <TracesLens agent={selectedAgent} workspaceId={workspaceId} from={from} to={to} />
-        ) : null}
+        {section === "operator" ? (
+          <div className="min-h-0 flex-1">
+            <OperatorLens />
+          </div>
+        ) : (
+          <>
+            <div className="shrink-0">
+              <SharedHeader
+                activeLens={activeLens}
+                onLensChange={setActiveLens}
+                agent={selectedAgent}
+                agentOptions={agentOptions}
+                onAgentChange={setSelectedAgentId}
+                rangeHours={rangeHours}
+                onRangeChange={setRangeHours}
+              />
+            </div>
+            <div className="min-h-0 flex-1">
+              {activeLens === "runtime" ? (
+                <RuntimeLens agent={selectedAgent} workspaceId={workspaceId} from={from} to={to} />
+              ) : null}
+              {activeLens === "traces" ? (
+                <TracesLens agent={selectedAgent} workspaceId={workspaceId} from={from} to={to} />
+              ) : null}
+            </div>
+          </>
+        )}
       </div>
     </Layout>
   );
 }
+
+

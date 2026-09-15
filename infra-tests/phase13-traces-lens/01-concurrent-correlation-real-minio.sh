@@ -229,8 +229,12 @@ RESULT_JSON="$(node_call_backend_api "
     builtKeys.push(await writeSegment('gateway', from, to, [gatewayLine(from + 500, TRACE_ID, i * 2), gatewayLine(from + 1000, TRACE_ID, i * 2 + 1)]));
   }
   // 1 gateway segment inside the window but carrying a DIFFERENT trace_id
-  // — must be excluded entirely from correlatedLogs (item 4's rule: a
-  // gateway line is included only on an exact trace_id match).
+  // — OpenClaw's internal gateway trace_id is a different id space than the
+  // OTel trace_id (see traceQuery.ts's module-header Correlation rule
+  // comment), so this must NOT be excluded outright; it must appear as
+  // inTrace:false/category:window, same as an untagged runtime line, and
+  // must NOT be marked inTrace:true/category:trace (that would wrongly
+  // conflate it with this trace's own lines).
   builtKeys.push(await writeSegment('gateway', T0 + 3000, T0 + 5000, [gatewayLine(T0 + 3500, OTHER_TRACE_ID, 100), gatewayLine(T0 + 4000, OTHER_TRACE_ID, 101)]));
   // 2 runtime segments inside the window, no trace_id — every line must be
   // included as inTrace:false/category:window regardless.
@@ -259,14 +263,23 @@ RESULT_JSON="$(node_call_backend_api "
 
   const inTraceLines = correlated.filter((l) => l.inTrace === true && l.category === 'trace');
   const windowLines = correlated.filter((l) => l.inTrace === false && l.category === 'window');
-  const otherTraceLeaked = correlated.some((l) => l.trace_id === OTHER_TRACE_ID);
+  const otherTraceLines = correlated.filter((l) => l.trace_id === OTHER_TRACE_ID);
+  // Misclassified means the other trace's own lines were wrongly tagged as
+  // THIS trace's (inTrace:true/category:trace) -- not that they're absent.
+  // Per the current, intentional design (traceQuery.ts's Correlation rule
+  // comment), they must be present, just correctly demoted to
+  // inTrace:false/category:window like any other in-window, non-matching
+  // line.
+  const otherTraceMisclassified = otherTraceLines.some((l) => l.inTrace !== false || l.category !== 'window');
+  const otherTraceMissing = otherTraceLines.length !== 2;
   const outsideWindowLeaked = correlated.some((l) => typeof l.message === 'string' && l.message.includes('infra-test runtime line 300'));
 
   console.log(JSON.stringify({
     totalCorrelated: correlated.length,
     inTraceCount: inTraceLines.length,
     windowCount: windowLines.length,
-    otherTraceLeaked,
+    otherTraceMisclassified,
+    otherTraceMissing,
     outsideWindowLeaked,
     candidateSegmentsFetched: builtKeys.length,
     singleLatencyMs,
@@ -286,13 +299,14 @@ fi
 total_correlated="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).totalCorrelated))' 2>/dev/null)"
 in_trace_count="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).inTraceCount))' 2>/dev/null)"
 window_count="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).windowCount))' 2>/dev/null)"
-other_trace_leaked="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).otherTraceLeaked))' 2>/dev/null)"
+other_trace_misclassified="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).otherTraceMisclassified))' 2>/dev/null)"
+other_trace_missing="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).otherTraceMissing))' 2>/dev/null)"
 outside_window_leaked="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).outsideWindowLeaked))' 2>/dev/null)"
 candidate_segments="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).candidateSegmentsFetched))' 2>/dev/null)"
 single_latency_ms="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).singleLatencyMs))' 2>/dev/null)"
 fetch_wall_ms="$(echo "$RESULT_JSON" | node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(0,"utf8")).fetchWallMs))' 2>/dev/null)"
 
-log_info "total_correlated=$total_correlated in_trace_count=$in_trace_count (expect 8) window_count=$window_count (expect 4) other_trace_leaked=$other_trace_leaked (expect false) outside_window_leaked=$outside_window_leaked (expect false)"
+log_info "total_correlated=$total_correlated in_trace_count=$in_trace_count (expect 8) window_count=$window_count (expect 6 -- 4 runtime + 2 other-trace-gateway, both demoted to window) other_trace_misclassified=$other_trace_misclassified (expect false) other_trace_missing=$other_trace_missing (expect false) outside_window_leaked=$outside_window_leaked (expect false)"
 log_info "candidate_segments=$candidate_segments single_latency_ms=$single_latency_ms fetch_wall_ms=$fetch_wall_ms"
 
 correctness_ok=1
@@ -300,12 +314,16 @@ if [ "$in_trace_count" != "8" ]; then
   log_warn "expected 8 in-trace gateway lines (4 segments x 2 lines), got $in_trace_count"
   correctness_ok=0
 fi
-if [ "$window_count" != "4" ]; then
-  log_warn "expected 4 in-window runtime lines (2 segments x 2 lines), got $window_count"
+if [ "$window_count" != "6" ]; then
+  log_warn "expected 6 in-window lines (2 runtime segments x 2 lines + 1 other-trace gateway segment x 2 lines, all demoted to category:window), got $window_count"
   correctness_ok=0
 fi
-if [ "$other_trace_leaked" != "false" ]; then
-  log_warn "a gateway line from a DIFFERENT trace_id leaked into correlatedLogs — item 4's exact-trace_id rule for gateway lines is broken"
+if [ "$other_trace_missing" != "false" ]; then
+  log_warn "the other-trace gateway segment's lines are missing entirely from correlatedLogs — per the current design (traceQuery.ts's Correlation rule) they must still appear, just demoted to category:window, since OpenClaw's internal gateway trace_id is a different id space than the OTel trace_id"
+  correctness_ok=0
+fi
+if [ "$other_trace_misclassified" != "false" ]; then
+  log_warn "a gateway line from a DIFFERENT trace_id was wrongly tagged inTrace:true/category:trace — it must be demoted to inTrace:false/category:window instead of being conflated with this trace"
   correctness_ok=0
 fi
 if [ "$outside_window_leaked" != "false" ]; then
@@ -332,5 +350,5 @@ if [ "$correctness_ok" -ne 1 ]; then
 elif [ "$concurrency_ok" -ne 1 ]; then
   test_fail "correlation content was correct, but the segment fetch does NOT look concurrent: fetching $candidate_segments segments took ${fetch_wall_ms}ms, close to or exceeding a serial estimate of ~$((single_latency_ms * candidate_segments))ms (single-segment baseline ${single_latency_ms}ms) — this is the exact failure mode Phase 6's README warns about (a connection-pool limit silently serializing what should be Promise.all concurrency). Note local MinIO round trips are fast enough that this signal can be noisy on a lightly-loaded machine; re-run if this looks like a fluke rather than a reproducible regression."
 else
-  test_pass "correlation split correct (in_trace=$in_trace_count/8, window=$window_count/4, other-trace and out-of-window lines correctly excluded) AND the $candidate_segments-segment fetch looks genuinely concurrent (${fetch_wall_ms}ms wall vs ~${single_latency_ms}ms single-segment baseline, well under the ~$((single_latency_ms * candidate_segments))ms a serial fetch would take)"
+  test_pass "correlation split correct (in_trace=$in_trace_count/8, window=$window_count/6, other-trace gateway lines correctly demoted to category:window rather than excluded, out-of-window runtime line correctly pruned) AND the $candidate_segments-segment fetch looks genuinely concurrent (${fetch_wall_ms}ms wall vs ~${single_latency_ms}ms single-segment baseline, well under the ~$((single_latency_ms * candidate_segments))ms a serial fetch would take)"
 fi

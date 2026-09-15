@@ -510,17 +510,18 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- An agent belongs to at most one workspace: agent_id is unique on its own
+-- (not just the (workspace_id, agent_id) pair), so workspace-scoped settings
+-- (e.g. workspace_log_settings) never have to arbitrate between two
+-- workspaces for the same agent.
 CREATE TABLE IF NOT EXISTS workspace_agents (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
   agent_id UUID REFERENCES agents(id) ON DELETE CASCADE,
   role TEXT DEFAULT 'member',
   created_at TIMESTAMP DEFAULT NOW(),
-  UNIQUE(workspace_id, agent_id)
+  UNIQUE(agent_id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_workspace_agents_agent
-  ON workspace_agents(agent_id);
 
 -- Shared BYOC remote hosts (Phase C3). A host's owner can share it into a
 -- workspace they belong to; workspace members then use it per their workspace

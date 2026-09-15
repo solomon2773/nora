@@ -56,6 +56,75 @@ function lazyDb(deps) {
   return deps.dbClient || deps.db || db;
 }
 
+// How long a known tracing_capability verdict is trusted before
+// reconcileTracingConfig's 30s tick will re-run the plugin install/enable/
+// list check (buildEnableTracingPluginCommand) against the SAME agent again.
+// Confirmed empirically this matters: an agent whose workspace has tracing
+// on gets this check re-run on literally every 30s reconcile tick forever
+// once nothing throttles it — and a real manual `openclaw update` on such an
+// agent, running concurrently with Nora's own automatic plugin install
+// hitting the same on-disk OpenClaw install/state, produced worse, disk-
+// persisted corruption (surviving a container restart) than an interrupted
+// update alone would. 30 minutes is long enough to eliminate that collision
+// window for all practical purposes while still picking up a manual
+// version upgrade in a reasonable time (the settings PUT's own immediate
+// reapply — see routes/observability.ts's tracesEnabledChanging branch —
+// still forces an unthrottled check right when an operator deliberately
+// flips the workspace toggle).
+const TRACING_CAPABILITY_RECHECK_INTERVAL_MS = 30 * 60 * 1000;
+
+/**
+ * Whether `applyTracingConfig` should include the plugin install/enable/list
+ * check this time, or skip it and just do the cheap, local, no-network
+ * config merge. Pure function of the agent row's own last-known state.
+ *
+ * @param {{tracing_capability?: string, tracing_capability_checked_at?: string|Date|null}} agent
+ * @param {number} [nowMs]
+ * @returns {boolean}
+ */
+function shouldCheckTracingCapability(agent, nowMs = Date.now()) {
+  const capability = agent?.tracing_capability;
+  if (!capability || capability === "unknown") return true;
+  const checkedAt = agent?.tracing_capability_checked_at;
+  if (!checkedAt) return true;
+  const checkedAtMs = new Date(checkedAt).getTime();
+  if (!Number.isFinite(checkedAtMs)) return true;
+  return nowMs - checkedAtMs >= TRACING_CAPABILITY_RECHECK_INTERVAL_MS;
+}
+
+/**
+ * Cheap, local, no-network probe: just `openclaw --version`, nothing else.
+ * Used to decide whether a throttled recheck can skip the real (network- and
+ * lock-touching) plugin install/enable/list sequence entirely -- when the
+ * version hasn't changed since the verdict currently on file, that verdict
+ * is still correct and there is nothing new to learn from re-running it.
+ * Deliberately NOT compared against a fixed "minimum compatible version"
+ * constant (see the module header's captureContent-adjacent note on why
+ * this module avoids hardcoding OpenClaw's plugin API floor) -- comparing
+ * against the LAST OBSERVED version for this specific agent instead means a
+ * rollback to a previously-tested version still gets exactly one (bounded,
+ * self-limiting) real recheck rather than either silently trusting a stale
+ * verdict or needing a maintained version-ordering comparison.
+ *
+ * @returns {string} Shell script fragment.
+ */
+function buildProbeOpenclawVersionCommand() {
+  return "openclaw --version 2>/dev/null | head -1";
+}
+
+/**
+ * `authSync.runRuntimeCommand`/`runContainerCommand` don't share one exact
+ * result shape -- both are read the same way throughout this module.
+ *
+ * @param {Object} [result]
+ * @returns {string}
+ */
+function extractCommandOutput(result) {
+  return typeof result?.output === "string"
+    ? result.output
+    : [result?.stdout, result?.stderr].filter(Boolean).join("\n");
+}
+
 /**
  * HMAC under NORA_OTLP_INGEST_SECRET — delegates to Phase 11's
  * `computeIngestKey` in routes/otlp.ts rather than reimplementing the
@@ -130,7 +199,7 @@ function buildTracingConfigDelta(agent, settings) {
         // actively rewrites any legacy "grpc" value it finds. This must
         // stay exactly "http/protobuf".
         protocol: "http/protobuf",
-        headers: { "x-nora-ingest-key": ingestKey },
+        headers: { "x-nora-agent-id": agent.id, "x-nora-ingest-key": ingestKey },
         // Never configurable — see module header.
         captureContent: false,
         sampleRate,
@@ -141,8 +210,9 @@ function buildTracingConfigDelta(agent, settings) {
 
 /**
  * Resolve an agent's workspace, the same way Phase 11's ingest route and
- * Phase 6's search scoping do — the first (and only expected) row in
- * `workspace_agents`, or null for an agent that belongs to no workspace.
+ * Phase 6's search scoping do — the single row in `workspace_agents` for this
+ * agent (UNIQUE(agent_id) guarantees there is at most one), or null for an
+ * agent that belongs to no workspace.
  *
  * @param {string} agentId
  * @param {Object} [deps]
@@ -199,6 +269,87 @@ async function resolveWorkspaceLogSettings(workspaceId, deps = {}) {
 }
 
 /**
+ * OpenClaw ships no OpenTelemetry exporter in core — `diagnostics.otel.*`
+ * is accepted and validated by the config schema regardless, but produces
+ * no actual export unless the separate `diagnostics-otel` plugin is BOTH
+ * installed and allow-listed/enabled (see
+ * /usr/local/lib/node_modules/openclaw/docs/gateway/opentelemetry.md inside
+ * any OpenClaw agent container — "Exporters only attach when both the
+ * diagnostics surface and the plugin are enabled"). Confirmed empirically:
+ * a real agent with a fully-correct `diagnostics.otel` merge and no plugin
+ * step exported nothing. `openclaw plugins install` is safe to re-run on an
+ * already-installed plugin (idempotent — errors are swallowed with `|| true`
+ * rather than failing the whole merge over a plugin that's already there);
+ * `openclaw plugins enable` is idempotent by nature. Only run on the
+ * enabling path — turning tracing off leaves the plugin installed but inert,
+ * since `diagnostics.otel.enabled: false` alone already stops export per
+ * the same doc line, and there's no reason to churn install/uninstall.
+ *
+ * @returns {string} Shell script fragment (plain `sh`, matches
+ *   buildOpenClawConfigMergeCommand's own dialect).
+ */
+// Printed by the shell fragment below so `applyTracingConfig` can tell
+// whether the plugin actually ended up enabled, without trusting either
+// command's own exit code (both are intentionally `|| true`-guarded so an
+// idempotent re-run, or a plugin already installed by hand, never fails the
+// whole config merge). `openclaw plugins list --enabled --json` is the
+// ground truth for "is it actually on", independent of why install/enable
+// did or didn't need to do anything.
+const TRACING_CAPABILITY_MARKER = "__NORA_TRACING_CAPABILITY__";
+// Captured purely for diagnostics/display (e.g. "OpenClaw 2026.6.11 —
+// needs ≥2026.9.3" in the Traces lens's unsupported message) -- NEVER the
+// trigger for the supported/unsupported verdict itself. The verdict stays
+// capability-based (did the plugin actually end up enabled), not
+// version-based, so a manually-updated agent is read correctly without Nora
+// having to hardcode/maintain the plugin API's minimum version anywhere.
+const TRACING_VERSION_MARKER = "__NORA_TRACING_OPENCLAW_VERSION__";
+
+function buildEnableTracingPluginCommand() {
+  return [
+    "openclaw plugins install clawhub:@openclaw/diagnostics-otel || true",
+    "openclaw plugins enable diagnostics-otel || true",
+    `if openclaw plugins list --enabled --json 2>/dev/null | grep -q '"diagnostics-otel"'; then`,
+    `  echo "${TRACING_CAPABILITY_MARKER}=supported"`,
+    `else`,
+    `  echo "${TRACING_CAPABILITY_MARKER}=unsupported"`,
+    `fi`,
+    `echo "${TRACING_VERSION_MARKER}=$(openclaw --version 2>/dev/null | head -1)"`,
+  ].join("\n");
+}
+
+/**
+ * Pull the `supported`/`unsupported` verdict out of the combined
+ * plugin-check + config-merge command's captured output. `undefined` when
+ * the marker never printed at all (an unreachable agent, a shell that
+ * errored before reaching the check, or `deps` overriding
+ * `applyConfigMergeCommand` in a test with no output field) -- distinct from
+ * "unsupported", and deliberately left unpersisted, since a failure to
+ * OBSERVE capability is not the same fact as observing it's absent.
+ *
+ * @param {string} [output]
+ * @returns {"supported"|"unsupported"|undefined}
+ */
+function parseTracingCapabilityFromOutput(output) {
+  const text = String(output || "");
+  const match = text.match(new RegExp(`${TRACING_CAPABILITY_MARKER}=(supported|unsupported)`));
+  return match ? match[1] : undefined;
+}
+
+/**
+ * Pull the raw `openclaw --version` line printed alongside the capability
+ * marker -- diagnostic-only, see `TRACING_VERSION_MARKER` above.
+ *
+ * @param {string} [output]
+ * @returns {string|undefined}
+ */
+function parseTracingOpenclawVersionFromOutput(output) {
+  const text = String(output || "");
+  const match = text.match(new RegExp(`${TRACING_VERSION_MARKER}=(.*)`));
+  const value = match ? match[1].trim() : "";
+  return value ? value : undefined;
+}
+
+/**
  * Run the config-merge command against an agent's running container,
  * preferring the runtime sidecar and falling back to a direct container exec
  * — the same two-step path `authSync.js` already uses to apply managed
@@ -228,10 +379,20 @@ async function applyConfigMergeCommand(agent, command, deps = {}) {
  * @param {Object} agent - Agent row; must carry `id` and enough
  *   runtime/container addressing fields for `authSync.runRuntimeCommand`/
  *   `runContainerCommand` to reach it (host/runtime_port/backend_type/etc.).
+ *   Also reads `tracing_capability`/`tracing_capability_checked_at` off this
+ *   row, when present, to decide whether the plugin check below is due —
+ *   see `shouldCheckTracingCapability`. A caller whose own SELECT doesn't
+ *   carry those columns (e.g. a deliberate operator toggle re-apply) should
+ *   pass `options.forceCapabilityCheck: true` instead of relying on the
+ *   absent columns defaulting to "always check".
  * @param {Object} [deps] - Test seams: dbClient, authSync.
+ * @param {Object} [options] - `{ forceCapabilityCheck?: boolean }` — skip
+ *   the throttle and always attempt the plugin check when true (used for a
+ *   deliberate, one-shot operator settings change, never for the recurring
+ *   30s reconcile loop).
  * @returns {Promise<{applied: boolean, skipped?: string, delta?: Object}>}
  */
-async function applyTracingConfig(agent, deps = {}) {
+async function applyTracingConfig(agent, deps = {}, options = {}) {
   if (!agent || !agent.id) {
     return { applied: false, skipped: "missing_agent" };
   }
@@ -244,11 +405,97 @@ async function applyTracingConfig(agent, deps = {}) {
   const workspaceId = await resolveAgentWorkspaceId(agent.id, deps);
   const settings = await resolveWorkspaceLogSettings(workspaceId, deps);
   const delta = buildTracingConfigDelta(agent, settings);
-  const command = buildOpenClawConfigMergeCommand(delta);
+  const configMergeCommand = buildOpenClawConfigMergeCommand(delta);
 
-  await applyConfigMergeCommand(agent, command, deps);
+  // "Due" = the throttle says it's time to look again (forced, unknown
+  // verdict, or the recheck interval elapsed) -- distinct from `checkCapability`
+  // below, which is whether we actually end up running the expensive,
+  // network-touching plugin install this time. A known verdict due for
+  // recheck still gets a cheap, local `openclaw --version`-only probe first;
+  // the real check only runs if that probe shows something actually changed.
+  const dueForCapabilityCheck =
+    settings.traces_enabled &&
+    (options.forceCapabilityCheck || shouldCheckTracingCapability(agent));
 
-  return { applied: true, delta, workspaceId, settings };
+  let checkCapability = dueForCapabilityCheck;
+  if (
+    dueForCapabilityCheck &&
+    !options.forceCapabilityCheck &&
+    agent.tracing_capability &&
+    agent.tracing_capability !== "unknown"
+  ) {
+    let probedVersion = "";
+    try {
+      const probeResult = await applyConfigMergeCommand(
+        agent,
+        buildProbeOpenclawVersionCommand(),
+        deps,
+      );
+      probedVersion = extractCommandOutput(probeResult).trim();
+    } catch {
+      // Unreachable/errored probe -- fall through and let the real check
+      // (if it also fails) fail the normal, already-established way rather
+      // than silently trusting a stale verdict off an inconclusive probe.
+    }
+    if (probedVersion && probedVersion === agent.tracing_openclaw_version) {
+      checkCapability = false;
+    }
+  }
+
+  // Plugin step must run BEFORE the config merge: the merge's own trailing
+  // step re-reads openclaw.json and (per OpenClaw's config watcher) can
+  // reconnect diagnostics wiring against whatever plugin state already
+  // exists at that moment — installing/enabling first, then merging config,
+  // matches the order the plugin's own docs show for a fresh setup.
+  const command = checkCapability
+    ? [buildEnableTracingPluginCommand(), configMergeCommand].join("\n")
+    : configMergeCommand;
+
+  if (dueForCapabilityCheck) {
+    // Refresh the throttle clock whenever we looked at all this tick --
+    // whether that meant the cheap version-only probe found nothing changed,
+    // or the full plugin check ran. Recorded BEFORE running `command` (which
+    // may still be the expensive path), not after, so a hang or timeout
+    // still starts the recheck-interval clock -- otherwise a single stuck
+    // attempt would look identical to "never tried" on the next tick and
+    // get retried immediately, indefinitely, which is the exact pile-up
+    // this throttle exists to prevent.
+    const dbClient = lazyDb(deps);
+    try {
+      await dbClient.query(`UPDATE agents SET tracing_capability_checked_at = NOW() WHERE id = $1`, [
+        agent.id,
+      ]);
+    } catch {
+      // Best-effort -- worst case this attempt isn't throttled correctly,
+      // no worse than before this change existed.
+    }
+  }
+
+  const result = await applyConfigMergeCommand(agent, command, deps);
+
+  let tracingCapability;
+  let tracingOpenclawVersion;
+  if (checkCapability) {
+    const output = extractCommandOutput(result);
+    tracingCapability = parseTracingCapabilityFromOutput(output);
+    tracingOpenclawVersion = parseTracingOpenclawVersionFromOutput(output);
+    if (tracingCapability) {
+      const dbClient = lazyDb(deps);
+      try {
+        await dbClient.query(
+          `UPDATE agents
+              SET tracing_capability = $1, tracing_openclaw_version = $2, tracing_capability_checked_at = NOW()
+            WHERE id = $3`,
+          [tracingCapability, tracingOpenclawVersion || null, agent.id],
+        );
+      } catch {
+        // Best-effort, matching the rest of this module's persistence —
+        // the next reconcile tick re-derives and re-persists this anyway.
+      }
+    }
+  }
+
+  return { applied: true, delta, workspaceId, settings, tracingCapability, tracingOpenclawVersion };
 }
 
 /**
@@ -270,7 +517,8 @@ async function reconcileTracingConfig(deps = {}) {
     const agents = await dbClient.query(
       `SELECT id, user_id, container_id, backend_type, deploy_target,
               execution_target_id, runtime_family, sandbox_profile, status,
-              host, runtime_host, runtime_port, gateway_host, gateway_port
+              host, runtime_host, runtime_port, gateway_host, gateway_port,
+              tracing_capability, tracing_capability_checked_at
          FROM agents
         WHERE container_id IS NOT NULL
           AND status IN ('running', 'warning')`,
@@ -294,6 +542,12 @@ module.exports = {
   mintIngestKey,
   resolveOtlpBase,
   buildTracingConfigDelta,
+  buildEnableTracingPluginCommand,
+  parseTracingCapabilityFromOutput,
+  parseTracingOpenclawVersionFromOutput,
+  buildProbeOpenclawVersionCommand,
+  shouldCheckTracingCapability,
+  TRACING_CAPABILITY_RECHECK_INTERVAL_MS,
   resolveAgentWorkspaceId,
   resolveWorkspaceLogSettings,
   applyTracingConfig,

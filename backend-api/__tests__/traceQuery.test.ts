@@ -233,6 +233,16 @@ describe("listTraces (item 1)", () => {
       expect(ok.traces).toHaveLength(1);
     });
 
+    it("lets an admin session list traces for an agent in any workspace without naming one", async () => {
+      const deps = makeDeps({
+        spans: [spanRow()],
+        workspaceByAgent: { "agent-1": "ws-A" },
+        findAgent: agentAdminBypass("agent-1"),
+      });
+      const result = await listTraces({ agentId: "agent-1" }, { id: "admin-1", role: "admin" }, deps);
+      expect(result.traces).toHaveLength(1);
+    });
+
     it("an unassigned agent's spans are returned to its owner, never filtered out by workspace scoping", async () => {
       const deps = makeDeps({
         spans: [spanRow()],
@@ -327,11 +337,25 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
     expect(result[0].message).toBe("matched gateway line");
   });
 
-  it("excludes gateway lines from a different trace_id", async () => {
+  it("includes an in-window gateway line from a different trace_id, flagged inTrace: false / category: 'window' (its trace_id is OpenClaw's own internal id, not the OTel trace_id, so it cannot be used to exclude)", async () => {
     const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
     const deps = {
       selectCandidateSegments: jest.fn(async () => [segmentRow({ stream: "gateway" })]),
       fetchSegmentLines: jest.fn(async () => [logLine({ trace_id: "some-other-trace" })]),
+    };
+    const result = await correlatedLogsForTrace(spans, deps);
+    expect(result).toHaveLength(1);
+    expect(result[0].inTrace).toBe(false);
+    expect(result[0].category).toBe("window");
+  });
+
+  it("excludes a gateway line from a different trace_id that falls OUTSIDE the time window", async () => {
+    const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
+    const deps = {
+      selectCandidateSegments: jest.fn(async () => [segmentRow({ stream: "gateway" })]),
+      fetchSegmentLines: jest.fn(async () => [
+        logLine({ trace_id: "some-other-trace", ts: "2026-01-01T00:05:00.000Z" }),
+      ]),
     };
     const result = await correlatedLogsForTrace(spans, deps);
     expect(result).toEqual([]);

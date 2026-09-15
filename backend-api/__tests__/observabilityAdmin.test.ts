@@ -645,6 +645,8 @@ describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
     expect(mockApplyTracingConfig).toHaveBeenCalledTimes(1);
     expect(mockApplyTracingConfig).toHaveBeenCalledWith(
       expect.objectContaining({ id: "agent-1" }),
+      expect.anything(),
+      { forceCapabilityCheck: true },
     );
   });
 

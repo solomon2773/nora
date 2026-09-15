@@ -43,6 +43,24 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
     query: async (sql, params = []) => {
       calls.push({ sql, params });
 
+      // migrateOneSegment's single statement: repoint the row only if it is
+      // still on its source backend, and credit the job for exactly the rows
+      // that moved. Checked first because it also contains the plain
+      // log_segments UPDATE text matched further down.
+      if (sql.includes("WITH moved AS")) {
+        const [id, storageBackend, storageConfig, expectedBackend, jobId] = params;
+        const segment = segments.find((seg) => seg.id === id);
+        let moved = 0;
+        if (segment && segment.storage_backend === expectedBackend) {
+          segment.storage_backend = storageBackend;
+          segment.storage_config = JSON.parse(storageConfig);
+          moved = 1;
+        }
+        const job = jobs.find((j) => j.id === jobId);
+        if (job) job.segments_migrated += moved;
+        return { rows: [] };
+      }
+
       // ── storage_migration_jobs ─────────────────────────────────────
       if (sql.includes("INSERT INTO storage_migration_jobs")) {
         jobSeq += 1;
@@ -123,26 +141,19 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
         return { rows: [] };
       }
       if (sql.includes("SET status = 'failed'")) {
-        const [jobId, addMigrated, checkpoint] = params;
+        const [jobId, checkpoint] = params;
         const job = jobs.find((j) => j.id === jobId);
         if (job) {
           job.status = "failed";
           job.completed_at = new Date().toISOString();
-          job.segments_migrated += addMigrated;
           job.checkpoint = checkpoint;
         }
         return { rows: [] };
       }
-      if (
-        sql.includes("SET segments_migrated = segments_migrated + $2, checkpoint = $3") &&
-        sql.includes("storage_migration_jobs")
-      ) {
-        const [jobId, addMigrated, checkpoint] = params;
+      if (sql.startsWith("UPDATE storage_migration_jobs SET checkpoint = $2")) {
+        const [jobId, checkpoint] = params;
         const job = jobs.find((j) => j.id === jobId);
-        if (job) {
-          job.segments_migrated += addMigrated;
-          job.checkpoint = checkpoint;
-        }
+        if (job) job.checkpoint = checkpoint;
         return { rows: [] };
       }
 
@@ -371,7 +382,7 @@ test("a segment is readable from its old location throughout its own migration, 
   assert.equal(finalOutcome.status, "completed");
 });
 
-test("an interrupted job (simulated worker restart mid-batch) resumes from its checkpoint without re-migrating or skipping segments", async () => {
+test("an interrupted job (simulated worker restart between batches) resumes from its checkpoint without re-migrating or skipping segments", async () => {
   const segments = [
     makeSegment({ id: "seg-01" }),
     makeSegment({ id: "seg-02" }),
@@ -929,4 +940,76 @@ test("retryStorageMigration flips the failed job back to running and finishes mi
     [segments[1].storage_key],
     "the already-succeeded segment must not be re-migrated",
   );
+});
+
+test("a worker killed mid-batch leaves every already-moved segment credited, and resume finishes at the exact total", async () => {
+  // batchSize 1 (the test above) can only ever interrupt BETWEEN batches.
+  // This keeps the default batch size so all five segments share one batch,
+  // and stands in for a SIGKILL with a write that never returns on the third
+  // — the batch never reaches its end-of-batch bookkeeping. The infra suite
+  // reproduced this against a real worker: a completed job read 578/600.
+  const segments = ["seg-01", "seg-02", "seg-03", "seg-04", "seg-05"].map((id) => makeSegment({ id }));
+  const db = fakeDb({ segments });
+  const store = fakeObjectStore(
+    Object.fromEntries(segments.map((s) => [`local:${s.storage_key}`, Buffer.from(s.id)])),
+  );
+  const deps = baseDeps({ db, store, toBackend: "s3" });
+  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, false, deps);
+
+  let reachedThird;
+  const reached = new Promise((resolve) => {
+    reachedThird = resolve;
+  });
+  const killedDeps = {
+    ...deps,
+    putStorageObject: async (key, buffer, config) => {
+      if (key.includes("seg-03")) {
+        reachedThird();
+        return new Promise(() => {});
+      }
+      return store.putStorageObject(key, buffer, config);
+    },
+  };
+  migrateSegmentBatch(jobId, killedDeps); // abandoned, as a killed process would be
+  await reached;
+
+  const job = db.jobs.find((j) => j.id === jobId);
+  assert.equal(job.segments_migrated, 2, "the two segments moved before the kill are already credited");
+  assert.equal(job.checkpoint, null, "the checkpoint still advances only at a batch boundary");
+
+  let outcome;
+  do {
+    outcome = await migrateSegmentBatch(jobId, deps);
+  } while (!outcome.done);
+  assert.equal(outcome.status, "completed");
+  assert.equal(job.segments_migrated, 5, "a completed job reports its exact total");
+  assert.ok(segments.every((s) => s.storage_backend === "s3"), "every segment reached the destination");
+});
+
+test("a segment retried after a later step failed is credited once, not once per attempt", async () => {
+  // The first attempt copies and repoints the segment, then fails deleting
+  // the old copy. migrateOneSegmentWithRetry runs the whole step again; the
+  // repeated repoint must find the row already moved and credit nothing.
+  const segments = [makeSegment({ id: "seg-01" })];
+  const db = fakeDb({ segments });
+  const store = fakeObjectStore({ [`local:${segments[0].storage_key}`]: Buffer.from("seg-01") });
+  const deps = baseDeps({ db, store, toBackend: "s3" });
+  let deleteAttempts = 0;
+  deps.deleteStorageObject = async (key, config) => {
+    deleteAttempts += 1;
+    if (deleteAttempts === 1) throw new Error("transient delete failure");
+    return store.deleteStorageObject(key, config);
+  };
+  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, false, deps);
+
+  let outcome;
+  do {
+    outcome = await migrateSegmentBatch(jobId, deps);
+  } while (!outcome.done);
+
+  const job = db.jobs.find((j) => j.id === jobId);
+  assert.equal(outcome.status, "completed");
+  assert.equal(deleteAttempts, 2, "the failed step was genuinely retried");
+  assert.equal(job.segments_migrated, 1, "one segment, credited once");
+  assert.equal(store.store.has(`local:${segments[0].storage_key}`), false, "the retry still deleted the old copy");
 });

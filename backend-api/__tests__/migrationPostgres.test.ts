@@ -16,6 +16,7 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
   let schemaName;
   let migrateDB;
   let userId;
+  let agentId;
 
   beforeAll(async () => {
     schemaName = `nora_migration_${process.pid}_${Date.now()}`;
@@ -41,7 +42,16 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
       DROP INDEX IF EXISTS idx_agent_hub_listings_slug_unique;
       ALTER TABLE workspace_agents
         DROP CONSTRAINT IF EXISTS workspace_agents_workspace_id_agent_id_key;
-      DROP INDEX IF EXISTS idx_workspace_agents_unique;
+      ALTER TABLE workspace_agents
+        DROP CONSTRAINT IF EXISTS workspace_agents_agent_id_key;
+      -- Schema-qualified: an unqualified DROP INDEX resolves the name via
+      -- search_path across EVERY schema in it (unlike ALTER TABLE ... DROP
+      -- CONSTRAINT, which is scoped to the table already resolved above), so
+      -- an unqualified drop here falls through to "public" and can destroy
+      -- the real application index of the same name when the fresh schema's
+      -- own workspace_agents doesn't happen to have one under this name.
+      DROP INDEX IF EXISTS ${schemaName}.idx_workspace_agents_unique;
+      DROP INDEX IF EXISTS ${schemaName}.idx_workspace_agents_agent_unique;
       CREATE TABLE llm_providers (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -64,17 +74,30 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
       `INSERT INTO agents(user_id, name) VALUES($1, 'Legacy agent') RETURNING id`,
       [userId],
     );
-    const agentId = agentResult.rows[0].id;
+    agentId = agentResult.rows[0].id;
     const workspaceResult = await migrationPool.query(
       `INSERT INTO workspaces(user_id, name) VALUES($1, 'Legacy workspace') RETURNING id`,
       [userId],
     );
     const workspaceId = workspaceResult.rows[0].id;
+    const secondWorkspaceResult = await migrationPool.query(
+      `INSERT INTO workspaces(user_id, name) VALUES($1, 'Legacy second workspace') RETURNING id`,
+      [userId],
+    );
+    const secondWorkspaceId = secondWorkspaceResult.rows[0].id;
 
     await migrationPool.query(
       `INSERT INTO workspace_agents(workspace_id, agent_id, role)
        VALUES($1, $2, 'member'), ($1, $2, 'member')`,
       [workspaceId, agentId],
+    );
+    // Pre-ledger installations could also link the same agent into a second
+    // workspace before agent_id was made unique — the migration must dedupe
+    // this down to one row too.
+    await migrationPool.query(
+      `INSERT INTO workspace_agents(workspace_id, agent_id, role)
+       VALUES($1, $2, 'member')`,
+      [secondWorkspaceId, agentId],
     );
     await migrationPool.query(
       `INSERT INTO backups(user_id, agent_id, kind, name, scope)
@@ -155,6 +178,12 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
        HAVING COUNT(*) > 1`,
     );
     expect(duplicateAssignments.rows).toEqual([]);
+
+    const agentWorkspaceLinks = await migrationPool.query(
+      `SELECT COUNT(*)::int AS count FROM workspace_agents WHERE agent_id = $1`,
+      [agentId],
+    );
+    expect(agentWorkspaceLinks.rows[0].count).toBe(1);
 
     const duplicateSlugs = await migrationPool.query(
       `SELECT slug, COUNT(*)::int AS count

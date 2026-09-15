@@ -6,13 +6,21 @@ import {
   computeVirtualRangeFromOffsets,
   computeWaterfallLayout,
   extractFilenameFromContentDisposition,
+  formatLogTime,
   isApproximateTimestamp,
+  isScrolledToBottom,
+  logRowIdentity,
+  logTimeZoneLabel,
+  orderRuntimeLensLines,
   pairCapacityHaltWindows,
   partitionCorrelatedLogs,
   resolveRuntimeLensCapability,
   resolveTracesLensView,
+  rowIndexAtOffset,
+  stripRedundantTimestamp,
   windowOverlapsRange,
   type CorrelatedLogRow,
+  type LogLine,
   type SpanRow,
 } from "./observabilityClient";
 
@@ -39,6 +47,107 @@ test("marks a collector-stamped row as approximate", () => {
 
 test("does not mark a source-stamped row as approximate", () => {
   assert.equal(isApproximateTimestamp({ ts_source: "source" }), false);
+});
+
+// ── Runtime lens ordering / follow-bottom ──────────────────────────────
+
+function lensLine(message: string, extra: Partial<LogLine> = {}): LogLine {
+  return {
+    ts: "2026-09-14T18:00:00.000Z",
+    observed_ts: "2026-09-14T18:00:00.000Z",
+    ts_source: "source",
+    stream: "runtime",
+    level: "INFO",
+    message,
+    ...extra,
+  };
+}
+
+test("orders search (desc) then live lines oldest to newest", () => {
+  const ordered = orderRuntimeLensLines(
+    [lensLine("s3"), lensLine("s2"), lensLine("s1")],
+    [lensLine("l1", { _live: true }), lensLine("l2", { _live: true })],
+  );
+  assert.deepEqual(
+    ordered.map((l) => l.message),
+    ["s1", "s2", "s3", "l1", "l2"],
+  );
+});
+
+test("treats positions within the threshold as at the bottom", () => {
+  assert.equal(isScrolledToBottom(1000, 560, 400, 40), true);
+  assert.equal(isScrolledToBottom(1000, 600, 400, 40), true);
+  assert.equal(isScrolledToBottom(1000, 500, 400, 40), false);
+});
+
+test("finds the row under a vertical offset", () => {
+  const offsets = [0, 20, 60, 80];
+  assert.equal(rowIndexAtOffset(offsets, 0), 0);
+  assert.equal(rowIndexAtOffset(offsets, 25), 1);
+  assert.equal(rowIndexAtOffset(offsets, 60), 2);
+  assert.equal(rowIndexAtOffset(offsets, 500), 2);
+  assert.equal(rowIndexAtOffset([0], 10), -1);
+});
+
+test("row identity distinguishes live and search rows with the same ord", () => {
+  assert.notEqual(
+    logRowIdentity(lensLine("a", { ord: 1 })),
+    logRowIdentity(lensLine("a", { ord: 1, _live: true })),
+  );
+});
+
+// ── formatLogTime / stripRedundantTimestamp ────────────────────────────
+
+test("formats a row timestamp in UTC with milliseconds", () => {
+  assert.equal(formatLogTime("2026-09-14T18:44:09.090Z", true), "18:44:09.090");
+});
+
+test("formats a missing or invalid row timestamp as a dash", () => {
+  assert.equal(formatLogTime(null, true), "—");
+  assert.equal(formatLogTime("not a date", false), "—");
+});
+
+test("labels the UTC zone explicitly", () => {
+  assert.equal(logTimeZoneLabel(true), "UTC");
+});
+
+const runtimeLine = {
+  ts: "2026-09-14T18:44:09.090Z",
+  ts_source: "source" as const,
+  message: "2026-09-14T18:44:09.085+00:00 [ws] ⇄ res ✓ logs.tail 160ms",
+};
+
+test("strips a leading timestamp that matches the row ts", () => {
+  assert.equal(stripRedundantTimestamp(runtimeLine), "[ws] ⇄ res ✓ logs.tail 160ms");
+});
+
+test("strips a bracketed, space-separated Z timestamp", () => {
+  assert.equal(
+    stripRedundantTimestamp({ ...runtimeLine, message: "[2026-09-14 18:44:09Z] hello" }),
+    "hello",
+  );
+});
+
+test("keeps a leading timestamp outside the tolerance", () => {
+  const message = "2026-09-14T18:40:00.000+00:00 replayed line";
+  assert.equal(stripRedundantTimestamp({ ...runtimeLine, message }), message);
+});
+
+test("keeps a zone-less leading timestamp", () => {
+  const message = "2026-09-14T18:44:09.085 no zone";
+  assert.equal(stripRedundantTimestamp({ ...runtimeLine, message }), message);
+});
+
+test("keeps the timestamp on collector-stamped rows", () => {
+  assert.equal(
+    stripRedundantTimestamp({ ...runtimeLine, ts_source: "collector" }),
+    runtimeLine.message,
+  );
+});
+
+test("leaves messages without a leading timestamp unchanged", () => {
+  const message = "⇄ res ✓ logs.tail 160ms conn=24103215…7966";
+  assert.equal(stripRedundantTimestamp({ ...runtimeLine, message }), message);
 });
 
 // ── pairCapacityHaltWindows / windowOverlapsRange ────────────────────────
@@ -266,6 +375,45 @@ test("tracing enabled with zero traces in range gets the empty state, not the CT
 
 test("tracing enabled with traces present gets the list state", () => {
   assert.equal(resolveTracesLensView({ tracesEnabled: true, traceCount: 3 }), "list");
+});
+
+test("tracing enabled but this agent's OpenClaw can't support it gets the unsupported state, even with zero traces", () => {
+  assert.equal(
+    resolveTracesLensView({ tracesEnabled: true, traceCount: 0, tracingCapability: "unsupported" }),
+    "unsupported",
+  );
+});
+
+test("workspace policy off still wins over per-agent capability", () => {
+  assert.equal(
+    resolveTracesLensView({ tracesEnabled: false, traceCount: 0, tracingCapability: "supported" }),
+    "enable_cta",
+  );
+});
+
+test("supported capability doesn't block the normal empty state", () => {
+  assert.equal(
+    resolveTracesLensView({ tracesEnabled: true, traceCount: 0, tracingCapability: "supported" }),
+    "empty",
+  );
+});
+
+test("traces already present prove capability, regardless of what the persisted 'unknown' verdict says", () => {
+  assert.equal(
+    resolveTracesLensView({ tracesEnabled: true, traceCount: 3, tracingCapability: "unknown" }),
+    "list",
+  );
+});
+
+test("unknown capability with zero traces (e.g. a stopped agent that's never been checked) gets its own distinct unverified state, not empty", () => {
+  assert.equal(
+    resolveTracesLensView({ tracesEnabled: true, traceCount: 0, tracingCapability: "unknown" }),
+    "unverified",
+  );
+});
+
+test("an absent tracingCapability field (older caller) still falls back to empty, not unverified", () => {
+  assert.equal(resolveTracesLensView({ tracesEnabled: true, traceCount: 0 }), "empty");
 });
 
 // ── partitionCorrelatedLogs (Phase 13 item 4) ────────────────────────────

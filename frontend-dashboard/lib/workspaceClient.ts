@@ -517,3 +517,36 @@ export function roleSatisfies(actual: WorkspaceRole | null, required: WorkspaceR
   if (!actual) return false;
   return ROLE_RANK[actual] >= ROLE_RANK[required];
 }
+
+// `GET`/`PUT /workspaces/:id/log-settings` — see backend-api/routes/
+// observability.ts's `readWorkspaceLogSettingsRow`/PUT handler for the exact
+// contract. `traceSampleRate` is read-only here on purpose (see that file):
+// no PUT field changes it, it stays whatever the column already holds.
+export interface WorkspaceLogSettings {
+  runtimeRetentionDays: number;
+  traceRetentionDays: number;
+  gatewayLogsEnabled: boolean;
+  tracesEnabled: boolean;
+  traceSampleRate: number;
+}
+
+export async function getWorkspaceLogSettings(workspaceId: string): Promise<WorkspaceLogSettings> {
+  const res = await fetchWithAuth(`/api/workspaces/${workspaceId}/log-settings`);
+  return jsonOrThrow<WorkspaceLogSettings>(res);
+}
+
+export async function updateWorkspaceLogSettings(
+  workspaceId: string,
+  payload: Partial<{
+    runtimeRetentionDays: number;
+    traceRetentionDays: number;
+    gatewayLogsEnabled: boolean;
+    tracesEnabled: boolean;
+  }>,
+): Promise<WorkspaceLogSettings> {
+  const res = await fetchWithAuth(`/api/workspaces/${workspaceId}/log-settings`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  return jsonOrThrow<WorkspaceLogSettings>(res);
+}

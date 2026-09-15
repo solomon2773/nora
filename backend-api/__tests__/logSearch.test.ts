@@ -22,6 +22,7 @@ const {
   fetchSegmentLines,
   compareLines,
   enforceWorkspaceScope,
+  listLoggingAgents,
   RECENT_LINES_UNAVAILABLE,
 } = require("../logSearch.ts");
 
@@ -395,6 +396,106 @@ describe("enforceWorkspaceScope (items 8a/8b) — direct unit coverage", () => {
     await expect(
       enforceWorkspaceScope({ agentId: "agent-1", workspaceId: "ws-A" }, { db }),
     ).resolves.toBeUndefined();
+  });
+
+  it("lets an admin session read an agent in any workspace without naming one", async () => {
+    const db = fakeDb({ "agent-1": "ws-A" });
+    await expect(
+      enforceWorkspaceScope(
+        { agentId: "agent-1", workspaceId: null, actor: { id: "admin-1", role: "admin" } },
+        { db },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("still rejects an admin session that names the wrong workspace", async () => {
+    const db = fakeDb({ "agent-1": "ws-A" });
+    await expect(
+      enforceWorkspaceScope(
+        { agentId: "agent-1", workspaceId: "ws-B", actor: { id: "admin-1", role: "admin" } },
+        { db },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403, code: "wrong_workspace" });
+  });
+
+  it("does not extend the admin exception to an API key issued by an admin", async () => {
+    const db = fakeDb({ "agent-1": "ws-A" });
+    await expect(
+      enforceWorkspaceScope(
+        {
+          agentId: "agent-1",
+          workspaceId: null,
+          actor: { id: "admin-1", role: "admin", authMethod: "api_key" },
+        },
+        { db },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403, code: "wrong_workspace" });
+  });
+
+  it("still requires a non-admin to name the agent's workspace", async () => {
+    const db = fakeDb({ "agent-1": "ws-A" });
+    await expect(
+      enforceWorkspaceScope(
+        { agentId: "agent-1", workspaceId: null, actor: { id: "user-1", role: "user" } },
+        { db },
+      ),
+    ).rejects.toMatchObject({ statusCode: 403, code: "wrong_workspace" });
+  });
+});
+
+describe("listLoggingAgents", () => {
+  function capturingDb(rows = []) {
+    return { query: jest.fn(async () => ({ rows })) };
+  }
+
+  it("gives an admin session every agent on the installation", async () => {
+    const db = capturingDb();
+    await listLoggingAgents({ id: "admin-1", role: "admin" }, {}, { db });
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/WHERE TRUE/);
+    expect(params).toEqual([]);
+  });
+
+  it("limits a non-admin to owned agents plus agents in their workspaces", async () => {
+    const db = capturingDb();
+    await listLoggingAgents({ id: "user-1", role: "user" }, {}, { db });
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/a\.user_id = \$1/);
+    expect(sql).toMatch(/workspace_members/);
+    expect(params).toEqual(["user-1"]);
+  });
+
+  it("limits an API key to its bound workspace even when issued by an admin", async () => {
+    const db = capturingDb();
+    await listLoggingAgents(
+      { id: "admin-1", role: "admin", authMethod: "api_key" },
+      { workspaceId: "ws-A" },
+      { db },
+    );
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/wa\.workspace_id = \$1/);
+    expect(sql).not.toMatch(/WHERE TRUE/);
+    expect(params).toEqual(["ws-A"]);
+  });
+
+  it("never selects agent secrets such as the gateway token", async () => {
+    const db = capturingDb();
+    await listLoggingAgents({ id: "admin-1", role: "admin" }, {}, { db });
+    const [sql] = db.query.mock.calls[0];
+    expect(sql).not.toMatch(/a\.\*/);
+    expect(sql).not.toMatch(/gateway_token/);
+  });
+
+  it("attaches each agent's real workspace, or none for an unassigned agent", async () => {
+    const db = capturingDb([
+      { id: "a1", name: "one", runtime_family: "openclaw", deploy_target: "docker", workspace_id: "ws-A", workspace_name: "A" },
+      { id: "a2", name: "two", runtime_family: "openclaw", deploy_target: "docker", workspace_id: null, workspace_name: null },
+    ]);
+    const agents = await listLoggingAgents({ id: "admin-1", role: "admin" }, {}, { db });
+    expect(agents).toEqual([
+      { id: "a1", name: "one", runtime_family: "openclaw", deploy_target: "docker", workspaces: [{ id: "ws-A", name: "A" }] },
+      { id: "a2", name: "two", runtime_family: "openclaw", deploy_target: "docker", workspaces: [] },
+    ]);
   });
 });
 

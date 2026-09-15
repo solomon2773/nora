@@ -2640,6 +2640,50 @@ async function migrateDB(database = db, env = process.env) {
        ADD COLUMN IF NOT EXISTS log_storage_ssh_private_key_encrypted TEXT`,
     `ALTER TABLE platform_settings
        ADD COLUMN IF NOT EXISTS log_storage_ssh_password_encrypted TEXT`,
+    // tracing_capability: per-agent fact, not a setting -- whether the last
+    // attempt to enable OTel tracing on THIS agent's own OpenClaw install
+    // actually succeeded (the `diagnostics-otel` plugin requires OpenClaw
+    // plugin API >=2026.9.3; agents on an older version can never satisfy
+    // this no matter what workspace_log_settings.traces_enabled says).
+    // 'unknown' until applyTracingConfig has run against the agent at least
+    // once. Read by the Traces lens to show an honest per-agent reason
+    // instead of a silently empty trace list.
+    `ALTER TABLE agents
+       ADD COLUMN IF NOT EXISTS tracing_capability TEXT NOT NULL DEFAULT 'unknown'
+       CHECK (tracing_capability IN ('unknown', 'supported', 'unsupported'))`,
+    // tracing_openclaw_version: raw `openclaw --version` output captured in
+    // the SAME check as tracing_capability above, purely for diagnostic
+    // display (e.g. "OpenClaw 2026.6.11 — needs >=2026.9.3" in the Traces
+    // lens). Deliberately NOT part of the supported/unsupported decision --
+    // that stays capability-based (did the plugin actually end up enabled),
+    // not a hardcoded version floor, so a manually-updated agent reads
+    // correctly without Nora maintaining a version number anywhere.
+    `ALTER TABLE agents ADD COLUMN IF NOT EXISTS tracing_openclaw_version TEXT`,
+    // tracing_capability_checked_at: throttles how often reconcileTracingConfig
+    // re-runs the plugin install/enable/list check (buildEnableTracingPluginCommand)
+    // against a given agent. Root-caused after a manually-run `openclaw update`
+    // on an agent collided with Nora's own automatic capability check running
+    // concurrently every 30s against the SAME on-disk OpenClaw install/state,
+    // producing a much worse outcome (persisted corruption surviving a
+    // container restart) than an interrupted update alone. Once a verdict is
+    // known, there is no reason to keep re-attempting the network- and
+    // lock-touching plugin install on every single reconcile tick forever —
+    // see TRACING_CAPABILITY_RECHECK_INTERVAL_MS in agentTracing.ts.
+    `ALTER TABLE agents ADD COLUMN IF NOT EXISTS tracing_capability_checked_at TIMESTAMPTZ`,
+    // An agent belongs to at most one workspace, so workspace-scoped settings
+    // (e.g. workspace_log_settings) never have to arbitrate between two
+    // workspaces for the same agent. Installations that predate this rule may
+    // have the same agent_id linked to more than one workspace_id; keep the
+    // most recent link per agent before the constraint is added, so this
+    // stays idempotent and never fails on legacy data.
+    `DELETE FROM workspace_agents a
+       USING workspace_agents b
+      WHERE a.ctid < b.ctid
+        AND a.agent_id = b.agent_id`,
+    `DROP INDEX IF EXISTS idx_workspace_agents_unique`,
+    `DROP INDEX IF EXISTS idx_workspace_agents_agent`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agents_agent_unique
+       ON workspace_agents(agent_id)`,
   ];
 
   return runVersionedMigrations(database, migrations, {

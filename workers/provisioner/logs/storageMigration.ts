@@ -88,7 +88,7 @@ function normalizeConfigInput(config) {
  *     independent expiry (Phase 5's retention sweeper) and excluded from
  *     orphan reconciliation (Phase 5 item 8a already checks this table).
  */
-async function migrateOneSegment(row, { toConfig, keepSourceCopies }, deps = {}) {
+async function migrateOneSegment(row, { toConfig, keepSourceCopies, jobId }, deps = {}) {
   const db = lazyDb(deps);
   const getObj = deps.getStorageObject || objectStorage.getStorageObject;
   const putObj = deps.putStorageObject || objectStorage.putStorageObject;
@@ -106,9 +106,29 @@ async function migrateOneSegment(row, { toConfig, keepSourceCopies }, deps = {})
 
   // Item 3/14 (extended from Phase 3): the object is confirmed in the new
   // location before the index row is touched at all.
+  //
+  // Repointing the row and crediting the job happen in ONE statement, so a
+  // crash can never land between them. Progress used to be credited once per
+  // batch, after every segment in it; a worker killed mid-batch left the
+  // segments it had already moved uncredited forever, because resume
+  // correctly skips them (they no longer match the source backend) and
+  // nothing counted them either. A completed job then reported, e.g.,
+  // 578/600.
+  //
+  // The `storage_backend = <old>` guard makes the credit idempotent across
+  // migrateOneSegmentWithRetry: if a later step of an earlier attempt failed
+  // (say, deleting the old copy), the retry finds the row already repointed,
+  // updates nothing, and credits nothing.
   await db.query(
-    `UPDATE log_segments SET storage_backend = $2, storage_config = $3 WHERE id = $1`,
-    [row.id, toConfig.storageBackend, JSON.stringify(snapshotFn(toConfig))],
+    `WITH moved AS (
+       UPDATE log_segments SET storage_backend = $2, storage_config = $3
+        WHERE id = $1 AND storage_backend = $4
+       RETURNING id
+     )
+     UPDATE storage_migration_jobs
+        SET segments_migrated = segments_migrated + (SELECT COUNT(*) FROM moved)
+      WHERE id = $5`,
+    [row.id, toConfig.storageBackend, JSON.stringify(snapshotFn(toConfig)), row.storage_backend, jobId],
   );
 
   if (keepSourceCopies) {
@@ -326,20 +346,20 @@ async function migrateSegmentBatch(jobId, deps = {}) {
   let migratedInBatch = 0;
   for (const row of rows) {
     try {
-      await migrateOneSegmentWithRetry(row, { toConfig, keepSourceCopies: job.keep_source }, deps);
+      await migrateOneSegmentWithRetry(row, { toConfig, keepSourceCopies: job.keep_source, jobId }, deps);
       migratedInBatch += 1;
     } catch (error) {
-      // Unrecoverable (retries already exhausted): mark failed, but credit
-      // whatever in THIS batch already succeeded before the failing
-      // segment — item 5's "only changes storage_backend for segments that
-      // already succeeded" guarantee.
+      // Unrecoverable (retries already exhausted): mark failed. Segments in
+      // THIS batch that succeeded before the failing one were already
+      // credited as each moved (see migrateOneSegment), so only the
+      // checkpoint advances here — item 5's "only changes storage_backend
+      // for segments that already succeeded" guarantee.
       const partialCheckpoint = migratedInBatch > 0 ? rows[migratedInBatch - 1].id : job.checkpoint;
       await db.query(
         `UPDATE storage_migration_jobs
-            SET status = 'failed', completed_at = NOW(), segments_migrated = segments_migrated + $2,
-                checkpoint = $3
+            SET status = 'failed', completed_at = NOW(), checkpoint = $2
           WHERE id = $1`,
-        [jobId, migratedInBatch, partialCheckpoint],
+        [jobId, partialCheckpoint],
       );
       await logEvent(
         "log_storage_migration_failed",
@@ -351,12 +371,9 @@ async function migrateSegmentBatch(jobId, deps = {}) {
   }
 
   const newCheckpoint = rows[rows.length - 1].id;
-  await db.query(
-    `UPDATE storage_migration_jobs
-        SET segments_migrated = segments_migrated + $2, checkpoint = $3
-      WHERE id = $1`,
-    [jobId, migratedInBatch, newCheckpoint],
-  );
+  // Progress was credited per segment as each moved; only the checkpoint
+  // advances at the batch boundary.
+  await db.query(`UPDATE storage_migration_jobs SET checkpoint = $2 WHERE id = $1`, [jobId, newCheckpoint]);
 
   return { done: false, status: "running", migrated: migratedInBatch };
 }

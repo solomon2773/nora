@@ -148,8 +148,8 @@ export default function TraceWaterfall({ detail, loading = false, error = null }
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="flex h-full min-h-[420px] flex-col gap-4">
+      <section className="max-h-[45%] shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <p className="mb-3 text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
           Span waterfall ({detail.spans.length})
         </p>
@@ -166,8 +166,8 @@ export default function TraceWaterfall({ detail, loading = false, error = null }
         )}
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+      <section className="flex min-h-[160px] flex-1 flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3">
           <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
             Correlated logs ({inTrace.length + inWindowOnly.length})
           </p>
@@ -175,7 +175,7 @@ export default function TraceWaterfall({ detail, loading = false, error = null }
             {inTrace.length} in trace · {inWindowOnly.length} in window only
           </p>
         </div>
-        <div className="max-h-80 overflow-y-auto font-mono">
+        <div className="min-h-0 flex-1 overflow-y-auto font-mono">
           {inTrace.length === 0 && inWindowOnly.length === 0 ? (
             <p className="px-4 py-6 text-center text-xs font-medium text-slate-400">
               No correlated log lines for this trace or its window.

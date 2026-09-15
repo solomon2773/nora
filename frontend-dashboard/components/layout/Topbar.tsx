@@ -29,7 +29,7 @@ const PAGE_META = {
     subtitle: "Step 2 of 3 — deploy an agent, then validate it immediately.",
   },
   "/logs": {
-    title: "Logs",
+    title: "Logging",
     subtitle: "Operator activity, per-agent runtime logs, and trace correlation in one place.",
   },
   "/workspaces": {

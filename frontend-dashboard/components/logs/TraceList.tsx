@@ -69,13 +69,13 @@ export default function TraceList({
   loading = false,
 }: TraceListProps) {
   return (
-    <div className="flex flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-100 px-4 py-3">
+    <div className="flex h-full min-h-[420px] flex-col rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="shrink-0 border-b border-slate-100 px-4 py-3">
         <p className="text-[11px] font-black uppercase tracking-[0.18em] text-slate-400">
           Traces ({traces.length})
         </p>
       </div>
-      <div className="max-h-[640px] overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? (
           <div className="flex h-40 items-center justify-center">
             <Loader2 size={20} className="animate-spin text-blue-500" />

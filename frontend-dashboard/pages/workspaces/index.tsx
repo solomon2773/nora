@@ -1,6 +1,6 @@
 import Layout from "../../components/layout/Layout";
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Loader2, Plus, FolderOpen, Trash2, Bot, Users } from "lucide-react";
+import { ArrowUpRight, Loader2, Plus, FolderOpen, Trash2, Bot, Users, Settings } from "lucide-react";
 import { useRouter } from "next/router";
 import { clsx } from "clsx";
 import { fetchWithAuth } from "../../lib/api";
@@ -203,6 +203,13 @@ export default function Workspaces() {
                   >
                     <ArrowUpRight size={14} />
                     Members
+                  </button>
+                  <button
+                    onClick={() => router.push(`/workspaces/${w.id}/settings`)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Settings size={14} />
+                    Settings
                   </button>
                 </div>
               </div>

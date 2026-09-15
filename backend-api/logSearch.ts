@@ -320,15 +320,35 @@ async function selectCandidateSegments({ agentId, streams, from, to }, deps = {}
 // ── Workspace scoping (items 8/8a/8b/8c) ────────────────────────────────
 
 /**
- * Item 8a: apply workspace filtering EXPLICITLY, for every actor including
- * platform admins. `findAccessibleAgentForActor` grants an admin access to
- * ANY agent, bypassing workspace membership entirely — that bypass governs
- * per-agent access only, and must never be treated as satisfying this
- * endpoint's workspace-scoping requirement. This check runs unconditionally
- * after `findAccessibleAgentForActor` succeeds, independent of `actor.role`.
+ * A platform admin signed in with a browser session. Deliberately not "any
+ * actor whose role is admin": an API key request carries its ISSUER's
+ * identity, so a key minted by an admin arrives with `role: "admin"` too,
+ * and must stay confined to the workspace it is bound to.
+ */
+function isAdminSession(actor) {
+  return actor?.role === "admin" && actor?.authMethod !== "api_key";
+}
+
+/**
+ * Item 8a: every non-admin request for an agent that belongs to a workspace
+ * must name that workspace. `findAccessibleAgentForActor` resolves per-agent
+ * access (ownership or membership); this check is what stops an owner, via
+ * the ownership fast path, from reading an agent out of a workspace context
+ * the request did not ask for.
  *
- * Item 8b: a null-workspace agent (an agent owned directly by a user, with
- * no workspace row in `workspace_agents`) is reached through the
+ * Platform admins are the exception, by product decision: in the Logging
+ * page an admin sees every agent across every workspace, so an admin
+ * session that names no workspace is let through for any agent. This
+ * intentionally departs from the plan's Decision 14 ("workspace-scoped for
+ * every actor, including platform admins"). It applies to admin sessions
+ * only — see `isAdminSession` for why admin-issued API keys are excluded.
+ *
+ * A request that DOES name a workspace must name the agent's real one, for
+ * every actor including admins. That is input validation, not an access
+ * decision: it hides nothing from an admin, who can omit the filter.
+ *
+ * Item 8b: a null-workspace agent (owned directly by a user, with no
+ * workspace row in `workspace_agents`) is reached through the
  * accessible-agent check above, NOT through a workspace filter that would
  * otherwise exclude it for having no workspace — so a request with no
  * `workspaceId` succeeds for such an agent, and a request WITH a
@@ -336,7 +356,7 @@ async function selectCandidateSegments({ agentId, streams, from, to }, deps = {}
  * match), which is the correct behaviour rather than a special case to work
  * around.
  */
-async function enforceWorkspaceScope({ agentId, workspaceId }, deps = {}) {
+async function enforceWorkspaceScope({ agentId, workspaceId, actor = null }, deps = {}) {
   const db = deps.db || require("./db");
   const result = await db.query(
     `SELECT workspace_id FROM workspace_agents WHERE agent_id = $1 LIMIT 1`,
@@ -345,6 +365,7 @@ async function enforceWorkspaceScope({ agentId, workspaceId }, deps = {}) {
   const actualWorkspaceId = result.rows[0]?.workspace_id || null;
 
   if (actualWorkspaceId) {
+    if (!workspaceId && isAdminSession(actor)) return;
     if (!workspaceId || workspaceId !== actualWorkspaceId) {
       const error = new Error("Agent belongs to a different workspace than requested");
       error.statusCode = 403;
@@ -447,20 +468,52 @@ async function readBufferSnapshots({ agentId, streams, to }, deps = {}) {
 }
 
 /**
+ * Applies the same `q`/`levels`/time-window filtering to a live-buffer line
+ * that `fetchSegmentLines` already applies to a stored one.
+ *
+ * Buffer lines arrive from worker-provisioner as already-parsed objects,
+ * bypassing `fetchSegmentLines` entirely — so without this they were the
+ * only lines in a result that no filter was ever applied to. `q` is matched
+ * against the serialized line rather than `message` alone, mirroring
+ * `fetchSegmentLines`'s `rawLine.includes(q)` over the raw NDJSON text so a
+ * match on any field behaves identically for buffered and stored lines.
+ */
+function lineMatchesFilters(line, { q, levelSet, fromMs, toMs }) {
+  if (levelSet && !levelSet.has(line.level)) return false;
+  if (q && !JSON.stringify(line).includes(q)) return false;
+  const tsMs = new Date(effectiveTs(line)).getTime();
+  if (Number.isFinite(fromMs) && tsMs < fromMs) return false;
+  if (Number.isFinite(toMs) && tsMs > toMs) return false;
+  return true;
+}
+
+/**
  * Step 2 of the recency-gap dance: once storage has actually been fetched
  * and `newestTsToByStream` reflects the newest segment ACTUALLY READ per
  * stream, admit only the buffer lines strictly newer than that boundary.
  * This is what resolves the buffer-first ordering's known duplicate risk —
  * a line that made it into both the step-1 snapshot and a freshly-flushed
  * segment is dropped here, since storage (the durable copy) wins.
+ *
+ * `filters` carries the caller's own `q`/`levels`/`from`/`to` so buffered
+ * lines are held to the same filters as stored ones (see
+ * `lineMatchesFilters`). Before this existed, a filtered query could return
+ * buffer lines that matched none of its filters — including lines outside
+ * the requested time window entirely — while the storage half of the very
+ * same result was filtered correctly.
  */
-function admitRecencyGapLines(snapshots, newestTsToByStream, agentId) {
+function admitRecencyGapLines(snapshots, newestTsToByStream, agentId, filters = {}) {
+  const levelSet =
+    Array.isArray(filters.levels) && filters.levels.length ? new Set(filters.levels) : null;
+  const fromMs = filters.from ? new Date(filters.from).getTime() : NaN;
+  const toMs = filters.to ? new Date(filters.to).getTime() : NaN;
   const admitted = [];
   for (const [stream, lines] of snapshots.entries()) {
     const boundary = newestTsToByStream.get(stream) || null;
     for (const line of lines) {
       const ts = effectiveTs(line);
       if (boundary && !(new Date(ts).getTime() > new Date(boundary).getTime())) continue;
+      if (!lineMatchesFilters(line, { q: filters.q, levelSet, fromMs, toMs })) continue;
       admitted.push({ ...line, agentId, workspaceId: line.workspaceId ?? null });
     }
   }
@@ -517,7 +570,11 @@ async function searchLogs(params, actor, deps = {}) {
   // beyond NOT reusing Phase 5c's deleted-agent recovery path, which this
   // function never calls.
   await enforceWorkspaceScope(
-    { agentId, workspaceId: typeof params.workspaceId === "string" ? params.workspaceId : null },
+    {
+      agentId,
+      workspaceId: typeof params.workspaceId === "string" ? params.workspaceId : null,
+      actor,
+    },
     { db },
   );
 
@@ -602,7 +659,14 @@ async function searchLogs(params, actor, deps = {}) {
   // boundary — storage wins on overlap, resolving step 1's buffer-first
   // duplicate risk deterministically.
   if (wantsRecencyGap) {
-    collected.push(...admitRecencyGapLines(bufferRead.snapshots, newestTsToByStream, agentId));
+    collected.push(
+      ...admitRecencyGapLines(bufferRead.snapshots, newestTsToByStream, agentId, {
+        q: params.q,
+        levels,
+        from,
+        to,
+      }),
+    );
   }
   const warning = bufferRead.warning;
 
@@ -711,6 +775,15 @@ function resolveExportFormat(params = {}) {
  * boundary check uses, applied to guarantee full-range ordering instead of
  * to cut a fetch short — it is what keeps memory bounded to "segments
  * currently in flight" rather than "the whole export."
+ *
+ * Recency gap (Phase 6 item 7, applied here in Phase 7): this closes the
+ * same last-few-minutes window `searchLogs` does, via the same
+ * buffer-first/storage-wins dance. It did not always — export used to read
+ * storage exclusively, so exporting a range that included the present
+ * silently omitted every line still sitting in worker-provisioner's
+ * unflushed buffer, while a search over the byte-identical range returned
+ * them. Both endpoints document "the same filters"; that divergence made it
+ * untrue for any range touching the last ~15 minutes.
  */
 async function streamLogExport(params, actor, res, deps = {}) {
   const db = deps.db || require("./db");
@@ -721,7 +794,11 @@ async function streamLogExport(params, actor, res, deps = {}) {
   if (!agent) throw notFoundAgentError();
 
   await enforceWorkspaceScope(
-    { agentId, workspaceId: typeof params.workspaceId === "string" ? params.workspaceId : null },
+    {
+      agentId,
+      workspaceId: typeof params.workspaceId === "string" ? params.workspaceId : null,
+      actor,
+    },
     { db },
   );
 
@@ -736,6 +813,18 @@ async function streamLogExport(params, actor, res, deps = {}) {
   const dispatcher = deps.dispatcher || sharedDispatcher(concurrency);
   const keyRing = deps.keyRing || segmentWriterModule.loadLogEncryptionKeys();
 
+  // Recency gap, step 1 — the same buffer-first ordering `searchLogs` uses,
+  // for the same reason (see `readBufferSnapshots`): reading storage first
+  // would turn a flush landing mid-request into a silent gap instead of a
+  // recoverable duplicate. Export previously skipped this entirely and read
+  // storage only, which meant an export and a search over the IDENTICAL
+  // range disagreed for anything still sitting in an unflushed buffer —
+  // export silently omitted it, despite both endpoints documenting "the
+  // same filters." `readBufferSnapshots` skips the worker call outright when
+  // `to` predates the oldest possible open buffer, so a historical export
+  // pays nothing for this.
+  const bufferRead = await readBufferSnapshots({ agentId, streams, to }, deps);
+
   const selectFn = deps.selectCandidateSegments || selectCandidateSegments;
   const rowsDesc = await selectFn({ agentId, streams, from, to }, { db });
   const orderedRows = rowsDesc.slice().reverse(); // ascending ts_from for a chronological export
@@ -748,6 +837,12 @@ async function streamLogExport(params, actor, res, deps = {}) {
     "Content-Type",
     format === "csv" ? "text/csv; charset=utf-8" : "application/x-ndjson; charset=utf-8",
   );
+  // A stream has no envelope to carry `searchLogs`'s `warning` field, so the
+  // degraded-worker signal goes in a header instead — set here, before any
+  // body byte is written, since headers are unsettable once streaming starts.
+  if (bufferRead.warning) {
+    res.setHeader("X-Nora-Log-Warning", bufferRead.warning);
+  }
 
   const writeLine = (line) => {
     if (format === "csv") {
@@ -763,6 +858,7 @@ async function streamLogExport(params, actor, res, deps = {}) {
 
   let pending = [];
   let index = 0;
+  const newestTsToByStream = new Map();
   while (index < orderedRows.length) {
     const wave = orderedRows.slice(index, index + concurrency);
     index += wave.length;
@@ -770,16 +866,17 @@ async function streamLogExport(params, actor, res, deps = {}) {
     const results = await Promise.all(
       wave.map((row) => fetchFn(row, { q: params.q, levels, keyRing, dispatcher })),
     );
-    results.forEach((lines) => pending.push(...lines));
+    wave.forEach((row, i) => {
+      const current = newestTsToByStream.get(row.stream);
+      if (!current || new Date(row.ts_to).getTime() > new Date(current).getTime()) {
+        newestTsToByStream.set(row.stream, row.ts_to);
+      }
+      pending.push(...results[i]);
+    });
     pending.sort((a, b) => compareLines(a, b, "asc"));
 
     const boundaryRow = orderedRows[index];
-    if (!boundaryRow) {
-      // No more candidates — everything pending is now safe to flush.
-      for (const line of pending) writeLine(line);
-      pending = [];
-      break;
-    }
+    if (!boundaryRow) break; // No more candidates — the tail flush below handles what's pending.
     const boundaryTs = boundaryRow.ts_from;
     const safeCount = pending.findIndex(
       (line) => new Date(effectiveTs(line)).getTime() > new Date(boundaryTs).getTime(),
@@ -789,11 +886,86 @@ async function streamLogExport(params, actor, res, deps = {}) {
     pending = pending.slice(splitAt);
   }
 
+  // Recency gap, step 2 — admit only buffer lines strictly newer than the
+  // newest segment ACTUALLY READ per stream, so a line caught by both the
+  // step-1 snapshot and a segment flushed mid-request is written once, with
+  // storage (the durable copy) winning. Buffered lines are by definition the
+  // newest content, so they sort into the tail; they are merged with
+  // whatever is still pending rather than appended blindly, since a pending
+  // line from one stream can be newer than an admitted line from another.
+  const admitted = admitRecencyGapLines(bufferRead.snapshots, newestTsToByStream, agentId, {
+    q: params.q,
+    levels,
+    from,
+    to,
+  });
+  const tail = pending.concat(admitted).sort((a, b) => compareLines(a, b, "asc"));
+  for (const line of tail) writeLine(line);
+
   res.end();
+}
+
+/**
+ * `listLoggingAgents(actor, { workspaceId }, deps)` — the agents the Logging
+ * page may offer this actor, each with the workspace it actually belongs to.
+ *
+ *   - An API key sees the agents in its bound workspace (`workspaceId`).
+ *   - An admin session sees every agent on the installation.
+ *   - Anyone else sees agents they own, plus agents in workspaces they are a
+ *     member of. Unassigned agents they don't own stay invisible.
+ *
+ * Separate from `GET /api/agents` on purpose. That list is shared by the
+ * whole dashboard, and admins seeing every agent is a Logging-only rule. It
+ * also selects `a.*`, which includes each agent's gateway token — acceptable
+ * for a user's own agents, not for a dropdown listing every other user's.
+ * This returns only what the agent picker renders.
+ *
+ * The workspace attached to each agent is its REAL workspace, not the subset
+ * the caller is a member of. `GET /api/agents` attaches only the caller's
+ * memberships, so an owner who had left their agent's workspace got that
+ * agent back with no workspace, sent none, and was rejected by
+ * `enforceWorkspaceScope`.
+ */
+async function listLoggingAgents(actor, { workspaceId = null } = {}, deps = {}) {
+  const db = deps.db || require("./db");
+  let where;
+  let params;
+  if (workspaceId) {
+    where = "wa.workspace_id = $1";
+    params = [workspaceId];
+  } else if (isAdminSession(actor)) {
+    where = "TRUE";
+    params = [];
+  } else {
+    where = `a.user_id = $1
+          OR EXISTS (
+            SELECT 1 FROM workspace_members m
+             WHERE m.workspace_id = wa.workspace_id AND m.user_id = $1
+          )`;
+    params = [actor?.id ?? null];
+  }
+  const result = await db.query(
+    `SELECT a.id, a.name, a.runtime_family, a.deploy_target,
+            w.id AS workspace_id, w.name AS workspace_name
+       FROM agents a
+       LEFT JOIN workspace_agents wa ON wa.agent_id = a.id
+       LEFT JOIN workspaces w ON w.id = wa.workspace_id
+      WHERE ${where}
+      ORDER BY a.created_at DESC`,
+    params,
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    runtime_family: row.runtime_family,
+    deploy_target: row.deploy_target,
+    workspaces: row.workspace_id ? [{ id: row.workspace_id, name: row.workspace_name }] : [],
+  }));
 }
 
 module.exports = {
   searchLogs,
+  listLoggingAgents,
   selectCandidateSegments,
   mergeSegments,
   encodeCursor,

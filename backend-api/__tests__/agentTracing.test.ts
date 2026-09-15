@@ -202,6 +202,337 @@ describe("agentTracing", () => {
       expect(disabledResult.delta.diagnostics.otel.traces).toBe(false);
       expect(mockAuthSync.runRuntimeCommand).toHaveBeenCalledTimes(2);
     });
+
+    describe("per-agent tracing capability", () => {
+      test("buildEnableTracingPluginCommand's shell fragment checks real enablement rather than trusting install/enable exit codes", () => {
+        const command = agentTracing.buildEnableTracingPluginCommand();
+        expect(command).toContain("openclaw plugins list --enabled --json");
+        expect(command).toMatch(/__NORA_TRACING_CAPABILITY__=supported/);
+        expect(command).toMatch(/__NORA_TRACING_CAPABILITY__=unsupported/);
+      });
+
+      test("buildEnableTracingPluginCommand's shell fragment also captures the raw OpenClaw version for diagnostics", () => {
+        const command = agentTracing.buildEnableTracingPluginCommand();
+        expect(command).toContain("__NORA_TRACING_OPENCLAW_VERSION__=$(openclaw --version");
+      });
+
+      test("parseTracingOpenclawVersionFromOutput reads the raw version line out of arbitrary surrounding output", () => {
+        expect(
+          agentTracing.parseTracingOpenclawVersionFromOutput(
+            "noise\n__NORA_TRACING_OPENCLAW_VERSION__=OpenClaw 2026.6.11 (abc123)\nmore noise",
+          ),
+        ).toBe("OpenClaw 2026.6.11 (abc123)");
+      });
+
+      test("parseTracingOpenclawVersionFromOutput returns undefined for an empty or missing marker", () => {
+        expect(agentTracing.parseTracingOpenclawVersionFromOutput("")).toBeUndefined();
+        expect(agentTracing.parseTracingOpenclawVersionFromOutput("__NORA_TRACING_OPENCLAW_VERSION__=")).toBeUndefined();
+        expect(agentTracing.parseTracingOpenclawVersionFromOutput("no marker here")).toBeUndefined();
+      });
+
+      test("parseTracingCapabilityFromOutput reads the marker out of arbitrary surrounding output", () => {
+        expect(
+          agentTracing.parseTracingCapabilityFromOutput(
+            "some noise\n__NORA_TRACING_CAPABILITY__=supported\nmore noise",
+          ),
+        ).toBe("supported");
+        expect(
+          agentTracing.parseTracingCapabilityFromOutput("__NORA_TRACING_CAPABILITY__=unsupported"),
+        ).toBe("unsupported");
+      });
+
+      test("parseTracingCapabilityFromOutput returns undefined when the marker never printed (unreachable agent, shell error before the check)", () => {
+        expect(agentTracing.parseTracingCapabilityFromOutput("")).toBeUndefined();
+        expect(agentTracing.parseTracingCapabilityFromOutput(undefined)).toBeUndefined();
+        expect(agentTracing.parseTracingCapabilityFromOutput("sh: command not found")).toBeUndefined();
+      });
+
+      test("persists 'supported' to agents.tracing_capability when the plugin check output says so", async () => {
+        mockDb.query
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+          .mockResolvedValueOnce({
+            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+          })
+          .mockResolvedValueOnce({ rows: [] }) // optimistic pre-write of checked_at
+          .mockResolvedValueOnce({ rows: [] }); // the final capability UPDATE
+        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({
+          exitCode: 0,
+          output:
+            "some plugin install noise\n__NORA_TRACING_CAPABILITY__=supported\n__NORA_TRACING_OPENCLAW_VERSION__=OpenClaw 2026.9.4 (abc123)\n",
+        });
+
+        const result = await agentTracing.applyTracingConfig(agentRow());
+
+        expect(result.tracingCapability).toBe("supported");
+        expect(result.tracingOpenclawVersion).toBe("OpenClaw 2026.9.4 (abc123)");
+        expect(mockDb.query).toHaveBeenLastCalledWith(
+          expect.stringContaining("SET tracing_capability = $1"),
+          ["supported", "OpenClaw 2026.9.4 (abc123)", AGENT_ID],
+        );
+      });
+
+      test("persists 'unsupported' the same way when the plugin check fails", async () => {
+        mockDb.query
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+          .mockResolvedValueOnce({
+            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+          })
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [] });
+        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({
+          exitCode: 0,
+          output:
+            "requires plugin API >=2026.9.3, but this OpenClaw runtime exposes 2026.6.11\n__NORA_TRACING_CAPABILITY__=unsupported\n__NORA_TRACING_OPENCLAW_VERSION__=OpenClaw 2026.6.11 (def456)\n",
+        });
+
+        const result = await agentTracing.applyTracingConfig(agentRow());
+
+        expect(result.tracingCapability).toBe("unsupported");
+        expect(result.tracingOpenclawVersion).toBe("OpenClaw 2026.6.11 (def456)");
+        expect(mockDb.query).toHaveBeenLastCalledWith(
+          expect.stringContaining("SET tracing_capability = $1"),
+          ["unsupported", "OpenClaw 2026.6.11 (def456)", AGENT_ID],
+        );
+      });
+
+      test("does not touch tracing_capability at all when traces_enabled is false -- no attempt means no new information", async () => {
+        mockDb.query
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+          .mockResolvedValueOnce({
+            rows: [{ gateway_logs_enabled: true, traces_enabled: false, trace_sample_rate: 1.0 }],
+          });
+        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
+
+        const result = await agentTracing.applyTracingConfig(agentRow());
+
+        expect(result.tracingCapability).toBeUndefined();
+        // Exactly the two lookups from above -- no plugin check attempted at
+        // all when traces_enabled is false, so no checked_at pre-write and
+        // no capability UPDATE either.
+        expect(mockDb.query).toHaveBeenCalledTimes(2);
+      });
+
+      test("does not persist a capability verdict when the marker never printed, but still records the attempt via checked_at", async () => {
+        mockDb.query
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+          .mockResolvedValueOnce({
+            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+          })
+          .mockResolvedValueOnce({ rows: [] }); // the optimistic pre-write
+        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "no marker here" });
+
+        const result = await agentTracing.applyTracingConfig(agentRow());
+
+        expect(result.tracingCapability).toBeUndefined();
+        // workspace lookup, settings lookup, and the pre-write -- no 4th
+        // (final capability) UPDATE since no verdict was ever parsed.
+        expect(mockDb.query).toHaveBeenCalledTimes(3);
+        expect(mockDb.query).toHaveBeenLastCalledWith(
+          expect.stringContaining("UPDATE agents SET tracing_capability_checked_at = NOW()"),
+          [AGENT_ID],
+        );
+      });
+
+      test("shouldCheckTracingCapability: always checks when capability is unknown or absent", () => {
+        expect(agentTracing.shouldCheckTracingCapability({})).toBe(true);
+        expect(agentTracing.shouldCheckTracingCapability({ tracing_capability: "unknown" })).toBe(true);
+      });
+
+      test("shouldCheckTracingCapability: always checks when a known verdict has no checked_at timestamp", () => {
+        expect(agentTracing.shouldCheckTracingCapability({ tracing_capability: "unsupported" })).toBe(true);
+      });
+
+      test("shouldCheckTracingCapability: skips a recent known verdict, within the recheck interval", () => {
+        const now = Date.parse("2026-01-01T00:10:00.000Z");
+        const checkedAt = "2026-01-01T00:00:00.000Z"; // 10 minutes ago, well under the 30-minute interval
+        expect(
+          agentTracing.shouldCheckTracingCapability(
+            { tracing_capability: "unsupported", tracing_capability_checked_at: checkedAt },
+            now,
+          ),
+        ).toBe(false);
+      });
+
+      test("shouldCheckTracingCapability: rechecks a known verdict once the recheck interval has elapsed", () => {
+        const checkedAt = "2026-01-01T00:00:00.000Z";
+        const now = Date.parse(checkedAt) + agentTracing.TRACING_CAPABILITY_RECHECK_INTERVAL_MS;
+        expect(
+          agentTracing.shouldCheckTracingCapability(
+            { tracing_capability: "unsupported", tracing_capability_checked_at: checkedAt },
+            now,
+          ),
+        ).toBe(true);
+      });
+
+      test("reconcileTracingConfig's automatic 30s loop skips the plugin check entirely once a verdict is already fresh -- the exact collision this throttle exists to prevent", async () => {
+        const freshlyChecked = new Date().toISOString();
+        mockDb.query
+          .mockResolvedValueOnce({
+            rows: [
+              agentRow({
+                tracing_capability: "unsupported",
+                tracing_capability_checked_at: freshlyChecked,
+              }),
+            ],
+          })
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+          .mockResolvedValueOnce({
+            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+          });
+        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
+
+        await agentTracing.reconcileTracingConfig({});
+
+        // Only the config-merge command ran -- no buildEnableTracingPluginCommand
+        // fragment (no `openclaw plugins install`) in what was sent.
+        const [, calledCommand] = mockAuthSync.runRuntimeCommand.mock.calls[0];
+        expect(calledCommand).not.toContain("openclaw plugins install");
+      });
+
+      test("a deliberate operator toggle (forceCapabilityCheck) bypasses the throttle even with a fresh checked_at", async () => {
+        const freshlyChecked = new Date().toISOString();
+        mockDb.query
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+          .mockResolvedValueOnce({
+            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+          })
+          .mockResolvedValueOnce({ rows: [] });
+        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
+
+        await agentTracing.applyTracingConfig(
+          agentRow({ tracing_capability: "unsupported", tracing_capability_checked_at: freshlyChecked }),
+          {},
+          { forceCapabilityCheck: true },
+        );
+
+        const [, calledCommand] = mockAuthSync.runRuntimeCommand.mock.calls[0];
+        expect(calledCommand).toContain("openclaw plugins install");
+      });
+
+      describe("version-probe fast path (a throttled recheck of an already-known verdict)", () => {
+        // shouldCheckTracingCapability returns true (due for recheck) once
+        // the interval has elapsed -- use a checked_at older than that so
+        // dueForCapabilityCheck is true without forceCapabilityCheck.
+        // Computed fresh per test (not at describe-body eval time, before
+        // `agentTracing` is even assigned by the outer beforeEach).
+        let staleCheckedAt;
+        beforeEach(() => {
+          staleCheckedAt = new Date(
+            Date.now() - agentTracing.TRACING_CAPABILITY_RECHECK_INTERVAL_MS - 1000,
+          ).toISOString();
+        });
+
+        test("an unchanged version skips the real plugin check entirely -- only the cheap probe and the config merge run", async () => {
+          mockDb.query
+            .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+            .mockResolvedValueOnce({
+              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+            })
+            .mockResolvedValueOnce({ rows: [] }); // checked_at refresh
+          mockAuthSync.runRuntimeCommand
+            .mockResolvedValueOnce({ exitCode: 0, output: "OpenClaw 2026.6.11 (e085fa1)" }) // the probe
+            .mockResolvedValueOnce({ exitCode: 0, output: "" }); // the actual command
+
+          const result = await agentTracing.applyTracingConfig(
+            agentRow({
+              tracing_capability: "unsupported",
+              tracing_capability_checked_at: staleCheckedAt,
+              tracing_openclaw_version: "OpenClaw 2026.6.11 (e085fa1)",
+            }),
+          );
+
+          expect(mockAuthSync.runRuntimeCommand).toHaveBeenCalledTimes(2);
+          const [, probeCommand] = mockAuthSync.runRuntimeCommand.mock.calls[0];
+          expect(probeCommand).toBe(agentTracing.buildProbeOpenclawVersionCommand());
+          const [, secondCommand] = mockAuthSync.runRuntimeCommand.mock.calls[1];
+          expect(secondCommand).not.toContain("openclaw plugins install");
+          // No verdict was re-derived -- the existing one stands unreported
+          // (the caller already knows it from the agent row it passed in).
+          expect(result.tracingCapability).toBeUndefined();
+          // workspace lookup, settings lookup, checked_at refresh -- no 4th
+          // (capability-persisting) UPDATE, since nothing changed.
+          expect(mockDb.query).toHaveBeenCalledTimes(3);
+        });
+
+        test("a changed version escalates to the real plugin check", async () => {
+          mockDb.query
+            .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+            .mockResolvedValueOnce({
+              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+            })
+            .mockResolvedValueOnce({ rows: [] }) // checked_at refresh
+            .mockResolvedValueOnce({ rows: [] }); // final capability persist
+          mockAuthSync.runRuntimeCommand
+            .mockResolvedValueOnce({ exitCode: 0, output: "OpenClaw 2026.9.4 (abc123)" }) // the probe -- changed!
+            .mockResolvedValueOnce({
+              exitCode: 0,
+              output:
+                "__NORA_TRACING_CAPABILITY__=supported\n__NORA_TRACING_OPENCLAW_VERSION__=OpenClaw 2026.9.4 (abc123)\n",
+            });
+
+          const result = await agentTracing.applyTracingConfig(
+            agentRow({
+              tracing_capability: "unsupported",
+              tracing_capability_checked_at: staleCheckedAt,
+              tracing_openclaw_version: "OpenClaw 2026.6.11 (e085fa1)",
+            }),
+          );
+
+          const [, secondCommand] = mockAuthSync.runRuntimeCommand.mock.calls[1];
+          expect(secondCommand).toContain("openclaw plugins install");
+          expect(result.tracingCapability).toBe("supported");
+        });
+
+        test("a known verdict with no previously-recorded version treats any real probe result as a change (safe default)", async () => {
+          mockDb.query
+            .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+            .mockResolvedValueOnce({
+              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+            })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [] });
+          mockAuthSync.runRuntimeCommand
+            .mockResolvedValueOnce({ exitCode: 0, output: "OpenClaw 2026.6.11 (e085fa1)" })
+            .mockResolvedValueOnce({
+              exitCode: 0,
+              output: "__NORA_TRACING_CAPABILITY__=unsupported\n",
+            });
+
+          await agentTracing.applyTracingConfig(
+            agentRow({ tracing_capability: "unsupported", tracing_capability_checked_at: staleCheckedAt }),
+          );
+
+          const [, secondCommand] = mockAuthSync.runRuntimeCommand.mock.calls[1];
+          expect(secondCommand).toContain("openclaw plugins install");
+        });
+
+        test("a probe that fails on both the runtime sidecar AND the container-exec fallback falls through to the real check rather than silently trusting a stale verdict", async () => {
+          mockDb.query
+            .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
+            .mockResolvedValueOnce({
+              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
+            })
+            .mockResolvedValueOnce({ rows: [] });
+          // applyConfigMergeCommand's own runRuntimeCommand -> runContainerCommand
+          // fallback means the probe only truly fails (and reaches this
+          // module's outer catch) if BOTH reject.
+          mockAuthSync.runRuntimeCommand.mockRejectedValueOnce(new Error("probe unreachable"));
+          mockAuthSync.runContainerCommand.mockRejectedValueOnce(new Error("probe unreachable"));
+          mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" }); // the actual command, on its own fresh attempt
+
+          await agentTracing.applyTracingConfig(
+            agentRow({
+              tracing_capability: "unsupported",
+              tracing_capability_checked_at: staleCheckedAt,
+              tracing_openclaw_version: "OpenClaw 2026.6.11 (e085fa1)",
+            }),
+          );
+
+          const [, secondCommand] = mockAuthSync.runRuntimeCommand.mock.calls[1];
+          expect(secondCommand).toContain("openclaw plugins install");
+        });
+      });
+    });
   });
 
   describe("reconcileTracingConfig", () => {
