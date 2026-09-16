@@ -12,6 +12,7 @@ const {
   GatewayScopeError,
   GatewayUnavailableError,
   MAX_RECONNECT_ATTEMPTS,
+  CONSECUTIVE_TIMEOUT_THRESHOLD,
   MAX_RECONNECT_DELAY_MS,
 } = gatewayRpc;
 
@@ -287,6 +288,88 @@ describe("createGatewayClient — reconnect backoff", () => {
     const countAfterExhaustion = createCount;
     await vi.advanceTimersByTimeAsync(MAX_RECONNECT_DELAY_MS * 2);
     expect(createCount).toBe(countAfterExhaustion);
+
+    client.close();
+  });
+});
+
+describe("createGatewayClient — silent-partition liveness (consecutive call timeouts)", () => {
+  it("tears down and reconnects after CONSECUTIVE_TIMEOUT_THRESHOLD consecutive call timeouts, without the dead socket ever emitting close or error", async () => {
+    // Regression test for a real gap confirmed against a live dropped
+    // connection by
+    // infra-tests/phase9-gateway-rpc-client/02-reconnect-backoff-real-kill.sh:
+    // on a genuine silent network partition, a WebSocket's readyState can
+    // stay OPEN forever — no close/error event ever fires — so
+    // onClose/onError (the only two call sites into runAttemptLoop()) are
+    // never reached and the client loops on per-call timeouts forever.
+    // This test never calls `_triggerClose()`/`_triggerError()` itself —
+    // the only thing that can make the client reconnect here is its own
+    // consecutive-timeout counting.
+    const client = createGatewayClient(agent, {
+      createSocket: (url) => new FakeSocket(url),
+      resolveTarget: fakeResolveTarget,
+    });
+
+    // Connection is lazy — established on the first call, not on client
+    // creation.
+    const firstCall = client.call("logs.tail", {}, { timeoutMs: 20 });
+    firstCall.catch(() => {});
+    await vi.waitFor(() => expect(lastSocket()).toBeTruthy());
+    lastSocket()._openAndAuthenticate();
+    expect(FakeSocket.instances.length).toBe(1);
+    await expect(firstCall).rejects.toBeInstanceOf(GatewayConnectionError);
+
+    for (let i = 1; i < CONSECUTIVE_TIMEOUT_THRESHOLD - 1; i += 1) {
+      await expect(client.call("logs.tail", {}, { timeoutMs: 20 })).rejects.toBeInstanceOf(
+        GatewayConnectionError,
+      );
+      // Fewer than the threshold: must not have reconnected yet.
+      expect(FakeSocket.instances.length).toBe(1);
+    }
+
+    await expect(client.call("logs.tail", {}, { timeoutMs: 20 })).rejects.toBeInstanceOf(GatewayConnectionError);
+
+    // The threshold-th consecutive timeout — still without the original
+    // socket ever reporting close or error — is enough on its own to tear
+    // the dead connection down and start a fresh attempt.
+    await vi.waitFor(() => expect(FakeSocket.instances.length).toBe(2));
+
+    lastSocket()._openAndAuthenticate();
+
+    // The reconnected client serves calls normally again.
+    const callPromise = client.call("logs.tail", {});
+    await vi.waitFor(() => expect(lastSocket().sent.length).toBeGreaterThanOrEqual(2));
+    const reqFrame = JSON.parse(lastSocket().sent.at(-1));
+    expect(reqFrame.method).toBe("logs.tail");
+    lastSocket()._receive({ type: "res", id: reqFrame.id, ok: true, payload: { lines: [] } });
+    await expect(callPromise).resolves.toEqual({ lines: [] });
+
+    client.close();
+  });
+
+  it("does not reconnect after a single isolated call timeout followed by a real response", async () => {
+    const client = createGatewayClient(agent, {
+      createSocket: (url) => new FakeSocket(url),
+      resolveTarget: fakeResolveTarget,
+    });
+    // Connection is lazy — established on the first call, not on client
+    // creation.
+    const firstCall = client.call("logs.tail", {}, { timeoutMs: 20 });
+    firstCall.catch(() => {});
+    await vi.waitFor(() => expect(lastSocket()).toBeTruthy());
+    lastSocket()._openAndAuthenticate();
+
+    await expect(firstCall).rejects.toBeInstanceOf(GatewayConnectionError);
+
+    // A real response in between resets the consecutive-timeout counter —
+    // one earlier timeout must not queue up a reconnect on its own.
+    const callPromise = client.call("agent.status", {});
+    await vi.waitFor(() => expect(lastSocket().sent.length).toBeGreaterThanOrEqual(2));
+    const reqFrame = JSON.parse(lastSocket().sent.at(-1));
+    lastSocket()._receive({ type: "res", id: reqFrame.id, ok: true, payload: { ok: true } });
+    await expect(callPromise).resolves.toEqual({ ok: true });
+
+    expect(FakeSocket.instances.length).toBe(1);
 
     client.close();
   });

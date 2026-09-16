@@ -183,6 +183,14 @@ const BASE_RECONNECT_DELAY_MS = 1000;
 const MAX_RECONNECT_DELAY_MS = 30000;
 const MAX_RECONNECT_ATTEMPTS = 8;
 
+// How many `call()` timeouts in a row (no response at all, not even a
+// gateway-side error) before the connection is presumed dead and torn
+// down proactively. 1 would over-react to an isolated slow response; this
+// waits for a second consecutive timeout — on this client's real polling
+// cadence (logs.tail every 1-10s per POLL_BACKOFF_STEPS_MS), a genuinely
+// live connection essentially never produces two timeouts back to back.
+const CONSECUTIVE_TIMEOUT_THRESHOLD = 2;
+
 function computeReconnectDelay(attempt) {
   return Math.min(BASE_RECONNECT_DELAY_MS * 2 ** Math.max(0, attempt - 1), MAX_RECONNECT_DELAY_MS);
 }
@@ -260,6 +268,19 @@ function createGatewayClient(agent, opts = {}) {
   let reconnectAttempts = 0; // retries consumed so far (excludes the initial attempt)
   let attemptInFlight = false;
   let reqCounter = 0;
+  // Consecutive `call()` timeouts with no response at all, reset on any
+  // real response (success or a gateway-side error) and on a fresh
+  // connect. This is the liveness signal for the one failure mode
+  // onClose/onError structurally can't see: a silent network partition
+  // where packets are just dropped. The WebSocket's readyState never
+  // leaves OPEN in that case (confirmed empirically —
+  // infra-tests/phase9-gateway-rpc-client/02-reconnect-backoff-real-kill.sh
+  // reproduces it against a real dropped connection), so neither handler
+  // ever fires and runAttemptLoop() is otherwise never reached — the
+  // client just loops on 30s call timeouts forever. See
+  // CONSECUTIVE_TIMEOUT_THRESHOLD below for why this waits for more than
+  // one timeout before acting.
+  let consecutiveTimeouts = 0;
   const pending = new Map(); // id -> { resolve, reject, timer }
   const connectWaiters = new Set(); // { resolve, reject } waiting on the CURRENT attempt cycle
 
@@ -441,6 +462,10 @@ function createGatewayClient(agent, opts = {}) {
             }
 
             if (msg.type === "res" && msg.id && pending.has(msg.id)) {
+              // A response — even a gateway-side error one — proves the
+              // connection is alive; only silence (a timeout) is evidence
+              // of the opposite.
+              consecutiveTimeouts = 0;
               const { resolve: res, reject: rej, timer: t } = pending.get(msg.id);
               clearTimeout(t);
               pending.delete(msg.id);
@@ -534,6 +559,7 @@ function createGatewayClient(agent, opts = {}) {
         try {
           await connectOnce();
           reconnectAttempts = 0;
+          consecutiveTimeouts = 0;
           settleConnectWaiters(({ resolve }) => resolve());
           return;
         } catch (error) {
@@ -590,6 +616,28 @@ function createGatewayClient(agent, opts = {}) {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new GatewayConnectionError(`gateway call timed out: ${method}`));
+
+        // A timeout means no response arrived at all — on a socket whose
+        // readyState still reports OPEN, that's exactly what a silent
+        // network partition looks like (nothing to make onClose/onError
+        // fire). One timeout could just be a slow round-trip; a second
+        // one in a row without anything resetting the counter in between
+        // is treated as proof the connection is dead, so it's torn down
+        // and handed to the same reconnect/backoff path a real close
+        // event would trigger — rather than continuing to loop on
+        // per-call timeouts forever.
+        consecutiveTimeouts += 1;
+        if (consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_THRESHOLD && socket && !closed && !unavailable) {
+          consecutiveTimeouts = 0;
+          connected = false;
+          teardownSocket();
+          rejectAllPending(
+            new GatewayConnectionError(
+              "gateway connection presumed dead (no response to repeated calls)",
+            ),
+          );
+          void runAttemptLoop();
+        }
       }, timeoutMs);
       timer.unref?.();
       pending.set(id, { resolve, reject, timer });
@@ -674,4 +722,5 @@ module.exports = {
   MAX_RECONNECT_ATTEMPTS,
   MAX_RECONNECT_DELAY_MS,
   BASE_RECONNECT_DELAY_MS,
+  CONSECUTIVE_TIMEOUT_THRESHOLD,
 };
