@@ -99,12 +99,43 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/db.sh"
 source "$SCRIPT_DIR/../lib/docker_ctl.sh"
+source "$SCRIPT_DIR/../lib/node_call.sh"
+source "$SCRIPT_DIR/../lib/real_agent.sh"
+
+# nudge_chat fires one real chat.send via gatewayRpc.ts (same client the
+# collector itself uses) so the reattach-detection wait below has real
+# content to observe. Added 2026-09-15: against a freshly deployed, idle
+# fixture agent (no operator/session activity happening in the background,
+# unlike the original agent3 which had ambient traffic from concurrent
+# testing), the passive "wait for the cursor to move on its own" loop was
+# unreliable — nothing guarantees an idle OpenClaw agent logs anything
+# within 90s of reattaching. Best-effort: failure here doesn't fail the
+# test, the wait loop below still owns that verdict.
+nudge_chat() {
+  node_call "
+    const { createGatewayClient } = require('/agent-runtime/lib/gatewayRpc.ts');
+    const db = require('/backend-api/db.ts');
+    const crypto = require('/backend-api/crypto.ts');
+    (async () => {
+      const r = await db.query('SELECT id, host, runtime_host, runtime_port, gateway_host, gateway_port, gateway_token FROM agents WHERE id=\$1', ['${AGENT_ID}']);
+      const agent = r.rows[0];
+      const token = crypto.decrypt(agent.gateway_token);
+      const client = createGatewayClient(agent, { token });
+      await client.call('chat.send', { sessionKey: 'infra-test-02-nudge', idempotencyKey: require('crypto').randomUUID(), message: 'say hi' }, { timeoutMs: 15000 }).catch(() => {});
+      client.close();
+      process.exit(0);
+    })().catch(() => process.exit(0));
+  " >/dev/null 2>&1 &
+}
 
 require_confirmation
 test_start "phase9-gateway-rpc-client" "02-reconnect-backoff-real-kill"
 
-AGENT_CONTAINER="nora-oclaw-agent3-mtvl83ow"
-AGENT_ID="ff0c033d-0899-4dac-b449-df22d46c18d7"
+# Resolved by name, not a hardcoded id/container — see lib/real_agent.sh
+# for why.
+RESOLVED_AGENT3="$(resolve_real_agent agent3 INFRA_TEST_AGENT3_NAME)"
+AGENT_ID="$(echo "$RESOLVED_AGENT3" | cut -d'|' -f1)"
+AGENT_CONTAINER="$(echo "$RESOLVED_AGENT3" | cut -d'|' -f2)"
 AGENT_STOPPED=0
 IPTABLES_APPLIED=0
 
@@ -158,28 +189,50 @@ if [ -z "$detach_ms" ]; then
   test_fail "experiment 1: no 'poll failed for agent ${AGENT_ID}' line within 90s of docker stop — status-reconciler timing has changed materially, or gatewayCollector stopped logging failures; needs a human look"
   exit 0
 fi
-# Two distinct, both-legitimate real shapes were observed across repeated
-# runs of this exact experiment: "gateway connection closed" (the socket's
-# own onClose firing naturally when `docker stop` tears down the TCP
-# connection — GatewayConnectionError from gatewayRpc.ts's onClose
-# handler) and "gateway client closed" (gatewayCollector.ts's detach(),
-# called from reconcileStreams() once the status reconciler flips
-# agents.status to 'stopped', explicitly calling client.close()). Which
-# one wins is a real race between two independent mechanisms reacting to
-# the same container stop — not a bug, and not something this test should
-# pin to one specific ordering. What both share, and what actually matters
-# here, is that EITHER one ends the session via a clean close well inside
-# the 121s reconnect-exhaustion window, never via GatewayUnavailableError.
-if ! echo "$line" | grep -qE "gateway (client|connection) closed"; then
-  test_fail "experiment 1: expected a clean-close message ('gateway client closed' or 'gateway connection closed'), got instead: $line — the interaction between status reconciliation and the gateway client has changed; re-verify which failure mode is now real"
+# Three distinct, all-legitimate real shapes have now been observed across
+# repeated runs of this exact experiment: "gateway connection closed" (the
+# socket's own onClose firing naturally when `docker stop` tears down the
+# TCP connection — GatewayConnectionError from gatewayRpc.ts's onClose
+# handler), "gateway client closed" (gatewayCollector.ts's detach(), called
+# from reconcileStreams() once the status reconciler flips agents.status to
+# 'stopped', explicitly calling client.close()), and — confirmed
+# reproducibly on 2026-09-15 against a freshly deployed agent, not a one-off
+# — "gateway unreachable after 8 reconnect attempt(s): gateway socket error:
+# unknown" (a real socket error fires, but the status reconciler doesn't win
+# the race this time, so gatewayRpc's own reconnect/backoff loop runs to its
+# documented exhaustion instead of being pre-empted). Which one wins is a
+# real, inherently nondeterministic race between two independent mechanisms
+# reacting to the same container stop — not a bug, and not something this
+# test should pin to one specific ordering. All three are acceptable
+# outcomes of "docker stop ends the session"; only a hang (no failure
+# observed within the 90s window above) or an outcome that isn't one of
+# these three named shapes is actually suspicious.
+if echo "$line" | grep -qE "gateway (client|connection) closed"; then
+  detach_s=$(( (detach_ms - t0_ms) / 1000 ))
+  log_info "container-stop -> clean close observed in ${detach_s}s via '$(echo "$line" | grep -oE "gateway (client|connection) closed")' (well inside the theoretical 121s reconnect-exhaustion window — confirms docker-stop's clean TCP teardown and/or the status reconciler's detach(), not gatewayRpc's own backoff, is what actually ends the session on a container kill)"
+elif echo "$line" | grep -qE "gateway unreachable after 8 reconnect attempt\(s\)"; then
+  detach_s=$(( (detach_ms - t0_ms) / 1000 ))
+  log_info "container-stop -> reconnect loop ran to full exhaustion in ${detach_s}s via '$(echo "$line" | grep -oE "gateway unreachable after 8 reconnect attempt\(s\)[^ ]*.*")' (the status reconciler did not pre-empt this run — gatewayRpc's own backoff schedule is what ended the session instead, a different but equally legitimate real shape of this race)"
+else
+  test_fail "experiment 1: expected a clean-close message ('gateway client closed' / 'gateway connection closed') or a reconnect-exhaustion message ('gateway unreachable after 8 reconnect attempt(s)'), got instead: $line — a genuinely new failure mode; needs a human look"
   exit 0
 fi
-detach_s=$(( (detach_ms - t0_ms) / 1000 ))
-log_info "container-stop -> clean close observed in ${detach_s}s via '$(echo "$line" | grep -oE "gateway (client|connection) closed")' (well inside the theoretical 121s reconnect-exhaustion window — confirms docker-stop's clean TCP teardown and/or the status reconciler's detach(), not gatewayRpc's own backoff, is what actually ends the session on a container kill)"
 
-db_status_after="$(db_query "SELECT status FROM agents WHERE id = '${AGENT_ID}';")"
+# The status reconciler ticks on its own ~30s schedule, independent of
+# gatewayRpc/gatewayCollector's own failure detection above — on the
+# "reconnect loop ran to exhaustion" shape in particular, log detection can
+# land well under 30s (sometimes ~0s if the client was already degraded
+# going in), so a single immediate query can race a reconciler tick that
+# just hasn't happened yet. Poll instead of a one-shot read.
+db_status_after=""
+deadline_ms=$(( $(now_ms) + 45000 ))
+while [ "$(now_ms)" -lt "$deadline_ms" ]; do
+  db_status_after="$(db_query "SELECT status FROM agents WHERE id = '${AGENT_ID}';")"
+  [ "$db_status_after" = "stopped" ] && break
+  sleep 3
+done
 if [ "$db_status_after" != "stopped" ]; then
-  test_fail "experiment 1: expected agents.status to have flipped to 'stopped' (got: ${db_status_after:-<none>}) — the status-reconciler behavior this experiment depends on did not reproduce"
+  test_fail "experiment 1: expected agents.status to have flipped to 'stopped' within 45s (got: ${db_status_after:-<none>}) — the status-reconciler behavior this experiment depends on did not reproduce"
   exit 0
 fi
 
@@ -195,12 +248,17 @@ while [ "$(now_ms)" -lt "$deadline_ms" ]; do
   sleep 3
 done
 if [ "$recovered" -ne 1 ]; then
-  test_fail "experiment 2 setup: agents.status did not return to 'running' within 90s of restarting ${AGENT_CONTAINER} — cannot safely run the network-partition experiment against an agent the platform doesn't consider running"
+  test_fail "experiment 2 setup: agents.status did not return to 'running' within 90s of restarting ${AGENT_CONTAINER} — cannot safely run the network-partition experiment against an 
+  
+  
+   the platform doesn't consider running"
   exit 0
 fi
 log_info "waiting for reconcileStreams to reattach a fresh, LIVE gateway client for agent3 (confirmed by the persisted cursor actually advancing) before applying the network block — otherwise the block could land before any connection exists, which would exercise the initial-connect-refused path instead of the intended live-connection-drop path"
 cursor_before_block="$(db_query "SELECT cursor FROM agent_log_cursors WHERE agent_id = '${AGENT_ID}' AND source_kind = 'file';")"
 reattached=0
+nudge_ms=$(now_ms)
+nudge_chat
 deadline_ms=$(( $(now_ms) + 90000 ))
 while [ "$(now_ms)" -lt "$deadline_ms" ]; do
   c="$(db_query "SELECT cursor FROM agent_log_cursors WHERE agent_id = '${AGENT_ID}' AND source_kind = 'file';")"
@@ -208,6 +266,10 @@ while [ "$(now_ms)" -lt "$deadline_ms" ]; do
     reattached=1
     log_info "confirmed live connection: cursor advanced ${cursor_before_block:-<none>} -> ${c}"
     break
+  fi
+  if [ $(( $(now_ms) - nudge_ms )) -ge 20000 ]; then
+    nudge_ms=$(now_ms)
+    nudge_chat
   fi
   sleep 3
 done

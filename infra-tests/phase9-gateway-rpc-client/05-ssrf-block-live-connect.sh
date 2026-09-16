@@ -57,11 +57,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/common.sh"
 source "$SCRIPT_DIR/../lib/db.sh"
 source "$SCRIPT_DIR/../lib/docker_ctl.sh"
+source "$SCRIPT_DIR/../lib/real_agent.sh"
 
 require_confirmation
 test_start "phase9-gateway-rpc-client" "05-ssrf-block-live-connect"
 
-AGENT_ID="6d782f7c-28d3-4998-8f52-3e411ce1dc66" # agent2
+# Resolved by name, not a hardcoded id — see lib/real_agent.sh for why.
+AGENT_ID="$(resolve_real_agent agent2 INFRA_TEST_AGENT2_NAME | cut -d'|' -f1)"
 ORIGINAL_HOST=""
 ORIGINAL_PORT=""
 HOST_CHANGED=0

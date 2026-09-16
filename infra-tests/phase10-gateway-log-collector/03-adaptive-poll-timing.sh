@@ -29,22 +29,18 @@ source "$SCRIPT_DIR/../lib/db.sh"
 source "$SCRIPT_DIR/../lib/docker_ctl.sh"
 source "$SCRIPT_DIR/../lib/auth.sh"
 source "$SCRIPT_DIR/../lib/node_call.sh"
+source "$SCRIPT_DIR/../lib/real_agent.sh"
 
 require_confirmation
 test_start "phase10-gateway-log-collector" "03-adaptive-poll-timing"
 
-AGENT_ID="6d782f7c-28d3-4998-8f52-3e411ce1dc66" # agent2
+# Resolved by name, not a hardcoded id — see lib/real_agent.sh for why.
+AGENT_ID="$(resolve_real_agent agent2 INFRA_TEST_AGENT2_NAME | cut -d'|' -f1)"
 
 cleanup() {
   test_trap_incomplete
 }
 trap cleanup EXIT
-
-db_status="$(db_query "SELECT status FROM agents WHERE id = '${AGENT_ID}';")"
-if [ "$db_status" != "running" ]; then
-  test_fail "expected agent2 (${AGENT_ID}) to have status='running' before this test (got: ${db_status:-<none>}) — re-resolve before rerunning"
-  exit 0
-fi
 
 # Direct RPC via gatewayRpc.ts, not backend-api's /gateway/chat — see
 # 10-01's "NOTE 2" for why (real gateway auth flakiness observed under

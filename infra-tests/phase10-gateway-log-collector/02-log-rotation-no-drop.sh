@@ -42,11 +42,13 @@ source "$SCRIPT_DIR/../lib/db.sh"
 source "$SCRIPT_DIR/../lib/docker_ctl.sh"
 source "$SCRIPT_DIR/../lib/auth.sh"
 source "$SCRIPT_DIR/../lib/node_call.sh"
+source "$SCRIPT_DIR/../lib/real_agent.sh"
 
 require_confirmation
 test_start "phase10-gateway-log-collector" "02-log-rotation-no-drop"
 
-AGENT_ID="dbb500ee-2689-4743-a538-d9c5ba3cde70" # agent4
+# Resolved by name, not a hardcoded id — see lib/real_agent.sh for why.
+AGENT_ID="$(resolve_real_agent agent4 INFRA_TEST_AGENT4_NAME | cut -d'|' -f1)"
 RUN_TAG="infra-rot-$(date +%s)"
 CONFIG_SHRUNK=0
 
@@ -101,12 +103,6 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-
-db_status="$(db_query "SELECT status FROM agents WHERE id = '${AGENT_ID}';")"
-if [ "$db_status" != "running" ]; then
-  test_fail "expected agent4 (${AGENT_ID}) to have status='running' before this test (got: ${db_status:-<none>}) — re-resolve before rerunning"
-  exit 0
-fi
 
 log_step "shrinking agent4's logging.maxFileBytes to 2000 bytes to make rotation reachable in test time"
 if ! set_max_file_bytes 2000; then
