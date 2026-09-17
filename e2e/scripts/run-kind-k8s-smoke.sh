@@ -102,6 +102,67 @@ MINIO_BUCKET="${MINIO_BUCKET:-nora-logs-smoke}"
 MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-noraminio}"
 MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-noraminiosecret}"
 MINIO_NODE_PORT="${MINIO_NODE_PORT:-30900}"
+MINIO_IMAGE="minio/minio:RELEASE.2025-04-08T15-41-24Z"
+MINIO_MC_IMAGE="minio/mc:RELEASE.2025-04-08T15-39-49Z"
+
+# Docker Hub no longer serves these exact pinned tags — confirmed directly:
+# `docker pull` of either, from this host, fails with "pull access denied,
+# repository does not exist" as of this writing, not a transient outage
+# (docker-compose.override.yml's own `minio`/`minio-init` services pin the
+# identical tags, and are affected the same way on a fresh clone with no
+# locally cached image). Both are already present in this host's local
+# Docker image store, though — pulled by that same compose stack earlier —
+# so `kind load docker-image` sideloads them directly into the node's
+# containerd without touching the registry at all. This is the standard
+# kind pattern for exactly this situation (see kind's own "Loading an Image
+# Into Your Cluster" docs), not a workaround specific to this outage; it
+# also makes every run here independent of Docker Hub rate limits generally.
+# `imagePullPolicy: IfNotPresent` is set explicitly below, in case a
+# scheduler restart ever caused a fresh pull attempt with the default
+# policy — belt and suspenders once the tag is confirmed gone upstream.
+#
+# Neither `kind load docker-image` NOR a plain `docker save` + `kind load
+# image-archive` works on these specific images: both fail identically with
+# "ctr: content digest ... not found". The image was originally pulled as a
+# multi-platform manifest list, and even though a single `docker pull` only
+# fetches the host's own platform's layers, this host's local Docker image
+# store (containerd-backed, the current Docker Desktop default) retains the
+# manifest-list/OCI-index metadata referencing every platform — including
+# ones never actually fetched — and BOTH kind loaders ask containerd to
+# import `--all-platforms` regardless of source, erroring the moment they
+# hit one of those un-fetched digests. Confirmed directly against this
+# node: `docker save` still embeds that multi-platform index even though
+# only the host's own platform has real blob content behind it.
+#
+# Fix: flatten each image to a single-platform image with no manifest-list
+# metadata at all before saving — `docker create` (never runs anything, so
+# there is no filesystem diff) then `docker commit` produces exactly that,
+# inheriting the original image's config unchanged. Committed to a
+# DEDICATED local-only tag (suffixed `-kindload`), never overwriting the
+# original `minio/*` tag — docker-compose.override.yml's own `minio`/
+# `minio-init` services pin that exact tag too, and this script has no
+# business mutating shared local image state other tooling depends on.
+NORA_KIND_IMAGE_TMPDIR="$(mktemp -d)"
+NORA_KIND_MINIO_IMAGE="${MINIO_IMAGE}-kindload"
+NORA_KIND_MINIO_MC_IMAGE="${MINIO_MC_IMAGE}-kindload"
+for pair in "${MINIO_IMAGE}=${NORA_KIND_MINIO_IMAGE}" "${MINIO_MC_IMAGE}=${NORA_KIND_MINIO_MC_IMAGE}"; do
+  source_image="${pair%%=*}"
+  flat_image="${pair#*=}"
+  if ! docker image inspect "$source_image" >/dev/null 2>&1; then
+    echo "run-kind-k8s-smoke.sh: ${source_image} is not present in the local Docker image store, and Docker Hub no longer serves this exact tag — pull it from wherever it's still cached (e.g. another host, or update the pin repo-wide to a current MinIO release) before running this script." >&2
+    exit 1
+  fi
+  flatten_container="nora-kind-flatten-$(echo "$source_image" | tr '/:' '__')"
+  docker rm -f "$flatten_container" >/dev/null 2>&1 || true
+  docker create --name "$flatten_container" "$source_image" >/dev/null
+  docker commit "$flatten_container" "$flat_image" >/dev/null
+  docker rm "$flatten_container" >/dev/null
+  archive="${NORA_KIND_IMAGE_TMPDIR}/$(echo "$flat_image" | tr '/:' '__').tar"
+  docker save "$flat_image" -o "$archive"
+  "$KIND_BIN" load image-archive "$archive" --name "$KIND_CLUSTER_NAME"
+  docker rmi "$flat_image" >/dev/null
+done
+rm -rf "$NORA_KIND_IMAGE_TMPDIR"
 
 "$KUBECTL_BIN" create namespace "$MINIO_NAMESPACE" --dry-run=client -o yaml | "$KUBECTL_BIN" apply -f -
 
@@ -125,7 +186,8 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2025-04-08T15-41-24Z
+          image: ${NORA_KIND_MINIO_IMAGE}
+          imagePullPolicy: IfNotPresent
           args: ["server", "/data"]
           env:
             - name: MINIO_ROOT_USER
@@ -182,7 +244,8 @@ spec:
       restartPolicy: Never
       containers:
         - name: mc
-          image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+          image: ${NORA_KIND_MINIO_MC_IMAGE}
+          imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -c
@@ -212,7 +275,53 @@ cp "$NORA_ENV_FILE" "$LOG_STORAGE_ENV_FILE"
   echo "NORA_LOG_S3_ENDPOINT=${NORA_K8S_LOG_STORAGE_ENDPOINT}"
   echo "NORA_LOG_S3_ACCESS_KEY_ID=${MINIO_ACCESS_KEY}"
   echo "NORA_LOG_S3_SECRET_ACCESS_KEY=${MINIO_SECRET_KEY}"
+  # k8s-smoke.mts's assertLogSegmentsProduced checks for a real, FLUSHED
+  # MinIO object (not the live in-memory buffer — see that function's own
+  # comment for why the buffer can't be trusted as proof of persistence),
+  # so a real flush has to actually happen inside this run. The production
+  # default (15 minutes) would make every run either wait a quarter hour or
+  # time out; worker.ts already reads this exact env var as an override
+  # (see its own "NORA_LOG_FLUSH_INTERVAL_MS overrides the 15-minute default
+  # flush timer" comment). Scoped to this smoke env file only. 45s leaves
+  # assertLogSegmentsProduced's default 180s poll timeout (K8S_SMOKE_LOG_
+  # SEGMENT_TIMEOUT_MS) comfortable margin for at least one real flush.
+  echo "NORA_LOG_FLUSH_INTERVAL_MS=45000"
+  # Pre-existing bug, unrelated to logging, found running this script for
+  # real: backend-api/lib/connectionConfig.ts's buildPostgresConfig() only
+  # ever reads a plain DB_PASSWORD env var — DB_PASSWORD_FILE (what
+  # docker-compose.yml actually sets, pointing at
+  # .secrets/compose/DB_PASSWORD) is never referenced anywhere in
+  # backend-api's code at all. The real dev stack's .env happens to also
+  # carry a plain DB_PASSWORD that matches the shared secret file, so this
+  # goes unnoticed there. NORA_ENV_FILE's default here is .env.test, whose
+  # DB_USER/DB_PASSWORD/DB_NAME are all the placeholder string "platform" —
+  # never intended to match the real secret file, and genuinely don't.
+  # Postgres itself DOES honor POSTGRES_PASSWORD_FILE correctly (the
+  # official image's own entrypoint), so it ends up initialized with the
+  # real secret while backend-api tries to authenticate with the literal
+  # string "platform" — confirmed directly: a fresh nora-kind-postgres-1
+  # rejects connections from nora-kind-backend-api-1 with "password
+  # authentication failed for user \"platform\"" every time, and the two
+  # passwords were confirmed byte-for-byte different by inspection. Not
+  # fixed at its root (connectionConfig.ts) here, since that's a
+  # significant behavior change to code every other service and test in
+  # the repo also depends on; overridden narrowly in this script's own
+  # overlay instead, to the same real secret every other service already
+  # uses, so this harness stops depending on .env.test's mismatched values
+  # at all.
+  echo "DB_USER=nora"
+  echo "DB_NAME=nora"
+  echo "DB_PASSWORD=$(cat "${NORA_COMPOSE_SECRETS_DIR:-.secrets/compose}/DB_PASSWORD")"
 } >>"$LOG_STORAGE_ENV_FILE"
+# k8s-smoke.mts's assertLogSegmentsProduced reads these same names to run
+# its own `mc find` pod against the identical in-cluster MinIO deployment/
+# bucket built above — MINIO_MC_IMAGE as the flattened, actually-loaded tag
+# (see the flatten-and-sideload block above for why the original tag name
+# won't resolve inside the cluster). These were plain (unexported) shell
+# variables until now — needed exporting for the `tsx` subprocess invoked
+# at the end of this script to see them at all.
+export MINIO_NAMESPACE MINIO_BUCKET MINIO_ACCESS_KEY MINIO_SECRET_KEY
+export MINIO_MC_IMAGE="$NORA_KIND_MINIO_MC_IMAGE"
 export NORA_ENV_FILE="$LOG_STORAGE_ENV_FILE"
 COMPOSE_ARGS=(--env-file "$NORA_ENV_FILE" "${COMPOSE_FILES[@]}")
 
@@ -229,12 +338,35 @@ if [[ -z "${NORA_K8S_LOAD_BALANCER_SOURCE_RANGES:-}" ]]; then
     docker inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' \
       "${COMPOSE_PROJECT_NAME}-backend-api-1"
   )"
+  # Real, confirmed finding, not a hypothetical: waitForAgentReadiness's
+  # initial runtime/gateway check (worker.ts's runProvisioningReadinessBarrier)
+  # runs INSIDE worker-provisioner's OWN process, hitting the deployed pod's
+  # NodePort directly — never proxied through backend-api. Omitting
+  # worker-provisioner's own container IP from this trusted list means
+  # Calico's `nora-openclaw-allow-trusted-ingress` policy (built from
+  # exactly this CIDR set — see k8s.ts's `_trustedIngressCidrs`) blocks that
+  # check outright, every single time, regardless of how long the pod is
+  # given to become Ready: confirmed directly against a live run — the pod
+  # reached 1/1 Ready repeatedly, and every readiness attempt still failed
+  # with "fetch failed" until this IP was added. This is a real gotcha for
+  # any operator manually setting `loadBalancerSourceRanges` on a real
+  # Kubernetes cluster profile too (see k8s.ts: it's operator-supplied, not
+  # auto-computed there) — not a Nora code defect, but exactly the mistake
+  # this script itself was making by omission.
+  WORKER_CONTAINER_IP="$(
+    docker inspect -f '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' \
+      "${COMPOSE_PROJECT_NAME}-worker-provisioner-1"
+  )"
   TRUSTED_INGRESS_CIDRS=()
   if [[ -n "$BACKEND_CONTAINER_IP" ]]; then
     TRUSTED_INGRESS_CIDRS+=("${BACKEND_CONTAINER_IP}/32")
   fi
+  if [[ -n "$WORKER_CONTAINER_IP" ]] && [[ "$WORKER_CONTAINER_IP" != "$BACKEND_CONTAINER_IP" ]]; then
+    TRUSTED_INGRESS_CIDRS+=("${WORKER_CONTAINER_IP}/32")
+  fi
   if [[ "$NORA_K8S_RUNTIME_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
-    [[ "$NORA_K8S_RUNTIME_HOST" != "$BACKEND_CONTAINER_IP" ]]; then
+    [[ "$NORA_K8S_RUNTIME_HOST" != "$BACKEND_CONTAINER_IP" ]] && \
+    [[ "$NORA_K8S_RUNTIME_HOST" != "$WORKER_CONTAINER_IP" ]]; then
     TRUSTED_INGRESS_CIDRS+=("${NORA_K8S_RUNTIME_HOST}/32")
   fi
   export NORA_K8S_LOAD_BALANCER_SOURCE_RANGES="$(

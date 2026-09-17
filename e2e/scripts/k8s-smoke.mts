@@ -49,12 +49,27 @@ const NEMOCLAW_MODEL = process.env.NEMOCLAW_DEFAULT_MODEL || "nvidia/nemotron-3-
 // does not stand up MinIO) is unaffected.
 const ASSERT_LOG_SEGMENTS = String(process.env.K8S_SMOKE_ASSERT_LOG_SEGMENTS || "") === "true";
 // Segment flush is interval-based (segmentWriter.ts), not immediate on
-// write, so this needs real wall-clock headroom beyond the default poll
-// timeout used for HTTP readiness checks.
+// write. run-kind-k8s-smoke.sh lowers NORA_LOG_FLUSH_INTERVAL_MS for this
+// run specifically so this timeout stays affordable; see that script's own
+// comment on the log-storage env overlay for the paired value.
 const LOG_SEGMENT_POLL_TIMEOUT_MS = Number.parseInt(
   process.env.K8S_SMOKE_LOG_SEGMENT_TIMEOUT_MS || "180000",
   10,
 );
+// Real object-storage identity, matching run-kind-k8s-smoke.sh's own MinIO
+// deployment — see that script's "Logging control plane Phase 14 item 6"
+// block for where these are set.
+const MINIO_NAMESPACE = process.env.MINIO_NAMESPACE || "nora-minio";
+const MINIO_BUCKET = process.env.MINIO_BUCKET || "nora-logs-smoke";
+const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || "noraminio";
+const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY || "noraminiosecret";
+// run-kind-k8s-smoke.sh exports this as the FLATTENED, locally-sideloaded
+// tag (suffixed `-kindload`), not the original `minio/mc:...` name — see
+// that script's flatten-and-sideload comment for why the original tag
+// can't be resolved inside the cluster at all. Falling back to the
+// original name only matters for a manual/non-Kind invocation of this
+// same check against a real registry-backed cluster.
+const MINIO_MC_IMAGE = process.env.MINIO_MC_IMAGE || "minio/mc:RELEASE.2025-04-08T15-39-49Z";
 
 const RUNTIMES = {
   openclaw: {
@@ -451,39 +466,123 @@ function isHttpUrl(value) {
 }
 
 /**
- * Logging control plane Phase 14 item 6: poll GET /logs/search until the
- * Kind-deployed agent's runtime stream has at least one line, proving the
- * k8s adapter's log collector (workers/provisioner/logs/logCollector.ts +
- * K8sBackend.logs()) actually followed the pod's logs and flushed a real
- * segment to the in-cluster MinIO — not merely that the collector attached
- * without erroring. Polled past the segment writer's flush interval, so a
- * result only shows up once a line has actually landed in a persisted
- * segment on the destination.
+ * Logging control plane Phase 14 item 6: confirms a real, persisted
+ * `log_segments` object for this agent actually exists in the in-cluster
+ * MinIO bucket — not merely that `GET /logs/search` returns a line.
+ *
+ * The original version of this function polled `/logs/search` and treated
+ * any returned line as proof a segment reached MinIO. It wasn't: a
+ * newest-first, first-page `/logs/search` query also closes the "recency
+ * gap" by merging in whatever is still sitting in worker-provisioner's live,
+ * unflushed in-memory buffer (see backend-api/logSearch.ts's
+ * `readBufferSnapshots`) — content that has never touched object storage at
+ * all. Segments flush on a timer (15 minutes by default), so a query
+ * against a fleet-default install would, in practice, almost always be
+ * reading the buffer, not storage — passing this assertion without ever
+ * exercising the k8s adapter's actual segment-write path. Confirmed by
+ * inspection, not just reasoning about it: the poll timeout here (3 minutes
+ * default) is shorter than the default flush interval, which only makes
+ * sense if the intent was to observe the buffer.
+ *
+ * Fixed by checking the destination directly: a one-shot `mc find` pod
+ * against the real in-cluster MinIO bucket, counting objects under this
+ * agent's real storage-key prefix (`buildStorageKey`'s
+ * `<tenant>/agent_<id>/<stream>/...` layout — see
+ * workers/provisioner/logs/segmentWriter.ts). Nothing about this depends on
+ * search's read path at all, so it can't be fooled by the buffer merge.
+ * run-kind-k8s-smoke.sh pairs this with a lowered
+ * NORA_LOG_FLUSH_INTERVAL_MS specifically so a real flush happens inside
+ * this poll's timeout.
  */
+function countMinioObjectsUnderPrefix(prefix) {
+  const podName = `k8s-smoke-mc-check-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const script =
+    `mc alias set smoke http://minio.${MINIO_NAMESPACE}.svc.cluster.local:9000 ` +
+    `${MINIO_ACCESS_KEY} ${MINIO_SECRET_KEY} >/tmp/mc.log 2>&1 && ` +
+    `mc find smoke/${MINIO_BUCKET}/${prefix} --name '*' 2>>/tmp/mc.log | wc -l`;
+  const result = kubectlStatus(
+    "run",
+    podName,
+    "--rm",
+    "-i",
+    "--restart=Never",
+    "--quiet",
+    `--namespace=${MINIO_NAMESPACE}`,
+    `--image=${MINIO_MC_IMAGE}`,
+    // Docker Hub no longer serves the original pinned tag at all (confirmed
+    // directly), and even a locally-cached multi-platform pull can't be
+    // sideloaded into kind as-is (confirmed directly — see
+    // run-kind-k8s-smoke.sh's flatten-and-sideload comment for both
+    // findings and the fix). Explicit rather than relying on the
+    // (already-matching) default for a non-latest tag, since a surprise
+    // pull attempt against a tag that exists nowhere but this node's own
+    // containerd is exactly the failure mode this whole fix exists to
+    // avoid.
+    "--image-pull-policy=IfNotPresent",
+    "--command",
+    "--",
+    "sh",
+    "-c",
+    script,
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `mc find against MinIO failed (exit ${result.status}): ${result.stderr || result.stdout}`,
+    );
+  }
+  // `kubectl run --rm -i` mixes the pod's stdout with its own status lines
+  // ("pod ... deleted"); the object count is the sole digits-only line.
+  const countLine = result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => /^\d+$/.test(line));
+  if (countLine === undefined) {
+    throw new Error(`mc find produced no parseable count; raw output: ${result.stdout}`);
+  }
+  return Number.parseInt(countLine, 10);
+}
+
 async function assertLogSegmentsProduced(token, agentId) {
+  // Matches segmentWriter.ts's buildStorageKey layout closely enough to
+  // scope the object listing to this agent without needing its exact
+  // tenant prefix (owner-id vs workspace-id) — a broader match, narrowed by
+  // the unique agent id segment, not a re-implementation of the key format.
+  const prefix = `*agent_${agentId}*`;
   const startedAt = Date.now();
+  let lastCount = 0;
   let lastError = null;
-  let lastBody = null;
 
   while (Date.now() - startedAt < LOG_SEGMENT_POLL_TIMEOUT_MS) {
     try {
-      const { body } = await api(
-        `/logs/search?agentId=${encodeURIComponent(agentId)}&streams=runtime&limit=1`,
-        { token },
-      );
-      lastBody = body;
-      if (Array.isArray(body?.lines) && body.lines.length > 0) return body.lines[0];
+      lastCount = countMinioObjectsUnderPrefix(prefix);
+      if (lastCount > 0) return { objectCount: lastCount };
     } catch (error) {
       lastError = error?.message || String(error);
     }
     await sleep(POLL_INTERVAL_MS);
   }
 
+  // A search check as a diagnostic aid only, never as the pass condition —
+  // it tells a failure apart ("the collector never even attached" vs "it
+  // attached but nothing ever flushed to storage") without being trusted as
+  // proof of persistence.
+  let searchDiagnostic = "unavailable";
+  try {
+    const { body } = await api(
+      `/logs/search?agentId=${encodeURIComponent(agentId)}&streams=runtime&limit=1`,
+      { token },
+    );
+    searchDiagnostic = JSON.stringify(body);
+  } catch (error) {
+    searchDiagnostic = `search itself failed: ${error?.message || error}`;
+  }
+
   throw new Error(
-    `No log segments were produced for agent ${agentId} within ${LOG_SEGMENT_POLL_TIMEOUT_MS}ms ` +
-      `(NORA_LOG_STORAGE=s3 against the in-cluster MinIO); last response: ${JSON.stringify(
-        lastBody,
-      )}${lastError ? `; last error: ${lastError}` : ""}`,
+    `No log segment objects were found in MinIO under prefix "${prefix}" for agent ${agentId} ` +
+      `within ${LOG_SEGMENT_POLL_TIMEOUT_MS}ms (bucket ${MINIO_BUCKET} in namespace ${MINIO_NAMESPACE}; ` +
+      `last object count: ${lastCount})${lastError ? `; last mc error: ${lastError}` : ""}. ` +
+      `GET /logs/search for the same agent/stream: ${searchDiagnostic} — a non-empty result there ` +
+      `despite zero MinIO objects would itself confirm this was reading the live buffer, not storage.`,
   );
 }
 
