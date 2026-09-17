@@ -44,6 +44,11 @@ async function deletePlatformAgent(request, token, agentId) {
       method: "DELETE",
       token,
       failOnStatus: false,
+      // Required since the logging control plane's Phase 5c: the caller
+      // must say whether this agent's logs are deleted or kept. Deleted —
+      // e2e cleanup has no reason to keep a throwaway test agent's logs
+      // around.
+      data: { deleteLogs: true },
       // The backend may spend 30 seconds waiting for the provision lock. Keep
       // the client alive long enough to receive the retryable 409 response.
       timeout: 45000,
@@ -389,8 +394,14 @@ test.describe("Complete platform journey", () => {
     await page.getByRole("button", { name: /^create$/i }).click();
     await expect(page.getByText(workspaceName)).toBeVisible();
 
+    // Workspace delete now requires an explicit keep/delete-logs choice
+    // before it's confirmable (logging control plane Phase 5c item 1 /
+    // Phase 8 item 11) — the dialog's own confirm button stays disabled
+    // until one is picked.
     await page.getByRole("button", { name: `Delete workspace ${workspaceName}` }).click();
-    await expect(page.getByText(workspaceName)).not.toBeVisible();
+    await page.getByRole("button", { name: "Delete logs" }).click();
+    await page.getByRole("button", { name: "Delete Workspace", exact: true }).click();
+    await expect(page.getByRole("heading", { name: workspaceName })).not.toBeVisible();
 
     await waitForUserEvent(request, admin.token, (event) =>
       String(event.message || "").includes(publishedListing.name),
@@ -410,6 +421,17 @@ test.describe("Complete platform journey", () => {
       .fill(publishedListing.name);
     await expect(page.getByText(publishedListing.name, { exact: true })).toBeVisible();
     await page.getByRole("button", { name: /clear filters/i }).click();
+
+    // Agent Logs section: Runtime lens shows real container log lines for
+    // the already-deployed primaryAgent (its own startup output is enough
+    // — no chat turn needed), and the Traces lens shows the correct
+    // enable-tracing CTA for a workspace that never turned tracing on.
+    await page.getByRole("button", { name: "Agent Logs" }).click();
+    await page.getByLabel("Agent").selectOption({ label: primaryAgent.name });
+    await expect(page.getByText(/no log lines in this range/i)).not.toBeVisible({ timeout: 15000 });
+
+    await page.getByRole("button", { name: "Traces", exact: true }).click();
+    await expect(page.getByText(/tracing is not enabled for this workspace/i)).toBeVisible();
   });
 
   test("admin pages show global state and can approve the listing", async ({ page, request }) => {
