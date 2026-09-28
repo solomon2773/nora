@@ -12,16 +12,16 @@
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
     "axios": "^1.20.0",
-    "bullmq": "^6.3.4",
+    "bullmq": "^6.3.8",
     "dockerode": "5.0.1",
     "ioredis": "^6.0.0",
     "pg": "^8.23.0",
     "ssh2": "^1.17.0",
     "tar-stream": "^3.2.1",
-    "tsx": "^4.23.13"
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
-    "@types/node": "^26.5.1",
+    "@types/node": "^26.6.2",
     "typescript": "^6.0.3"
   },
   "overrides": {
