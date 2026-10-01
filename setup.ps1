@@ -945,7 +945,7 @@ function Read-LogCollectionSettings {
         Write-Warn "Less than 5 GB of free disk — log collection is not recommended here."
         $logEnabledAnswer = Read-Host "  Enable log collection? [y/N]"
         $script:NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
-    } elseif ($NORA_LOG_ENABLED -eq "false") {
+    } elseif ($NORA_LOG_ENABLED -eq "false" -or $DefaultAnswer -eq "no") {
         $logEnabledAnswer = Read-Host "  Enable log collection? (recommended) [y/N]"
         $script:NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
     } else {
