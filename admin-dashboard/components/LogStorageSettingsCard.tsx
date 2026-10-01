@@ -156,7 +156,6 @@ export default function LogStorageSettingsCard() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Poll while a migration is actually in flight; stop the moment it

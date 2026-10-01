@@ -777,92 +777,88 @@ function createSegmentWriter(deps = {}) {
       }
 
       const snapshot = extractSnapshot(buffer);
-      try {
-        const ordered = assignOrd(snapshot.lines);
-        const ndjson = ordered.map((line) => JSON.stringify(line)).join("\n") + "\n";
-        const uncompressed = Buffer.from(ndjson, "utf8");
-        const compressed = zlib.zstdCompressSync(uncompressed);
-        const { buffer: encrypted, keyId } = encryptSegment(compressed, ring());
+      const ordered = assignOrd(snapshot.lines);
+      const ndjson = ordered.map((line) => JSON.stringify(line)).join("\n") + "\n";
+      const uncompressed = Buffer.from(ndjson, "utf8");
+      const compressed = zlib.zstdCompressSync(uncompressed);
+      const { buffer: encrypted, keyId } = encryptSegment(compressed, ring());
 
-        const tenant = { workspaceId: snapshot.workspaceId, ownerUserId: snapshot.ownerUserId };
-        const storageKey = buildStorageKey(
-          tenant,
-          snapshot.agentId,
-          snapshot.stream,
-          snapshot.tsFrom,
-          snapshot.tsTo,
-        );
+      const tenant = { workspaceId: snapshot.workspaceId, ownerUserId: snapshot.ownerUserId };
+      const storageKey = buildStorageKey(
+        tenant,
+        snapshot.agentId,
+        snapshot.stream,
+        snapshot.tsFrom,
+        snapshot.tsTo,
+      );
 
-        const indexMeta = {
-          workspaceId: snapshot.workspaceId,
-          agentId: snapshot.agentId,
-          stream: snapshot.stream,
-          tsFrom: snapshot.tsFrom,
-          tsTo: snapshot.tsTo,
-          bytes: encrypted.length,
-          lines: ordered.length,
-          droppedLines: snapshot.droppedLines,
-          levelCounts: snapshot.levelCounts,
-          encryptionKeyId: keyId,
-        };
+      const indexMeta = {
+        workspaceId: snapshot.workspaceId,
+        agentId: snapshot.agentId,
+        stream: snapshot.stream,
+        tsFrom: snapshot.tsFrom,
+        tsTo: snapshot.tsTo,
+        bytes: encrypted.length,
+        lines: ordered.length,
+        droppedLines: snapshot.droppedLines,
+        levelCounts: snapshot.levelCounts,
+        encryptionKeyId: keyId,
+      };
 
-        if (isLocal) {
-          // Item 21: local write failures surface immediately — no retry,
-          // no park. A local disk failure is not the transient condition
-          // retry-and-park exists for.
-          try {
-            await putObj(storageKey, encrypted, config);
-          } catch (error) {
-            restoreSnapshot(buffer, snapshot);
-            throw error;
-          }
-        } else {
-          const result = await putWithRetryOrPark({
-            storageKey,
-            payload: encrypted,
-            config,
-            retryDelaysMs,
-            sleep: retrySleep,
-            shouldStopRetrying: () => shuttingDown,
-            logger,
-            put: putObj,
-            park: (meta) => parkSegment(storageKey, encrypted, meta),
-            indexMeta,
-          });
-          if (result.parked) {
-            // Parked: the object is on local disk for later re-upload, not
-            // yet in remote storage, so we deliberately do NOT write the
-            // index row now (item 14 — object before index — extends to
-            // "no object yet reachable" meaning "no index row yet either").
-            // retryParkedSegments() writes the index row once the re-upload
-            // actually lands in remote storage.
-            return { skipped: false, parked: true };
-          }
+      if (isLocal) {
+        // Item 21: local write failures surface immediately — no retry,
+        // no park. A local disk failure is not the transient condition
+        // retry-and-park exists for.
+        try {
+          await putObj(storageKey, encrypted, config);
+        } catch (error) {
+          restoreSnapshot(buffer, snapshot);
+          throw error;
         }
-
-        // Item 14: write the object first, the index row second. An
-        // orphaned object (write succeeded, process died before the index
-        // insert) is reclaimable by Phase 5's reconciliation; an index row
-        // pointing at a missing object would make search throw on a result
-        // the user can already see.
-        await upsertIndexRow({
-          ...indexMeta,
+      } else {
+        const result = await putWithRetryOrPark({
           storageKey,
-          storageBackend: config.storageBackend,
-          storageConfigSnapshot: logStorageConfigModule.logStorageConfigSnapshot(config),
+          payload: encrypted,
+          config,
+          retryDelaysMs,
+          sleep: retrySleep,
+          shouldStopRetrying: () => shuttingDown,
+          logger,
+          put: putObj,
+          park: (meta) => parkSegment(storageKey, encrypted, meta),
+          indexMeta,
         });
-
-        return {
-          skipped: false,
-          storageKey,
-          lines: ordered.length,
-          bytes: encrypted.length,
-          tsFrom: snapshot.tsFrom,
-          tsTo: snapshot.tsTo,
-        };
-      } catch (error) {
-        throw error;
+        if (result.parked) {
+          // Parked: the object is on local disk for later re-upload, not
+          // yet in remote storage, so we deliberately do NOT write the
+          // index row now (item 14 — object before index — extends to
+          // "no object yet reachable" meaning "no index row yet either").
+          // retryParkedSegments() writes the index row once the re-upload
+          // actually lands in remote storage.
+          return { skipped: false, parked: true };
+        }
       }
+
+      // Item 14: write the object first, the index row second. An
+      // orphaned object (write succeeded, process died before the index
+      // insert) is reclaimable by Phase 5's reconciliation; an index row
+      // pointing at a missing object would make search throw on a result
+      // the user can already see.
+      await upsertIndexRow({
+        ...indexMeta,
+        storageKey,
+        storageBackend: config.storageBackend,
+        storageConfigSnapshot: logStorageConfigModule.logStorageConfigSnapshot(config),
+      });
+
+      return {
+        skipped: false,
+        storageKey,
+        lines: ordered.length,
+        bytes: encrypted.length,
+        tsFrom: snapshot.tsFrom,
+        tsTo: snapshot.tsTo,
+      };
     })();
 
     buffer.flushing = run.finally(() => {

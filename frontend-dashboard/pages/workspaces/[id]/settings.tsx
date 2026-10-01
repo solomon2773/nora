@@ -52,7 +52,6 @@ export default function WorkspaceSettingsPage() {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
 
   async function handleSave(event: React.FormEvent) {

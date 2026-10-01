@@ -303,7 +303,6 @@ export default function LogTable({
     return result;
     // heightsVersion is a trigger, not a value read here — it bumps whenever
     // a real measurement lands so offsets recompute with fresh data.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowKeys, heightsVersion]);
 
   const range = useMemo(
