@@ -21,7 +21,7 @@ source "$SCRIPT_DIR/../lib/common.sh"
 require_confirmation
 test_start "k8s-parity" "03-helm-renders-s3-and-r2"
 
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CHART_DIR="$REPO_ROOT/infra/helm/nora"
 DUMMY_SECRETS_FILE=""
 

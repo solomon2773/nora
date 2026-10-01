@@ -48,7 +48,15 @@ require_confirmation() {
 
 # ── Timing ───────────────────────────────────────────────────────────────
 _TEST_START_MS=0
-now_ms() { echo $(($(date +%s%N) / 1000000)); }
+# BSD/macOS `date` has no %N (prints a literal "N"), so fall back to perl.
+now_ms() {
+  local ns
+  ns="$(date +%s%N 2>/dev/null)"
+  case "$ns" in
+    ""|*N*) perl -MTime::HiRes=time -e 'printf("%d\n", time() * 1000)' ;;
+    *) echo $((ns / 1000000)) ;;
+  esac
+}
 
 # ── Result recording (JSON Lines) ───────────────────────────────────────
 #
