@@ -22,6 +22,7 @@ import {
   type CorrelatedLogRow,
   type LogLine,
   type SpanRow,
+  describeCollectionOff,
 } from "./observabilityClient";
 
 // ── extractFilenameFromContentDisposition ──────────────────────────────
@@ -555,4 +556,22 @@ test("computeWaterfallLayout guards against a zero trace duration instead of pro
   const layout = computeWaterfallLayout(spans, "2026-01-01T00:00:00.000Z", 0);
   assert.equal(Number.isFinite(layout[0].offsetPct), true);
   assert.equal(Number.isFinite(layout[0].widthPct), true);
+});
+
+// ── log collection notice ────────────────────────────────────────────────
+
+test("describeCollectionOff says nothing while collection is on or the answer is unknown", () => {
+  assert.equal(describeCollectionOff({ enabled: true, decided: true }), null);
+  assert.equal(describeCollectionOff(null), null, "an unreadable answer must not produce a notice");
+  assert.equal(describeCollectionOff(undefined), null);
+});
+
+test("describeCollectionOff explains an explicit off differently from not decided yet", () => {
+  const off = describeCollectionOff({ enabled: false, decided: true });
+  assert.equal(off?.title, "Log collection is off");
+  assert.match(off?.detail || "", /earlier stay searchable/);
+
+  const undecided = describeCollectionOff({ enabled: false, decided: false });
+  assert.equal(undecided?.title, "Log collection is off");
+  assert.match(undecided?.detail || "", /administrator turns collection on/);
 });

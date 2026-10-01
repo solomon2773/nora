@@ -9,6 +9,7 @@ import {
   Archive,
   Boxes,
   History,
+  ScrollText,
   LayoutDashboard,
   LogOut,
   SlidersHorizontal,
@@ -24,6 +25,7 @@ import { clsx } from "clsx";
 import { formatBytes, formatDateTime } from "../lib/format";
 import LanguageSwitcher from "./LanguageSwitcher";
 import { useI18n } from "../lib/i18n";
+import { shouldShowUndecidedBanner } from "../lib/logCollection";
 
 const NAV_ITEMS = [
   { name: "Overview", icon: LayoutDashboard, href: "/" },
@@ -68,6 +70,8 @@ export default function AdminLayout({ children }) {
   const [systemBanner, setSystemBanner] = useState(null);
   const [logStorageCapacity, setLogStorageCapacity] = useState(null);
   const [capacityBannerDismissed, setCapacityBannerDismissed] = useState(false);
+  const [logCollection, setLogCollection] = useState(null);
+  const [collectionBannerDismissed, setCollectionBannerDismissed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -107,11 +111,26 @@ export default function AdminLayout({ children }) {
       }
     }
 
+    // Whether anyone has decided about log collection yet. After an upgrade
+    // it is off until an admin chooses, so this drives a "not decided" banner.
+    async function loadLogCollection() {
+      try {
+        const response = await fetch("/api/admin/log-collection");
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => ({}));
+        if (active) setLogCollection({ enabled: Boolean(payload?.enabled), decided: Boolean(payload?.decided) });
+      } catch {
+        // Same fallback posture as the loaders above.
+      }
+    }
+
     loadRelease();
     loadLogStorageCapacity();
+    loadLogCollection();
     const intervalId = setInterval(() => {
       loadRelease();
       loadLogStorageCapacity();
+      loadLogCollection();
     }, 60000);
 
     return () => {
@@ -135,6 +154,25 @@ export default function AdminLayout({ children }) {
       // never treat the banner as dismissed in that case.
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      setCollectionBannerDismissed(
+        sessionStorage.getItem("nora-admin-log-collection-banner-dismissed") === "1",
+      );
+    } catch {
+      // Same as the capacity banner: never treat it as dismissed if storage throws.
+    }
+  }, []);
+
+  function dismissCollectionBanner() {
+    setCollectionBannerDismissed(true);
+    try {
+      sessionStorage.setItem("nora-admin-log-collection-banner-dismissed", "1");
+    } catch {
+      // Best-effort — the in-memory state still hides it for this page's lifetime.
+    }
+  }
 
   function dismissCapacityBanner() {
     setCapacityBannerDismissed(true);
@@ -173,6 +211,7 @@ export default function AdminLayout({ children }) {
       (logStorageCapacity.state === "warning" || logStorageCapacity.state === "halted") &&
       !capacityBannerDismissed,
   );
+  const showCollectionBanner = shouldShowUndecidedBanner(logCollection, collectionBannerDismissed);
   const capacityCritical = logStorageCapacity?.state === "halted";
   const capacityPercent =
     logStorageCapacity?.limitBytes != null && logStorageCapacity.limitBytes > 0
@@ -251,6 +290,33 @@ export default function AdminLayout({ children }) {
 
         <main className="flex-1">
           <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            {showCollectionBanner ? (
+              <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 shadow-sm">
+                <ScrollText size={18} className="shrink-0 text-blue-600" />
+                <p className="min-w-0 flex-1 text-sm text-slate-800">
+                  <span className="font-black">{t("Log collection is off.")}</span>{" "}
+                  {t(
+                    "Nora does not store agent logs until you turn it on. Choose whether to collect them, how long to keep them, and how much disk they may use.",
+                  )}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link
+                    href="/settings#log-collection"
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-blue-700"
+                  >
+                    {t("Review log collection")}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={dismissCollectionBanner}
+                    aria-label={t("Dismiss")}
+                    className="rounded-full p-1.5 text-slate-500 hover:bg-black/5"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {showCapacityBanner ? (
               <div
                 className={clsx(

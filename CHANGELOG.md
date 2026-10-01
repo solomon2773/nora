@@ -27,13 +27,17 @@ which carries the full notes and verification details.
   questions (on or off, days to keep, disk cap; a bare Enter means off) when run from a terminal
   on an install that has no `NORA_LOG_ENABLED` yet. The one-click upgrade and unattended runs
   cannot ask, so they leave it unset and collection stays off. Fresh installs ask during setup.
-  To turn it on later, set `NORA_LOG_ENABLED=true` in `.env` and restart `worker-provisioner`.
+  To turn it on later, use **Settings → Log Collection** in the admin dashboard (a banner points
+  there until someone decides), or set `NORA_LOG_ENABLED=true` in `.env` and restart
+  `worker-provisioner`. Turning collection off while logs exist asks whether to keep or delete them.
 - **New required secrets:** `NORA_LOG_ENCRYPTION_KEY` and `NORA_OTLP_INGEST_SECRET`. `setup.sh`,
   `setup.ps1`, and one-click upgrades generate them (this does not turn collection on); if you
   upgrade by pulling and restarting manually, add them to `.env` first. Without
   `NORA_LOG_ENCRYPTION_KEY`, log segments are not persisted once collection is on.
-- **Helm:** `backendEnv.NORA_LOG_STORAGE` must be `s3` or `r2` (the chart refuses to render with
-  `local` or unset), and `workerProvisioner.replicas` must stay `1`.
+- **Helm:** once log collection is enabled (`backendEnv.NORA_LOG_ENABLED=true`),
+  `backendEnv.NORA_LOG_STORAGE` must be `s3` or `r2` (the chart refuses to render with `local` or
+  unset), and `workerProvisioner.replicas` must stay `1`. An install that never enables logging
+  needs no log storage settings.
 
 ## [v1.22.0](https://github.com/solomon2773/nora/releases/tag/v1.22.0) — 2026-09-16
 

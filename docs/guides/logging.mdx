@@ -116,9 +116,24 @@ API keys need the `logs:read` scope to search and export, and only reach agents 
 
 The rest of this guide covers setup and is mostly for platform admins.
 
-`setup.sh` / `setup.ps1` ask whether to enable log collection (recommended), how many days to keep logs, and how much disk the `local` destination may use. Upgrades from an older version turn collection on automatically, unless the host has less than 5 GB of free disk.
+Collecting logs means Nora stores what your agents print, so it's **off until you turn it on**. Nothing is collected after an upgrade unless someone chooses it.
 
-To turn it off, set `NORA_LOG_ENABLED=false` in `.env` and restart `worker-provisioner`. Logs that were already collected still expire on schedule.
+- **Fresh install:** `setup.sh` / `setup.ps1` ask whether to enable log collection, how many days to keep logs, and how much disk the `local` destination may use.
+- **Upgrade with `setup.sh --update` or `setup.ps1`:** it asks the same three questions once, on a terminal, if no choice has been made yet. Pressing Enter means no.
+- **One-click upgrade from the dashboard:** it can't ask, so collection stays off. A banner in the admin dashboard says so until someone decides.
+
+Platform admins turn collection on or off in **Settings → Log Collection** in the admin dashboard. It takes effect within seconds, with no restart. It can also be set in `.env` (`NORA_LOG_ENABLED=true` or `false`, then restart `worker-provisioner`); once someone changes it in the dashboard, the dashboard setting wins and `.env` is ignored.
+
+Turning collection on is refused if logs couldn't be saved (an unusable `NORA_LOG_ENCRYPTION_KEY`), or if you use local storage while Kubernetes is an enabled deploy target — pick S3, R2 or SSH storage first.
+
+### When you turn collection off
+
+If logs have already been collected, you're asked what to do with them. There's no default:
+
+- **Keep existing logs** — they stay searchable and expire on the normal retention schedule.
+- **Delete all logs** — every agent's collected logs are removed permanently, in the background. This can't be undone, and backups don't contain them. Logs kept for agents or workspaces you already deleted aren't touched; they have their own purge on the **Log Recovery** page.
+
+Through the API, `PUT /api/admin/log-collection` takes `{ "enabled": false, "deleteExisting": true | false }`, and `deleteExisting` is required when logs exist. You can't turn collection back on while a delete is still running.
 
 Collection is a platform-wide setting: it's on or off for every agent, and covers both container and gateway logs. Workspaces can't switch it off — they only choose how long their logs are kept (see [Retention](#retention)).
 
@@ -277,8 +292,9 @@ Both accept the same filters as the dashboard (`streams`, `levels`, `q`). Export
 
 <AccordionGroup>
   <Accordion title="No logs are being saved">
-    Check that `NORA_LOG_ENABLED=true` and `NORA_LOG_ENCRYPTION_KEY` is set, then restart
-    `worker-provisioner`.
+    Collection is off until someone turns it on — check **Settings → Log Collection** in the admin
+    dashboard (or `NORA_LOG_ENABLED=true` in `.env`). Then check that `NORA_LOG_ENCRYPTION_KEY` is
+    set and restart `worker-provisioner`.
   </Accordion>
 
   <Accordion title="Collection stopped for every agent">

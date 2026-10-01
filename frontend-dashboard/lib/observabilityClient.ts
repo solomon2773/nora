@@ -166,6 +166,42 @@ export interface CapacityStatus {
   state: "ok" | "warning" | "halted";
 }
 
+/**
+ * Whether the platform is collecting agent logs at all. Collection is opt-in
+ * (an admin turns it on), so an empty Logs page usually means "off", not
+ * "nothing happened". `decided` is false until someone has chosen. Null when
+ * the answer cannot be read, so callers say nothing rather than guess.
+ */
+export interface LogCollectionStatus {
+  enabled: boolean;
+  decided: boolean;
+}
+
+export async function getLogCollectionStatus(): Promise<LogCollectionStatus | null> {
+  try {
+    const res = await fetchWithAuth("/api/logs/collection-status");
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    if (typeof body?.enabled !== "boolean") return null;
+    return { enabled: body.enabled, decided: Boolean(body.decided) };
+  } catch {
+    return null;
+  }
+}
+
+/** The notice to show above the log views, or null when there is nothing to say. */
+export function describeCollectionOff(
+  status: LogCollectionStatus | null | undefined,
+): { title: string; detail: string } | null {
+  if (!status || status.enabled) return null;
+  return {
+    title: "Log collection is off",
+    detail: status.decided
+      ? "Nora is not saving new agent logs. Logs collected earlier stay searchable until they expire."
+      : "Nora does not save agent logs until an administrator turns collection on.",
+  };
+}
+
 export async function getCurrentCapacityStatus(): Promise<CapacityStatus | null> {
   try {
     const res = await fetchWithAuth("/api/admin/log-storage");

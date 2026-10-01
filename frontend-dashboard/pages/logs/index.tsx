@@ -45,6 +45,9 @@ import {
   type LogStream,
   type TraceDetail,
   type TraceSummary,
+  getLogCollectionStatus,
+  describeCollectionOff,
+  type LogCollectionStatus,
 } from "../../lib/observabilityClient";
 import { runtimeSupportsGateway } from "../../lib/runtime";
 import LogFilterBar from "../../components/logs/LogFilterBar";
@@ -1481,8 +1484,19 @@ export default function LoggingPage() {
   const [agentOptions, setAgentOptions] = useState<NormalizedAgentOption[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [rangeHours, setRangeHours] = useState(1);
+  const [collectionStatus, setCollectionStatus] = useState<LogCollectionStatus | null>(null);
 
   useEffect(() => subscribeToActiveWorkspace(setWorkspaceId), []);
+
+  useEffect(() => {
+    let active = true;
+    getLogCollectionStatus().then((status) => {
+      if (active) setCollectionStatus(status);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -1544,6 +1558,7 @@ export default function LoggingPage() {
 
   const from = useMemo(() => isoMinusHours(rangeHours), [rangeHours]);
   const to = useMemo(() => nowIso(), [rangeHours]);
+  const collectionOff = describeCollectionOff(collectionStatus);
 
   return (
     <Layout>
@@ -1558,6 +1573,17 @@ export default function LoggingPage() {
           </div>
         ) : (
           <>
+            {collectionOff ? (
+              <div
+                role="status"
+                className="shrink-0 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-slate-800"
+              >
+                <span className="font-black">{collectionOff.title}.</span> {collectionOff.detail}{" "}
+                <a href="/admin/settings#log-collection" className="font-bold text-blue-700 underline">
+                  Admin → Settings → Log Collection
+                </a>
+              </div>
+            ) : null}
             <div className="shrink-0">
               <SharedHeader
                 activeLens={activeLens}
