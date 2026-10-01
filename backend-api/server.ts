@@ -1474,6 +1474,46 @@ const LEGACY_COMPATIBILITY_REPAIRS = [
       END
     $nora$`,
   },
+  {
+    // An agent now belongs to at most one workspace (UNIQUE(agent_id), added by
+    // a later versioned migration whose own DELETE keeps an arbitrary row).
+    // Run first so the surviving link is deterministic — the oldest by
+    // created_at — and each removed link is recorded in `events`, since the
+    // removal is otherwise silent and irreversible. A no-op once the unique
+    // index exists, because duplicates can no longer be created.
+    name: "dedupe-workspace-agents-oldest-wins",
+    sql: `DO $nora$
+      BEGIN
+        IF to_regclass('workspace_agents') IS NOT NULL AND to_regclass('events') IS NOT NULL THEN
+          WITH ranked AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY agent_id
+                     ORDER BY created_at ASC NULLS LAST, id ASC
+                   ) AS link_position
+              FROM workspace_agents
+          ),
+          removed AS (
+            DELETE FROM workspace_agents AS link
+             USING ranked
+             WHERE link.id = ranked.id
+               AND ranked.link_position > 1
+            RETURNING link.workspace_id, link.agent_id, link.role, link.created_at
+          )
+          INSERT INTO events(type, message, metadata)
+          SELECT 'workspace_agent_link_removed',
+                 'Agent was linked to more than one workspace; kept the oldest link',
+                 jsonb_build_object(
+                   'agentId', removed.agent_id,
+                   'workspaceId', removed.workspace_id,
+                   'role', removed.role,
+                   'linkCreatedAt', removed.created_at
+                 )
+            FROM removed;
+        END IF;
+      END
+    $nora$`,
+  },
 ];
 
 /**

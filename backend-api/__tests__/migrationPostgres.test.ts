@@ -185,6 +185,15 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
     );
     expect(agentWorkspaceLinks.rows[0].count).toBe(1);
 
+    // Three legacy links collapsed to one, and each removal left an audit row.
+    const removedLinkEvents = await migrationPool.query(
+      `SELECT COUNT(*)::int AS count FROM events
+        WHERE type = 'workspace_agent_link_removed'
+          AND metadata->>'agentId' = $1`,
+      [agentId],
+    );
+    expect(removedLinkEvents.rows[0].count).toBe(2);
+
     const duplicateSlugs = await migrationPool.query(
       `SELECT slug, COUNT(*)::int AS count
          FROM agent_hub_listings
@@ -217,6 +226,48 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
         DB_MIGRATION_STATEMENT_TIMEOUT_MS: "60000",
       }),
     ).resolves.toEqual({ total: firstRun.total, applied: 0 });
+  });
+
+  it("keeps the oldest workspace link when an agent is in several, and records each removal", async () => {
+    const workspaces = await migrationPool.query(
+      `SELECT id FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC, id ASC LIMIT 2`,
+      [userId],
+    );
+    const [firstWorkspaceId, secondWorkspaceId] = workspaces.rows.map((row) => row.id);
+
+    // Recreate the pre-constraint state (the unique index is what normally
+    // prevents duplicates) with explicit timestamps so "oldest" is unambiguous.
+    // The second workspace's link is the older one, so it must win.
+    await migrationPool.query(`DROP INDEX IF EXISTS idx_workspace_agents_agent_unique`);
+    await migrationPool.query(`DELETE FROM workspace_agents WHERE agent_id = $1`, [agentId]);
+    await migrationPool.query(`DELETE FROM events WHERE type = 'workspace_agent_link_removed'`);
+    await migrationPool.query(
+      `INSERT INTO workspace_agents(workspace_id, agent_id, role, created_at)
+       VALUES($1, $3, 'member', '2026-02-01T00:00:00Z'),
+             ($2, $3, 'admin', '2026-01-01T00:00:00Z')`,
+      [firstWorkspaceId, secondWorkspaceId, agentId],
+    );
+
+    await migrateDB(migrationPool, {
+      DB_MIGRATION_LOCK_TIMEOUT_MS: "10000",
+      DB_MIGRATION_STATEMENT_TIMEOUT_MS: "60000",
+    });
+
+    const survivors = await migrationPool.query(
+      `SELECT workspace_id FROM workspace_agents WHERE agent_id = $1`,
+      [agentId],
+    );
+    expect(survivors.rows).toEqual([{ workspace_id: secondWorkspaceId }]);
+
+    const removed = await migrationPool.query(
+      `SELECT metadata FROM events WHERE type = 'workspace_agent_link_removed'`,
+    );
+    expect(removed.rows).toHaveLength(1);
+    expect(removed.rows[0].metadata).toMatchObject({
+      agentId,
+      workspaceId: firstWorkspaceId,
+      role: "member",
+    });
   });
 });
 
