@@ -1485,6 +1485,14 @@ export default function LoggingPage() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [rangeHours, setRangeHours] = useState(1);
   const [collectionStatus, setCollectionStatus] = useState<LogCollectionStatus | null>(null);
+  // The admin dashboard is a separate app at /admin. This app's link localizer
+  // prefixes every relative href with /app, so cross into /admin with an
+  // absolute URL (which it leaves alone). Set after mount to avoid a
+  // server/client markup mismatch.
+  const [adminLogSettingsUrl, setAdminLogSettingsUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setAdminLogSettingsUrl(`${window.location.origin}/admin/settings#log-collection`);
+  }, []);
 
   useEffect(() => subscribeToActiveWorkspace(setWorkspaceId), []);
 
@@ -1579,9 +1587,13 @@ export default function LoggingPage() {
                 className="shrink-0 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-slate-800"
               >
                 <span className="font-black">{collectionOff.title}.</span> {collectionOff.detail}{" "}
-                <a href="/admin/settings#log-collection" className="font-bold text-blue-700 underline">
-                  Admin → Settings → Log Collection
-                </a>
+                {adminLogSettingsUrl ? (
+                  <a href={adminLogSettingsUrl} className="font-bold text-blue-700 underline">
+                    Admin → Settings → Log Collection
+                  </a>
+                ) : (
+                  <span className="font-bold">Admin → Settings → Log Collection</span>
+                )}
               </div>
             ) : null}
             <div className="shrink-0">

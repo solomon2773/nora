@@ -94,6 +94,7 @@ export default function LogCollectionCard() {
 
   const headline = collectionHeadline(state);
   const stats = state?.stats;
+  const agentsLabel = (count: number) => `${formatCount(count)} ${count === 1 ? t("agent") : t("agents")}`;
   const purge = state?.purge;
   const keyProblem = state?.encryptionKeyProblem;
 
@@ -157,7 +158,7 @@ export default function LogCollectionCard() {
           {stats && hasCollectedLogs(stats) ? (
             <p className="mb-4 text-xs font-medium text-slate-600">
               {t("Collected so far")}: {formatCount(stats.lines)} {t("lines")} · {formatBytes(stats.bytes)} ·{" "}
-              {formatCount(stats.agents)} {t("agents")}
+              {agentsLabel(stats.agents)}
               {stats.oldest ? ` · ${t("oldest")} ${formatDateTime(stats.oldest)}` : ""}
             </p>
           ) : null}
@@ -200,7 +201,7 @@ export default function LogCollectionCard() {
               </p>
               <p className="mt-1 text-xs text-slate-600">
                 {stats
-                  ? `${formatCount(stats.lines)} ${t("lines")} · ${formatBytes(stats.bytes)} · ${formatCount(stats.agents)} ${t("agents")}`
+                  ? `${formatCount(stats.lines)} ${t("lines")} · ${formatBytes(stats.bytes)} · ${agentsLabel(stats.agents)}`
                   : null}
               </p>
               <ul className="mt-2 list-disc pl-5 text-xs text-slate-600">
