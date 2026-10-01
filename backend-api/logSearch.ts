@@ -546,6 +546,26 @@ function notFoundAgentError() {
 }
 
 /**
+ * Reads one segment for a search, tolerating a segment that cannot be read —
+ * a lost or replaced encryption key, a missing object (a restored backup keeps
+ * the index rows but not the files), or a storage hiccup. Without this a single
+ * bad segment failed the whole search with a 500, hiding every readable line.
+ * The count is reported back so the caller can say results may be incomplete.
+ */
+async function fetchSegmentLinesOrSkip(fetchFn, row, opts, state, logger) {
+  try {
+    const lines = await fetchFn(row, opts);
+    state.readable += 1;
+    return lines;
+  } catch (error) {
+    state.unreadable += 1;
+    if (!state.firstError) state.firstError = error;
+    logger.warn?.(`[logSearch] skipping unreadable segment ${row.id} (${row.storage_key}): ${error.message}`);
+    return [];
+  }
+}
+
+/**
  * `searchLogs(params, actor)` — item 1/orchestrator. Prune → fetch (waves,
  * concurrency-bounded, early termination) → merge → recency-gap merge.
  *
@@ -615,6 +635,7 @@ async function searchLogs(params, actor, deps = {}) {
   const fetchFn = deps.fetchSegmentLines || fetchSegmentLines;
   const collected = [];
   const newestTsToByStream = new Map();
+  const readState = { readable: 0, unreadable: 0, firstError: null };
   let index = 0;
 
   while (index < orderedRows.length) {
@@ -630,7 +651,9 @@ async function searchLogs(params, actor, deps = {}) {
     // row in the same wave never touches the dispatcher at all (objectStorage
     // only uses `dispatcher` for the S3/R2 fetch path).
     const results = await Promise.all(
-      wave.map((row) => fetchFn(row, { q: params.q, levels, keyRing, dispatcher })),
+      wave.map((row) =>
+        fetchSegmentLinesOrSkip(fetchFn, row, { q: params.q, levels, keyRing, dispatcher }, readState, deps.logger || console),
+      ),
     );
     wave.forEach((row, i) => {
       const current = newestTsToByStream.get(row.stream);
@@ -668,6 +691,10 @@ async function searchLogs(params, actor, deps = {}) {
       }),
     );
   }
+  // Some segments unreadable is a degraded result; every segment unreadable is
+  // far more likely a global problem (storage credentials, storage down), so
+  // fail loudly rather than return an empty page that looks like "no logs".
+  if (readState.unreadable > 0 && readState.readable === 0) throw readState.firstError;
   const warning = bufferRead.warning;
 
   const merged = mergeSegments(collected, limit, cursor, order);
@@ -675,6 +702,7 @@ async function searchLogs(params, actor, deps = {}) {
     lines: merged.lines,
     nextCursor: merged.nextCursor,
     ...(warning ? { warning } : {}),
+    ...(readState.unreadable > 0 ? { unreadableSegments: readState.unreadable } : {}),
   };
 }
 

@@ -23,6 +23,7 @@ import {
   type LogLine,
   type SpanRow,
   describeCollectionOff,
+  describeUnreadableSegments,
 } from "./observabilityClient";
 
 // ── extractFilenameFromContentDisposition ──────────────────────────────
@@ -574,4 +575,19 @@ test("describeCollectionOff explains an explicit off differently from not decide
   const undecided = describeCollectionOff({ enabled: false, decided: false });
   assert.equal(undecided?.title, "Log collection is off");
   assert.match(undecided?.detail || "", /administrator turns collection on/);
+});
+
+// ── unreadable segments notice ───────────────────────────────────────────
+
+test("describeUnreadableSegments says nothing when everything was readable", () => {
+  assert.equal(describeUnreadableSegments(0), null);
+  assert.equal(describeUnreadableSegments(undefined), null);
+  assert.equal(describeUnreadableSegments(null), null);
+  assert.equal(describeUnreadableSegments(Number.NaN), null);
+});
+
+test("describeUnreadableSegments counts, pluralises, and says why it may have happened", () => {
+  assert.match(describeUnreadableSegments(1) || "", /^1 stored log segment could not be read/);
+  assert.match(describeUnreadableSegments(3) || "", /^3 stored log segments could not be read/);
+  assert.match(describeUnreadableSegments(2) || "", /encryption key changed or the stored files are missing/);
 });

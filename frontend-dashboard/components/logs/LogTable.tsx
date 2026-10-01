@@ -12,6 +12,7 @@ import {
   type CapacityHaltWindow,
   type LogLine,
   type RuntimeLensCapability,
+  describeUnreadableSegments,
 } from "../../lib/observabilityClient";
 
 // Runtime lens row list. Deliberately NOT `components/LogViewer.tsx` — see
@@ -165,6 +166,7 @@ export interface LogTableProps {
   loading?: boolean;
   capability: RuntimeLensCapability;
   warning?: string | null;
+  unreadableSegments?: number;
   capacityWindows?: CapacityHaltWindow[];
   // Fallback height used only until the container's actual rendered height
   // is measured (and if ResizeObserver is unavailable). The scroll container
@@ -180,9 +182,11 @@ export default function LogTable({
   loading = false,
   capability,
   warning = null,
+  unreadableSegments = 0,
   capacityWindows = [],
   height: fallbackHeight = 480,
 }: LogTableProps) {
+  const unreadableNotice = describeUnreadableSegments(unreadableSegments);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(fallbackHeight);
@@ -401,6 +405,16 @@ export default function LogTable({
               collection gap, not deleted data — nothing within retention was removed.
             </p>
           ))}
+        </div>
+      ) : null}
+
+      {unreadableNotice ? (
+        <div
+          role="alert"
+          className="flex shrink-0 items-start gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] font-semibold text-amber-800"
+        >
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+          {unreadableNotice}
         </div>
       ) : null}
 

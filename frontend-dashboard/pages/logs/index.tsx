@@ -836,6 +836,7 @@ function RuntimeLens({
   const [lines, setLines] = useState<LogLine[]>([]);
   const [liveLines, setLiveLines] = useState<LogLine[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
+  const [unreadableSegments, setUnreadableSegments] = useState(0);
   const [loading, setLoading] = useState(false);
   const [capacityWindows, setCapacityWindows] = useState<CapacityHaltWindow[]>([]);
   const [storageBackend, setStorageBackend] = useState<string | null>(null);
@@ -871,10 +872,12 @@ function RuntimeLens({
       });
       setLines(result.lines);
       setWarning(result.warning || null);
+      setUnreadableSegments(result.unreadableSegments || 0);
     } catch (error) {
       console.error("Failed to search logs:", error);
       setLines([]);
       setWarning(null);
+      setUnreadableSegments(0);
     } finally {
       setLoading(false);
     }
@@ -1064,6 +1067,7 @@ function RuntimeLens({
           loading={loading}
           capability={capability}
           warning={warning}
+          unreadableSegments={unreadableSegments}
           capacityWindows={capacityWindows}
           height={520}
         />

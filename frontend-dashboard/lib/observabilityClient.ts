@@ -60,6 +60,8 @@ export interface SearchLogsResult {
   lines: LogLine[];
   nextCursor: string | null;
   warning?: "recent_lines_unavailable";
+  /** Stored segments that could not be read, so these results may be incomplete. */
+  unreadableSegments?: number;
 }
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
@@ -164,6 +166,18 @@ export interface CapacityStatus {
   usedBytes: number;
   limitBytes: number;
   state: "ok" | "warning" | "halted";
+}
+
+/**
+ * The notice for a search that skipped stored segments it could not read (a
+ * lost or replaced encryption key, or files missing after a backup restore).
+ * Null when everything was readable.
+ */
+export function describeUnreadableSegments(count: number | null | undefined): string | null {
+  const n = Number(count || 0);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return `${n} stored log segment${n === 1 ? "" : "s"} could not be read, so these results may be incomplete. ` +
+    "This usually means the log encryption key changed or the stored files are missing.";
 }
 
 /**

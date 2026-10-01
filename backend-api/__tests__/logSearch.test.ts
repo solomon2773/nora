@@ -330,6 +330,56 @@ describe("searchLogs orchestration (items 1-7)", () => {
     });
   });
 
+  describe("unreadable segments", () => {
+    const quiet = { warn: jest.fn() };
+
+    it("skips a segment that cannot be read, returns the rest, and says how many were skipped", async () => {
+      const good = row({ id: "good", ts_to: "2026-01-01T00:20:00.000Z" });
+      const bad = row({ id: "bad", ts_to: "2026-01-01T00:10:00.000Z" });
+      const deps = makeDeps({ rows: [good, bad] });
+      deps.logger = quiet;
+      deps.fetchSegmentLines = jest.fn(async (r) => {
+        if (r.id === "bad") throw new Error("Unsupported state or unable to authenticate data");
+        return [line({ message: "readable" })];
+      });
+
+      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+
+      expect(result.lines.map((l) => l.message)).toEqual(["readable"]);
+      expect(result.unreadableSegments).toBe(1);
+      expect(quiet.warn).toHaveBeenCalledWith(expect.stringContaining("skipping unreadable segment bad"));
+    });
+
+    it("a missing object (restored backup: index row without a file) is skipped too", async () => {
+      const deps = makeDeps({ rows: [row({ id: "a" }), row({ id: "b", ts_to: "2026-01-01T00:30:00.000Z" })] });
+      deps.logger = quiet;
+      deps.fetchSegmentLines = jest.fn(async (r) => {
+        if (r.id === "a") throw Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
+        return [line({ message: "still here" })];
+      });
+      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+      expect(result.lines.map((l) => l.message)).toEqual(["still here"]);
+      expect(result.unreadableSegments).toBe(1);
+    });
+
+    it("omits the field entirely when every segment was readable", async () => {
+      const deps = makeDeps({ rows: [row()], linesByKey: { "key-seg-1": [line()] } });
+      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+      expect(result).not.toHaveProperty("unreadableSegments");
+    });
+
+    it("when EVERY segment fails it still errors, since that points at a global problem like bad storage credentials", async () => {
+      const deps = makeDeps({ rows: [row({ id: "a" }), row({ id: "b" })] });
+      deps.logger = quiet;
+      deps.fetchSegmentLines = jest.fn(async () => {
+        throw new Error("AccessDenied");
+      });
+      await expect(
+        searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps),
+      ).rejects.toThrow("AccessDenied");
+    });
+  });
+
   describe("recency gap (item 7)", () => {
     it("closes the recency gap: a line written ~30 seconds ago (buffer only) is returned", async () => {
       const recentLine = line({
