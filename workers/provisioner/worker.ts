@@ -5794,20 +5794,33 @@ segmentWriter?.startParkedSegmentRetry?.();
 // reconcile timer immediately; `stopReconciler`/`stopCollector` are wired
 // into the shutdown coordinator below via `registerLogPipelineHooks`, in
 // the exact two-hook shape it already expects.
-// The key is otherwise only read on the first flush (~15 minutes after an
-// agent starts), and the healthcheck stays green meanwhile — say so now.
-{
+//
+// Collection is opt-in: both collectors are skipped unless NORA_LOG_ENABLED=true (see isLogCollectionEnabled);
+// the no-op stand-in keeps the shutdown hooks below uniform. Compared with
+// `!== false` so shutdownCoordinator.test.js's catch-all module stub (which
+// returns undefined) keeps exercising the collector path it did before.
+const { isLogCollectionEnabled } = require("./logs/logStorageConfig");
+const LOG_COLLECTION_ENABLED = isLogCollectionEnabled() !== false;
+const disabledCollector = { stopReconciler() {}, stopCollector() {} };
+if (!LOG_COLLECTION_ENABLED) {
+  console.log("[worker] Log collection is off (set NORA_LOG_ENABLED=true to enable); retention sweeps still run.");
+} else {
+  // The key is otherwise only read on the first flush (~15 minutes after an
+  // agent starts), and the healthcheck stays green meanwhile — say so now.
   const { logEncryptionKeyProblem } = require("./logs/logKeyCheck");
   const keyProblem = logEncryptionKeyProblem();
   if (keyProblem) {
     console.warn(
       `[worker] Log collection is on but logs cannot be saved: ${keyProblem}. ` +
-        "Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart worker-provisioner.",
+        "Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart worker-provisioner, " +
+        "or set NORA_LOG_ENABLED=false to turn collection off.",
     );
   }
 }
 const { startLogCollector } = require("./logs/logCollector");
-const logCollector = startLogCollector({ segmentWriter });
+const logCollector = LOG_COLLECTION_ENABLED
+  ? startLogCollector({ segmentWriter })
+  : disabledCollector;
 
 // ── Gateway Log Collector (Logging Control Plane Phase 10) ────────────
 //
@@ -5830,7 +5843,9 @@ const logCollector = startLogCollector({ segmentWriter });
 // combined registration for why calling it twice would silently drop
 // whichever collector registered first.
 const { startGatewayCollector } = require("./logs/gatewayCollector");
-const gatewayCollector = startGatewayCollector({ segmentWriter });
+const gatewayCollector = LOG_COLLECTION_ENABLED
+  ? startGatewayCollector({ segmentWriter })
+  : disabledCollector;
 
 // ── Storage Migration Resume (Logging Control Plane Phase 5b item 10) ────
 //

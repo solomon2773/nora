@@ -315,6 +315,18 @@ function logStorageConfigSnapshot(config = {}) {
 }
 
 /**
+ * Platform-wide log collection switch. Collection stores agent output on disk,
+ * so it is opt-in: only `NORA_LOG_ENABLED=true` (or 1/yes/on) turns it on, and
+ * unset, empty, or `false` leaves it off. setup.sh/setup.ps1 write an explicit
+ * value; an upgrade leaves it unset until an admin decides. Retention sweeps
+ * keep running either way so logs collected earlier still expire.
+ */
+function isLogCollectionEnabled(env = process.env) {
+  const raw = String(env.NORA_LOG_ENABLED ?? "").trim().toLowerCase();
+  return ["true", "1", "yes", "on"].includes(raw);
+}
+
+/**
  * Boot-time validation (Phase 3 item 20): warn — never fail boot — when the
  * `local` driver is selected but Kubernetes is an enabled deploy target,
  * since local storage only exists on the Docker host and Kubernetes agents'
@@ -348,6 +360,7 @@ module.exports = {
   storageConfigForSegment,
   logStorageConfigSnapshot,
   assertDriverSupportsTargets,
+  isLogCollectionEnabled,
   LOG_KEY_PREFIX,
   isLogSegmentKey,
   isLegacyLogSegmentKey,

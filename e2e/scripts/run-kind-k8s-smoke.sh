@@ -269,6 +269,9 @@ export K8S_SMOKE_ASSERT_LOG_SEGMENTS="true"
 LOG_STORAGE_ENV_FILE="$(mktemp)"
 cp "$NORA_ENV_FILE" "$LOG_STORAGE_ENV_FILE"
 {
+  # Collection is opt-in (unset means off), and this run asserts that segments
+  # are produced, so opt in explicitly.
+  echo "NORA_LOG_ENABLED=true"
   echo "NORA_LOG_STORAGE=s3"
   echo "NORA_LOG_S3_BUCKET=${MINIO_BUCKET}"
   echo "NORA_LOG_S3_REGION=us-east-1"
