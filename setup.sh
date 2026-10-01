@@ -1407,6 +1407,85 @@ if [ -z "$SETUP_MODE" ]; then
   fi
 fi
 
+# Asks the three log-collection questions (on/off, days to keep, local disk
+# cap) and sets NORA_LOG_ENABLED / NORA_LOG_RETENTION_CEILING_DAYS /
+# NORA_LOG_LOCAL_MAX_BYTES / NORA_TRACES_ENABLED for the caller to write out.
+# Reads from /dev/tty, so callers must only use it on an interactive run.
+#
+# $1 is the answer a bare Enter gives: "yes" (fresh install, the recommended
+# choice) or "no" (an upgrade, where nobody should start storing logs by
+# accident).
+prompt_log_collection_settings() {
+  local default_answer="${1:-yes}"
+  # Recommended local cap: the smaller of 10 GB and 20% of free disk (0 when
+  # under 5 GB is free). Reconfigure keeps the operator's previous answers.
+  LOG_RECOMMENDED_BYTES="$(bash infra/ensure-log-env.sh --recommend-bytes .)"
+  NORA_LOG_ENABLED="$(read_env_value "$ENV_FILE" "NORA_LOG_ENABLED" "")"
+  NORA_LOG_LOCAL_MAX_BYTES="$(read_env_value "$ENV_FILE" "NORA_LOG_LOCAL_MAX_BYTES" "")"
+  [[ "$NORA_LOG_LOCAL_MAX_BYTES" =~ ^[0-9]+$ ]] || NORA_LOG_LOCAL_MAX_BYTES=""
+  NORA_LOG_RETENTION_CEILING_DAYS="$(read_env_value "$ENV_FILE" "NORA_LOG_RETENTION_CEILING_DAYS" "30")"
+  # Tracing is off unless an operator already turned it on; setup never asks.
+  NORA_TRACES_ENABLED="$(read_env_value "$ENV_FILE" "NORA_TRACES_ENABLED" "false")"
+  [ "$NORA_TRACES_ENABLED" = "true" ] || NORA_TRACES_ENABLED="false"
+  [[ "$NORA_LOG_RETENTION_CEILING_DAYS" =~ ^[0-9]+$ ]] && [ "$NORA_LOG_RETENTION_CEILING_DAYS" -ge 1 ] ||
+    NORA_LOG_RETENTION_CEILING_DAYS="30"
+
+  printf "  Nora can collect agent runtime and gateway logs and keep them for a set\n"
+  printf "  number of days (workspaces can choose a shorter period in their settings).\n"
+  printf "  Logs are stored encrypted on this server; S3, R2, or SSH storage can be\n"
+  printf "  configured later in Admin → Log Storage (required for Kubernetes agents).\n\n"
+  if [ "$LOG_RECOMMENDED_BYTES" -eq 0 ] && [ -z "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
+    warn "Less than 5 GB of free disk — log collection is not recommended here."
+    printf "  Enable log collection? [y/N] "
+    read -r log_enabled_answer < /dev/tty
+    [[ "$log_enabled_answer" =~ ^[Yy]$ ]] && NORA_LOG_ENABLED="true" || NORA_LOG_ENABLED="false"
+  elif [ "$NORA_LOG_ENABLED" = "false" ] || [ "$default_answer" = "no" ]; then
+    printf "  Enable log collection? (recommended) [y/N] "
+    read -r log_enabled_answer < /dev/tty
+    [[ "$log_enabled_answer" =~ ^[Yy]$ ]] && NORA_LOG_ENABLED="true" || NORA_LOG_ENABLED="false"
+  else
+    printf "  Enable log collection? (recommended) [Y/n] "
+    read -r log_enabled_answer < /dev/tty
+    [[ "$log_enabled_answer" =~ ^[Nn]$ ]] && NORA_LOG_ENABLED="false" || NORA_LOG_ENABLED="true"
+  fi
+
+  if [ "$NORA_LOG_ENABLED" = "true" ]; then
+    while true; do
+      printf "  Keep logs for how many days? [%s]: " "$NORA_LOG_RETENTION_CEILING_DAYS"
+      read -r log_days_answer < /dev/tty
+      log_days_answer="${log_days_answer:-$NORA_LOG_RETENTION_CEILING_DAYS}"
+      if [[ "$log_days_answer" =~ ^[0-9]+$ ]] && [ "$log_days_answer" -ge 1 ] && [ "$log_days_answer" -le 3650 ]; then
+        break
+      fi
+      warn "Enter a whole number of days between 1 and 3650."
+    done
+    NORA_LOG_RETENTION_CEILING_DAYS="$log_days_answer"
+    if [ -n "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
+      log_default_gb=$(( (NORA_LOG_LOCAL_MAX_BYTES + 1073741823) / 1073741824 ))
+    else
+      log_default_gb=$(( LOG_RECOMMENDED_BYTES / 1073741824 ))
+    fi
+    [ "$log_default_gb" -ge 1 ] || log_default_gb=1
+    while true; do
+      printf "  Max disk space for logs in GB [%s]: " "$log_default_gb"
+      read -r log_gb_answer < /dev/tty
+      log_gb_answer="${log_gb_answer:-$log_default_gb}"
+      if [[ "$log_gb_answer" =~ ^[0-9]+$ ]] && [ "$log_gb_answer" -ge 1 ]; then
+        break
+      fi
+      warn "Enter a whole number of GB (1 or more)."
+    done
+    NORA_LOG_LOCAL_MAX_BYTES=$(( log_gb_answer * 1073741824 ))
+    ok "Log collection enabled — kept ${NORA_LOG_RETENTION_CEILING_DAYS} days, local cap ${log_gb_answer} GB (collection pauses when full)"
+  else
+    if [ -z "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
+      NORA_LOG_LOCAL_MAX_BYTES="$LOG_RECOMMENDED_BYTES"
+      [ "$NORA_LOG_LOCAL_MAX_BYTES" -ge 1073741824 ] || NORA_LOG_LOCAL_MAX_BYTES=1073741824
+    fi
+    info "Log collection disabled — set NORA_LOG_ENABLED=true in .env to turn it on later"
+  fi
+}
+
 if [ "$SETUP_MODE" = "update" ]; then
   if [ ! -f "$ENV_FILE" ]; then
     error "Update mode requires an existing $ENV_FILE. Run setup without --update for first install."
@@ -1475,6 +1554,17 @@ if [ "$SETUP_MODE" = "update" ]; then
   ensure_agent_hub_hash_secret_env "$ENV_FILE"
   ensure_api_key_hash_secret_env "$ENV_FILE"
   ensure_backup_encryption_key_env "$ENV_FILE"
+  # First upgrade onto log collection: ask once, on a terminal. Unattended runs
+  # (cron, CI, the one-click upgrade) cannot ask, so they leave
+  # NORA_LOG_ENABLED unset and collection stays off until an admin decides.
+  if [ -z "$(read_env_value "$ENV_FILE" "NORA_LOG_ENABLED" "")" ] &&
+    [ -t 0 ] && [ -t 1 ] && [ "${NORA_SETUP_NONINTERACTIVE:-}" != "1" ]; then
+    header "Log Collection"
+    prompt_log_collection_settings no
+    set_env_value "$ENV_FILE" "NORA_LOG_ENABLED" "$NORA_LOG_ENABLED"
+    set_env_value "$ENV_FILE" "NORA_LOG_RETENTION_CEILING_DAYS" "$NORA_LOG_RETENTION_CEILING_DAYS"
+    set_env_value "$ENV_FILE" "NORA_LOG_LOCAL_MAX_BYTES" "$NORA_LOG_LOCAL_MAX_BYTES"
+  fi
   bash infra/ensure-log-env.sh "$ENV_FILE"
   materialize_compose_secret_files "$ENV_FILE"
   stamp_release_tracking_env "$ENV_FILE"
@@ -1754,73 +1844,7 @@ ok "Enabled backends: ${ENABLED_BACKENDS}"
 
 header "Log Collection"
 
-# Recommended local cap: the smaller of 10 GB and 20% of free disk (0 when
-# under 5 GB is free). Reconfigure keeps the operator's previous answers.
-LOG_RECOMMENDED_BYTES="$(bash infra/ensure-log-env.sh --recommend-bytes .)"
-NORA_LOG_ENABLED="$(read_env_value "$ENV_FILE" "NORA_LOG_ENABLED" "")"
-NORA_LOG_LOCAL_MAX_BYTES="$(read_env_value "$ENV_FILE" "NORA_LOG_LOCAL_MAX_BYTES" "")"
-[[ "$NORA_LOG_LOCAL_MAX_BYTES" =~ ^[0-9]+$ ]] || NORA_LOG_LOCAL_MAX_BYTES=""
-NORA_LOG_RETENTION_CEILING_DAYS="$(read_env_value "$ENV_FILE" "NORA_LOG_RETENTION_CEILING_DAYS" "30")"
-# Tracing is off unless an operator already turned it on; setup never asks.
-NORA_TRACES_ENABLED="$(read_env_value "$ENV_FILE" "NORA_TRACES_ENABLED" "false")"
-[ "$NORA_TRACES_ENABLED" = "true" ] || NORA_TRACES_ENABLED="false"
-[[ "$NORA_LOG_RETENTION_CEILING_DAYS" =~ ^[0-9]+$ ]] && [ "$NORA_LOG_RETENTION_CEILING_DAYS" -ge 1 ] ||
-  NORA_LOG_RETENTION_CEILING_DAYS="30"
-
-printf "  Nora can collect agent runtime and gateway logs and keep them for a set\n"
-printf "  number of days (workspaces can choose a shorter period in their settings).\n"
-printf "  Logs are stored encrypted on this server; S3, R2, or SSH storage can be\n"
-printf "  configured later in Admin → Log Storage (required for Kubernetes agents).\n\n"
-if [ "$LOG_RECOMMENDED_BYTES" -eq 0 ] && [ -z "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
-  warn "Less than 5 GB of free disk — log collection is not recommended here."
-  printf "  Enable log collection? [y/N] "
-  read -r log_enabled_answer < /dev/tty
-  [[ "$log_enabled_answer" =~ ^[Yy]$ ]] && NORA_LOG_ENABLED="true" || NORA_LOG_ENABLED="false"
-elif [ "$NORA_LOG_ENABLED" = "false" ]; then
-  printf "  Enable log collection? (recommended) [y/N] "
-  read -r log_enabled_answer < /dev/tty
-  [[ "$log_enabled_answer" =~ ^[Yy]$ ]] && NORA_LOG_ENABLED="true" || NORA_LOG_ENABLED="false"
-else
-  printf "  Enable log collection? (recommended) [Y/n] "
-  read -r log_enabled_answer < /dev/tty
-  [[ "$log_enabled_answer" =~ ^[Nn]$ ]] && NORA_LOG_ENABLED="false" || NORA_LOG_ENABLED="true"
-fi
-
-if [ "$NORA_LOG_ENABLED" = "true" ]; then
-  while true; do
-    printf "  Keep logs for how many days? [%s]: " "$NORA_LOG_RETENTION_CEILING_DAYS"
-    read -r log_days_answer < /dev/tty
-    log_days_answer="${log_days_answer:-$NORA_LOG_RETENTION_CEILING_DAYS}"
-    if [[ "$log_days_answer" =~ ^[0-9]+$ ]] && [ "$log_days_answer" -ge 1 ] && [ "$log_days_answer" -le 3650 ]; then
-      break
-    fi
-    warn "Enter a whole number of days between 1 and 3650."
-  done
-  NORA_LOG_RETENTION_CEILING_DAYS="$log_days_answer"
-  if [ -n "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
-    log_default_gb=$(( (NORA_LOG_LOCAL_MAX_BYTES + 1073741823) / 1073741824 ))
-  else
-    log_default_gb=$(( LOG_RECOMMENDED_BYTES / 1073741824 ))
-  fi
-  [ "$log_default_gb" -ge 1 ] || log_default_gb=1
-  while true; do
-    printf "  Max disk space for logs in GB [%s]: " "$log_default_gb"
-    read -r log_gb_answer < /dev/tty
-    log_gb_answer="${log_gb_answer:-$log_default_gb}"
-    if [[ "$log_gb_answer" =~ ^[0-9]+$ ]] && [ "$log_gb_answer" -ge 1 ]; then
-      break
-    fi
-    warn "Enter a whole number of GB (1 or more)."
-  done
-  NORA_LOG_LOCAL_MAX_BYTES=$(( log_gb_answer * 1073741824 ))
-  ok "Log collection enabled — kept ${NORA_LOG_RETENTION_CEILING_DAYS} days, local cap ${log_gb_answer} GB (collection pauses when full)"
-else
-  if [ -z "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
-    NORA_LOG_LOCAL_MAX_BYTES="$LOG_RECOMMENDED_BYTES"
-    [ "$NORA_LOG_LOCAL_MAX_BYTES" -ge 1073741824 ] || NORA_LOG_LOCAL_MAX_BYTES=1073741824
-  fi
-  info "Log collection disabled — set NORA_LOG_ENABLED=true in .env to turn it on later"
-fi
+prompt_log_collection_settings
 
 enabled_runtime_families=()
 [ "$OPENCLAW_RUNTIME_ENABLED" = "true" ] && enabled_runtime_families+=("openclaw")

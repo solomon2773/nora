@@ -886,6 +886,10 @@ function Get-RecommendedLogMaxBytes {
 # Fills in missing logging settings on update, never touching a value that is
 # already set. NORA_LOG_ENCRYPTION_KEY in particular may hold a rotation key
 # ring; replacing it would make every stored log segment unreadable.
+#
+# NORA_LOG_ENABLED is deliberately NOT written here: collection stores agent
+# output on disk, so an upgrade must not turn it on. Unset means "not decided
+# yet" — collection stays off and the admin dashboard asks.
 function Ensure-LogEnv {
     param([string]$EnvPath)
     if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENCRYPTION_KEY" -Default "")) {
@@ -900,23 +904,82 @@ function Ensure-LogEnv {
         Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_RETENTION_CEILING_DAYS" -Value "30"
         Write-Ok "NORA_LOG_RETENTION_CEILING_DAYS set to 30 (platform-wide maximum days logs are kept)"
     }
+    # Preset a safe disk cap so enabling collection later never starts with an
+    # unbounded budget. Never changes an existing value.
+    if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Default "")) {
+        $recommended = [math]::Max([int64](Get-RecommendedLogMaxBytes), [int64]1073741824)
+        Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Value ([string]$recommended)
+    }
     if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Default "")) {
-        $currentCap = Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Default ""
-        if ($currentCap) {
-            Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Value "true"
-            Write-Ok "Log collection enabled (existing NORA_LOG_LOCAL_MAX_BYTES=$currentCap kept)"
-        } else {
-            $recommended = Get-RecommendedLogMaxBytes
-            if ($recommended -gt 0) {
-                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Value "true"
-                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Value ([string]$recommended)
-                Write-Ok "Log collection enabled with a $([math]::Floor($recommended / 1048576)) MiB local disk cap"
-            } else {
-                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Value "false"
-                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Value "1073741824"
-                Write-Warn "Less than 5 GB free disk: log collection left off (1 GB cap preset). Set NORA_LOG_ENABLED=true in .env to turn it on."
-            }
+        Write-Info "Log collection is OFF until you turn it on (Admin -> Settings -> Log Storage, or NORA_LOG_ENABLED=true in .env)."
+    }
+}
+
+# Asks the three log-collection questions (on/off, days to keep, local disk
+# cap) and sets $script:NORA_LOG_ENABLED / NORA_LOG_RETENTION_CEILING_DAYS /
+# NORA_LOG_LOCAL_MAX_BYTES / NORA_TRACES_ENABLED for the caller to write out.
+# -DefaultAnswer is what a bare Enter gives: "yes" on a fresh install (the
+# recommended choice) or "no" on an upgrade, where nobody should start storing
+# logs by accident.
+function Read-LogCollectionSettings {
+    param([string]$DefaultAnswer = "yes")
+    # Reconfigure keeps the operator's previous answers as the defaults.
+    $gbBytes = [int64]1073741824
+    $logRecommendedBytes = Get-RecommendedLogMaxBytes
+    $script:NORA_LOG_ENABLED = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_ENABLED" -Default ""
+    $script:NORA_LOG_LOCAL_MAX_BYTES = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_LOCAL_MAX_BYTES" -Default ""
+    if ($NORA_LOG_LOCAL_MAX_BYTES -notmatch '^[0-9]+$') { $script:NORA_LOG_LOCAL_MAX_BYTES = "" }
+    $script:NORA_LOG_RETENTION_CEILING_DAYS = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_RETENTION_CEILING_DAYS" -Default "30"
+    # Tracing is off unless an operator already turned it on; setup never asks.
+    $script:NORA_TRACES_ENABLED = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_TRACES_ENABLED" -Default "false"
+    if ($NORA_TRACES_ENABLED -ne "true") { $script:NORA_TRACES_ENABLED = "false" }
+    if ($NORA_LOG_RETENTION_CEILING_DAYS -notmatch '^[0-9]+$' -or [int64]$NORA_LOG_RETENTION_CEILING_DAYS -lt 1) {
+        $script:NORA_LOG_RETENTION_CEILING_DAYS = "30"
+    }
+
+    Write-Host "  Nora can collect agent runtime and gateway logs and keep them for a set"
+    Write-Host "  number of days (workspaces can choose a shorter period in their settings)."
+    Write-Host "  Logs are stored encrypted on this server; S3, R2, or SSH storage can be"
+    Write-Host "  configured later in Admin → Log Storage (required for Kubernetes agents).`n"
+    if ($logRecommendedBytes -eq 0 -and -not $NORA_LOG_LOCAL_MAX_BYTES) {
+        Write-Warn "Less than 5 GB of free disk — log collection is not recommended here."
+        $logEnabledAnswer = Read-Host "  Enable log collection? [y/N]"
+        $script:NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
+    } elseif ($NORA_LOG_ENABLED -eq "false") {
+        $logEnabledAnswer = Read-Host "  Enable log collection? (recommended) [y/N]"
+        $script:NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
+    } else {
+        $logEnabledAnswer = Read-Host "  Enable log collection? (recommended) [Y/n]"
+        $script:NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Nn]$') { "false" } else { "true" }
+    }
+
+    if ($NORA_LOG_ENABLED -eq "true") {
+        while ($true) {
+            $logDaysAnswer = Read-Host "  Keep logs for how many days? [$NORA_LOG_RETENTION_CEILING_DAYS]"
+            if (-not $logDaysAnswer) { $logDaysAnswer = $NORA_LOG_RETENTION_CEILING_DAYS }
+            if ($logDaysAnswer -match '^[0-9]+$' -and [int64]$logDaysAnswer -ge 1 -and [int64]$logDaysAnswer -le 3650) { break }
+            Write-Warn "Enter a whole number of days between 1 and 3650."
         }
+        $script:NORA_LOG_RETENTION_CEILING_DAYS = [string]$logDaysAnswer
+        if ($NORA_LOG_LOCAL_MAX_BYTES) {
+            $logDefaultGb = [int64][math]::Ceiling([int64]$NORA_LOG_LOCAL_MAX_BYTES / $gbBytes)
+        } else {
+            $logDefaultGb = [int64][math]::Floor($logRecommendedBytes / $gbBytes)
+        }
+        if ($logDefaultGb -lt 1) { $logDefaultGb = 1 }
+        while ($true) {
+            $logGbAnswer = Read-Host "  Max disk space for logs in GB [$logDefaultGb]"
+            if (-not $logGbAnswer) { $logGbAnswer = [string]$logDefaultGb }
+            if ($logGbAnswer -match '^[0-9]+$' -and [int64]$logGbAnswer -ge 1) { break }
+            Write-Warn "Enter a whole number of GB (1 or more)."
+        }
+        $script:NORA_LOG_LOCAL_MAX_BYTES = [string]([int64]$logGbAnswer * $gbBytes)
+        Write-Ok "Log collection enabled — kept $NORA_LOG_RETENTION_CEILING_DAYS days, local cap $logGbAnswer GB (collection pauses when full)"
+    } else {
+        if (-not $NORA_LOG_LOCAL_MAX_BYTES) {
+            $script:NORA_LOG_LOCAL_MAX_BYTES = [string]([math]::Max([int64]$logRecommendedBytes, $gbBytes))
+        }
+        Write-Info "Log collection disabled — set NORA_LOG_ENABLED=true in .env to turn it on later"
     }
 }
 
@@ -1599,6 +1662,18 @@ if ($SETUP_MODE -eq "update") {
     Ensure-AgentHubHashSecretEnv -EnvPath $ENV_FILE
     Ensure-ApiKeyHashSecretEnv -EnvPath $ENV_FILE
     Ensure-BackupEncryptionKeyEnv -EnvPath $ENV_FILE
+    # First upgrade onto log collection: ask once, on a terminal. Unattended
+    # runs cannot ask, so they leave NORA_LOG_ENABLED unset and collection
+    # stays off until an admin decides.
+    if (-not (Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_ENABLED" -Default "") `
+        -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected `
+        -and $env:NORA_SETUP_NONINTERACTIVE -ne "1") {
+        Write-Header "Log Collection"
+        Read-LogCollectionSettings -DefaultAnswer "no"
+        Set-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_ENABLED" -Value $script:NORA_LOG_ENABLED
+        Set-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_RETENTION_CEILING_DAYS" -Value $script:NORA_LOG_RETENTION_CEILING_DAYS
+        Set-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_LOCAL_MAX_BYTES" -Value $script:NORA_LOG_LOCAL_MAX_BYTES
+    }
     Ensure-LogEnv -EnvPath $ENV_FILE
     Write-ComposeSecretFiles -EnvPath $ENV_FILE
     Update-ReleaseTrackingEnv -EnvPath $ENV_FILE
@@ -1872,64 +1947,7 @@ Write-Ok "Enabled backends: $ENABLED_BACKENDS"
 
 Write-Header "Log Collection"
 
-# Reconfigure keeps the operator's previous answers as the defaults.
-$gbBytes = [int64]1073741824
-$logRecommendedBytes = Get-RecommendedLogMaxBytes
-$NORA_LOG_ENABLED = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_ENABLED" -Default ""
-$NORA_LOG_LOCAL_MAX_BYTES = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_LOCAL_MAX_BYTES" -Default ""
-if ($NORA_LOG_LOCAL_MAX_BYTES -notmatch '^[0-9]+$') { $NORA_LOG_LOCAL_MAX_BYTES = "" }
-$NORA_LOG_RETENTION_CEILING_DAYS = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_RETENTION_CEILING_DAYS" -Default "30"
-# Tracing is off unless an operator already turned it on; setup never asks.
-$NORA_TRACES_ENABLED = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_TRACES_ENABLED" -Default "false"
-if ($NORA_TRACES_ENABLED -ne "true") { $NORA_TRACES_ENABLED = "false" }
-if ($NORA_LOG_RETENTION_CEILING_DAYS -notmatch '^[0-9]+$' -or [int64]$NORA_LOG_RETENTION_CEILING_DAYS -lt 1) {
-    $NORA_LOG_RETENTION_CEILING_DAYS = "30"
-}
-
-Write-Host "  Nora can collect agent runtime and gateway logs and keep them for a set"
-Write-Host "  number of days (workspaces can choose a shorter period in their settings)."
-Write-Host "  Logs are stored encrypted on this server; S3, R2, or SSH storage can be"
-Write-Host "  configured later in Admin → Log Storage (required for Kubernetes agents).`n"
-if ($logRecommendedBytes -eq 0 -and -not $NORA_LOG_LOCAL_MAX_BYTES) {
-    Write-Warn "Less than 5 GB of free disk — log collection is not recommended here."
-    $logEnabledAnswer = Read-Host "  Enable log collection? [y/N]"
-    $NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
-} elseif ($NORA_LOG_ENABLED -eq "false") {
-    $logEnabledAnswer = Read-Host "  Enable log collection? (recommended) [y/N]"
-    $NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
-} else {
-    $logEnabledAnswer = Read-Host "  Enable log collection? (recommended) [Y/n]"
-    $NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Nn]$') { "false" } else { "true" }
-}
-
-if ($NORA_LOG_ENABLED -eq "true") {
-    while ($true) {
-        $logDaysAnswer = Read-Host "  Keep logs for how many days? [$NORA_LOG_RETENTION_CEILING_DAYS]"
-        if (-not $logDaysAnswer) { $logDaysAnswer = $NORA_LOG_RETENTION_CEILING_DAYS }
-        if ($logDaysAnswer -match '^[0-9]+$' -and [int64]$logDaysAnswer -ge 1 -and [int64]$logDaysAnswer -le 3650) { break }
-        Write-Warn "Enter a whole number of days between 1 and 3650."
-    }
-    $NORA_LOG_RETENTION_CEILING_DAYS = [string]$logDaysAnswer
-    if ($NORA_LOG_LOCAL_MAX_BYTES) {
-        $logDefaultGb = [int64][math]::Ceiling([int64]$NORA_LOG_LOCAL_MAX_BYTES / $gbBytes)
-    } else {
-        $logDefaultGb = [int64][math]::Floor($logRecommendedBytes / $gbBytes)
-    }
-    if ($logDefaultGb -lt 1) { $logDefaultGb = 1 }
-    while ($true) {
-        $logGbAnswer = Read-Host "  Max disk space for logs in GB [$logDefaultGb]"
-        if (-not $logGbAnswer) { $logGbAnswer = [string]$logDefaultGb }
-        if ($logGbAnswer -match '^[0-9]+$' -and [int64]$logGbAnswer -ge 1) { break }
-        Write-Warn "Enter a whole number of GB (1 or more)."
-    }
-    $NORA_LOG_LOCAL_MAX_BYTES = [string]([int64]$logGbAnswer * $gbBytes)
-    Write-Ok "Log collection enabled — kept $NORA_LOG_RETENTION_CEILING_DAYS days, local cap $logGbAnswer GB (collection pauses when full)"
-} else {
-    if (-not $NORA_LOG_LOCAL_MAX_BYTES) {
-        $NORA_LOG_LOCAL_MAX_BYTES = [string]([math]::Max([int64]$logRecommendedBytes, $gbBytes))
-    }
-    Write-Info "Log collection disabled — set NORA_LOG_ENABLED=true in .env to turn it on later"
-}
+Read-LogCollectionSettings
 
 $enabledRuntimeFamilies = @()
 if ($OPENCLAW_RUNTIME_ENABLED) { $enabledRuntimeFamilies += "openclaw" }

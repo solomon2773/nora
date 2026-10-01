@@ -5,8 +5,13 @@
 #
 #   NORA_LOG_ENCRYPTION_KEY    64-char hex; encrypts stored log segments
 #   NORA_OTLP_INGEST_SECRET    64-char hex; signs per-agent trace-ingest keys
-#   NORA_LOG_ENABLED           true, or false when the disk is too small
 #   NORA_LOG_LOCAL_MAX_BYTES   smaller of 10 GiB and 20% of free disk
+#
+# NORA_LOG_ENABLED is deliberately NOT written here. Collection stores agent
+# output on disk, so an upgrade must not turn it on for the operator. Leaving
+# it unset means "not decided yet": collection stays off and the admin
+# dashboard asks. setup.sh --update asks interactively before this runs, and
+# fresh installs ask during setup, so both write an explicit value.
 #   NORA_LOG_RETENTION_CEILING_DAYS  30, the code default, so upgrades keep
 #                              today's behavior but the setting is visible
 #
@@ -128,21 +133,15 @@ if [ -z "$(env_value "$env_file" NORA_LOG_RETENTION_CEILING_DAYS)" ]; then
   echo "NORA_LOG_RETENTION_CEILING_DAYS set to 30 (platform-wide maximum days logs are kept)."
 fi
 
+# Preset a safe disk cap so enabling collection later (Admin -> Logging, or
+# NORA_LOG_ENABLED=true) never starts with an unbounded budget. Never changes
+# an existing value, and never writes NORA_LOG_ENABLED itself.
+if [ -z "$(env_value "$env_file" NORA_LOG_LOCAL_MAX_BYTES)" ]; then
+  recommended_cap="$(recommend_log_max_bytes "$(dirname "$env_file")")"
+  [ "$recommended_cap" -ge "$LOG_CAP_FLOOR_BYTES" ] || recommended_cap="$LOG_CAP_FLOOR_BYTES"
+  write_env_value "$env_file" NORA_LOG_LOCAL_MAX_BYTES "$recommended_cap"
+fi
+
 if [ -z "$(env_value "$env_file" NORA_LOG_ENABLED)" ]; then
-  current_cap="$(env_value "$env_file" NORA_LOG_LOCAL_MAX_BYTES)"
-  if [ -n "$current_cap" ]; then
-    write_env_value "$env_file" NORA_LOG_ENABLED true
-    echo "Log collection enabled (existing NORA_LOG_LOCAL_MAX_BYTES=${current_cap} kept)."
-  else
-    recommended_cap="$(recommend_log_max_bytes "$(dirname "$env_file")")"
-    if [ "$recommended_cap" -gt 0 ]; then
-      write_env_value "$env_file" NORA_LOG_ENABLED true
-      write_env_value "$env_file" NORA_LOG_LOCAL_MAX_BYTES "$recommended_cap"
-      echo "Log collection enabled with a $((recommended_cap / 1024 / 1024)) MiB local disk cap (NORA_LOG_LOCAL_MAX_BYTES)."
-    else
-      write_env_value "$env_file" NORA_LOG_ENABLED false
-      write_env_value "$env_file" NORA_LOG_LOCAL_MAX_BYTES "$LOG_CAP_FLOOR_BYTES"
-      echo "Less than 5 GiB free disk: log collection left off (1 GiB cap preset). Set NORA_LOG_ENABLED=true in .env to turn it on." >&2
-    fi
-  fi
+  echo "Log collection is OFF until you turn it on (Admin -> Settings -> Log Storage, or NORA_LOG_ENABLED=true in .env)."
 fi
