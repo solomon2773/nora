@@ -18,6 +18,55 @@
 
 const objectStorage = require("../../../agent-runtime/lib/objectStorage.ts");
 
+// Every log segment key lives under `logs/`, so a destination shared with
+// another consumer (managed backups in the same bucket, or the same SSH
+// remote path) never has its objects mistaken for log segments. Segments
+// written before the prefix existed keep their un-prefixed key — reads,
+// retention, and migration all go through `log_segments.storage_key`, so
+// they stay reachable until they expire.
+const LOG_KEY_PREFIX = "logs/";
+const SEGMENT_KEY_BODY = String.raw`(?:ws|user)_[^/]+/agent_[^/]+/(?:runtime|gateway)/.+\.ndjson\.zst\.enc`;
+const LOG_SEGMENT_KEY_RE = new RegExp(`^${LOG_KEY_PREFIX}${SEGMENT_KEY_BODY}$`);
+const LEGACY_LOG_SEGMENT_KEY_RE = new RegExp(`^${SEGMENT_KEY_BODY}$`);
+
+/** True for a key in the current `logs/`-prefixed segment layout. */
+function isLogSegmentKey(key) {
+  return LOG_SEGMENT_KEY_RE.test(String(key || ""));
+}
+
+/** True for a segment key written before the `logs/` prefix existed. */
+function isLegacyLogSegmentKey(key) {
+  return LEGACY_LOG_SEGMENT_KEY_RE.test(String(key || ""));
+}
+
+// The fields that identify WHERE a driver keeps objects (not how it
+// authenticates). Two configs with the same backend but a different bucket
+// or remote path are different destinations.
+const LOCATION_FIELDS = {
+  local: ["localPath"],
+  s3: ["bucket", "endpoint"],
+  r2: ["bucket", "endpoint"],
+  ssh: ["sshHost", "sshPort", "sshRemotePath"],
+};
+
+/**
+ * True when a `log_segments` row's recorded destination (its
+ * `storage_backend` + `storage_config` snapshot) is the same physical
+ * location as `config`. A row whose snapshot can't be matched — a different
+ * backend, a different bucket/path, or a missing snapshot — is NOT treated as
+ * living here.
+ */
+function isSameLogStorageLocation(rowBackend, rowConfig, config) {
+  const row = objectStorage.normalizeStorageConfig({
+    ...(rowConfig || {}),
+    storageBackend: rowBackend || "local",
+  });
+  const current = objectStorage.normalizeStorageConfig(config || {});
+  if (row.storageBackend !== current.storageBackend) return false;
+  const fields = LOCATION_FIELDS[current.storageBackend] || [];
+  return fields.every((field) => String(row[field] ?? "") === String(current[field] ?? ""));
+}
+
 // Lazy: backend-api/db.ts's own internal requires (./lib/connectionConfig,
 // etc.) resolve fine under `tsx worker.ts` (production) but not under plain
 // `node --test` (this package's actual test runner — see package.json),
@@ -299,4 +348,8 @@ module.exports = {
   storageConfigForSegment,
   logStorageConfigSnapshot,
   assertDriverSupportsTargets,
+  LOG_KEY_PREFIX,
+  isLogSegmentKey,
+  isLegacyLogSegmentKey,
+  isSameLogStorageLocation,
 };

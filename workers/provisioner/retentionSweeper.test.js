@@ -137,12 +137,18 @@ function fakeDb({
         return { rows: [] };
       }
 
-      if (sql.includes("SELECT id, storage_key FROM log_segments WHERE storage_key LIKE")) {
+      if (sql.includes("SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE storage_key LIKE")) {
         const pattern = String(params[0] || "%").replace(/%$/, "");
         const rows = segments
           .filter((s) => s.storage_key.startsWith(pattern))
-          .map(({ id, storage_key }) => ({ id, storage_key }));
+          .map(({ id, storage_key, storage_backend, storage_config }) => ({ id, storage_key, storage_backend, storage_config }));
         return { rows };
+      }
+
+      if (sql.includes("SELECT 1 FROM log_segments WHERE storage_key NOT LIKE")) {
+        const pattern = String(params[0]).replace(/%$/, "");
+        const match = segments.find((s) => !s.storage_key.startsWith(pattern));
+        return { rows: match ? [{ "?column?": 1 }] : [] };
       }
 
       if (sql.includes("DELETE FROM agent_spans")) {
@@ -634,6 +640,150 @@ test("reconciliation does not delete an object tracked in log_segment_legacy_cop
   // And since the object DOES exist in the bucket listing, the log_segments
   // row is not dangling either.
   assert.equal(result.removedDanglingRows, 0);
+});
+
+// ── Shared destinations: reconciliation never touches non-log objects ─────
+
+test("reconciliation never deletes a non-log object sharing the destination (e.g. a backup archive)", async () => {
+  const db = fakeDb({ segments: [] });
+  const now = Date.parse("2026-06-01T00:00:00.000Z");
+  const old = new Date(now - 60 * 60 * 1000).toISOString();
+  const objects = [
+    { key: "agents/agent-1.nora-backup.tgz", size: 100, lastModified: old },
+    { key: "logs/backup-notes.txt", size: 100, lastModified: old },
+    { key: "logs/ws_ws-1/agent_a/runtime/2026-05-31/0000-0015.ndjson.zst.enc", size: 100, lastModified: old },
+  ];
+  const deleteObjs = fakeDeleteStorageObjects();
+
+  const result = await reconcileStorage("", {
+    db,
+    listStorageObjects: async () => objects,
+    storageConfig: {},
+    deleteStorageObjects: deleteObjs,
+    now: () => now,
+  });
+
+  assert.equal(result.deletedOrphans, 1);
+  assert.deepEqual(deleteObjs.calls[0], [
+    "logs/ws_ws-1/agent_a/runtime/2026-05-31/0000-0015.ndjson.zst.enc",
+  ]);
+});
+
+test("daily reconciliation lists only logs/ when no pre-prefix segments remain", async () => {
+  const db = fakeDb({
+    segments: [{ id: "seg-1", storage_key: "logs/ws_ws-1/agent_a/runtime/x.ndjson.zst.enc", ts_to: "x" }],
+  });
+  const listedPrefixes = [];
+  const sweeper = startRetentionSweeper({
+    db,
+    setIntervalFn: () => ({ unref() {} }),
+    clearIntervalFn: () => {},
+    storageConfig: {},
+    listStorageObjects: async (prefix) => {
+      listedPrefixes.push(prefix);
+      return [];
+    },
+    deleteStorageObjects: fakeDeleteStorageObjects(),
+    logger: { warn() {}, error() {} },
+  });
+  try {
+    await sweeper.runDailyReconcileNow();
+  } finally {
+    sweeper.stop();
+  }
+
+  assert.deepEqual(listedPrefixes, ["logs/"]);
+});
+
+test("daily reconciliation still cleans pre-prefix segments, touching only legacy-shaped keys", async () => {
+  const now = Date.parse("2026-06-01T00:00:00.000Z");
+  const old = new Date(now - 60 * 60 * 1000).toISOString();
+  const db = fakeDb({
+    segments: [{ id: "seg-legacy", storage_key: "ws_ws-1/agent_a/runtime/kept.ndjson.zst.enc", ts_to: "x" }],
+  });
+  const rootObjects = [
+    { key: "ws_ws-1/agent_a/runtime/kept.ndjson.zst.enc", size: 1, lastModified: old },
+    { key: "ws_ws-1/agent_a/runtime/orphan.ndjson.zst.enc", size: 1, lastModified: old },
+    { key: "installation/2026-05-31.nora-backup.tgz", size: 1, lastModified: old },
+    { key: "logs/ws_ws-1/agent_a/runtime/new.ndjson.zst.enc", size: 1, lastModified: old },
+  ];
+  const listedPrefixes = [];
+  const deleteObjs = fakeDeleteStorageObjects();
+  const sweeper = startRetentionSweeper({
+    db,
+    setIntervalFn: () => ({ unref() {} }),
+    clearIntervalFn: () => {},
+    storageConfig: {},
+    listStorageObjects: async (prefix) => {
+      listedPrefixes.push(prefix);
+      return prefix === "logs/" ? [] : rootObjects;
+    },
+    deleteStorageObjects: deleteObjs,
+    now: () => now,
+    logger: { warn() {}, error() {} },
+  });
+  try {
+    await sweeper.runDailyReconcileNow();
+  } finally {
+    sweeper.stop();
+  }
+
+  assert.deepEqual(listedPrefixes, ["logs/", ""]);
+  assert.deepEqual(deleteObjs.calls, [["ws_ws-1/agent_a/runtime/orphan.ndjson.zst.enc"]]);
+  assert.deepEqual(db.deletedSegmentIds, [], "the legacy segment's object exists, so its row is kept");
+});
+
+// ── Dangling rows: only rows at the destination just listed ───────────────
+
+test("reconciliation keeps rows for segments a running migration hasn't copied yet", async () => {
+  const db = fakeDb({
+    segments: [
+      // Not yet migrated: still recorded on the OLD backend.
+      { id: "seg-old", storage_key: "logs/ws_ws-1/agent_a/runtime/a.ndjson.zst.enc", storage_backend: "local", storage_config: {} },
+      // Already migrated to the current destination, but its object is gone.
+      {
+        id: "seg-new",
+        storage_key: "logs/ws_ws-1/agent_a/runtime/b.ndjson.zst.enc",
+        storage_backend: "s3",
+        storage_config: { storageBackend: "s3", bucket: "logs-new" },
+      },
+    ],
+  });
+
+  const result = await reconcileStorage("logs/", {
+    db,
+    listStorageObjects: async () => [],
+    storageConfig: { storageBackend: "s3", bucket: "logs-new" },
+    deleteStorageObjects: fakeDeleteStorageObjects(),
+    logger: { warn() {} },
+  });
+
+  assert.equal(result.removedDanglingRows, 1);
+  assert.deepEqual(db.deletedSegmentIds, ["seg-new"]);
+});
+
+test("reconciliation keeps rows left in a previous bucket of the same backend", async () => {
+  const db = fakeDb({
+    segments: [
+      {
+        id: "seg-a",
+        storage_key: "logs/ws_ws-1/agent_a/runtime/a.ndjson.zst.enc",
+        storage_backend: "s3",
+        storage_config: { storageBackend: "s3", bucket: "logs-old" },
+      },
+    ],
+  });
+
+  const result = await reconcileStorage("logs/", {
+    db,
+    listStorageObjects: async () => [],
+    storageConfig: { storageBackend: "s3", bucket: "logs-new" },
+    deleteStorageObjects: fakeDeleteStorageObjects(),
+    logger: { warn() {} },
+  });
+
+  assert.equal(result.removedDanglingRows, 0);
+  assert.deepEqual(db.deletedSegmentIds, []);
 });
 
 // ── startRetentionSweeper cadence (item 3) ────────────────────────────────

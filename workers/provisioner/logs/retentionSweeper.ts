@@ -633,30 +633,43 @@ async function deleteLogsByAgentAndRange(agentId, from, to, actor, deps = {}) {
  * so without this check, reconciliation would delete every kept copy on its
  * very first run.
  *
+ * Only keys shaped like a log segment are ever considered (`deps.keyFilter`,
+ * defaulting to the current or legacy segment layout): the destination may be
+ * shared with managed backups, and anything else listed there must never be
+ * treated as an orphan.
+ *
  * @param {string} [prefix] - Storage key prefix to scope both the LIST call
- *   and the index comparison to (e.g. a single workspace's `ws_<id>/`).
- *   Omit to reconcile the whole installation.
+ *   and the index comparison to (e.g. a single workspace's
+ *   `logs/ws_<id>/`). Defaults to the installation's whole `logs/` tree.
  * @param {Object} [deps]
  * @returns {Promise<{deletedOrphans: number, removedDanglingRows: number}>}
  */
-async function reconcileStorage(prefix = "", deps = {}) {
+async function reconcileStorage(prefix = logStorageConfigModule.LOG_KEY_PREFIX, deps = {}) {
   const db = lazyDb(deps);
   const list = deps.listStorageObjects || objectStorage.listStorageObjects;
   const deleteObjs = deps.deleteStorageObjects || objectStorage.deleteStorageObjects;
   const resolveConfig = deps.logStorageConfig || logStorageConfigModule.logStorageConfig;
+  const keyFilter =
+    deps.keyFilter ||
+    ((key) =>
+      logStorageConfigModule.isLogSegmentKey(key) ||
+      logStorageConfigModule.isLegacyLogSegmentKey(key));
   const logger = deps.logger || console;
   const now = deps.now ? deps.now() : Date.now();
   const flushIntervalMs = deps.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
 
   const config = deps.storageConfig || (await resolveConfig());
-  const objects = (await list(prefix, config)) || [];
+  const objects = ((await list(prefix, config)) || []).filter((obj) => keyFilter(obj.key));
 
   const likePattern = prefix ? `${prefix}%` : "%";
   const segmentRows = (
-    await db.query(`SELECT id, storage_key FROM log_segments WHERE storage_key LIKE $1`, [
-      likePattern,
-    ])
-  ).rows;
+    await db.query(
+      `SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE storage_key LIKE $1`,
+      [likePattern],
+    )
+  ).rows.filter((row) => keyFilter(row.storage_key));
+  // Every indexed key protects its object from orphan deletion, wherever the
+  // row says the segment lives.
   const indexedKeys = new Set(segmentRows.map((r) => r.storage_key));
 
   // Item 8a: legacy copies share their parent segment's storage_key, so a
@@ -689,8 +702,17 @@ async function reconcileStorage(prefix = "", deps = {}) {
     deletedOrphans = outcome?.deleted?.length ?? orphanKeys.length;
   }
 
+  // A row can only be called dangling if it says its segment lives at the
+  // destination just listed. Rows on another backend or another bucket/path —
+  // not yet copied by a running migration, or left behind by a bucket change
+  // that started none — would otherwise look missing here and lose their
+  // index entry while the object still exists where the row points.
   const objectKeySet = new Set(objects.map((o) => o.key));
-  const danglingRows = segmentRows.filter((r) => !objectKeySet.has(r.storage_key));
+  const danglingRows = segmentRows.filter(
+    (r) =>
+      !objectKeySet.has(r.storage_key) &&
+      logStorageConfigModule.isSameLogStorageLocation(r.storage_backend, r.storage_config, config),
+  );
   let removedDanglingRows = 0;
   if (danglingRows.length > 0) {
     logger.warn(
@@ -706,6 +728,14 @@ async function reconcileStorage(prefix = "", deps = {}) {
   }
 
   return { deletedOrphans, removedDanglingRows };
+}
+
+async function hasLegacySegments(db) {
+  const { rows } = await db.query(
+    `SELECT 1 FROM log_segments WHERE storage_key NOT LIKE $1 LIMIT 1`,
+    [`${logStorageConfigModule.LOG_KEY_PREFIX}%`],
+  );
+  return rows.length > 0;
 }
 
 // ── startRetentionSweeper (Phase 5 item 3 / function list) ───────────────
@@ -760,7 +790,21 @@ function startRetentionSweeper(deps = {}) {
 
   async function runDailyReconcileOnce() {
     try {
-      await reconcileStorage(deps.reconcilePrefix ?? "", deps);
+      if (deps.reconcilePrefix !== undefined) {
+        await reconcileStorage(deps.reconcilePrefix, deps);
+        return;
+      }
+      await reconcileStorage(logStorageConfigModule.LOG_KEY_PREFIX, deps);
+      // Segments written before the `logs/` prefix sit at the destination
+      // root. Reconcile them only while any are still indexed, and only by
+      // their exact key shape — once they've all expired, the root (which
+      // may hold backup archives) is never listed again.
+      if (await hasLegacySegments(db)) {
+        await reconcileStorage("", {
+          ...deps,
+          keyFilter: logStorageConfigModule.isLegacyLogSegmentKey,
+        });
+      }
     } catch (error) {
       logger.error(`[retentionSweeper] daily reconciliation failed: ${error.message}`);
     }

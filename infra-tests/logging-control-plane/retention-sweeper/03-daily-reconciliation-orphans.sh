@@ -20,7 +20,7 @@ require_confirmation
 test_start "retention-sweeper" "03-daily-reconciliation-orphans"
 # Unlike the other scripts that only ASSUME 'local' (and just warn if it
 # isn't), this one's correctness genuinely depends on it:
-# `reconcileStorage('')` lists objects from whatever the CURRENT resolved
+# `reconcileStorage()` lists objects under `logs/` in whatever the CURRENT resolved
 # destination is, so if that's not 'local', it will list MinIO/S3 instead
 # and never see the orphan file this script plants on local disk at all —
 # not a "probably fine, just a heads up" situation, an outright wrong-target
@@ -29,7 +29,7 @@ test_start "retention-sweeper" "03-daily-reconciliation-orphans"
 # if this test fails in a way that doesn't make sense.
 warn_if_destination_not_local
 
-ORPHAN_KEY="user_infra-test-orphan/agent_infra-test-orphan/runtime/2020-01-01/0000-0000.ndjson.zst.enc"
+ORPHAN_KEY="logs/user_infra-test-orphan/agent_infra-test-orphan/runtime/2020-01-01/0000-0000.ndjson.zst.enc"
 ORPHAN_PATH="/var/lib/nora-logs/${ORPHAN_KEY}"
 
 cleanup() {
@@ -57,10 +57,10 @@ compose exec -T worker-provisioner sh -c "
 exists_before="$(compose exec -T worker-provisioner sh -c "[ -f '${ORPHAN_PATH}' ] && echo yes || echo no")"
 log_info "orphan file present before reconciliation: $exists_before"
 
-log_step "running reconcileStorage('') directly"
+log_step "running reconcileStorage() directly"
 reconcile_output="$(node_call "
   const { reconcileStorage } = require('./logs/retentionSweeper.ts');
-  reconcileStorage('')
+  reconcileStorage()
     .then((r) => { console.log('RECONCILE_OK ' + JSON.stringify(r)); process.exit(0); })
     .catch((e) => { console.error('RECONCILE_ERR ' + e.message); process.exit(1); });
 ")"

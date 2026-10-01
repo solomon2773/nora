@@ -245,11 +245,11 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
         }
         return { rows: [] };
       }
-      if (sql.includes("SELECT id, storage_key FROM log_segments WHERE storage_key LIKE")) {
+      if (sql.includes("SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE storage_key LIKE")) {
         const pattern = String(params[0] || "%").replace(/%$/, "");
         const rows = segments
           .filter((s) => s.storage_key.startsWith(pattern))
-          .map(({ id, storage_key }) => ({ id, storage_key }));
+          .map(({ id, storage_key, storage_backend, storage_config }) => ({ id, storage_key, storage_backend, storage_config }));
         return { rows };
       }
       if (sql.includes("DELETE FROM log_segments WHERE id = ANY")) {

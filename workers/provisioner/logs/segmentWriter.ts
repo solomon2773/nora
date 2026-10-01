@@ -226,8 +226,10 @@ function twoDigit(n) {
 }
 
 /**
- * `ws_<workspaceId>/agent_<id>/<stream>/<date>/<HHMM>-<HHMM>.ndjson.zst.enc`,
- * or `user_<userId>/...` when the agent belongs to no workspace.
+ * `logs/ws_<workspaceId>/agent_<id>/<stream>/<date>/<HHMM>-<HHMM>.ndjson.zst.enc`,
+ * or `logs/user_<userId>/...` when the agent belongs to no workspace. The
+ * `logs/` prefix keeps segments apart from anything else sharing the
+ * destination (see LOG_KEY_PREFIX in logStorageConfig.ts).
  *
  * Deliberately NOT a shared `unassigned/` pool: pooling every workspace-less
  * agent under one prefix would mix one noisy unowned agent's data into a
@@ -255,7 +257,10 @@ function buildStorageKey(tenant, agentId, stream, tsFrom, tsTo) {
   const date = from.toISOString().slice(0, 10);
   const hhmmFrom = `${twoDigit(from.getUTCHours())}${twoDigit(from.getUTCMinutes())}`;
   const hhmmTo = `${twoDigit(to.getUTCHours())}${twoDigit(to.getUTCMinutes())}`;
-  return `${prefix}/agent_${agentId}/${stream}/${date}/${hhmmFrom}-${hhmmTo}.ndjson.zst.enc`;
+  return (
+    `${logStorageConfigModule.LOG_KEY_PREFIX}${prefix}/agent_${agentId}/${stream}/` +
+    `${date}/${hhmmFrom}-${hhmmTo}.ndjson.zst.enc`
+  );
 }
 
 // ── checkLocalCapacity (Phase 3 item 22 / function list) ────────────────

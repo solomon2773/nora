@@ -137,7 +137,7 @@ test("buildStorageKey partitions by workspace, or by owning user when unassigned
     "2026-01-01T00:00:00.000Z",
     "2026-01-01T00:15:00.000Z",
   );
-  assert.equal(wsKey, "ws_ws-1/agent_agent-1/runtime/2026-01-01/0000-0015.ndjson.zst.enc");
+  assert.equal(wsKey, "logs/ws_ws-1/agent_agent-1/runtime/2026-01-01/0000-0015.ndjson.zst.enc");
 
   const userKey = buildStorageKey(
     { ownerUserId: "user-1" },
@@ -146,15 +146,15 @@ test("buildStorageKey partitions by workspace, or by owning user when unassigned
     "2026-01-01T00:00:00.000Z",
     "2026-01-01T00:15:00.000Z",
   );
-  assert.equal(userKey, "user_user-1/agent_agent-2/gateway/2026-01-01/0000-0015.ndjson.zst.enc");
+  assert.equal(userKey, "logs/user_user-1/agent_agent-2/gateway/2026-01-01/0000-0015.ndjson.zst.enc");
 });
 
 test("two unassigned owners never share a prefix", () => {
   const keyA = buildStorageKey({ ownerUserId: "user-a" }, "agent-x", "runtime", 0, 900000);
   const keyB = buildStorageKey({ ownerUserId: "user-b" }, "agent-x", "runtime", 0, 900000);
-  assert.notEqual(keyA.split("/")[0], keyB.split("/")[0]);
-  assert.ok(keyA.startsWith("user_user-a/"));
-  assert.ok(keyB.startsWith("user_user-b/"));
+  assert.notEqual(keyA.split("/")[1], keyB.split("/")[1]);
+  assert.ok(keyA.startsWith("logs/user_user-a/"));
+  assert.ok(keyB.startsWith("logs/user_user-b/"));
 });
 
 test("buildStorageKey throws rather than pooling into a shared unassigned/ prefix", () => {
@@ -417,7 +417,7 @@ test("round-trip: a written segment decrypts and decompresses to the exact input
     outputLines.map((l) => l.ord),
     [0, 1],
   );
-  assert.ok(key.startsWith("ws_ws-1/agent_agent-1/runtime/"));
+  assert.ok(key.startsWith("logs/ws_ws-1/agent_agent-1/runtime/"));
 });
 
 test("the index row's lines/bytes/ts_from/ts_to match the actual segment contents", async () => {
