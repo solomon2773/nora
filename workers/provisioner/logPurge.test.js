@@ -17,13 +17,17 @@ const silent = { log() {}, warn() {}, error() {} };
  * A fake db that backs `platform_settings.log_purge_job` with plain state and
  * hands out span deletions from a queue.
  */
-function fakeDb({ job = null, spanBatches = [], spanError = null } = {}) {
-  const state = { job, patches: [], spanBatches: [...spanBatches] };
+function fakeDb({ job = null, spanBatches = [], spanError = null, collectionEnabled = false } = {}) {
+  const state = { job, patches: [], spanBatches: [...spanBatches], collectionEnabled, collectionReads: 0 };
   return {
     state,
     async query(sql, params) {
       if (/SELECT log_purge_job FROM platform_settings/.test(sql)) {
         return { rows: [{ log_purge_job: state.job }] };
+      }
+      if (/SELECT log_collection_enabled/.test(sql)) {
+        state.collectionReads += 1;
+        return { rows: [{ log_collection_enabled: state.collectionEnabled }] };
       }
       if (/UPDATE platform_settings\s+SET log_purge_job = log_purge_job \|\|/.test(sql)) {
         const patch = JSON.parse(params[1]);
@@ -228,4 +232,31 @@ test("the runner is single-flight: overlapping ticks do not start two purges", a
   } finally {
     runner.stop();
   }
+});
+
+test("by default the safety check reads the setting fresh from the database, never a cached value", async () => {
+  // Collection is off in the database: the job must run, even if some cached
+  // gate elsewhere in the process still believes it is on.
+  const off = fakeDb({ job: pendingJob(), spanBatches: [0], collectionEnabled: false });
+  const ran = await runPendingPurge({
+    db: off,
+    logger: silent,
+    sweepExpiredSegmentsByScope: sweepFrom([0, 0]),
+    logEvent: async () => {},
+  });
+  assert.equal(ran.ran, true);
+  assert.equal(off.state.collectionReads, 1, "it must ask the database itself");
+  assert.equal(off.state.job.status, "completed");
+
+  // Collection really is on in the database: abandon rather than delete live logs.
+  const on = fakeDb({ job: pendingJob(), collectionEnabled: true });
+  let swept = false;
+  const abandoned = await runPendingPurge({
+    db: on,
+    logger: silent,
+    sweepExpiredSegmentsByScope: async () => { swept = true; return { deletedSegments: 0 }; },
+  });
+  assert.equal(abandoned.abandoned, true);
+  assert.equal(swept, false);
+  assert.equal(on.state.job.status, "failed");
 });

@@ -20,7 +20,7 @@
 
 const UNDEFINED_COLUMN = "42703";
 const UNDEFINED_TABLE = "42P01";
-const DEFAULT_TTL_MS = 10_000;
+const DEFAULT_TTL_MS = 5_000;
 
 function getDb() {
   return require("../../../backend-api/db.ts");

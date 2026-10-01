@@ -143,5 +143,5 @@ if [ -z "$(env_value "$env_file" NORA_LOG_LOCAL_MAX_BYTES)" ]; then
 fi
 
 if [ -z "$(env_value "$env_file" NORA_LOG_ENABLED)" ]; then
-  echo "Log collection is OFF until you turn it on (Admin -> Settings -> Log Storage, or NORA_LOG_ENABLED=true in .env)."
+  echo "Log collection is OFF until you turn it on (Admin -> Settings -> Log Collection, or NORA_LOG_ENABLED=true in .env)."
 fi

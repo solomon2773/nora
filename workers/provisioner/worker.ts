@@ -5809,7 +5809,7 @@ const isCollectionEnabled = () => logCollectionGate.isEnabled();
       console.log(
         state.decided
           ? `[worker] Log collection is off (${state.source}); retention sweeps still run.`
-          : "[worker] Log collection is off until an admin enables it (Admin -> Settings -> Log Storage, or NORA_LOG_ENABLED=true); retention sweeps still run.",
+          : "[worker] Log collection is off until an admin enables it (Admin -> Settings -> Log Collection, or NORA_LOG_ENABLED=true); retention sweeps still run.",
       );
       return;
     }
@@ -5836,7 +5836,8 @@ const logCollector = startLogCollector({ segmentWriter, isCollectionEnabled });
 // discarded first). A request survives a restart: the job state is in the
 // database and an interrupted job resumes.
 const { startLogPurgeRunner } = require("./logs/logPurge");
-startLogPurgeRunner({ segmentWriter, isCollectionEnabled });
+// (It reads the setting fresh itself — the cached gate can be a few seconds stale.)
+startLogPurgeRunner({ segmentWriter });
 
 // ── Gateway Log Collector (Logging Control Plane Phase 10) ────────────
 //
@@ -5860,6 +5861,25 @@ startLogPurgeRunner({ segmentWriter, isCollectionEnabled });
 // whichever collector registered first.
 const { startGatewayCollector } = require("./logs/gatewayCollector");
 const gatewayCollector = startGatewayCollector({ segmentWriter, isCollectionEnabled });
+
+// An admin flipping the setting should take effect within seconds, not at the
+// collectors' next 30-second reconcile tick — after "turn off", agent output
+// must stop being saved promptly. The gate re-reads the setting every few
+// seconds; when it changes, reconcile both collectors right away.
+let lastCollectionEnabled = null;
+const collectionWatcher = setInterval(async () => {
+  try {
+    const enabled = await isCollectionEnabled();
+    if (lastCollectionEnabled !== null && enabled !== lastCollectionEnabled) {
+      console.log(`[worker] Log collection turned ${enabled ? "on" : "off"}.`);
+      await Promise.allSettled([logCollector.reconcileStreams?.(), gatewayCollector.reconcileStreams?.()]);
+    }
+    lastCollectionEnabled = enabled;
+  } catch (error) {
+    console.warn(`[worker] Could not check the log collection setting: ${error.message}`);
+  }
+}, 5000);
+if (typeof collectionWatcher.unref === "function") collectionWatcher.unref();
 
 // ── Storage Migration Resume (Logging Control Plane Phase 5b item 10) ────
 //

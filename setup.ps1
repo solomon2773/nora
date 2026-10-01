@@ -911,7 +911,7 @@ function Ensure-LogEnv {
         Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Value ([string]$recommended)
     }
     if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Default "")) {
-        Write-Info "Log collection is OFF until you turn it on (Admin -> Settings -> Log Storage, or NORA_LOG_ENABLED=true in .env)."
+        Write-Info "Log collection is OFF until you turn it on (Admin -> Settings -> Log Collection, or NORA_LOG_ENABLED=true in .env)."
     }
 }
 

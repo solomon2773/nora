@@ -122,7 +122,7 @@ Collecting logs means Nora stores what your agents print, so it's **off until yo
 - **Upgrade with `setup.sh --update` or `setup.ps1`:** it asks the same three questions once, on a terminal, if no choice has been made yet. Pressing Enter means no.
 - **One-click upgrade from the dashboard:** it can't ask, so collection stays off. A banner in the admin dashboard says so until someone decides.
 
-Platform admins turn collection on or off in **Settings → Log Collection** in the admin dashboard. It takes effect within seconds, with no restart. It can also be set in `.env` (`NORA_LOG_ENABLED=true` or `false`, then restart `worker-provisioner`); once someone changes it in the dashboard, the dashboard setting wins and `.env` is ignored.
+Platform admins turn collection on or off in **Settings → Log Collection** in the admin dashboard. It takes effect within about ten seconds, with no restart. It can also be set in `.env` (`NORA_LOG_ENABLED=true` or `false`, then restart `worker-provisioner`); once someone changes it in the dashboard, the dashboard setting wins and `.env` is ignored.
 
 Turning collection on is refused if logs couldn't be saved (an unusable `NORA_LOG_ENCRYPTION_KEY`), or if you use local storage while Kubernetes is an enabled deploy target — pick S3, R2 or SSH storage first.
 

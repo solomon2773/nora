@@ -148,7 +148,7 @@ async function patchPurgeJob(jobId, patch, deps = {}) {
  *
  * @param {Object} deps
  * @param {Object} deps.segmentWriter - its buffers and parked uploads are discarded first.
- * @param {Function} [deps.isCollectionEnabled] - the job refuses to run while collection is on.
+ * @param {Function} [deps.isCollectionEnabled] - override for tests; by default the setting is read fresh, and the job refuses to run while collection is on.
  */
 async function runPendingPurge(deps = {}) {
   const db = deps.db || getDb();
@@ -163,7 +163,13 @@ async function runPendingPurge(deps = {}) {
 
   // The request is only valid while collection is off. If something turned it
   // back on, abandon the job rather than delete logs that are being written.
-  if (deps.isCollectionEnabled && (await deps.isCollectionEnabled())) {
+  // This is a safety check before destroying data, so it reads the setting
+  // fresh: the worker's cached gate can be a few seconds stale, and right after
+  // an admin turns collection off it would still say "on".
+  const isCollectionEnabled =
+    deps.isCollectionEnabled ||
+    (async () => (await require("./logCollectionState.ts").resolveLogCollectionState({ db })).enabled);
+  if (await isCollectionEnabled()) {
     await patchPurgeJob(job.id, {
       status: "failed",
       finishedAt: new Date().toISOString(),
