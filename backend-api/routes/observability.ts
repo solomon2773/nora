@@ -25,6 +25,7 @@
 //   6. Workspace log settings      — GET/PUT /workspaces/:id/log-settings (Phase 12)
 //   7. Traces                      — GET /traces, GET /traces/:traceId (Phase 13)
 
+const { queryArrayParam } = require("../lib/queryParams");
 const express = require("express");
 const { decrypt, encrypt, ensureEncryptionConfigured } = require("../crypto");
 const monitoring = require("../monitoring");
@@ -565,21 +566,6 @@ router.post(
 
 // ─── 4. Search (Phase 6) ────────────────────────────────────────────────
 
-/**
- * Accepts either a single query value or Express's array-parsed
- * `?streams=a&streams=b` / `?streams[]=a` form, plus a comma-separated
- * single value (`?streams=runtime,gateway`), for convenience across CLI and
- * dashboard callers.
- */
-function parseArrayParam(value) {
-  if (value === undefined || value === null) return undefined;
-  if (Array.isArray(value)) return value.flatMap((entry) => String(entry).split(","));
-  return String(value)
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
 function sendLogError(res, error) {
   const status = error.statusCode || 500;
   res.status(status).json({ error: error.message, ...(error.code ? { code: error.code } : {}) });
@@ -618,8 +604,8 @@ router.get(
         {
           workspaceId,
           agentId,
-          streams: parseArrayParam(req.query.streams),
-          levels: parseArrayParam(req.query.levels),
+          streams: queryArrayParam(req.query, "streams"),
+          levels: queryArrayParam(req.query, "levels"),
           from: req.query.from,
           to: req.query.to,
           q: typeof req.query.q === "string" ? req.query.q : undefined,
@@ -686,8 +672,8 @@ router.get(
         {
           workspaceId,
           agentId,
-          streams: parseArrayParam(req.query.streams),
-          levels: parseArrayParam(req.query.levels),
+          streams: queryArrayParam(req.query, "streams"),
+          levels: queryArrayParam(req.query, "levels"),
           from: req.query.from,
           to: req.query.to,
           q: typeof req.query.q === "string" ? req.query.q : undefined,
