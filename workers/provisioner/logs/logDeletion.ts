@@ -91,7 +91,8 @@ function lazyLogEvent(deps) {
 async function purgeAllLogsByColumn(column, value, deps = {}) {
   const db = lazyDb(deps);
   const deleteObjs = deps.deleteStorageObjects || objectStorage.deleteStorageObjects;
-  const resolveConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
+  const resolveConfig =
+    deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
   const deleteLegacyCopiesForSegments =
     deps.deleteLegacyCopiesForSegments || retentionSweeperModule.deleteLegacyCopiesForSegments;
   const groupKeysByConfig = deps.groupKeysByConfig || retentionSweeperModule.groupKeysByConfig;
@@ -122,7 +123,9 @@ async function purgeAllLogsByColumn(column, value, deps = {}) {
     await db.query(`DELETE FROM log_segments WHERE id = ANY($1::uuid[])`, [segmentIds]);
   }
 
-  const spanResult = await db.query(`DELETE FROM agent_spans WHERE ${column} = $1 RETURNING id`, [value]);
+  const spanResult = await db.query(`DELETE FROM agent_spans WHERE ${column} = $1 RETURNING id`, [
+    value,
+  ]);
   const deletedSpans = spanResult.rowCount ?? (spanResult.rows || []).length ?? 0;
 
   return {
@@ -182,7 +185,8 @@ async function snapshotDeletedLogOwner(kind, sourceId, actor, meta = {}, deps = 
     throw new Error(`Unknown deleted_log_owners kind: ${kind}`);
   }
   const db = lazyDb(deps);
-  const resolveLogRetention = deps.resolveLogRetention || retentionSweeperModule.resolveLogRetention;
+  const resolveLogRetention =
+    deps.resolveLogRetention || retentionSweeperModule.resolveLogRetention;
 
   // For "workspace", the workspace's OWN id is what workspace_log_settings
   // is keyed by. For "agent", it's whichever workspace (if any) the agent
@@ -196,7 +200,14 @@ async function snapshotDeletedLogOwner(kind, sourceId, actor, meta = {}, deps = 
        (kind, source_id, display_name, owner_user_id, retention_days, deleted_by_user_id)
      VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [kind, sourceId, meta.displayName || null, meta.ownerUserId || null, retentionDays, actor?.id || null],
+    [
+      kind,
+      sourceId,
+      meta.displayName || null,
+      meta.ownerUserId || null,
+      retentionDays,
+      actor?.id || null,
+    ],
   );
   return result.rows[0];
 }
@@ -236,7 +247,13 @@ async function purgeDeletedLogOwner(deletedLogOwnerId, actor, deps = {}) {
   await logEvent(
     "log_recovery_purged",
     `Admin ${actor?.id || "(unknown)"} purged kept logs for deleted ${owner.kind} ${owner.source_id}`,
-    { deletedLogOwnerId, kind: owner.kind, sourceId: owner.source_id, actorId: actor?.id, ...outcome },
+    {
+      deletedLogOwnerId,
+      kind: owner.kind,
+      sourceId: owner.source_id,
+      actorId: actor?.id,
+      ...outcome,
+    },
   );
 
   return { purged: true, ...outcome };
@@ -276,7 +293,8 @@ async function loadOrderedSegmentsForOwner(owner, deps) {
 
 async function readSegmentLines(segment, deps) {
   const getObj = deps.getStorageObject || objectStorage.getStorageObject;
-  const resolveConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
+  const resolveConfig =
+    deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
   const decryptSegment = deps.decryptSegment || segmentWriterModule.decryptSegment;
   const loadKeys = deps.loadLogEncryptionKeys || segmentWriterModule.loadLogEncryptionKeys;
   const zstdDecompressSync = deps.zstdDecompressSync || zlib.zstdDecompressSync;

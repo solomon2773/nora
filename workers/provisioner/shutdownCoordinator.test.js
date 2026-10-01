@@ -32,7 +32,10 @@ function loadWorkerForShutdownTests() {
   Module._load = function loadWorkerDependency(request, parent) {
     if (parent?.filename?.endsWith(workerSuffix)) {
       if (request === "bullmq") {
-        return { Worker: StubWorker, UnrecoverableError: class UnrecoverableError extends Error {} };
+        return {
+          Worker: StubWorker,
+          UnrecoverableError: class UnrecoverableError extends Error {},
+        };
       }
       if (request === "crypto") return originalLoad.apply(this, arguments);
       if (request === "ioredis") return function StubRedis() {};

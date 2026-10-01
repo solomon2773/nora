@@ -39,11 +39,18 @@ test("the undecided banner shows only for a known 'not decided' answer that has 
   assert.equal(shouldShowUndecidedBanner({ decided: false }, false), true);
   assert.equal(shouldShowUndecidedBanner({ decided: false }, true), false, "dismissed");
   assert.equal(shouldShowUndecidedBanner({ decided: true }, false), false, "already decided");
-  assert.equal(shouldShowUndecidedBanner(null, false), false, "no answer yet must not flash a banner");
+  assert.equal(
+    shouldShowUndecidedBanner(null, false),
+    false,
+    "no answer yet must not flash a banner",
+  );
 });
 
 test("describeCollectionError prefers the server's message", () => {
-  assert.equal(describeCollectionError({ error: "Logs are still being deleted." }, 409), "Logs are still being deleted.");
+  assert.equal(
+    describeCollectionError({ error: "Logs are still being deleted." }, 409),
+    "Logs are still being deleted.",
+  );
   assert.equal(describeCollectionError({}, 500), "Request failed (500)");
   assert.equal(describeCollectionError(null, 502), "Request failed (502)");
 });

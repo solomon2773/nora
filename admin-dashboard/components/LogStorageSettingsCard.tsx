@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Database,
-  Loader2,
-  RefreshCw,
-  Save,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, Database, Loader2, RefreshCw, Save } from "lucide-react";
 import { fetchWithAuth } from "../lib/api";
 import { useToast } from "./Toast";
 import { useI18n } from "../lib/i18n";
@@ -316,7 +309,9 @@ export default function LogStorageSettingsCard() {
         </span>
         <span className="text-xs font-semibold text-slate-500">
           {formatBytes(settings.capacity.usedBytes)}
-          {settings.capacity.limitBytes != null ? ` / ${formatBytes(settings.capacity.limitBytes)}` : ` (${t("no limit configured")})`}
+          {settings.capacity.limitBytes != null
+            ? ` / ${formatBytes(settings.capacity.limitBytes)}`
+            : ` (${t("no limit configured")})`}
         </span>
         {settings.storageBackendSource === "env" ? (
           <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
@@ -379,7 +374,9 @@ export default function LogStorageSettingsCard() {
                 label={t("Endpoint (optional)")}
                 value={form.s3Endpoint ?? settings.s3Endpoint}
                 onChange={(v) => update("s3Endpoint", v)}
-                placeholder={selectedBackend === "r2" ? "https://<account>.r2.cloudflarestorage.com" : ""}
+                placeholder={
+                  selectedBackend === "r2" ? "https://<account>.r2.cloudflarestorage.com" : ""
+                }
               />
               <div />
               <Field
@@ -489,8 +486,8 @@ export default function LogStorageSettingsCard() {
                 onChange={(e) => update("keepSourceCopies", e.target.checked)}
               />
               <span>
-                {t("Keep copies on the current destination")} ({BACKEND_LABELS[settings.storageBackend]})
-                {" — "}
+                {t("Keep copies on the current destination")} (
+                {BACKEND_LABELS[settings.storageBackend]}){" — "}
                 <span className="text-slate-500">
                   {t(
                     "otherwise each segment is deleted from the old destination once it's confirmed migrated",
@@ -534,7 +531,12 @@ function MigrationProgress({
 }) {
   const total = migration.segmentsTotal ?? 0;
   const migrated = migration.segmentsMigrated ?? 0;
-  const pct = total > 0 ? Math.min(100, Math.round((migrated / total) * 100)) : migration.status === "completed" ? 100 : 0;
+  const pct =
+    total > 0
+      ? Math.min(100, Math.round((migrated / total) * 100))
+      : migration.status === "completed"
+        ? 100
+        : 0;
 
   const tone =
     migration.status === "failed"
@@ -571,7 +573,11 @@ function MigrationProgress({
       <div className="h-2 w-full overflow-hidden rounded-full bg-white/70">
         <div
           className={`h-full rounded-full transition-all ${
-            migration.status === "failed" ? "bg-red-500" : migration.status === "paused" ? "bg-amber-500" : "bg-blue-600"
+            migration.status === "failed"
+              ? "bg-red-500"
+              : migration.status === "paused"
+                ? "bg-amber-500"
+                : "bg-blue-600"
           }`}
           style={{ width: `${pct}%` }}
         />
@@ -604,7 +610,9 @@ function MigrationProgress({
       {migration.startedAt ? (
         <p className="mt-2 text-[11px] text-slate-400">
           {t("Started")} {formatDateTime(migration.startedAt)}
-          {migration.completedAt ? ` · ${t("finished")} ${formatDateTime(migration.completedAt)}` : ""}
+          {migration.completedAt
+            ? ` · ${t("finished")} ${formatDateTime(migration.completedAt)}`
+            : ""}
         </p>
       ) : null}
     </div>
@@ -630,7 +638,9 @@ function Field({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</span>
+      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+        {label}
+      </span>
       <input
         type={type}
         value={value}
@@ -659,7 +669,9 @@ function TextAreaField({
 }) {
   return (
     <label className="flex flex-col gap-1 sm:col-span-2">
-      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">{label}</span>
+      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
+        {label}
+      </span>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}

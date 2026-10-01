@@ -110,10 +110,18 @@ export interface TraceWaterfallProps {
   error?: string | null;
 }
 
-export default function TraceWaterfall({ detail, loading = false, error = null }: TraceWaterfallProps) {
+export default function TraceWaterfall({
+  detail,
+  loading = false,
+  error = null,
+}: TraceWaterfallProps) {
   const layout = useMemo(() => {
     if (!detail) return [];
-    return computeWaterfallLayout(detail.spans as SpanRow[], detail.trace.startedAt, detail.trace.durationMs);
+    return computeWaterfallLayout(
+      detail.spans as SpanRow[],
+      detail.trace.startedAt,
+      detail.trace.durationMs,
+    );
   }, [detail]);
 
   const { inTrace, inWindowOnly } = useMemo(
@@ -183,10 +191,16 @@ export default function TraceWaterfall({ detail, loading = false, error = null }
           ) : (
             <>
               {inTrace.map((log, index) => (
-                <CorrelatedLogRowView key={`traced-${index}-${log.ts || log.observedTs}`} log={log} />
+                <CorrelatedLogRowView
+                  key={`traced-${index}-${log.ts || log.observedTs}`}
+                  log={log}
+                />
               ))}
               {inWindowOnly.map((log, index) => (
-                <CorrelatedLogRowView key={`window-${index}-${log.ts || log.observedTs}`} log={log} />
+                <CorrelatedLogRowView
+                  key={`window-${index}-${log.ts || log.observedTs}`}
+                  log={log}
+                />
               ))}
             </>
           )}

@@ -89,8 +89,8 @@ export default function SettingsTab({
             This agent's logs
           </p>
           <p className="mt-1 text-xs text-slate-500">
-            Choose whether to keep or delete this agent's runtime logs. There is no default —
-            pick one before deleting.
+            Choose whether to keep or delete this agent's runtime logs. There is no default — pick
+            one before deleting.
           </p>
           <div className="mt-3 flex gap-2">
             <button

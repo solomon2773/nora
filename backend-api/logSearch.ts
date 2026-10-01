@@ -162,10 +162,13 @@ function isAfterCursor(line, cursor, order) {
  * parsing is not the bottleneck" note.
  */
 function mergeSegments(lines, limit, cursor = null, order = "desc") {
-  const filtered = cursor ? lines.filter((line) => isAfterCursor(line, cursor, order)) : lines.slice();
+  const filtered = cursor
+    ? lines.filter((line) => isAfterCursor(line, cursor, order))
+    : lines.slice();
   filtered.sort((a, b) => compareLines(a, b, order));
   const page = filtered.slice(0, limit);
-  const nextCursor = page.length === limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
+  const nextCursor =
+    page.length === limit && page.length > 0 ? encodeCursor(page[page.length - 1]) : null;
   return { lines: page, nextCursor };
 }
 
@@ -385,7 +388,8 @@ async function enforceWorkspaceScope({ agentId, workspaceId, actor = null }, dep
 
 // ── Recency gap (item 7) ─────────────────────────────────────────────────
 
-const WORKER_INTERNAL_URL = process.env.NORA_WORKER_INTERNAL_URL || "http://worker-provisioner:4001";
+const WORKER_INTERNAL_URL =
+  process.env.NORA_WORKER_INTERNAL_URL || "http://worker-provisioner:4001";
 const WORKER_INTERNAL_TIMEOUT_MS = Number(process.env.NORA_WORKER_INTERNAL_TIMEOUT_MS) || 2000;
 const RECENT_LINES_UNAVAILABLE = "recent_lines_unavailable";
 
@@ -413,7 +417,9 @@ async function fetchWorkerBufferOverHttp(agentId, stream) {
       signal: controller.signal,
     });
     if (!response.ok) {
-      throw new Error(`worker-provisioner internal log-buffer request failed with ${response.status}`);
+      throw new Error(
+        `worker-provisioner internal log-buffer request failed with ${response.status}`,
+      );
     }
     const body = await response.json();
     return body && body.found ? body : null;
@@ -560,7 +566,9 @@ async function fetchSegmentLinesOrSkip(fetchFn, row, opts, state, logger) {
   } catch (error) {
     state.unreadable += 1;
     if (!state.firstError) state.firstError = error;
-    logger.warn?.(`[logSearch] skipping unreadable segment ${row.id} (${row.storage_key}): ${error.message}`);
+    logger.warn?.(
+      `[logSearch] skipping unreadable segment ${row.id} (${row.storage_key}): ${error.message}`,
+    );
     return [];
   }
 }
@@ -652,7 +660,13 @@ async function searchLogs(params, actor, deps = {}) {
     // only uses `dispatcher` for the S3/R2 fetch path).
     const results = await Promise.all(
       wave.map((row) =>
-        fetchSegmentLinesOrSkip(fetchFn, row, { q: params.q, levels, keyRing, dispatcher }, readState, deps.logger || console),
+        fetchSegmentLinesOrSkip(
+          fetchFn,
+          row,
+          { q: params.q, levels, keyRing, dispatcher },
+          readState,
+          deps.logger || console,
+        ),
       ),
     );
     wave.forEach((row, i) => {
@@ -708,7 +722,8 @@ async function searchLogs(params, actor, deps = {}) {
 
 // ── streamLogExport orchestration (Phase 7) ──────────────────────────────
 
-const EXPORT_MAX_RANGE_MS = Number(process.env.NORA_LOG_EXPORT_MAX_RANGE_MS) || DEFAULT_EXPORT_MAX_RANGE_MS;
+const EXPORT_MAX_RANGE_MS =
+  Number(process.env.NORA_LOG_EXPORT_MAX_RANGE_MS) || DEFAULT_EXPORT_MAX_RANGE_MS;
 
 function assertExportRangeWithinCap(from, to) {
   if (!from || !to) {
@@ -745,7 +760,8 @@ function assertExportRangeWithinCap(from, to) {
   }
 }
 
-const CSV_HEADER = "ts,observed_ts,ts_source,stream,level,message,trace_id,span_id,session_id,channel";
+const CSV_HEADER =
+  "ts,observed_ts,ts_source,stream,level,message,trace_id,span_id,session_id,channel";
 const CSV_FIELDS = [
   "ts",
   "observed_ts",

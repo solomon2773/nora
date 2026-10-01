@@ -82,21 +82,33 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
       }
 
       if (
-        sql.includes("SELECT id FROM storage_migration_jobs WHERE status IN ('running','paused') LIMIT 1")
+        sql.includes(
+          "SELECT id FROM storage_migration_jobs WHERE status IN ('running','paused') LIMIT 1",
+        )
       ) {
         const active = jobs.find((j) => j.status === "running" || j.status === "paused");
         return { rows: active ? [{ id: active.id }] : [] };
       }
 
-      if (sql.includes("SELECT id FROM storage_migration_jobs WHERE status IN ('running','paused')")) {
-        return { rows: jobs.filter((j) => j.status === "running" || j.status === "paused").map((j) => ({ id: j.id })) };
+      if (
+        sql.includes("SELECT id FROM storage_migration_jobs WHERE status IN ('running','paused')")
+      ) {
+        return {
+          rows: jobs
+            .filter((j) => j.status === "running" || j.status === "paused")
+            .map((j) => ({ id: j.id })),
+        };
       }
 
       if (sql.includes("SELECT id FROM storage_migration_jobs WHERE status = 'paused'")) {
         return { rows: jobs.filter((j) => j.status === "paused").map((j) => ({ id: j.id })) };
       }
 
-      if (sql.includes("SELECT id FROM storage_migration_jobs WHERE status = 'failed' ORDER BY started_at DESC LIMIT 1")) {
+      if (
+        sql.includes(
+          "SELECT id FROM storage_migration_jobs WHERE status = 'failed' ORDER BY started_at DESC LIMIT 1",
+        )
+      ) {
         const failed = jobs
           .filter((j) => j.status === "failed")
           .sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
@@ -116,7 +128,9 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
         return { rows: job ? [{ ...job }] : [] };
       }
 
-      if (sql.includes("SELECT id, from_backend, to_backend, keep_source, status, segments_total")) {
+      if (
+        sql.includes("SELECT id, from_backend, to_backend, keep_source, status, segments_total")
+      ) {
         if (jobs.length === 0) return { rows: [] };
         const latest = [...jobs].sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0];
         return { rows: [{ ...latest }] };
@@ -202,16 +216,25 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
         return { rows: [] };
       }
 
-      if (sql.includes("SELECT DISTINCT storage_backend FROM log_segment_legacy_copies WHERE ts_to > NOW()")) {
+      if (
+        sql.includes(
+          "SELECT DISTINCT storage_backend FROM log_segment_legacy_copies WHERE ts_to > NOW()",
+        )
+      ) {
         const now = Date.now();
         const backends = new Set(
-          legacyCopies.filter((lc) => new Date(lc.ts_to).getTime() > now).map((lc) => lc.storage_backend),
+          legacyCopies
+            .filter((lc) => new Date(lc.ts_to).getTime() > now)
+            .map((lc) => lc.storage_backend),
         );
         return { rows: [...backends].map((storage_backend) => ({ storage_backend })) };
       }
 
       // ── Delegated to retentionSweeper.ts (used by the integration test) ──
-      if (sql.includes("FROM log_segment_legacy_copies lc") && sql.includes("JOIN log_segments ls")) {
+      if (
+        sql.includes("FROM log_segment_legacy_copies lc") &&
+        sql.includes("JOIN log_segments ls")
+      ) {
         if (sql.includes("lc.log_segment_id = ANY")) {
           const ids = params[0] || [];
           const rows = legacyCopies
@@ -245,11 +268,20 @@ function fakeDb({ jobs = [], segments = [], legacyCopies = [] } = {}) {
         }
         return { rows: [] };
       }
-      if (sql.includes("SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE storage_key LIKE")) {
+      if (
+        sql.includes(
+          "SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE storage_key LIKE",
+        )
+      ) {
         const pattern = String(params[0] || "%").replace(/%$/, "");
         const rows = segments
           .filter((s) => s.storage_key.startsWith(pattern))
-          .map(({ id, storage_key, storage_backend, storage_config }) => ({ id, storage_key, storage_backend, storage_config }));
+          .map(({ id, storage_key, storage_backend, storage_config }) => ({
+            id,
+            storage_key,
+            storage_backend,
+            storage_config,
+          }));
         return { rows };
       }
       if (sql.includes("DELETE FROM log_segments WHERE id = ANY")) {
@@ -277,7 +309,8 @@ function fakeObjectStore(initial = {}) {
   const getStorageObject = async (key, config) => {
     getCalls.push({ key, backend: config.storageBackend });
     const value = store.get(`${config.storageBackend}:${key}`);
-    if (value === undefined) throw new Error(`fakeObjectStore: no object at ${config.storageBackend}:${key}`);
+    if (value === undefined)
+      throw new Error(`fakeObjectStore: no object at ${config.storageBackend}:${key}`);
     return value;
   };
   const putStorageObject = async (key, buffer, config) => {
@@ -289,7 +322,15 @@ function fakeObjectStore(initial = {}) {
     store.delete(`${config.storageBackend}:${key}`);
   };
 
-  return { store, getStorageObject, putStorageObject, deleteStorageObject, getCalls, putCalls, deleteCalls };
+  return {
+    store,
+    getStorageObject,
+    putStorageObject,
+    deleteStorageObject,
+    getCalls,
+    putCalls,
+    deleteCalls,
+  };
 }
 
 function fakeStorageConfigForSegment() {
@@ -309,7 +350,12 @@ function fakeLogEvent() {
   return fn;
 }
 
-function makeSegment({ id, backend = "local", bytes = 100, tsTo = "2026-01-01T00:00:00.000Z" } = {}) {
+function makeSegment({
+  id,
+  backend = "local",
+  bytes = 100,
+  tsTo = "2026-01-01T00:00:00.000Z",
+} = {}) {
   return {
     id,
     storage_key: `ws_ws-1/agent_a/runtime/${id}.ndjson.zst.enc`,
@@ -350,7 +396,9 @@ test.afterEach(() => {
 test("a segment is readable from its old location throughout its own migration, and from its new location immediately after", async () => {
   const segment = makeSegment({ id: "seg-01", backend: "local" });
   const db = fakeDb({ segments: [segment] });
-  const store = fakeObjectStore({ "local:ws_ws-1/agent_a/runtime/seg-01.ndjson.zst.enc": Buffer.from("hello") });
+  const store = fakeObjectStore({
+    "local:ws_ws-1/agent_a/runtime/seg-01.ndjson.zst.enc": Buffer.from("hello"),
+  });
   const deps = baseDeps({ db, store, toBackend: "s3" });
 
   // Wrap putStorageObject so that, WHILE the new-destination write is
@@ -371,11 +419,18 @@ test("a segment is readable from its old location throughout its own migration, 
   );
   const outcome = await migrateSegmentBatch(jobId, deps);
 
-  assert.ok(observedDuringPut, "old location must still be readable while the new write is in flight");
+  assert.ok(
+    observedDuringPut,
+    "old location must still be readable while the new write is in flight",
+  );
   assert.deepEqual(outcome, { done: false, status: "running", migrated: 1 });
 
   const newObject = await store.getStorageObject(segment.storage_key, { storageBackend: "s3" });
-  assert.equal(newObject.toString(), "hello", "new location must be readable immediately after migration");
+  assert.equal(
+    newObject.toString(),
+    "hello",
+    "new location must be readable immediately after migration",
+  );
 
   // Completion: the next batch call finds nothing left and marks the job done.
   const finalOutcome = await migrateSegmentBatch(jobId, deps);
@@ -432,7 +487,12 @@ test("keepSourceCopies: false deletes the old-destination object once the new co
   const store = fakeObjectStore({ [`local:${segment.storage_key}`]: Buffer.from("x") });
   const deps = baseDeps({ db, store, toBackend: "s3" });
 
-  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, false, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "local" },
+    { storageBackend: "s3" },
+    false,
+    deps,
+  );
   await migrateSegmentBatch(jobId, deps);
 
   assert.equal(store.deleteCalls.length, 1);
@@ -447,7 +507,12 @@ test("keepSourceCopies: true leaves the old-destination object in place and crea
   const store = fakeObjectStore({ [`local:${segment.storage_key}`]: Buffer.from("x") });
   const deps = baseDeps({ db, store, toBackend: "s3" });
 
-  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, true, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "local" },
+    { storageBackend: "s3" },
+    true,
+    deps,
+  );
   await migrateSegmentBatch(jobId, deps);
 
   assert.equal(store.deleteCalls.length, 0, "old object must be left in place");
@@ -466,7 +531,12 @@ test("a kept legacy copy's ts_to is snapshotted at migration time, independent o
   const store = fakeObjectStore({ [`local:${segment.storage_key}`]: Buffer.from("x") });
   const deps = baseDeps({ db, store, toBackend: "s3" });
 
-  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, true, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "local" },
+    { storageBackend: "s3" },
+    true,
+    deps,
+  );
   await migrateSegmentBatch(jobId, deps);
 
   // Nothing in storageMigration.ts reads a workspace's retention setting at
@@ -489,7 +559,12 @@ test("orphan reconciliation (Phase 5's reconcileStorage) does not delete a legac
   const store = fakeObjectStore({ [`local:${segment.storage_key}`]: Buffer.from("x") });
   const deps = baseDeps({ db, store, toBackend: "s3" });
 
-  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, true, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "local" },
+    { storageBackend: "s3" },
+    true,
+    deps,
+  );
   await migrateSegmentBatch(jobId, deps);
   // Segment now lives on s3; its OLD ("local") copy is tracked via
   // log_segment_legacy_copies and still physically present in `store`.
@@ -516,7 +591,11 @@ test("orphan reconciliation (Phase 5's reconcileStorage) does not delete a legac
     now: () => now,
   });
 
-  assert.equal(result.deletedOrphans, 0, "a tracked legacy copy must never be treated as an orphan");
+  assert.equal(
+    result.deletedOrphans,
+    0,
+    "a tracked legacy copy must never be treated as an orphan",
+  );
   assert.equal(deleteStorageObjectsCalls.length, 0);
 });
 
@@ -547,7 +626,9 @@ test("backendsRequiringRetainedCredentials reports a backend referenced by a run
 test("backendsRequiringRetainedCredentials reports a backend referenced by an unexpired legacy copy", async () => {
   const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
   const db = fakeDb({
-    legacyCopies: [{ legacy_id: "lc-1", log_segment_id: "seg-01", storage_backend: "ssh", ts_to: future }],
+    legacyCopies: [
+      { legacy_id: "lc-1", log_segment_id: "seg-01", storage_backend: "ssh", ts_to: future },
+    ],
   });
   const backends = await backendsRequiringRetainedCredentials({ db });
   assert.ok(backends.has("ssh"));
@@ -556,7 +637,9 @@ test("backendsRequiringRetainedCredentials reports a backend referenced by an un
 test("backendsRequiringRetainedCredentials does not report a backend whose only legacy copy already expired", async () => {
   const past = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const db = fakeDb({
-    legacyCopies: [{ legacy_id: "lc-1", log_segment_id: "seg-01", storage_backend: "ssh", ts_to: past }],
+    legacyCopies: [
+      { legacy_id: "lc-1", log_segment_id: "seg-01", storage_backend: "ssh", ts_to: past },
+    ],
   });
   const backends = await backendsRequiringRetainedCredentials({ db });
   assert.equal(backends.has("ssh"), false);
@@ -662,10 +745,19 @@ test("a running migration to local pauses (not failed) when usage crosses the ca
   let atCapacity = false;
   const deps = {
     ...baseDeps({ db, store, toBackend: "local" }),
-    checkLocalCapacity: async () => ({ usedBytes: atCapacity ? 1000 : 0, limitBytes: 1000, atCapacity }),
+    checkLocalCapacity: async () => ({
+      usedBytes: atCapacity ? 1000 : 0,
+      limitBytes: 1000,
+      atCapacity,
+    }),
   };
 
-  const { jobId } = await startStorageMigration({ storageBackend: "s3" }, { storageBackend: "local" }, false, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "s3" },
+    { storageBackend: "local" },
+    false,
+    deps,
+  );
 
   atCapacity = true; // usage crosses the cap before the batch runs
   const outcome = await migrateSegmentBatch(jobId, deps);
@@ -690,26 +782,49 @@ test("object-storage destinations (s3, r2) never trigger the capacity check or a
     },
   };
 
-  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, false, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "local" },
+    { storageBackend: "s3" },
+    false,
+    deps,
+  );
   const outcome = await migrateSegmentBatch(jobId, deps);
 
-  assert.equal(capacityChecked, false, "the local capacity gate must never run for an s3/r2 destination");
+  assert.equal(
+    capacityChecked,
+    false,
+    "the local capacity gate must never run for an s3/r2 destination",
+  );
   assert.equal(outcome.status, "running");
   assert.equal(outcome.migrated, 1);
 });
 
 test("a paused migration resumes automatically from its checkpoint once usage drops back under the cap", async () => {
-  const segments = [makeSegment({ id: "seg-01", backend: "s3" }), makeSegment({ id: "seg-02", backend: "s3" })];
+  const segments = [
+    makeSegment({ id: "seg-01", backend: "s3" }),
+    makeSegment({ id: "seg-02", backend: "s3" }),
+  ];
   const db = fakeDb({ segments });
-  const store = fakeObjectStore(Object.fromEntries(segments.map((s) => [`s3:${s.storage_key}`, Buffer.from("x")])));
+  const store = fakeObjectStore(
+    Object.fromEntries(segments.map((s) => [`s3:${s.storage_key}`, Buffer.from("x")])),
+  );
   let atCapacity = true;
   const deps = {
     ...baseDeps({ db, store, toBackend: "local" }),
     batchSize: 1,
-    checkLocalCapacity: async () => ({ usedBytes: atCapacity ? 1000 : 0, limitBytes: 1000, atCapacity }),
+    checkLocalCapacity: async () => ({
+      usedBytes: atCapacity ? 1000 : 0,
+      limitBytes: 1000,
+      atCapacity,
+    }),
   };
 
-  const { jobId } = await startStorageMigration({ storageBackend: "s3" }, { storageBackend: "local" }, false, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "s3" },
+    { storageBackend: "local" },
+    false,
+    deps,
+  );
   let outcome = await migrateSegmentBatch(jobId, deps);
   assert.equal(outcome.status, "paused");
   assert.equal(db.jobs[0].checkpoint, null, "nothing migrated while paused");
@@ -781,7 +896,10 @@ test("resumeStorageMigration picks up a paused job exactly like a running one", 
     ],
   });
   const store = fakeObjectStore();
-  const deps = { ...baseDeps({ db, store, toBackend: "local" }), checkLocalCapacity: async () => ({ usedBytes: 0, limitBytes: Infinity, atCapacity: false }) };
+  const deps = {
+    ...baseDeps({ db, store, toBackend: "local" }),
+    checkLocalCapacity: async () => ({ usedBytes: 0, limitBytes: Infinity, atCapacity: false }),
+  };
 
   const { resumed } = await resumeStorageMigration(deps);
   assert.equal(resumed, 1);
@@ -815,7 +933,11 @@ test("a worker restart while a job is paused does not resume real processing pas
   await resumeStorageMigration(deps);
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(db.jobs[0].status, "paused", "restart must never bypass the gate and resume blindly");
+  assert.equal(
+    db.jobs[0].status,
+    "paused",
+    "restart must never bypass the gate and resume blindly",
+  );
   assert.equal(store.putCalls.length, 0);
 });
 
@@ -880,11 +1002,14 @@ test("retryStorageMigration rejects with no failed job to retry", async () => {
   const db = fakeDb({ jobs: [] });
   const deps = baseDeps({ db, store: fakeObjectStore() });
 
-  await assert.rejects(() => retryStorageMigration(deps), (error) => {
-    assert.equal(error.code, "NO_FAILED_MIGRATION");
-    assert.equal(error.statusCode, 404);
-    return true;
-  });
+  await assert.rejects(
+    () => retryStorageMigration(deps),
+    (error) => {
+      assert.equal(error.code, "NO_FAILED_MIGRATION");
+      assert.equal(error.statusCode, 404);
+      return true;
+    },
+  );
 });
 
 test("retryStorageMigration rejects while another migration is running or paused", async () => {
@@ -907,11 +1032,14 @@ test("retryStorageMigration rejects while another migration is running or paused
   });
   const deps = baseDeps({ db, store: fakeObjectStore() });
 
-  await assert.rejects(() => retryStorageMigration(deps), (error) => {
-    assert.equal(error.code, "MIGRATION_ALREADY_RUNNING");
-    assert.equal(error.statusCode, 409);
-    return true;
-  });
+  await assert.rejects(
+    () => retryStorageMigration(deps),
+    (error) => {
+      assert.equal(error.code, "MIGRATION_ALREADY_RUNNING");
+      assert.equal(error.statusCode, 409);
+      return true;
+    },
+  );
 });
 
 test("retryStorageMigration flips the failed job back to running and finishes migrating the remaining segments, resuming from its checkpoint", async () => {
@@ -948,13 +1076,20 @@ test("a worker killed mid-batch leaves every already-moved segment credited, and
   // and stands in for a SIGKILL with a write that never returns on the third
   // — the batch never reaches its end-of-batch bookkeeping. The infra suite
   // reproduced this against a real worker: a completed job read 578/600.
-  const segments = ["seg-01", "seg-02", "seg-03", "seg-04", "seg-05"].map((id) => makeSegment({ id }));
+  const segments = ["seg-01", "seg-02", "seg-03", "seg-04", "seg-05"].map((id) =>
+    makeSegment({ id }),
+  );
   const db = fakeDb({ segments });
   const store = fakeObjectStore(
     Object.fromEntries(segments.map((s) => [`local:${s.storage_key}`, Buffer.from(s.id)])),
   );
   const deps = baseDeps({ db, store, toBackend: "s3" });
-  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, false, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "local" },
+    { storageBackend: "s3" },
+    false,
+    deps,
+  );
 
   let reachedThird;
   const reached = new Promise((resolve) => {
@@ -974,7 +1109,11 @@ test("a worker killed mid-batch leaves every already-moved segment credited, and
   await reached;
 
   const job = db.jobs.find((j) => j.id === jobId);
-  assert.equal(job.segments_migrated, 2, "the two segments moved before the kill are already credited");
+  assert.equal(
+    job.segments_migrated,
+    2,
+    "the two segments moved before the kill are already credited",
+  );
   assert.equal(job.checkpoint, null, "the checkpoint still advances only at a batch boundary");
 
   let outcome;
@@ -983,7 +1122,10 @@ test("a worker killed mid-batch leaves every already-moved segment credited, and
   } while (!outcome.done);
   assert.equal(outcome.status, "completed");
   assert.equal(job.segments_migrated, 5, "a completed job reports its exact total");
-  assert.ok(segments.every((s) => s.storage_backend === "s3"), "every segment reached the destination");
+  assert.ok(
+    segments.every((s) => s.storage_backend === "s3"),
+    "every segment reached the destination",
+  );
 });
 
 test("a segment retried after a later step failed is credited once, not once per attempt", async () => {
@@ -1000,7 +1142,12 @@ test("a segment retried after a later step failed is credited once, not once per
     if (deleteAttempts === 1) throw new Error("transient delete failure");
     return store.deleteStorageObject(key, config);
   };
-  const { jobId } = await startStorageMigration({ storageBackend: "local" }, { storageBackend: "s3" }, false, deps);
+  const { jobId } = await startStorageMigration(
+    { storageBackend: "local" },
+    { storageBackend: "s3" },
+    false,
+    deps,
+  );
 
   let outcome;
   do {
@@ -1011,5 +1158,9 @@ test("a segment retried after a later step failed is credited once, not once per
   assert.equal(outcome.status, "completed");
   assert.equal(deleteAttempts, 2, "the failed step was genuinely retried");
   assert.equal(job.segments_migrated, 1, "one segment, credited once");
-  assert.equal(store.store.has(`local:${segments[0].storage_key}`), false, "the retry still deleted the old copy");
+  assert.equal(
+    store.store.has(`local:${segments[0].storage_key}`),
+    false,
+    "the retry still deleted the old copy",
+  );
 });

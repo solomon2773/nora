@@ -44,7 +44,10 @@ function value(file, key) {
 }
 
 function count(file, key) {
-  return fs.readFileSync(file, "utf8").split("\n").filter((l) => l.startsWith(`${key}=`)).length;
+  return fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.startsWith(`${key}=`)).length;
 }
 
 function run(script, args, env = {}) {
@@ -205,7 +208,9 @@ test("update-release-env.sh adds log settings but never enables collection", asy
   const file = writeEnv(dir, [AGENT_HUB_SECRET]);
 
   await withSocket(dir, async (socketPath) => {
-    const result = run(UPDATE, [file, "v9.9.9", "deadbeef"], { NORA_DOCKER_SOCKET_PATH: socketPath });
+    const result = run(UPDATE, [file, "v9.9.9", "deadbeef"], {
+      NORA_DOCKER_SOCKET_PATH: socketPath,
+    });
     assert.equal(result.status, 0, result.stderr);
   });
 
@@ -222,7 +227,7 @@ test("update-release-env.sh writes DOCKER_GID 0 on macOS and the socket's gid el
     // On Docker Desktop for Mac the host-side gid of the socket symlink is
     // meaningless to containers; the socket is root:root (0) inside the VM.
     const mac = writeEnv(dir, ["DOCKER_GID=1", AGENT_HUB_SECRET], "mac.env");
-    const macBin = fakeBin(path.join(dir, "mac"), { uname: 'echo Darwin' });
+    const macBin = fakeBin(path.join(dir, "mac"), { uname: "echo Darwin" });
     const macRun = run(UPDATE, [mac, "v9.9.9", "deadbeef"], {
       NORA_DOCKER_SOCKET_PATH: socketPath,
       PATH: `${macBin}:${process.env.PATH}`,
@@ -231,7 +236,7 @@ test("update-release-env.sh writes DOCKER_GID 0 on macOS and the socket's gid el
     assert.equal(value(mac, "DOCKER_GID"), "0");
 
     const linux = writeEnv(dir, ["DOCKER_GID=1", AGENT_HUB_SECRET], "linux.env");
-    const linuxBin = fakeBin(path.join(dir, "linux"), { uname: 'echo Linux' });
+    const linuxBin = fakeBin(path.join(dir, "linux"), { uname: "echo Linux" });
     const linuxRun = run(UPDATE, [linux, "v9.9.9", "deadbeef"], {
       NORA_DOCKER_SOCKET_PATH: socketPath,
       PATH: `${linuxBin}:${process.env.PATH}`,

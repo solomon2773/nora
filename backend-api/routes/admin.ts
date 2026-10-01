@@ -2495,9 +2495,7 @@ router.get(
       const headers = ["ts", "observed_ts", "stream", "level", "message"];
       const csvLines = [
         headers.join(","),
-        ...collected.lines.map((line) =>
-          headers.map((header) => csvCell(line[header])).join(","),
-        ),
+        ...collected.lines.map((line) => headers.map((header) => csvCell(line[header])).join(",")),
       ];
       res.send(csvLines.join("\n"));
     } else {

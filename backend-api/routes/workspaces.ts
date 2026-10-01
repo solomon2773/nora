@@ -224,7 +224,10 @@ router.delete("/:id", requireWorkspaceRole("owner"), async (req, res, next) => {
     // workspace-row deletion with an async cleanup job — never awaited.
     if (deleteLogs) {
       logDeletion.deleteWorkspaceLogs(req.params.id).catch((error) => {
-        console.error(`Async log cleanup failed for deleted workspace ${req.params.id}:`, error.message);
+        console.error(
+          `Async log cleanup failed for deleted workspace ${req.params.id}:`,
+          error.message,
+        );
       });
     }
 

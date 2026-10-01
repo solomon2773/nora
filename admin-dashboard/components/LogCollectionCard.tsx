@@ -74,7 +74,8 @@ export default function LogCollectionCard() {
       setConfirmingDelete(false);
       await load();
       if (body.enabled) toast.success(t("Log collection turned on"));
-      else if (body.deleteExisting) toast.success(t("Log collection turned off — deleting collected logs"));
+      else if (body.deleteExisting)
+        toast.success(t("Log collection turned off — deleting collected logs"));
       else toast.success(t("Log collection turned off — existing logs kept"));
     } catch (error: any) {
       toast.error(error?.message || t("Save failed"));
@@ -93,7 +94,8 @@ export default function LogCollectionCard() {
 
   const headline = collectionHeadline(state);
   const stats = state?.stats;
-  const agentsLabel = (count: number) => `${formatCount(count)} ${count === 1 ? t("agent") : t("agents")}`;
+  const agentsLabel = (count: number) =>
+    `${formatCount(count)} ${count === 1 ? t("agent") : t("agents")}`;
   const purge = state?.purge;
   const keyProblem = state?.encryptionKeyProblem;
 
@@ -102,7 +104,10 @@ export default function LogCollectionCard() {
       ? { tone: "border-emerald-200 bg-emerald-50 text-emerald-700", label: t("Collecting") }
       : headline === "off"
         ? { tone: "border-slate-200 bg-slate-50 text-slate-600", label: t("Off") }
-        : { tone: "border-amber-200 bg-amber-50 text-amber-700", label: t("Not decided yet — off") };
+        : {
+            tone: "border-amber-200 bg-amber-50 text-amber-700",
+            label: t("Not decided yet — off"),
+          };
 
   return (
     <section className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
@@ -111,7 +116,9 @@ export default function LogCollectionCard() {
           <ScrollText size={22} />
         </div>
         <div className="flex-1">
-          <h2 className="text-lg font-black tracking-tight text-slate-950">{t("Log Collection")}</h2>
+          <h2 className="text-lg font-black tracking-tight text-slate-950">
+            {t("Log Collection")}
+          </h2>
           <p className="text-xs text-slate-500">
             {t(
               "Whether Nora collects agent runtime and gateway logs and stores them encrypted. Off until you turn it on.",
@@ -156,8 +163,8 @@ export default function LogCollectionCard() {
 
           {stats && hasCollectedLogs(stats) ? (
             <p className="mb-4 text-xs font-medium text-slate-600">
-              {t("Collected so far")}: {formatCount(stats.lines)} {t("lines")} · {formatBytes(stats.bytes)} ·{" "}
-              {agentsLabel(stats.agents)}
+              {t("Collected so far")}: {formatCount(stats.lines)} {t("lines")} ·{" "}
+              {formatBytes(stats.bytes)} · {agentsLabel(stats.agents)}
               {stats.oldest ? ` · ${t("oldest")} ${formatDateTime(stats.oldest)}` : ""}
             </p>
           ) : null}
@@ -175,7 +182,8 @@ export default function LogCollectionCard() {
           {purge && purgeInProgress(purge) ? (
             <p className="mb-4 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800">
               <Loader2 size={14} className="animate-spin" />
-              {t("Deleting collected logs…")} {formatCount(purge.segmentsDeleted || 0)} {t("segments removed so far")}
+              {t("Deleting collected logs…")} {formatCount(purge.segmentsDeleted || 0)}{" "}
+              {t("segments removed so far")}
             </p>
           ) : null}
           {purge && purge.status === "failed" ? (
@@ -204,7 +212,9 @@ export default function LogCollectionCard() {
                   : null}
               </p>
               <ul className="mt-2 list-disc pl-5 text-xs text-slate-600">
-                <li>{t("Keep: they stay searchable and expire on the normal retention schedule.")}</li>
+                <li>
+                  {t("Keep: they stay searchable and expire on the normal retention schedule.")}
+                </li>
                 <li>
                   {t(
                     "Delete: every agent's collected logs are removed permanently. This cannot be undone, and backups do not contain them.",
@@ -281,7 +291,9 @@ export default function LogCollectionCard() {
                 </button>
               )}
               {deleting ? (
-                <span className="text-xs text-slate-500">{t("Wait for the deletion to finish before turning it back on.")}</span>
+                <span className="text-xs text-slate-500">
+                  {t("Wait for the deletion to finish before turning it back on.")}
+                </span>
               ) : null}
             </div>
           ) : null}

@@ -37,7 +37,10 @@
 // exported.
 
 const db = require("./db");
-const { buildOpenClawConfigMergeCommand, buildRuntimeEnv } = require("../agent-runtime/lib/runtimeBootstrap");
+const {
+  buildOpenClawConfigMergeCommand,
+  buildRuntimeEnv,
+} = require("../agent-runtime/lib/runtimeBootstrap");
 const { resolveAgentRuntimeFamily } = require("../agent-runtime/lib/agentRuntimeFields");
 const otlpRoutes = require("./routes/otlp");
 
@@ -56,7 +59,9 @@ const PLATFORM_LOG_SETTINGS_DEFAULTS = Object.freeze({
  * leaves it off.
  */
 function isTracingEnabled(env = process.env) {
-  const raw = String(env.NORA_TRACES_ENABLED ?? "").trim().toLowerCase();
+  const raw = String(env.NORA_TRACES_ENABLED ?? "")
+    .trim()
+    .toLowerCase();
   if (!raw) return PLATFORM_LOG_SETTINGS_DEFAULTS.traces_enabled;
   return ["true", "1", "yes", "on"].includes(raw);
 }
@@ -442,9 +447,10 @@ async function applyTracingConfig(agent, deps = {}, options = {}) {
     // this throttle exists to prevent.
     const dbClient = lazyDb(deps);
     try {
-      await dbClient.query(`UPDATE agents SET tracing_capability_checked_at = NOW() WHERE id = $1`, [
-        agent.id,
-      ]);
+      await dbClient.query(
+        `UPDATE agents SET tracing_capability_checked_at = NOW() WHERE id = $1`,
+        [agent.id],
+      );
     } catch {
       // Best-effort -- worst case this attempt isn't throttled correctly,
       // no worse than before this change existed.

@@ -2942,7 +2942,9 @@ describe("Phase 5c: /admin/log-recovery", () => {
   it("GET /admin/log-recovery/:id/export?format=csv streams CSV", async () => {
     mockCollectAllRecoveredLogLines.mockResolvedValueOnce({
       owner: { id: "owner-1" },
-      lines: [{ ts: "2026-01-01T00:00:00.000Z", stream: "runtime", level: "INFO", message: "hi, there" }],
+      lines: [
+        { ts: "2026-01-01T00:00:00.000Z", stream: "runtime", level: "INFO", message: "hi, there" },
+      ],
       truncated: false,
     });
 

@@ -113,7 +113,9 @@ function decodeTraceRequest(buffer, contentType) {
 
 function flattenResourceSpans(normalized) {
   const out = [];
-  const resourceSpansList = Array.isArray(normalized?.resourceSpans) ? normalized.resourceSpans : [];
+  const resourceSpansList = Array.isArray(normalized?.resourceSpans)
+    ? normalized.resourceSpans
+    : [];
   for (const resourceSpans of resourceSpansList) {
     const resource = resourceSpans?.resource || { attributes: [] };
     const scopeSpansList = Array.isArray(resourceSpans?.scopeSpans) ? resourceSpans.scopeSpans : [];
@@ -267,16 +269,20 @@ function mapSpanToRow(span, resource, agent) {
   const resourceAttrs = attributesToObject(resource?.attributes || []);
 
   const model =
-    (typeof spanAttrs[GEN_AI_ATTR.REQUEST_MODEL] === "string" && spanAttrs[GEN_AI_ATTR.REQUEST_MODEL]) ||
-    (typeof spanAttrs[GEN_AI_ATTR.RESPONSE_MODEL] === "string" && spanAttrs[GEN_AI_ATTR.RESPONSE_MODEL]) ||
+    (typeof spanAttrs[GEN_AI_ATTR.REQUEST_MODEL] === "string" &&
+      spanAttrs[GEN_AI_ATTR.REQUEST_MODEL]) ||
+    (typeof spanAttrs[GEN_AI_ATTR.RESPONSE_MODEL] === "string" &&
+      spanAttrs[GEN_AI_ATTR.RESPONSE_MODEL]) ||
     null;
-  const provider = typeof spanAttrs[GEN_AI_ATTR.SYSTEM] === "string" ? spanAttrs[GEN_AI_ATTR.SYSTEM] : null;
+  const provider =
+    typeof spanAttrs[GEN_AI_ATTR.SYSTEM] === "string" ? spanAttrs[GEN_AI_ATTR.SYSTEM] : null;
   const tokensIn = toIntOrNull(spanAttrs[GEN_AI_ATTR.USAGE_INPUT_TOKENS]);
   const tokensOut = toIntOrNull(spanAttrs[GEN_AI_ATTR.USAGE_OUTPUT_TOKENS]);
   const costUsd = firstPresentCostAttr(spanAttrs);
 
   const kindRaw = typeof span?.kind === "string" ? span.kind : "SPAN_KIND_UNSPECIFIED";
-  const statusCodeRaw = typeof span?.status?.code === "string" ? span.status.code : "STATUS_CODE_UNSET";
+  const statusCodeRaw =
+    typeof span?.status?.code === "string" ? span.status.code : "STATUS_CODE_UNSET";
 
   return {
     trace_id: base64ToHex(span?.traceId),

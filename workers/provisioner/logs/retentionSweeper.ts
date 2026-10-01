@@ -215,7 +215,8 @@ async function deleteLegacyCopiesForSegments(segmentIds, deps = {}) {
   if (!segmentIds || segmentIds.length === 0) return { deletedCopies: 0, deletedObjects: 0 };
   const db = lazyDb(deps);
   const deleteObjs = deps.deleteStorageObjects || objectStorage.deleteStorageObjects;
-  const resolveConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
+  const resolveConfig =
+    deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
 
   const result = await db.query(
     `SELECT lc.id AS legacy_id, lc.storage_backend, lc.storage_config, ls.storage_key
@@ -228,7 +229,11 @@ async function deleteLegacyCopiesForSegments(segmentIds, deps = {}) {
   if (rows.length === 0) return { deletedCopies: 0, deletedObjects: 0 };
 
   const groups = await groupKeysByConfig(
-    rows.map((r) => ({ storage_key: r.storage_key, storage_backend: r.storage_backend, storage_config: r.storage_config })),
+    rows.map((r) => ({
+      storage_key: r.storage_key,
+      storage_backend: r.storage_backend,
+      storage_config: r.storage_config,
+    })),
     resolveConfig,
   );
   let deletedObjects = 0;
@@ -276,7 +281,8 @@ async function deleteLegacyCopiesForSegments(segmentIds, deps = {}) {
 async function sweepExpiredSegmentsByScope(whereSql, param, cutoff, deps = {}) {
   const db = lazyDb(deps);
   const deleteObjs = deps.deleteStorageObjects || objectStorage.deleteStorageObjects;
-  const resolveConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
+  const resolveConfig =
+    deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
 
   const params = param == null ? [cutoff] : [cutoff, param];
   // `deps.limit` bounds one pass so a very large store can be swept in batches
@@ -399,15 +405,26 @@ async function sweepExpiredSpansForDeletedOwner(kind, sourceId, cutoff, deps = {
 async function sweepDeletedLogOwners(deps = {}) {
   const db = lazyDb(deps);
   const now = deps.now ? deps.now() : Date.now();
-  const rows = (await db.query(`SELECT id, kind, source_id, retention_days FROM deleted_log_owners`))
-    .rows || [];
+  const rows =
+    (await db.query(`SELECT id, kind, source_id, retention_days FROM deleted_log_owners`)).rows ||
+    [];
 
   const summaries = [];
   for (const row of rows) {
     const retentionDays = await resolveLogRetention(null, deps, row.retention_days);
     const cutoff = daysAgoIso(retentionDays, now);
-    const segOutcome = await sweepExpiredSegmentsForDeletedOwner(row.kind, row.source_id, cutoff, deps);
-    const spanOutcome = await sweepExpiredSpansForDeletedOwner(row.kind, row.source_id, cutoff, deps);
+    const segOutcome = await sweepExpiredSegmentsForDeletedOwner(
+      row.kind,
+      row.source_id,
+      cutoff,
+      deps,
+    );
+    const spanOutcome = await sweepExpiredSpansForDeletedOwner(
+      row.kind,
+      row.source_id,
+      cutoff,
+      deps,
+    );
     summaries.push({ deletedLogOwnerId: row.id, ...segOutcome, ...spanOutcome });
   }
   return summaries;
@@ -466,11 +483,9 @@ const defaultStateStore = {
  * @returns {Promise<"ok"|"warning"|"halted">}
  */
 async function checkCapacityState(deps = {}) {
-  const limitBytes =
-    deps.limitBytes ?? (Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity);
+  const limitBytes = deps.limitBytes ?? (Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity);
   const warningRatio = deps.warningRatio ?? DEFAULT_WARNING_RATIO;
-  const usedBytes =
-    deps.usedBytes !== undefined ? deps.usedBytes : await localStorageUsage(deps);
+  const usedBytes = deps.usedBytes !== undefined ? deps.usedBytes : await localStorageUsage(deps);
   const logEvent = deps.logEventFn || lazyLogEvent(deps);
   const stateStore = deps.stateStore || defaultStateStore;
 
@@ -518,8 +533,7 @@ async function checkCapacityState(deps = {}) {
  * @returns {Promise<{usedBytes: number, limitBytes: number, state: string}>}
  */
 async function getCapacityStatus(deps = {}) {
-  const limitBytes =
-    deps.limitBytes ?? (Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity);
+  const limitBytes = deps.limitBytes ?? (Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity);
   const usedBytes = await localStorageUsage(deps);
   const stateStore = deps.stateStore || defaultStateStore;
   return { usedBytes, limitBytes, state: stateStore.get() };
@@ -558,7 +572,8 @@ async function deleteLogsByAgentAndRange(agentId, from, to, actor, deps = {}) {
 
   const db = lazyDb(deps);
   const deleteObjs = deps.deleteStorageObjects || objectStorage.deleteStorageObjects;
-  const resolveConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
+  const resolveConfig =
+    deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
   const logEvent = deps.logEventFn || lazyLogEvent(deps);
 
   const fromIso = new Date(from).toISOString();
@@ -723,10 +738,9 @@ async function reconcileStorage(prefix = logStorageConfigModule.LOG_KEY_PREFIX, 
         `from storage under prefix "${prefix}" — removing (a Postgres restore taken before the ` +
         `bucket's current state is the expected cause)`,
     );
-    await db.query(
-      `DELETE FROM log_segments WHERE id = ANY($1::uuid[])`,
-      [danglingRows.map((r) => r.id)],
-    );
+    await db.query(`DELETE FROM log_segments WHERE id = ANY($1::uuid[])`, [
+      danglingRows.map((r) => r.id),
+    ]);
     removedDanglingRows = danglingRows.length;
   }
 

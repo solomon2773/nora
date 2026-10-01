@@ -130,7 +130,10 @@ function normalizeJson(value, fallback) {
  */
 function resolveEnvLogStorageConfig(env = process.env) {
   return {
-    storageBackend: String(env.NORA_LOG_STORAGE || "local").trim().toLowerCase() || "local",
+    storageBackend:
+      String(env.NORA_LOG_STORAGE || "local")
+        .trim()
+        .toLowerCase() || "local",
     localPath: env.NORA_LOG_DIR || "/var/lib/nora-logs",
     bucket: env.NORA_LOG_S3_BUCKET || env.NORA_LOG_R2_BUCKET || "",
     region: env.NORA_LOG_S3_REGION || env.NORA_LOG_R2_REGION || "",
@@ -221,11 +224,13 @@ async function resolveLogStorageConfig(deps) {
         accessKeyId:
           safeDecrypt(row.log_storage_s3_access_key_id_encrypted, deps) || envConfig.accessKeyId,
         secretAccessKey:
-          safeDecrypt(row.log_storage_s3_secret_access_key_encrypted, deps) || envConfig.secretAccessKey,
+          safeDecrypt(row.log_storage_s3_secret_access_key_encrypted, deps) ||
+          envConfig.secretAccessKey,
         sessionToken: envConfig.sessionToken,
         sshPrivateKey:
           safeDecrypt(row.log_storage_ssh_private_key_encrypted, deps) || envConfig.sshPrivateKey,
-        sshPassword: safeDecrypt(row.log_storage_ssh_password_encrypted, deps) || envConfig.sshPassword,
+        sshPassword:
+          safeDecrypt(row.log_storage_ssh_password_encrypted, deps) || envConfig.sshPassword,
       }
     : envConfig;
   return objectStorage.normalizeStorageConfig(raw);
@@ -356,7 +361,9 @@ function logStorageConfigSnapshot(config = {}) {
  * scraping console output.
  */
 function assertDriverSupportsTargets(driver, enabledBackends = [], { warn = console.warn } = {}) {
-  const normalizedDriver = String(driver || "local").trim().toLowerCase();
+  const normalizedDriver = String(driver || "local")
+    .trim()
+    .toLowerCase();
   const includesK8s = Array.isArray(enabledBackends) && enabledBackends.includes("k8s");
   if (normalizedDriver === "local" && includesK8s) {
     warn(

@@ -117,9 +117,9 @@ describe("otlpDecode", () => {
   });
 
   test("malformed/truncated protobuf is rejected without throwing an uncaught exception", () => {
-    expect(() => decodeTraceRequest(Buffer.from([0xff, 0xff, 0xff]), "application/x-protobuf")).toThrow(
-      OtlpDecodeError,
-    );
+    expect(() =>
+      decodeTraceRequest(Buffer.from([0xff, 0xff, 0xff]), "application/x-protobuf"),
+    ).toThrow(OtlpDecodeError);
   });
 
   test("malformed JSON body is rejected gracefully", () => {
@@ -129,7 +129,9 @@ describe("otlpDecode", () => {
   });
 
   test("an unsupported content type is rejected gracefully", () => {
-    expect(() => decodeTraceRequest(Buffer.from("whatever"), "text/plain")).toThrow(OtlpDecodeError);
+    expect(() => decodeTraceRequest(Buffer.from("whatever"), "text/plain")).toThrow(
+      OtlpDecodeError,
+    );
   });
 });
 
@@ -271,7 +273,9 @@ describe("POST /otlp/v1/traces", () => {
 
   test("a payload whose resource claims a different workspace is still stored under the agent's real workspace", async () => {
     db.query.mockResolvedValueOnce({ rows: [{ workspace_id: "real-workspace" }] });
-    const body = encodeProtobuf(buildSampleRequestObject({ claimedWorkspaceId: "attacker-workspace" }));
+    const body = encodeProtobuf(
+      buildSampleRequestObject({ claimedWorkspaceId: "attacker-workspace" }),
+    );
 
     const res = await request(app)
       .post("/otlp/v1/traces")

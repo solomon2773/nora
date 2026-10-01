@@ -34,7 +34,9 @@ function extractFilename(contentDisposition, fallback) {
 function KindBadge({ kind }) {
   const tone = kind === "workspace" ? "bg-violet-50 text-violet-700" : "bg-blue-50 text-blue-700";
   return (
-    <span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${tone}`}>
+    <span
+      className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${tone}`}
+    >
       {kind}
     </span>
   );
@@ -167,7 +169,8 @@ function RecoveryEntry({ entry, onPurged }) {
               </p>
             </div>
             <p className="mt-1 text-xs font-medium text-slate-500">
-              Deleted {formatDateTime(entry.deleted_at)} · kept {formatCount(entry.retention_days)} day
+              Deleted {formatDateTime(entry.deleted_at)} · kept {formatCount(entry.retention_days)}{" "}
+              day
               {entry.retention_days === 1 ? "" : "s"} · id {formatShortId(entry.source_id, 12)}
             </p>
           </div>
@@ -303,8 +306,8 @@ export default function LogRecoveryPage() {
               Log recovery
             </h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
-              Logs kept when an agent or workspace was deleted with "keep logs" chosen. Preview
-              or export what was kept, or purge an entry to permanently reclaim its storage — there is
+              Logs kept when an agent or workspace was deleted with "keep logs" chosen. Preview or
+              export what was kept, or purge an entry to permanently reclaim its storage — there is
               no way back once purged.
             </p>
           </div>

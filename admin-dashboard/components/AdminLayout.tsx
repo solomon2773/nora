@@ -118,7 +118,11 @@ export default function AdminLayout({ children }) {
         const response = await fetch("/api/admin/log-collection");
         if (!response.ok) return;
         const payload = await response.json().catch(() => ({}));
-        if (active) setLogCollection({ enabled: Boolean(payload?.enabled), decided: Boolean(payload?.decided) });
+        if (active)
+          setLogCollection({
+            enabled: Boolean(payload?.enabled),
+            decided: Boolean(payload?.decided),
+          });
       } catch {
         // Same fallback posture as the loaders above.
       }
@@ -208,14 +212,17 @@ export default function AdminLayout({ children }) {
   // null-check is needed here for an unlimited destination.
   const showCapacityBanner = Boolean(
     logStorageCapacity &&
-      (logStorageCapacity.state === "warning" || logStorageCapacity.state === "halted") &&
-      !capacityBannerDismissed,
+    (logStorageCapacity.state === "warning" || logStorageCapacity.state === "halted") &&
+    !capacityBannerDismissed,
   );
   const showCollectionBanner = shouldShowUndecidedBanner(logCollection, collectionBannerDismissed);
   const capacityCritical = logStorageCapacity?.state === "halted";
   const capacityPercent =
     logStorageCapacity?.limitBytes != null && logStorageCapacity.limitBytes > 0
-      ? Math.min(100, Math.round((logStorageCapacity.usedBytes / logStorageCapacity.limitBytes) * 100))
+      ? Math.min(
+          100,
+          Math.round((logStorageCapacity.usedBytes / logStorageCapacity.limitBytes) * 100),
+        )
       : null;
 
   return (

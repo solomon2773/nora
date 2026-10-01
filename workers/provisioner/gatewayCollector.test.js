@@ -207,7 +207,9 @@ test("a source-kind transition (meta record) resets/updates the cursor for that 
     { type: "meta", sourceKind: "journal" },
     { level: "info", msg: "now in journal", ts: recentTs(1) },
   ];
-  const client = fakeGatewayClient([{ lines: records, cursor: "journal-cursor-1", sourceKind: "journal" }]);
+  const client = fakeGatewayClient([
+    { lines: records, cursor: "journal-cursor-1", sourceKind: "journal" },
+  ]);
   const cursorState = { currentSourceKind: "file", sourceCursors: new Map() };
 
   const result = await pollAgentGatewayLogs(agent, cursorState, {
@@ -220,7 +222,11 @@ test("a source-kind transition (meta record) resets/updates the cursor for that 
     logger: silentLogger(),
   });
 
-  assert.equal(result.appended, 2, "both lines around the transition must be written, none dropped");
+  assert.equal(
+    result.appended,
+    2,
+    "both lines around the transition must be written, none dropped",
+  );
   // The NEW kind's cursor was updated...
   assert.equal(db.cursors.get("agent-1:journal"), "journal-cursor-1");
   // ...and the OLD kind's cursor was left untouched.
@@ -244,7 +250,9 @@ test("log rotation occurring mid-poll does not drop any lines", async () => {
     { level: "info", msg: "post-rotation line 1", ts: recentTs(2) },
     { level: "info", msg: "post-rotation line 2", ts: recentTs(3) },
   ];
-  const client = fakeGatewayClient([{ lines: records, cursor: "post-rotation-cursor", sourceKind: "file" }]);
+  const client = fakeGatewayClient([
+    { lines: records, cursor: "post-rotation-cursor", sourceKind: "file" },
+  ]);
   const cursorState = { currentSourceKind: "file", sourceCursors: new Map() };
 
   const result = await pollAgentGatewayLogs(agent, cursorState, {
@@ -352,12 +360,14 @@ test("redaction masks a known secret pattern in a message body", () => {
 
 test("a Hermes agent (non-OpenClaw runtime family) is skipped entirely, without throwing or logging an error", async () => {
   const hermesAgent = agentRow({ id: "agent-hermes", runtime_family: "hermes" });
-  const db = fakeDb({ extra: (sql) => {
-    if (/FROM agents\s+WHERE status IN/.test(sql)) {
-      return { rows: [hermesAgent] };
-    }
-    return null;
-  } });
+  const db = fakeDb({
+    extra: (sql) => {
+      if (/FROM agents\s+WHERE status IN/.test(sql)) {
+        return { rows: [hermesAgent] };
+      }
+      return null;
+    },
+  });
   const segmentWriter = fakeSegmentWriter();
 
   let warnedOrErrored = false;
@@ -425,12 +435,14 @@ test("a line whose timestamp is already older than the resolved retention window
 
 test("an agent found without consoleLevel:warn already applied has it applied by the 30s reconcile loop, not only at provisioning", async () => {
   const agent = agentRow();
-  const db = fakeDb({ extra: (sql) => {
-    if (/FROM agents\s+WHERE status IN/.test(sql)) {
-      return { rows: [agent] };
-    }
-    return null;
-  } });
+  const db = fakeDb({
+    extra: (sql) => {
+      if (/FROM agents\s+WHERE status IN/.test(sql)) {
+        return { rows: [agent] };
+      }
+      return null;
+    },
+  });
   const segmentWriter = fakeSegmentWriter();
 
   const consoleLevelCalls = [];
@@ -455,12 +467,14 @@ test("an agent found without consoleLevel:warn already applied has it applied by
 
 test("while collection is disabled the gateway collector polls nothing and pushes no config into agents; re-enabling resumes", async () => {
   const agent = agentRow();
-  const db = fakeDb({ extra: (sql) => {
-    if (/FROM agents\s+WHERE status IN/.test(sql)) {
-      return { rows: [agent] };
-    }
-    return null;
-  } });
+  const db = fakeDb({
+    extra: (sql) => {
+      if (/FROM agents\s+WHERE status IN/.test(sql)) {
+        return { rows: [agent] };
+      }
+      return null;
+    },
+  });
   let enabled = true;
   const consoleLevelCalls = [];
   const collector = createGatewayCollector({
@@ -484,9 +498,17 @@ test("while collection is disabled the gateway collector polls nothing and pushe
     enabled = false;
     const callsBefore = db.calls.length;
     await collector.reconcileStreams();
-    assert.equal(collector.heldAgentCount(), 0, "turning collection off must stop polling every agent");
+    assert.equal(
+      collector.heldAgentCount(),
+      0,
+      "turning collection off must stop polling every agent",
+    );
     assert.equal(db.calls.length, callsBefore, "a disabled tick must not even list agents");
-    assert.deepEqual(consoleLevelCalls, ["agent-1"], "a disabled tick must not rewrite agents' config");
+    assert.deepEqual(
+      consoleLevelCalls,
+      ["agent-1"],
+      "a disabled tick must not rewrite agents' config",
+    );
 
     enabled = true;
     await collector.reconcileStreams();
@@ -523,7 +545,11 @@ test("gateway lines older than when collection was turned on are skipped, and th
   assert.equal(result.dropped, 1);
   assert.equal(result.appended, 1);
   assert.equal(segmentWriter.appendCalls[0].lines[0].message, "written after it was turned on");
-  assert.equal(db.cursors.get("agent-1:file"), "c9", "the skipped backlog must not be fetched again next poll");
+  assert.equal(
+    db.cursors.get("agent-1:file"),
+    "c9",
+    "the skipped backlog must not be fetched again next poll",
+  );
 });
 
 test("splitRunsOnMetaRecords with no meta records returns a single run attributed to the response's sourceKind", () => {

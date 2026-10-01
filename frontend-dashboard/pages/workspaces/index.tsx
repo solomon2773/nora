@@ -1,6 +1,15 @@
 import Layout from "../../components/layout/Layout";
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Loader2, Plus, FolderOpen, Trash2, Bot, Users, Settings } from "lucide-react";
+import {
+  ArrowUpRight,
+  Loader2,
+  Plus,
+  FolderOpen,
+  Trash2,
+  Bot,
+  Users,
+  Settings,
+} from "lucide-react";
 import { useRouter } from "next/router";
 import { clsx } from "clsx";
 import { fetchWithAuth } from "../../lib/api";

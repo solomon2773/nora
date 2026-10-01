@@ -3122,7 +3122,8 @@ class K8sBackend extends ProvisionerBackend {
       logOptions.tailLines = opts.tail;
     }
     if (opts.since !== undefined && opts.since !== null) {
-      const sinceDate = typeof opts.since === "number" ? new Date(opts.since * 1000) : new Date(opts.since);
+      const sinceDate =
+        typeof opts.since === "number" ? new Date(opts.since * 1000) : new Date(opts.since);
       if (!Number.isNaN(sinceDate.getTime())) {
         logOptions.sinceTime = sinceDate.toISOString();
       }

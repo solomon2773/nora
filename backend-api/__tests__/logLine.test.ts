@@ -134,7 +134,10 @@ describe("normalizeGatewayLogLine", () => {
   });
 
   it("drops silent-level records", () => {
-    const line = normalizeGatewayLogLine({ level: "silent", msg: "should not surface" }, fixedCtx());
+    const line = normalizeGatewayLogLine(
+      { level: "silent", msg: "should not surface" },
+      fixedCtx(),
+    );
     expect(line).toBeNull();
   });
 
@@ -245,7 +248,9 @@ describe("createLogChunkStreamParser", () => {
 
   it("flush() emits a trailing line that never got a terminating newline", () => {
     const parser = createLogChunkStreamParser(fixedCtx());
-    const midStream = parser.push(dockerFrame("2026-09-06T00:00:00.000Z first\n2026-09-06T00:00:01.000Z unterminated"));
+    const midStream = parser.push(
+      dockerFrame("2026-09-06T00:00:00.000Z first\n2026-09-06T00:00:01.000Z unterminated"),
+    );
     expect(midStream).toHaveLength(1);
     expect(midStream[0].message).toBe("first");
 

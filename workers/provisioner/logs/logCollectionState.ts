@@ -28,7 +28,9 @@ function getDb() {
 
 /** true / false when NORA_LOG_ENABLED says so, undefined when it is unset or unrecognised. */
 function parseEnvDecision(env = process.env) {
-  const raw = String(env.NORA_LOG_ENABLED ?? "").trim().toLowerCase();
+  const raw = String(env.NORA_LOG_ENABLED ?? "")
+    .trim()
+    .toLowerCase();
   if (["true", "1", "yes", "on"].includes(raw)) return true;
   if (["false", "0", "no", "off"].includes(raw)) return false;
   return undefined;
@@ -49,7 +51,8 @@ async function readStoredState(deps = {}) {
         LIMIT 1`,
     );
     const row = result.rows?.[0];
-    const value = typeof row?.log_collection_enabled === "boolean" ? row.log_collection_enabled : null;
+    const value =
+      typeof row?.log_collection_enabled === "boolean" ? row.log_collection_enabled : null;
     const raw = row?.log_collection_updated_at;
     const updatedAt = raw ? new Date(raw).toISOString() : null;
     return { value, updatedAt };
@@ -136,7 +139,9 @@ function createLogCollectionGate(deps = {}) {
       try {
         cached = await resolve();
       } catch (error) {
-        logger.warn(`[logCollectionState] could not read the setting, keeping the last known value: ${error.message}`);
+        logger.warn(
+          `[logCollectionState] could not read the setting, keeping the last known value: ${error.message}`,
+        );
         if (!cached) cached = stateFrom(null, env);
       } finally {
         cachedAt = now();

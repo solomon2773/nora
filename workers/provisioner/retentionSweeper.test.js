@@ -73,7 +73,10 @@ function fakeDb({
         return { rows: [{ total: String(total) }] };
       }
 
-      if (sql.includes("FROM log_segment_legacy_copies lc") && sql.includes("JOIN log_segments ls")) {
+      if (
+        sql.includes("FROM log_segment_legacy_copies lc") &&
+        sql.includes("JOIN log_segments ls")
+      ) {
         // Used both by deleteLegacyCopiesForSegments (filtered by segment
         // ids) and reconcileStorage (filtered by key prefix LIKE).
         if (sql.includes("lc.log_segment_id = ANY")) {
@@ -112,15 +115,28 @@ function fakeDb({
       // "ts_to <= $3" contains "ts_to <" as a substring, so the (more
       // specific) agent-scoped branch must be checked first or it would
       // never be reached.
-      if (sql.includes("SELECT id, storage_key, storage_backend, storage_config") && sql.includes("agent_id = $1")) {
+      if (
+        sql.includes("SELECT id, storage_key, storage_backend, storage_config") &&
+        sql.includes("agent_id = $1")
+      ) {
         const [agentId, from, to] = params;
         const rows = segments.filter(
           (s) => s.agent_id === agentId && s.ts_from >= from && s.ts_to <= to,
         );
-        return { rows: rows.map(({ id, storage_key, storage_backend, storage_config }) => ({ id, storage_key, storage_backend, storage_config })) };
+        return {
+          rows: rows.map(({ id, storage_key, storage_backend, storage_config }) => ({
+            id,
+            storage_key,
+            storage_backend,
+            storage_config,
+          })),
+        };
       }
 
-      if (sql.includes("SELECT id, storage_key, storage_backend, storage_config") && sql.includes("ts_to <")) {
+      if (
+        sql.includes("SELECT id, storage_key, storage_backend, storage_config") &&
+        sql.includes("ts_to <")
+      ) {
         const cutoff = params[0];
         const workspaceId = sql.includes("workspace_id IS NULL") ? null : params[1];
         const rows = segments.filter((s) => {
@@ -129,7 +145,14 @@ function fakeDb({
             : s.workspace_id === workspaceId;
           return matchesWorkspace && s.ts_to < cutoff;
         });
-        return { rows: rows.map(({ id, storage_key, storage_backend, storage_config }) => ({ id, storage_key, storage_backend, storage_config })) };
+        return {
+          rows: rows.map(({ id, storage_key, storage_backend, storage_config }) => ({
+            id,
+            storage_key,
+            storage_backend,
+            storage_config,
+          })),
+        };
       }
 
       if (sql.includes("DELETE FROM log_segments WHERE id = ANY")) {
@@ -137,11 +160,20 @@ function fakeDb({
         return { rows: [] };
       }
 
-      if (sql.includes("SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE storage_key LIKE")) {
+      if (
+        sql.includes(
+          "SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE storage_key LIKE",
+        )
+      ) {
         const pattern = String(params[0] || "%").replace(/%$/, "");
         const rows = segments
           .filter((s) => s.storage_key.startsWith(pattern))
-          .map(({ id, storage_key, storage_backend, storage_config }) => ({ id, storage_key, storage_backend, storage_config }));
+          .map(({ id, storage_key, storage_backend, storage_config }) => ({
+            id,
+            storage_key,
+            storage_backend,
+            storage_config,
+          }));
         return { rows };
       }
 
@@ -347,7 +379,11 @@ test("deletion batches group by storage_backend, not the current destination", a
   });
 
   assert.equal(result.deletedSegments, 2);
-  assert.equal(deleteObjs.calls.length, 2, "two distinct configs must produce two separate delete calls");
+  assert.equal(
+    deleteObjs.calls.length,
+    2,
+    "two distinct configs must produce two separate delete calls",
+  );
   const allKeys = deleteObjs.calls.flat();
   assert.ok(allKeys.includes("ws_ws-1/agent_a/runtime/old.ndjson.zst.enc"));
   assert.ok(allKeys.includes("ws_ws-1/agent_a/runtime/new.ndjson.zst.enc"));
@@ -485,7 +521,9 @@ test("repeated calls in the same state write no additional events", async () => 
 });
 
 test("getCapacityStatus reports usage, limit, and current state together", async () => {
-  const segments = [{ id: "s1", storage_backend: "local", bytes: 500, ts_to: "x", storage_key: "a" }];
+  const segments = [
+    { id: "s1", storage_backend: "local", bytes: 500, ts_to: "x", storage_key: "a" },
+  ];
   const db = fakeDb({ segments });
   const stateStore = fakeStateStore("warning");
   const status = await getCapacityStatus({ db, limitBytes: 1000, stateStore });
@@ -507,7 +545,12 @@ test("DELETE /logs removes the requested agent/time-range segments and any match
     },
   ];
   const legacyCopies = [
-    { legacy_id: "lc-1", log_segment_id: "seg-1", storage_backend: "s3", storage_config: { bucket: "old" } },
+    {
+      legacy_id: "lc-1",
+      log_segment_id: "seg-1",
+      storage_backend: "s3",
+      storage_config: { bucket: "old" },
+    },
   ];
   const db = fakeDb({ segments, legacyCopies });
   const deleteObjs = fakeDeleteStorageObjects();
@@ -519,7 +562,13 @@ test("DELETE /logs removes the requested agent/time-range segments and any match
     "2026-01-01T00:00:00.000Z",
     "2026-01-01T00:20:00.000Z",
     { id: "user-1", role: "user" },
-    { db, deleteStorageObjects: deleteObjs, storageConfigForSegment: fakeStorageConfigForSegment(), logEventFn, findAccessibleAgentForActor },
+    {
+      db,
+      deleteStorageObjects: deleteObjs,
+      storageConfigForSegment: fakeStorageConfigForSegment(),
+      logEventFn,
+      findAccessibleAgentForActor,
+    },
   );
 
   assert.equal(result.deletedSegments, 1);
@@ -609,7 +658,12 @@ test("reconciliation does not delete an object tracked in log_segment_legacy_cop
     { id: "seg-1", storage_key: "ws_ws-1/agent_a/runtime/kept.ndjson.zst.enc", ts_to: "x" },
   ];
   const legacyCopies = [
-    { legacy_id: "lc-1", log_segment_id: "seg-1", storage_backend: "s3", storage_config: { bucket: "old" } },
+    {
+      legacy_id: "lc-1",
+      log_segment_id: "seg-1",
+      storage_backend: "s3",
+      storage_config: { bucket: "old" },
+    },
   ];
   const db = fakeDb({ segments, legacyCopies });
   const now = Date.parse("2026-06-01T00:00:00.000Z");
@@ -651,7 +705,11 @@ test("reconciliation never deletes a non-log object sharing the destination (e.g
   const objects = [
     { key: "agents/agent-1.nora-backup.tgz", size: 100, lastModified: old },
     { key: "logs/backup-notes.txt", size: 100, lastModified: old },
-    { key: "logs/ws_ws-1/agent_a/runtime/2026-05-31/0000-0015.ndjson.zst.enc", size: 100, lastModified: old },
+    {
+      key: "logs/ws_ws-1/agent_a/runtime/2026-05-31/0000-0015.ndjson.zst.enc",
+      size: 100,
+      lastModified: old,
+    },
   ];
   const deleteObjs = fakeDeleteStorageObjects();
 
@@ -671,7 +729,9 @@ test("reconciliation never deletes a non-log object sharing the destination (e.g
 
 test("daily reconciliation lists only logs/ when no pre-prefix segments remain", async () => {
   const db = fakeDb({
-    segments: [{ id: "seg-1", storage_key: "logs/ws_ws-1/agent_a/runtime/x.ndjson.zst.enc", ts_to: "x" }],
+    segments: [
+      { id: "seg-1", storage_key: "logs/ws_ws-1/agent_a/runtime/x.ndjson.zst.enc", ts_to: "x" },
+    ],
   });
   const listedPrefixes = [];
   const sweeper = startRetentionSweeper({
@@ -699,7 +759,9 @@ test("daily reconciliation still cleans pre-prefix segments, touching only legac
   const now = Date.parse("2026-06-01T00:00:00.000Z");
   const old = new Date(now - 60 * 60 * 1000).toISOString();
   const db = fakeDb({
-    segments: [{ id: "seg-legacy", storage_key: "ws_ws-1/agent_a/runtime/kept.ndjson.zst.enc", ts_to: "x" }],
+    segments: [
+      { id: "seg-legacy", storage_key: "ws_ws-1/agent_a/runtime/kept.ndjson.zst.enc", ts_to: "x" },
+    ],
   });
   const rootObjects = [
     { key: "ws_ws-1/agent_a/runtime/kept.ndjson.zst.enc", size: 1, lastModified: old },
@@ -730,7 +792,11 @@ test("daily reconciliation still cleans pre-prefix segments, touching only legac
 
   assert.deepEqual(listedPrefixes, ["logs/", ""]);
   assert.deepEqual(deleteObjs.calls, [["ws_ws-1/agent_a/runtime/orphan.ndjson.zst.enc"]]);
-  assert.deepEqual(db.deletedSegmentIds, [], "the legacy segment's object exists, so its row is kept");
+  assert.deepEqual(
+    db.deletedSegmentIds,
+    [],
+    "the legacy segment's object exists, so its row is kept",
+  );
 });
 
 // ── Dangling rows: only rows at the destination just listed ───────────────
@@ -739,7 +805,12 @@ test("reconciliation keeps rows for segments a running migration hasn't copied y
   const db = fakeDb({
     segments: [
       // Not yet migrated: still recorded on the OLD backend.
-      { id: "seg-old", storage_key: "logs/ws_ws-1/agent_a/runtime/a.ndjson.zst.enc", storage_backend: "local", storage_config: {} },
+      {
+        id: "seg-old",
+        storage_key: "logs/ws_ws-1/agent_a/runtime/a.ndjson.zst.enc",
+        storage_backend: "local",
+        storage_config: {},
+      },
       // Already migrated to the current destination, but its object is gone.
       {
         id: "seg-new",

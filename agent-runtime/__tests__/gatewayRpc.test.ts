@@ -91,7 +91,12 @@ const agent = { id: "agent-1", gateway_host: "127.0.0.1", gateway_port: 18789 };
 // Bypasses DNS/SSRF resolution entirely — that logic is covered separately
 // below — so RPC-protocol tests aren't coupled to network resolution timing.
 async function fakeResolveTarget() {
-  return { url: "ws://127.0.0.1:18789/", host: "127.0.0.1", resolvedHost: "127.0.0.1", port: 18789 };
+  return {
+    url: "ws://127.0.0.1:18789/",
+    host: "127.0.0.1",
+    resolvedHost: "127.0.0.1",
+    port: 18789,
+  };
 }
 
 beforeEach(() => {
@@ -164,11 +169,17 @@ describe("createGatewayClient — request/response correlation", () => {
     lastSocket()._openAndAuthenticate();
     await vi.waitFor(() => expect(lastSocket().sent.length).toBeGreaterThanOrEqual(2));
 
-    const [reqFrame] = lastSocket().sent.slice(1).map((s) => JSON.parse(s));
+    const [reqFrame] = lastSocket()
+      .sent.slice(1)
+      .map((s) => JSON.parse(s));
     expect(reqFrame.method).toBe("logs.tail");
 
     // An unrelated event frame arrives while the request is still pending.
-    lastSocket()._receive({ type: "event", event: "agent.status.changed", payload: { status: "running" } });
+    lastSocket()._receive({
+      type: "event",
+      event: "agent.status.changed",
+      payload: { status: "running" },
+    });
     lastSocket()._receive({ type: "res", id: reqFrame.id, ok: true, payload: { lines: ["x"] } });
 
     await expect(callPromise).resolves.toEqual({ lines: ["x"] });
@@ -234,7 +245,9 @@ describe("createGatewayClient — error classification", () => {
     lastSocket()._openAndAuthenticate();
     await vi.waitFor(() => expect(lastSocket().sent.length).toBeGreaterThanOrEqual(2));
 
-    const [reqFrame] = lastSocket().sent.slice(1).map((s) => JSON.parse(s));
+    const [reqFrame] = lastSocket()
+      .sent.slice(1)
+      .map((s) => JSON.parse(s));
     lastSocket()._receive({
       type: "res",
       id: reqFrame.id,
@@ -327,7 +340,9 @@ describe("createGatewayClient — silent-partition liveness (consecutive call ti
       expect(FakeSocket.instances.length).toBe(1);
     }
 
-    await expect(client.call("logs.tail", {}, { timeoutMs: 20 })).rejects.toBeInstanceOf(GatewayConnectionError);
+    await expect(client.call("logs.tail", {}, { timeoutMs: 20 })).rejects.toBeInstanceOf(
+      GatewayConnectionError,
+    );
 
     // The threshold-th consecutive timeout — still without the original
     // socket ever reporting close or error — is enough on its own to tear
@@ -396,9 +411,15 @@ describe("resolveSafeGatewayTarget", () => {
 
 describe("callLogsTail", () => {
   it("is a thin typed wrapper returning { lines, cursor, sourceKind }", async () => {
-    const client = { call: vi.fn().mockResolvedValue({ lines: ["a", "b"], cursor: "c2", sourceKind: "stdout" }) };
+    const client = {
+      call: vi.fn().mockResolvedValue({ lines: ["a", "b"], cursor: "c2", sourceKind: "stdout" }),
+    };
     const result = await callLogsTail(client, { cursor: "c1", limit: 100, maxBytes: 4096 });
-    expect(client.call).toHaveBeenCalledWith("logs.tail", { cursor: "c1", limit: 100, maxBytes: 4096 });
+    expect(client.call).toHaveBeenCalledWith("logs.tail", {
+      cursor: "c1",
+      limit: 100,
+      maxBytes: 4096,
+    });
     expect(result).toEqual({ lines: ["a", "b"], cursor: "c2", sourceKind: "stdout" });
   });
 

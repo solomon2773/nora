@@ -40,7 +40,10 @@ export default function LogFilterBar({
     <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
       <div className="flex flex-1 flex-wrap items-center gap-3">
         <div className="relative min-w-[220px] flex-1">
-          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+          />
           <input
             value={q}
             onChange={(event) => onQChange(event.target.value)}

@@ -7777,7 +7777,9 @@ describe("agent deletion routes", () => {
     };
     mockDb.query.mockResolvedValueOnce({ rows: [agent] }).mockResolvedValueOnce({ rows: [agent] });
 
-    const res = await auth(request(app).delete("/agents/a-k8s-delete-fail").send({ deleteLogs: true }));
+    const res = await auth(
+      request(app).delete("/agents/a-k8s-delete-fail").send({ deleteLogs: true }),
+    );
 
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/Kubernetes API unreachable/i);
@@ -7801,7 +7803,9 @@ describe("agent deletion routes", () => {
     };
     mockDb.query.mockResolvedValueOnce({ rows: [agent] }).mockResolvedValueOnce({ rows: [agent] });
 
-    const res = await auth(request(app).delete("/agents/a-proxmox-delete-fail").send({ deleteLogs: true }));
+    const res = await auth(
+      request(app).delete("/agents/a-proxmox-delete-fail").send({ deleteLogs: true }),
+    );
 
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/Proxmox destroy task failed/i);

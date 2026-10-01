@@ -56,7 +56,12 @@ function agentRow(overrides = {}) {
  *   - `segments`: array of `{ agent_id, stream, ts_to }` — backs the
  *     MAX(ts_to) last-flushed-cursor lookup
  */
-function fakeDb({ agents = [], workspaceMembership = new Map(), agentOwners = new Map(), segments = [] } = {}) {
+function fakeDb({
+  agents = [],
+  workspaceMembership = new Map(),
+  agentOwners = new Map(),
+  segments = [],
+} = {}) {
   const calls = [];
   const state = { agents, workspaceMembership, agentOwners, segments };
   return {
@@ -74,7 +79,9 @@ function fakeDb({ agents = [], workspaceMembership = new Map(), agentOwners = ne
       calls.push({ sql, params });
       if (/FROM agents\s+WHERE status IN/.test(sql)) {
         return {
-          rows: state.agents.filter((a) => ["running", "warning"].includes(a.status) && a.container_id),
+          rows: state.agents.filter(
+            (a) => ["running", "warning"].includes(a.status) && a.container_id,
+          ),
         };
       }
       if (/FROM workspace_agents WHERE agent_id/.test(sql)) {
@@ -157,7 +164,11 @@ test("reconcile starts a stream for a newly-running agent and stops one for a no
   await collector.reconcileStreams();
 
   assert.equal(collector.heldStreamCount(), 0);
-  assert.equal(streamA.destroyed, true, "the stream must be disconnected once the agent is no longer desired");
+  assert.equal(
+    streamA.destroyed,
+    true,
+    "the stream must be disconnected once the agent is no longer desired",
+  );
 });
 
 // ── opt-in gate ──────────────────────────────────────────────────────────
@@ -177,13 +188,21 @@ test("while collection is disabled the collector holds no streams and does not q
   enabled = false;
   const callsBefore = db.calls.length;
   await collector.reconcileStreams();
-  assert.equal(collector.heldStreamCount(), 0, "turning collection off must release every held stream");
+  assert.equal(
+    collector.heldStreamCount(),
+    0,
+    "turning collection off must release every held stream",
+  );
   assert.equal(stream.destroyed, true);
   assert.equal(db.calls.length, callsBefore, "a disabled tick must not even list agents");
 
   enabled = true;
   await collector.reconcileStreams();
-  assert.equal(collector.heldStreamCount(), 1, "turning it back on must attach again without a restart");
+  assert.equal(
+    collector.heldStreamCount(),
+    1,
+    "turning it back on must attach again without a restart",
+  );
 });
 
 // ── reattach on dead stream ───────────────────────────────────────────────
@@ -268,15 +287,23 @@ test("'since' is the LATER of the last flushed cursor and when collection was tu
       segments: cursor ? [{ agent_id: "agent-1", stream: "runtime", ts_to: cursor }] : [],
     });
     const containerManager = fakeContainerManager(async () => new FakeLogStream());
-    const collector = createLogCollector(baseDeps({ db, containerManager, getCollectionSince: async () => enabledAt }));
+    const collector = createLogCollector(
+      baseDeps({ db, containerManager, getCollectionSince: async () => enabledAt }),
+    );
     await collector.reconcileStreams();
     return containerManager.calls[0].opts.since;
   };
 
   // Cursor older than the enable time (a re-enable after an off period): the enable time wins.
-  assert.equal(await run("2026-10-01T10:00:00.000Z", "2026-10-01T15:44:33.000Z"), "2026-10-01T15:44:33.000Z");
+  assert.equal(
+    await run("2026-10-01T10:00:00.000Z", "2026-10-01T15:44:33.000Z"),
+    "2026-10-01T15:44:33.000Z",
+  );
   // Cursor newer (collection has been on since): the cursor wins, as before.
-  assert.equal(await run("2026-10-01T16:00:00.000Z", "2026-10-01T15:44:33.000Z"), "2026-10-01T16:00:00.000Z");
+  assert.equal(
+    await run("2026-10-01T16:00:00.000Z", "2026-10-01T15:44:33.000Z"),
+    "2026-10-01T16:00:00.000Z",
+  );
   // No enable time known (decided by .env): unchanged behaviour.
   assert.equal(await run("2026-10-01T10:00:00.000Z", null), "2026-10-01T10:00:00.000Z");
   assert.equal(await run(null, null), undefined);
@@ -302,7 +329,11 @@ test("lines older than when collection was turned on are dropped even if the sou
 
   await new Promise((resolve) => setImmediate(resolve));
   const messages = segmentWriter.appendCalls.flatMap((call) => call.lines.map((l) => l.message));
-  assert.equal(messages.length, 1, `expected only the later line, got: ${JSON.stringify(messages)}`);
+  assert.equal(
+    messages.length,
+    1,
+    `expected only the later line, got: ${JSON.stringify(messages)}`,
+  );
   assert.match(messages[0], /written after/);
 });
 
@@ -313,16 +344,16 @@ test("first-ever attach (no prior flush) omits since entirely", async () => {
 
   await collector.reconcileStreams();
 
-  assert.equal(Object.prototype.hasOwnProperty.call(containerManager.calls[0].opts, "since"), false);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(containerManager.calls[0].opts, "since"),
+    false,
+  );
 });
 
 // ── killing the worker mid-window loses no lines (crash-replay) ──────────
 
 test("killing the worker mid-window loses no lines: restart replays from the last flushed cursor into the same storage_key", async () => {
-  const {
-    createSegmentWriter,
-    buildStorageKey,
-  } = require("./logs/segmentWriter.ts");
+  const { createSegmentWriter, buildStorageKey } = require("./logs/segmentWriter.ts");
 
   // Shared fake Postgres + fake object store standing in for "the durable
   // state that survives a worker restart" — segmentWriter and logCollector
@@ -392,8 +423,20 @@ test("killing the worker mid-window loses no lines: restart replays from the las
   await proc1.writer.append(
     { agentId: "agent-1", stream: "runtime", workspaceId: null, ownerUserId: "user-1" },
     [
-      { ts: "2026-01-01T00:00:00.000Z", observed_ts: "2026-01-01T00:00:00.000Z", ts_source: "source", level: "INFO", message: "line-1" },
-      { ts: "2026-01-01T00:00:01.000Z", observed_ts: "2026-01-01T00:00:01.000Z", ts_source: "source", level: "INFO", message: "line-2" },
+      {
+        ts: "2026-01-01T00:00:00.000Z",
+        observed_ts: "2026-01-01T00:00:00.000Z",
+        ts_source: "source",
+        level: "INFO",
+        message: "line-1",
+      },
+      {
+        ts: "2026-01-01T00:00:01.000Z",
+        observed_ts: "2026-01-01T00:00:01.000Z",
+        ts_source: "source",
+        level: "INFO",
+        message: "line-2",
+      },
     ],
   );
   // Process dies here — no flush call, no SIGTERM. durableSegments stays empty.
@@ -407,17 +450,39 @@ test("killing the worker mid-window loses no lines: restart replays from the las
   await proc2.writer.append(
     { agentId: "agent-1", stream: "runtime", workspaceId: null, ownerUserId: "user-1" },
     [
-      { ts: "2026-01-01T00:00:00.000Z", observed_ts: "2026-01-01T00:00:00.000Z", ts_source: "source", level: "INFO", message: "line-1" },
-      { ts: "2026-01-01T00:00:01.000Z", observed_ts: "2026-01-01T00:00:01.000Z", ts_source: "source", level: "INFO", message: "line-2" },
+      {
+        ts: "2026-01-01T00:00:00.000Z",
+        observed_ts: "2026-01-01T00:00:00.000Z",
+        ts_source: "source",
+        level: "INFO",
+        message: "line-1",
+      },
+      {
+        ts: "2026-01-01T00:00:01.000Z",
+        observed_ts: "2026-01-01T00:00:01.000Z",
+        ts_source: "source",
+        level: "INFO",
+        message: "line-2",
+      },
     ],
   );
   const flushResult = await proc2.writer.flush("agent-1:runtime");
 
   assert.equal(flushResult.skipped, false);
-  assert.equal(durableSegments.length, 1, "the recovered flush must upsert the SAME storage_key, not create a second segment");
+  assert.equal(
+    durableSegments.length,
+    1,
+    "the recovered flush must upsert the SAME storage_key, not create a second segment",
+  );
   assert.equal(
     durableSegments[0].storage_key,
-    buildStorageKey({ ownerUserId: "user-1" }, "agent-1", "runtime", "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:01.000Z"),
+    buildStorageKey(
+      { ownerUserId: "user-1" },
+      "agent-1",
+      "runtime",
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:01.000Z",
+    ),
   );
 });
 
@@ -526,19 +591,28 @@ test("re-resolves the tenant on every reconnect, picking up a mid-life workspace
   secondStream.emit("data", Buffer.from("2026-01-01T00:00:01.000Z after reassignment\n"));
   await new Promise((resolve) => setImmediate(resolve));
 
-  const afterCall = segmentWriter.appendCalls.find((c) => c.lines[0].message === "after reassignment");
+  const afterCall = segmentWriter.appendCalls.find(
+    (c) => c.lines[0].message === "after reassignment",
+  );
   assert.equal(afterCall.agentCtx.workspaceId, "ws-new");
 });
 
 // ── storage_unsupported_for_target (item 3a) ──────────────────────────────
 
 test("skips a k8s agent when the storage driver is local, silently after the first tick", async () => {
-  const db = fakeDb({ agents: [agentRow({ id: "agent-k8s", backend_type: "k8s", deploy_target: "k8s" })] });
+  const db = fakeDb({
+    agents: [agentRow({ id: "agent-k8s", backend_type: "k8s", deploy_target: "k8s" })],
+  });
   const containerManager = fakeContainerManager(async () => new FakeLogStream());
   const warnings = [];
   const logger = { log: () => {}, warn: (msg) => warnings.push(msg), error: () => {} };
   const collector = createLogCollector(
-    baseDeps({ db, containerManager, logger, logStorageConfig: async () => ({ storageBackend: "local" }) }),
+    baseDeps({
+      db,
+      containerManager,
+      logger,
+      logStorageConfig: async () => ({ storageBackend: "local" }),
+    }),
   );
 
   await collector.reconcileStreams();
@@ -546,13 +620,19 @@ test("skips a k8s agent when the storage driver is local, silently after the fir
   await collector.reconcileStreams();
 
   assert.equal(collector.heldStreamCount(), 0);
-  assert.equal(containerManager.calls.length, 0, "a k8s agent must never be attached while storage is local");
+  assert.equal(
+    containerManager.calls.length,
+    0,
+    "a k8s agent must never be attached while storage is local",
+  );
   const skipWarnings = warnings.filter((w) => w.includes("storage_unsupported_for_target"));
   assert.equal(skipWarnings.length, 1, "the skip must be logged once, not once per tick");
 });
 
 test("does not skip a k8s agent once the storage driver is not local", async () => {
-  const db = fakeDb({ agents: [agentRow({ id: "agent-k8s", backend_type: "k8s", deploy_target: "k8s" })] });
+  const db = fakeDb({
+    agents: [agentRow({ id: "agent-k8s", backend_type: "k8s", deploy_target: "k8s" })],
+  });
   const containerManager = fakeContainerManager(async () => new FakeLogStream());
   const collector = createLogCollector(
     baseDeps({ db, containerManager, logStorageConfig: async () => ({ storageBackend: "s3" }) }),
@@ -580,7 +660,11 @@ test("a capacity-paused stream is disconnected cleanly, not held open buffering"
   await collector.reconcileStreams();
 
   assert.equal(collector.heldStreamCount(), 0);
-  assert.equal(stream.destroyed, true, "capacity-paused must disconnect the stream, not merely stop reading it");
+  assert.equal(
+    stream.destroyed,
+    true,
+    "capacity-paused must disconnect the stream, not merely stop reading it",
+  );
 });
 
 test("capacity clearing lets the reconciler re-attach the stream on the next tick, with no manual intervention", async () => {
@@ -596,7 +680,11 @@ test("capacity clearing lets the reconciler re-attach the stream on the next tic
   const collector = createLogCollector(baseDeps({ db, containerManager, segmentWriter }));
 
   await collector.reconcileStreams();
-  assert.equal(collector.heldStreamCount(), 0, "starts paused — never attaches while capacity is exceeded");
+  assert.equal(
+    collector.heldStreamCount(),
+    0,
+    "starts paused — never attaches while capacity is exceeded",
+  );
 
   segmentWriter.capacityPausedAgents.delete("agent-1:runtime");
   await collector.reconcileStreams();
@@ -618,7 +706,11 @@ test("stopReconciler stops new attaches; stopCollector disconnects everything cu
 
   collector.stopReconciler();
   await collector.reconcileStreams(); // must be a no-op now
-  assert.equal(collector.heldStreamCount(), 1, "stopReconciler alone must not tear down an already-held stream");
+  assert.equal(
+    collector.heldStreamCount(),
+    1,
+    "stopReconciler alone must not tear down an already-held stream",
+  );
   assert.equal(stream.destroyed, false);
 
   collector.stopCollector();

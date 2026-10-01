@@ -368,7 +368,8 @@ describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => 
     await freshPool?.end();
     await existingPool?.end();
     if (adminConnected) {
-      if (freshSchemaName) await adminClient.query(`DROP SCHEMA IF EXISTS ${freshSchemaName} CASCADE`);
+      if (freshSchemaName)
+        await adminClient.query(`DROP SCHEMA IF EXISTS ${freshSchemaName} CASCADE`);
       if (existingSchemaName) {
         await adminClient.query(`DROP SCHEMA IF EXISTS ${existingSchemaName} CASCADE`);
       }
@@ -406,11 +407,19 @@ describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => 
   it("adds the events indexes required by the new Operator lens", async () => {
     const names = await indexNames(freshPool, freshSchemaName, "events");
     expect(names).toEqual(
-      expect.arrayContaining(["idx_events_created_at", "idx_events_type", "idx_events_metadata_gin"]),
+      expect.arrayContaining([
+        "idx_events_created_at",
+        "idx_events_type",
+        "idx_events_metadata_gin",
+      ]),
     );
     const migratedNames = await indexNames(existingPool, existingSchemaName, "events");
     expect(migratedNames).toEqual(
-      expect.arrayContaining(["idx_events_created_at", "idx_events_type", "idx_events_metadata_gin"]),
+      expect.arrayContaining([
+        "idx_events_created_at",
+        "idx_events_type",
+        "idx_events_metadata_gin",
+      ]),
     );
   });
 
@@ -473,7 +482,10 @@ describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => 
            (agent_id, stream, ts_from, ts_to, storage_key, storage_backend, encryption_key_id)
          VALUES ($1, 'runtime', NOW(), NOW(), $2, 'local', 'key-1')
          RETURNING id`,
-        [deletableAgentId, `ws_test/agent_${deletableAgentId}/runtime/2026-01-01/0015-0030.ndjson.zst.enc`],
+        [
+          deletableAgentId,
+          `ws_test/agent_${deletableAgentId}/runtime/2026-01-01/0015-0030.ndjson.zst.enc`,
+        ],
       );
       const segmentId = segment.rows[0].id;
 
@@ -487,12 +499,15 @@ describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => 
 
       await freshPool.query(`DELETE FROM agents WHERE id = $1`, [deletableAgentId]);
 
-      const agentRow = await freshPool.query(`SELECT id FROM agents WHERE id = $1`, [deletableAgentId]);
+      const agentRow = await freshPool.query(`SELECT id FROM agents WHERE id = $1`, [
+        deletableAgentId,
+      ]);
       expect(agentRow.rows).toEqual([]);
 
-      const segmentRow = await freshPool.query(`SELECT id, agent_id FROM log_segments WHERE id = $1`, [
-        segmentId,
-      ]);
+      const segmentRow = await freshPool.query(
+        `SELECT id, agent_id FROM log_segments WHERE id = $1`,
+        [segmentId],
+      );
       expect(segmentRow.rows).toEqual([{ id: segmentId, agent_id: deletableAgentId }]);
 
       const spanRow = await freshPool.query(`SELECT id, agent_id FROM agent_spans WHERE id = $1`, [
@@ -532,7 +547,11 @@ describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => 
            (agent_id, stream, ts_from, ts_to, storage_key, storage_backend, encryption_key_id)
          VALUES ($1, 'runtime', '2026-01-01T00:00:00.000Z', $2, $3, 's3', 'key-1')
          RETURNING id`,
-        [agentId, originalTsTo, `ws_test/agent_${agentId}/runtime/2026-01-01/legacy.ndjson.zst.enc`],
+        [
+          agentId,
+          originalTsTo,
+          `ws_test/agent_${agentId}/runtime/2026-01-01/legacy.ndjson.zst.enc`,
+        ],
       );
       const segmentId = segment.rows[0].id;
 
@@ -621,9 +640,10 @@ describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => 
       await freshPool.query(`UPDATE storage_migration_jobs SET status = 'paused' WHERE id = $1`, [
         job.rows[0].id,
       ]);
-      const paused = await freshPool.query(`SELECT status FROM storage_migration_jobs WHERE id = $1`, [
-        job.rows[0].id,
-      ]);
+      const paused = await freshPool.query(
+        `SELECT status FROM storage_migration_jobs WHERE id = $1`,
+        [job.rows[0].id],
+      );
       expect(paused.rows[0].status).toBe("paused");
     });
   });

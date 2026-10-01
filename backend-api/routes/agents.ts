@@ -2710,7 +2710,8 @@ function requireDeleteLogsFlag(req, res) {
   const { deleteLogs } = req.body || {};
   if (typeof deleteLogs !== "boolean") {
     res.status(400).json({
-      error: "deleteLogs (boolean) is required — choose whether this agent's logs are deleted or kept",
+      error:
+        "deleteLogs (boolean) is required — choose whether this agent's logs are deleted or kept",
     });
     return null;
   }
@@ -2782,19 +2783,17 @@ async function destroyAgent(agentId, req, res) {
         );
         agentWorkspaceId = workspaceRow.rows[0]?.workspace_id || null;
       } catch (error) {
-        console.error("Failed to resolve agent workspace for log-recovery snapshot:", error.message);
+        console.error(
+          "Failed to resolve agent workspace for log-recovery snapshot:",
+          error.message,
+        );
       }
       try {
-        await logDeletion.snapshotDeletedLogOwner(
-          "agent",
-          agent.id,
-          req.user,
-          {
-            displayName: agent.name || null,
-            ownerUserId: agent.user_id || null,
-            workspaceId: agentWorkspaceId,
-          },
-        );
+        await logDeletion.snapshotDeletedLogOwner("agent", agent.id, req.user, {
+          displayName: agent.name || null,
+          ownerUserId: agent.user_id || null,
+          workspaceId: agentWorkspaceId,
+        });
       } catch (error) {
         console.error("Failed to snapshot deleted_log_owners for agent:", error.message);
       }

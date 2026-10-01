@@ -53,9 +53,7 @@
 
 const { createGatewayClient, callLogsTail } = require("../../../agent-runtime/lib/gatewayRpc.ts");
 const { normalizeGatewayLogLine } = require("../../../agent-runtime/lib/logLine.ts");
-const {
-  resolveAgentRuntimeFamily,
-} = require("../../../agent-runtime/lib/agentRuntimeFields.ts");
+const { resolveAgentRuntimeFamily } = require("../../../agent-runtime/lib/agentRuntimeFields.ts");
 const { redactLine } = require("./redaction.ts");
 
 const GATEWAY_STREAM = "gateway";
@@ -466,10 +464,12 @@ function createGatewayCollector(deps = {}) {
   const resolveRuntimeFamily = deps.resolveAgentRuntimeFamily || resolveAgentRuntimeFamily;
   const resolveTenant =
     deps.resolveTenantForAgent || require("./logCollector.ts").resolveTenantForAgent;
-  const resolveRetention = deps.resolveLogRetention || require("./retentionSweeper.ts").resolveLogRetention;
+  const resolveRetention =
+    deps.resolveLogRetention || require("./retentionSweeper.ts").resolveLogRetention;
   const applyConsoleLevel = deps.applyConsoleLevelConfig || applyConsoleLevelConfig;
   const decryptGatewayToken =
-    deps.decryptGatewayToken || ((token) => require("../../../backend-api/crypto.ts").decrypt(token));
+    deps.decryptGatewayToken ||
+    ((token) => require("../../../backend-api/crypto.ts").decrypt(token));
   const reconcileIntervalMs = deps.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS;
   const setIntervalFn = deps.setIntervalFn || setInterval;
   const clearIntervalFn = deps.clearIntervalFn || clearInterval;
@@ -500,7 +500,9 @@ function createGatewayCollector(deps = {}) {
     try {
       held.client?.close?.();
     } catch (error) {
-      logger.warn(`[gatewayCollector] error closing gateway client for agent ${agentId}: ${error.message}`);
+      logger.warn(
+        `[gatewayCollector] error closing gateway client for agent ${agentId}: ${error.message}`,
+      );
     }
     agents.delete(agentId);
   }
@@ -656,7 +658,9 @@ function createGatewayCollector(deps = {}) {
       try {
         attachAgent(agent, tenant);
       } catch (error) {
-        logger.warn(`[gatewayCollector] failed to attach gateway poll for agent ${agentId}: ${error.message}`);
+        logger.warn(
+          `[gatewayCollector] failed to attach gateway poll for agent ${agentId}: ${error.message}`,
+        );
       }
     }
   }

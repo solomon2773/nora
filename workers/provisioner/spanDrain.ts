@@ -65,12 +65,12 @@ const SPAN_COLUMNS = [
 function isInsertableRow(row) {
   return Boolean(
     row &&
-      row.trace_id &&
-      row.span_id &&
-      row.agent_id &&
-      typeof row.name === "string" &&
-      row.started_at instanceof Date &&
-      !Number.isNaN(row.started_at.getTime()),
+    row.trace_id &&
+    row.span_id &&
+    row.agent_id &&
+    typeof row.name === "string" &&
+    row.started_at instanceof Date &&
+    !Number.isNaN(row.started_at.getTime()),
   );
 }
 
@@ -88,7 +88,7 @@ function buildBatchInsert(rows) {
       return col === "attrs" ? `$${paramIndex}::jsonb` : `$${paramIndex}`;
     });
     for (const col of SPAN_COLUMNS) {
-      values.push(col === "attrs" ? JSON.stringify(row.attrs || {}) : row[col] ?? null);
+      values.push(col === "attrs" ? JSON.stringify(row.attrs || {}) : (row[col] ?? null));
     }
     return `(${placeholders.join(", ")})`;
   });

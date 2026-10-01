@@ -443,8 +443,14 @@ test("partitionCorrelatedLogs splits traced lines from in-window-only lines", ()
     correlatedLog({ message: "d", inTrace: false, spanId: null }),
   ];
   const { inTrace, inWindowOnly } = partitionCorrelatedLogs(logs);
-  assert.deepEqual(inTrace.map((l) => l.message), ["a", "c"]);
-  assert.deepEqual(inWindowOnly.map((l) => l.message), ["b", "d"]);
+  assert.deepEqual(
+    inTrace.map((l) => l.message),
+    ["a", "c"],
+  );
+  assert.deepEqual(
+    inWindowOnly.map((l) => l.message),
+    ["b", "d"],
+  );
 });
 
 test("partitionCorrelatedLogs handles an all-traced or all-in-window list", () => {
@@ -589,5 +595,8 @@ test("describeUnreadableSegments says nothing when everything was readable", () 
 test("describeUnreadableSegments counts, pluralises, and says why it may have happened", () => {
   assert.match(describeUnreadableSegments(1) || "", /^1 stored log segment could not be read/);
   assert.match(describeUnreadableSegments(3) || "", /^3 stored log segments could not be read/);
-  assert.match(describeUnreadableSegments(2) || "", /encryption key changed or the stored files are missing/);
+  assert.match(
+    describeUnreadableSegments(2) || "",
+    /encryption key changed or the stored files are missing/,
+  );
 });

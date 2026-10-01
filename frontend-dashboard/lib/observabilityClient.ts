@@ -176,8 +176,10 @@ export interface CapacityStatus {
 export function describeUnreadableSegments(count: number | null | undefined): string | null {
   const n = Number(count || 0);
   if (!Number.isFinite(n) || n <= 0) return null;
-  return `${n} stored log segment${n === 1 ? "" : "s"} could not be read, so these results may be incomplete. ` +
-    "This usually means the log encryption key changed or the stored files are missing.";
+  return (
+    `${n} stored log segment${n === 1 ? "" : "s"} could not be read, so these results may be incomplete. ` +
+    "This usually means the log encryption key changed or the stored files are missing."
+  );
 }
 
 /**
@@ -370,11 +372,7 @@ export function stripRedundantTimestamp(
 
 // ── Capability-state resolution (item 8) ─────────────────────────────────
 
-export type RuntimeLensCapability =
-  | "ok"
-  | "no_gateway_stream"
-  | "k8s_local_unsupported"
-  | "empty";
+export type RuntimeLensCapability = "ok" | "no_gateway_stream" | "k8s_local_unsupported" | "empty";
 
 export interface RuntimeLensCapabilityInput {
   runtimeSupportsGatewayStream: boolean;
@@ -401,8 +399,7 @@ export function resolveRuntimeLensCapability(
   }
 
   const wantsGatewayOnly =
-    input.streamsFilter.length > 0 &&
-    input.streamsFilter.every((stream) => stream === "gateway");
+    input.streamsFilter.length > 0 && input.streamsFilter.every((stream) => stream === "gateway");
   if (!input.runtimeSupportsGatewayStream && wantsGatewayOnly) {
     return "no_gateway_stream";
   }
@@ -787,7 +784,8 @@ export async function listTraces(params: ListTracesParams): Promise<ListTracesRe
       rawTracingCapability === "supported" || rawTracingCapability === "unsupported"
         ? rawTracingCapability
         : "unknown",
-    tracingOpenclawVersion: typeof rawTracingOpenclawVersion === "string" ? rawTracingOpenclawVersion : null,
+    tracingOpenclawVersion:
+      typeof rawTracingOpenclawVersion === "string" ? rawTracingOpenclawVersion : null,
   };
 }
 
@@ -803,7 +801,9 @@ export async function getTraceDetail(
   const query = new URLSearchParams();
   if (workspaceId) query.set("workspaceId", workspaceId);
   const qs = query.toString();
-  const res = await fetchWithAuth(`/api/traces/${encodeURIComponent(traceId)}${qs ? `?${qs}` : ""}`);
+  const res = await fetchWithAuth(
+    `/api/traces/${encodeURIComponent(traceId)}${qs ? `?${qs}` : ""}`,
+  );
   const body = await jsonOrThrow<any>(res);
   return normalizeTraceDetail(body);
 }
@@ -828,7 +828,9 @@ export async function getWorkspaceTracesEnabled(
 ): Promise<boolean | null> {
   if (!workspaceId) return null;
   try {
-    const res = await fetchWithAuth(`/api/workspaces/${encodeURIComponent(workspaceId)}/log-settings`);
+    const res = await fetchWithAuth(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/log-settings`,
+    );
     if (!res.ok) return null;
     const body = await res.json().catch(() => null);
     const raw =
@@ -951,7 +953,8 @@ export function computeWaterfallLayout(
   const traceStart = new Date(traceStartedAt).getTime();
   // Guard divide-by-zero for a zero/negative/unparseable trace duration —
   // every span collapses to offset 0 rather than NaN/Infinity.
-  const safeDuration = Number.isFinite(traceDurationMs) && traceDurationMs > 0 ? traceDurationMs : 1;
+  const safeDuration =
+    Number.isFinite(traceDurationMs) && traceDurationMs > 0 ? traceDurationMs : 1;
 
   const byId = new Map(spans.map((span) => [span.spanId, span]));
   const childrenByParent = new Map<string, SpanRow[]>();

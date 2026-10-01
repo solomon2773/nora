@@ -104,7 +104,9 @@ export default function WorkspaceSettingsPage() {
             <div>
               <h2 className="text-sm font-black text-slate-900">{t("Log retention")}</h2>
               <p className="text-xs text-slate-500">
-                {t("How long Nora keeps logs and traces for agents in this workspace. Capped at the platform's limit.")}
+                {t(
+                  "How long Nora keeps logs and traces for agents in this workspace. Capped at the platform's limit.",
+                )}
               </p>
             </div>
           </div>
@@ -123,7 +125,9 @@ export default function WorkspaceSettingsPage() {
                     type="number"
                     min={1}
                     value={runtimeRetentionDays}
-                    onChange={(e) => setRuntimeRetentionDays(Math.max(1, Number(e.target.value) || 1))}
+                    onChange={(e) =>
+                      setRuntimeRetentionDays(Math.max(1, Number(e.target.value) || 1))
+                    }
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none focus:border-blue-300"
                   />
                 </label>
@@ -136,7 +140,9 @@ export default function WorkspaceSettingsPage() {
                     type="number"
                     min={1}
                     value={matchTraceRetention ? runtimeRetentionDays : traceRetentionDays}
-                    onChange={(e) => setTraceRetentionDays(Math.max(1, Number(e.target.value) || 1))}
+                    onChange={(e) =>
+                      setTraceRetentionDays(Math.max(1, Number(e.target.value) || 1))
+                    }
                     disabled={matchTraceRetention}
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none focus:border-blue-300 disabled:bg-slate-50 disabled:text-slate-400"
                   />

@@ -59,7 +59,9 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
   }
 
   async function reset() {
-    await pool.query(`TRUNCATE log_segment_legacy_copies, log_segments, agent_spans, deleted_log_owners`);
+    await pool.query(
+      `TRUNCATE log_segment_legacy_copies, log_segments, agent_spans, deleted_log_owners`,
+    );
     await pool.query(
       `UPDATE platform_settings SET log_purge_job = NULL, log_collection_enabled = NULL, log_collection_updated_at = NULL WHERE singleton = TRUE`,
     );
@@ -81,7 +83,8 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
 
     logPurge = require("../../workers/provisioner/logs/logPurge.ts");
     logCollectionState = require("../../workers/provisioner/logs/logCollectionState.ts");
-    realSweep = require("../../workers/provisioner/logs/retentionSweeper.ts").sweepExpiredSegmentsByScope;
+    realSweep =
+      require("../../workers/provisioner/logs/retentionSweeper.ts").sweepExpiredSegmentsByScope;
   });
 
   afterAll(async () => {
@@ -126,7 +129,13 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
   });
 
   it("stats are all zero on an empty installation", async () => {
-    expect(await logPurge.getLogStats({ db: pool })).toMatchObject({ segments: 0, lines: 0, bytes: 0, agents: 0, spans: 0 });
+    expect(await logPurge.getLogStats({ db: pool })).toMatchObject({
+      segments: 0,
+      lines: 0,
+      bytes: 0,
+      agents: 0,
+      spans: 0,
+    });
   });
 
   it("requesting a purge is single-flight, and a finished one can be followed by a new one", async () => {
@@ -148,7 +157,9 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
 
   it("runs a purge end to end: deletes active segments, legacy copies and spans in batches, spares kept logs", async () => {
     await seedMixed();
-    const { rows } = await pool.query(`SELECT id FROM log_segments WHERE agent_id = $1 LIMIT 1`, [ids.liveAgentA]);
+    const { rows } = await pool.query(`SELECT id FROM log_segments WHERE agent_id = $1 LIMIT 1`, [
+      ids.liveAgentA,
+    ]);
     await pool.query(
       `INSERT INTO log_segment_legacy_copies(log_segment_id, storage_backend, ts_to) VALUES ($1, 'local', '2026-01-02')`,
       [rows[0].id],
@@ -160,20 +171,50 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
       db: pool,
       logger: silent,
       sweepExpiredSegmentsByScope: sweep,
-      logEvent: async (...args) => { events.push(args); },
+      logEvent: async (...args) => {
+        events.push(args);
+      },
       isCollectionEnabled: async () => false,
       segmentBatch: 2, // forces more than one batch
       spanBatch: 1,
     });
 
     expect(result).toMatchObject({ ran: true, segmentsDeleted: 3, spansDeleted: 2 });
-    expect((await pool.query(`SELECT COUNT(*)::int AS n FROM log_segments WHERE agent_id IN ($1, $2)`, [ids.liveAgentA, ids.liveAgentB])).rows[0].n).toBe(0);
-    expect((await pool.query(`SELECT COUNT(*)::int AS n FROM agent_spans WHERE agent_id IN ($1, $2)`, [ids.liveAgentA, ids.liveAgentB])).rows[0].n).toBe(0);
-    expect((await pool.query(`SELECT COUNT(*)::int AS n FROM log_segment_legacy_copies`)).rows[0].n).toBe(0);
+    expect(
+      (
+        await pool.query(`SELECT COUNT(*)::int AS n FROM log_segments WHERE agent_id IN ($1, $2)`, [
+          ids.liveAgentA,
+          ids.liveAgentB,
+        ])
+      ).rows[0].n,
+    ).toBe(0);
+    expect(
+      (
+        await pool.query(`SELECT COUNT(*)::int AS n FROM agent_spans WHERE agent_id IN ($1, $2)`, [
+          ids.liveAgentA,
+          ids.liveAgentB,
+        ])
+      ).rows[0].n,
+    ).toBe(0);
+    expect(
+      (await pool.query(`SELECT COUNT(*)::int AS n FROM log_segment_legacy_copies`)).rows[0].n,
+    ).toBe(0);
 
     // Logs kept for the deleted agent are still there, and still recoverable.
-    expect((await pool.query(`SELECT COUNT(*)::int AS n FROM log_segments WHERE agent_id = $1`, [ids.keptAgent])).rows[0].n).toBe(1);
-    expect((await pool.query(`SELECT COUNT(*)::int AS n FROM agent_spans WHERE agent_id = $1`, [ids.keptAgent])).rows[0].n).toBe(1);
+    expect(
+      (
+        await pool.query(`SELECT COUNT(*)::int AS n FROM log_segments WHERE agent_id = $1`, [
+          ids.keptAgent,
+        ])
+      ).rows[0].n,
+    ).toBe(1);
+    expect(
+      (
+        await pool.query(`SELECT COUNT(*)::int AS n FROM agent_spans WHERE agent_id = $1`, [
+          ids.keptAgent,
+        ])
+      ).rows[0].n,
+    ).toBe(1);
 
     const job = await logPurge.readPurgeJob({ db: pool });
     expect(job).toMatchObject({ status: "completed", segmentsDeleted: 3, spansDeleted: 2 });
@@ -195,7 +236,11 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
 
   it("setLogCollectionEnabled moves the 'since' timestamp only when the value actually changes", async () => {
     const read = async () =>
-      (await pool.query(`SELECT log_collection_enabled AS v, log_collection_updated_at AS at FROM platform_settings WHERE singleton = TRUE`)).rows[0];
+      (
+        await pool.query(
+          `SELECT log_collection_enabled AS v, log_collection_updated_at AS at FROM platform_settings WHERE singleton = TRUE`,
+        )
+      ).rows[0];
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     await logCollectionState.setLogCollectionEnabled(true, { db: pool });
@@ -227,19 +272,45 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
     expect(Number.isNaN(Date.parse(on.since))).toBe(false);
 
     await logCollectionState.setLogCollectionEnabled(false, { db: pool });
-    expect((await logCollectionState.resolveLogCollectionState({ db: pool, env: {} })).since).toBeNull();
+    expect(
+      (await logCollectionState.resolveLogCollectionState({ db: pool, env: {} })).since,
+    ).toBeNull();
   });
 
   it("collection state follows the stored value, then the environment, then 'undecided'", async () => {
     const state = (env = {}) => logCollectionState.resolveLogCollectionState({ db: pool, env });
 
-    expect(await state()).toEqual({ enabled: false, decided: false, source: "default", since: null });
-    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({ enabled: true, decided: true, source: "env", since: null });
+    expect(await state()).toEqual({
+      enabled: false,
+      decided: false,
+      source: "default",
+      since: null,
+    });
+    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({
+      enabled: true,
+      decided: true,
+      source: "env",
+      since: null,
+    });
 
-    await pool.query(`UPDATE platform_settings SET log_collection_enabled = FALSE WHERE singleton = TRUE`);
-    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({ enabled: false, decided: true, source: "database", since: null });
+    await pool.query(
+      `UPDATE platform_settings SET log_collection_enabled = FALSE WHERE singleton = TRUE`,
+    );
+    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({
+      enabled: false,
+      decided: true,
+      source: "database",
+      since: null,
+    });
 
-    await pool.query(`UPDATE platform_settings SET log_collection_enabled = TRUE WHERE singleton = TRUE`);
-    expect(await state()).toEqual({ enabled: true, decided: true, source: "database", since: null });
+    await pool.query(
+      `UPDATE platform_settings SET log_collection_enabled = TRUE WHERE singleton = TRUE`,
+    );
+    expect(await state()).toEqual({
+      enabled: true,
+      decided: true,
+      source: "database",
+      since: null,
+    });
   });
 });

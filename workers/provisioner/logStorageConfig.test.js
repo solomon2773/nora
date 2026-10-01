@@ -182,7 +182,10 @@ test("the destination cache re-resolves after its TTL, so an admin change reache
   let resolves = 0;
   let clock = 0;
   const resolver = createCachedResolver({
-    resolve: async () => { resolves += 1; return destination; },
+    resolve: async () => {
+      resolves += 1;
+      return destination;
+    },
     ttlMs: 5_000,
     now: () => clock,
   });
@@ -190,18 +193,30 @@ test("the destination cache re-resolves after its TTL, so an admin change reache
   assert.equal(await resolver.get(), "old");
   destination = "new"; // the admin changes it in another process
   clock += 4_999;
-  assert.equal(await resolver.get(), "old", "within the TTL it is reused, so flushes do not hit the database");
+  assert.equal(
+    await resolver.get(),
+    "old",
+    "within the TTL it is reused, so flushes do not hit the database",
+  );
   assert.equal(resolves, 1);
 
   clock += 1;
-  assert.equal(await resolver.get(), "new", "once the TTL passes the change is picked up with no restart");
+  assert.equal(
+    await resolver.get(),
+    "new",
+    "once the TTL passes the change is picked up with no restart",
+  );
   assert.equal(resolves, 2);
 });
 
 test("invalidate forces the next call to re-resolve immediately", async () => {
   const { createCachedResolver } = require("./logs/logStorageConfig.ts");
   let value = 1;
-  const resolver = createCachedResolver({ resolve: async () => value, ttlMs: 60_000, now: () => 0 });
+  const resolver = createCachedResolver({
+    resolve: async () => value,
+    ttlMs: 60_000,
+    now: () => 0,
+  });
   assert.equal(await resolver.get(), 1);
   value = 2;
   assert.equal(await resolver.get(), 1);
@@ -213,7 +228,11 @@ test("concurrent callers share one in-flight resolve", async () => {
   const { createCachedResolver } = require("./logs/logStorageConfig.ts");
   let resolves = 0;
   const resolver = createCachedResolver({
-    resolve: async () => { resolves += 1; await new Promise((r) => setTimeout(r, 10)); return "x"; },
+    resolve: async () => {
+      resolves += 1;
+      await new Promise((r) => setTimeout(r, 10));
+      return "x";
+    },
     now: () => 0,
   });
   await Promise.all([resolver.get(), resolver.get(), resolver.get()]);
@@ -224,7 +243,11 @@ test("a failed resolve is not cached: the next call tries again", async () => {
   const { createCachedResolver } = require("./logs/logStorageConfig.ts");
   let attempts = 0;
   const resolver = createCachedResolver({
-    resolve: async () => { attempts += 1; if (attempts === 1) throw new Error("db hiccup"); return "ok"; },
+    resolve: async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("db hiccup");
+      return "ok";
+    },
     now: () => 0,
   });
   await assert.rejects(resolver.get(), /db hiccup/);

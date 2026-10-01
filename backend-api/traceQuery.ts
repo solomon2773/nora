@@ -240,7 +240,7 @@ function summarizeTrace(rows) {
     durationMs: Math.max(0, endedAtMs - startedAtMs),
     spanCount: rows.length,
     rootSpanName: rootRow ? rootRow.name : null,
-    status: rootRow ? rootRow.status ?? null : null,
+    status: rootRow ? (rootRow.status ?? null) : null,
     tokensIn,
     tokensOut,
     costUsd,
@@ -357,7 +357,9 @@ async function correlatedLogsForTrace(spanRows, deps = {}) {
   );
 
   const fetched = await Promise.all(
-    candidateRows.map((row) => fetchFn(row, { keyRing: deps.keyRing, dispatcher: deps.dispatcher })),
+    candidateRows.map((row) =>
+      fetchFn(row, { keyRing: deps.keyRing, dispatcher: deps.dispatcher }),
+    ),
   );
 
   const correlated = [];
@@ -450,9 +452,10 @@ async function listTraces(params, actor, deps = {}) {
     .map((rows) => summarizeTrace(rows))
     .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 
-  const limit = Number.isFinite(Number(params.limit)) && Number(params.limit) > 0
-    ? Math.min(1000, Math.floor(Number(params.limit)))
-    : 200;
+  const limit =
+    Number.isFinite(Number(params.limit)) && Number(params.limit) > 0
+      ? Math.min(1000, Math.floor(Number(params.limit)))
+      : 200;
 
   return {
     agentId,
@@ -491,10 +494,9 @@ async function getTraceDetail(traceId, actor, params = {}, deps = {}) {
   const findAgentFn = deps.findAccessibleAgentForActor || findAccessibleAgentForActor;
   const correlatedLogsFn = deps.correlatedLogsForTrace || correlatedLogsForTrace;
 
-  const spanResult = await db.query(
-    `SELECT ${SPAN_COLUMNS} FROM agent_spans WHERE trace_id = $1`,
-    [traceId],
-  );
+  const spanResult = await db.query(`SELECT ${SPAN_COLUMNS} FROM agent_spans WHERE trace_id = $1`, [
+    traceId,
+  ]);
   const spanRows = spanResult.rows;
   if (!spanRows.length) throw notFoundError("Trace not found");
 

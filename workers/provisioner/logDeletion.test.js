@@ -67,7 +67,10 @@ function fakeDb({
         return { rows: column == null ? [] : [{ value: column }] };
       }
 
-      if (sql.includes("FROM log_segment_legacy_copies lc") && sql.includes("lc.log_segment_id = ANY")) {
+      if (
+        sql.includes("FROM log_segment_legacy_copies lc") &&
+        sql.includes("lc.log_segment_id = ANY")
+      ) {
         const ids = params[0] || [];
         const rows = legacyCopies
           .filter((lc) => ids.includes(lc.log_segment_id))
@@ -96,15 +99,17 @@ function fakeDb({
           .filter((s) => s[column] === params[0])
           .sort((a, b) => (a.ts_from < b.ts_from ? -1 : a.ts_from > b.ts_from ? 1 : 0));
         return {
-          rows: rows.map(({ id, storage_key, storage_backend, storage_config, ts_from, ts_to, stream }) => ({
-            id,
-            storage_key,
-            storage_backend,
-            storage_config,
-            ts_from,
-            ts_to,
-            stream,
-          })),
+          rows: rows.map(
+            ({ id, storage_key, storage_backend, storage_config, ts_from, ts_to, stream }) => ({
+              id,
+              storage_key,
+              storage_backend,
+              storage_config,
+              ts_from,
+              ts_to,
+              stream,
+            }),
+          ),
         };
       }
 
@@ -131,7 +136,9 @@ function fakeDb({
       // The unconditional purge select (purgeAllLogsByColumn) — no cutoff,
       // single bind param.
       if (
-        sql.includes("SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE")
+        sql.includes(
+          "SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE",
+        )
       ) {
         const column = sql.includes("workspace_id =") ? "workspace_id" : "agent_id";
         const rows = segments.filter((s) => s[column] === params[0]);
@@ -244,7 +251,14 @@ test("deleteAgentLogs removes segments, spans, legacy copies for the agent — s
   const siblingSeg = segmentFixture({ id: "seg-sibling", agent_id: "agent-2" });
   const db = fakeDb({
     segments: [targetSeg, siblingSeg],
-    legacyCopies: [{ legacy_id: "lc-1", log_segment_id: "seg-target", storage_backend: "local", storage_config: {} }],
+    legacyCopies: [
+      {
+        legacy_id: "lc-1",
+        log_segment_id: "seg-target",
+        storage_backend: "local",
+        storage_config: {},
+      },
+    ],
     spans: [
       { id: "span-1", agent_id: "agent-1" },
       { id: "span-2", agent_id: "agent-2" },
@@ -270,7 +284,11 @@ test("deleteAgentLogs removes segments, spans, legacy copies for the agent — s
 
 test("deleteWorkspaceLogs scopes by workspace_id, not by enumerating member agents", async () => {
   const wsSeg = segmentFixture({ id: "seg-ws", agent_id: "agent-1", workspace_id: "ws-1" });
-  const otherWsSeg = segmentFixture({ id: "seg-other-ws", agent_id: "agent-1", workspace_id: "ws-2" });
+  const otherWsSeg = segmentFixture({
+    id: "seg-other-ws",
+    agent_id: "agent-1",
+    workspace_id: "ws-2",
+  });
   const db = fakeDb({
     segments: [wsSeg, otherWsSeg],
     spans: [
@@ -295,7 +313,9 @@ test("deleteWorkspaceLogs scopes by workspace_id, not by enumerating member agen
 
 test("snapshotDeletedLogOwner resolves retention_days from workspace_log_settings for an agent's workspace", async () => {
   const db = fakeDb({
-    workspaceLogSettings: new Map([["ws-1", { runtime_retention_days: 14, trace_retention_days: 14 }]]),
+    workspaceLogSettings: new Map([
+      ["ws-1", { runtime_retention_days: 14, trace_retention_days: 14 }],
+    ]),
   });
 
   const row = await snapshotDeletedLogOwner(
@@ -327,7 +347,9 @@ test("snapshotDeletedLogOwner falls back to the platform ceiling for an agent wi
 });
 
 test("workspace deleteLogs:false — retention snapshot survives workspace_log_settings being gone afterward", async () => {
-  const workspaceLogSettings = new Map([["ws-9", { runtime_retention_days: 21, trace_retention_days: 21 }]]);
+  const workspaceLogSettings = new Map([
+    ["ws-9", { runtime_retention_days: 21, trace_retention_days: 21 }],
+  ]);
   const db = fakeDb({ workspaceLogSettings });
 
   const row = await snapshotDeletedLogOwner(
@@ -352,11 +374,16 @@ test("purgeDeletedLogOwner removes segments, spans, legacy copies, and the delet
   const seg = segmentFixture({ id: "seg-kept", agent_id: "agent-3" });
   const db = fakeDb({
     segments: [seg],
-    legacyCopies: [{ legacy_id: "lc-2", log_segment_id: "seg-kept", storage_backend: "local", storage_config: {} }],
-    spans: [{ id: "span-kept", agent_id: "agent-3" }],
-    deletedLogOwners: [
-      { id: "owner-1", kind: "agent", source_id: "agent-3", retention_days: 30 },
+    legacyCopies: [
+      {
+        legacy_id: "lc-2",
+        log_segment_id: "seg-kept",
+        storage_backend: "local",
+        storage_config: {},
+      },
     ],
+    spans: [{ id: "span-kept", agent_id: "agent-3" }],
+    deletedLogOwners: [{ id: "owner-1", kind: "agent", source_id: "agent-3", retention_days: 30 }],
   });
   const deleteObjs = fakeDeleteStorageObjects();
 
@@ -453,7 +480,11 @@ test("listRecoveredLogLines decrypts and decompresses real segments into real lo
   );
   assert.ok(page1.nextCursor, "more lines remain in segment 2");
 
-  const page2 = await listRecoveredLogLines("owner-5", { limit: 2, cursor: page1.nextCursor }, deps);
+  const page2 = await listRecoveredLogLines(
+    "owner-5",
+    { limit: 2, cursor: page1.nextCursor },
+    deps,
+  );
   assert.deepEqual(
     page2.lines.map((l) => l.message),
     ["third"],

@@ -4333,7 +4333,10 @@ console.log(
 // `local` log storage driver can't reach every enabled deploy target.
 {
   const { assertDriverSupportsTargets } = require("./logs/logStorageConfig");
-  const configuredLogStorage = String(process.env.NORA_LOG_STORAGE || "local").trim().toLowerCase() || "local";
+  const configuredLogStorage =
+    String(process.env.NORA_LOG_STORAGE || "local")
+      .trim()
+      .toLowerCase() || "local";
   assertDriverSupportsTargets(configuredLogStorage, enabledBackends);
 }
 
@@ -5627,10 +5630,7 @@ scheduleRunWorker.on("completed", (job) => {
 // rather than opening a second one; drainSpanIngest lazily creates its own
 // pool only when no pool is injected (e.g. under test).
 const { drainSpanIngest } = require("./spanDrain");
-const SPAN_INGEST_CONCURRENCY = parsePositiveInteger(
-  process.env.SPAN_INGEST_WORKER_CONCURRENCY,
-  5,
-);
+const SPAN_INGEST_CONCURRENCY = parsePositiveInteger(process.env.SPAN_INGEST_WORKER_CONCURRENCY, 5);
 
 const spanIngestWorker = new Worker(
   "span-ingest",
@@ -5862,7 +5862,11 @@ startLogPurgeRunner({ segmentWriter });
 // combined registration for why calling it twice would silently drop
 // whichever collector registered first.
 const { startGatewayCollector } = require("./logs/gatewayCollector");
-const gatewayCollector = startGatewayCollector({ segmentWriter, isCollectionEnabled, getCollectionSince });
+const gatewayCollector = startGatewayCollector({
+  segmentWriter,
+  isCollectionEnabled,
+  getCollectionSince,
+});
 
 // An admin flipping the setting should take effect within seconds, not at the
 // collectors' next 30-second reconcile tick — after "turn off", agent output
@@ -5874,7 +5878,10 @@ const collectionWatcher = setInterval(async () => {
     const enabled = await isCollectionEnabled();
     if (lastCollectionEnabled !== null && enabled !== lastCollectionEnabled) {
       console.log(`[worker] Log collection turned ${enabled ? "on" : "off"}.`);
-      await Promise.allSettled([logCollector.reconcileStreams?.(), gatewayCollector.reconcileStreams?.()]);
+      await Promise.allSettled([
+        logCollector.reconcileStreams?.(),
+        gatewayCollector.reconcileStreams?.(),
+      ]);
     }
     lastCollectionEnabled = enabled;
   } catch (error) {
@@ -5993,7 +6000,9 @@ function registerShutdownCoordinator({
   async function runShutdown(signal) {
     if (shuttingDown) return;
     shuttingDown = true;
-    logger.log(`[shutdown] received ${signal}, starting graceful shutdown (deadline ${deadlineMs}ms)`);
+    logger.log(
+      `[shutdown] received ${signal}, starting graceful shutdown (deadline ${deadlineMs}ms)`,
+    );
 
     const hooks = getHooks() || {};
     try {

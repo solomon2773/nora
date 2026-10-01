@@ -89,7 +89,12 @@ test("chart renders with no log settings at all, because log collection is opt-i
 test("chart renders with local storage while collection is not enabled", () => {
   assert.match(helmTemplate(["--set", "backendEnv.NORA_LOG_STORAGE=local"]), /kind: ConfigMap/);
   assert.match(
-    helmTemplate(["--set", "backendEnv.NORA_LOG_STORAGE=local", "--set-string", "backendEnv.NORA_LOG_ENABLED=false"]),
+    helmTemplate([
+      "--set",
+      "backendEnv.NORA_LOG_STORAGE=local",
+      "--set-string",
+      "backendEnv.NORA_LOG_ENABLED=false",
+    ]),
     /kind: ConfigMap/,
   );
 });

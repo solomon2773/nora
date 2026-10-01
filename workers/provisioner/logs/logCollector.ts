@@ -51,9 +51,7 @@
 // a handful of lines across a transient reconnect.
 
 const { createLogChunkStreamParser } = require("../../../agent-runtime/lib/logLine.ts");
-const {
-  resolveAgentBackendType,
-} = require("../../../agent-runtime/lib/agentRuntimeFields.ts");
+const { resolveAgentBackendType } = require("../../../agent-runtime/lib/agentRuntimeFields.ts");
 
 const RUNTIME_STREAM = "runtime";
 const DEFAULT_RECONCILE_INTERVAL_MS = 30000;
@@ -131,7 +129,8 @@ function laterIso(a, b) {
  */
 function createLogCollector(deps = {}) {
   const db = deps.db || require("../../../backend-api/db.ts");
-  const containerManager = deps.containerManager || require("../../../backend-api/containerManager.ts");
+  const containerManager =
+    deps.containerManager || require("../../../backend-api/containerManager.ts");
   const segmentWriter = deps.segmentWriter;
   const resolveStorageConfig =
     deps.logStorageConfig || require("./logStorageConfig.ts").logStorageConfig;
@@ -259,7 +258,9 @@ function createLogCollector(deps = {}) {
           lines,
         ),
       ).catch((error) => {
-        logger.error(`[logCollector] segmentWriter.append failed for agent ${agentId}: ${error.message}`);
+        logger.error(
+          `[logCollector] segmentWriter.append failed for agent ${agentId}: ${error.message}`,
+        );
       });
     }
 

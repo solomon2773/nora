@@ -93,8 +93,10 @@ async function migrateOneSegment(row, { toConfig, keepSourceCopies, jobId }, dep
   const getObj = deps.getStorageObject || objectStorage.getStorageObject;
   const putObj = deps.putStorageObject || objectStorage.putStorageObject;
   const deleteObj = deps.deleteStorageObject || objectStorage.deleteStorageObject;
-  const resolveFromConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
-  const snapshotFn = deps.logStorageConfigSnapshot || logStorageConfigModule.logStorageConfigSnapshot;
+  const resolveFromConfig =
+    deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
+  const snapshotFn =
+    deps.logStorageConfigSnapshot || logStorageConfigModule.logStorageConfigSnapshot;
 
   const fromConfig = await resolveFromConfig(row);
 
@@ -128,7 +130,13 @@ async function migrateOneSegment(row, { toConfig, keepSourceCopies, jobId }, dep
      UPDATE storage_migration_jobs
         SET segments_migrated = segments_migrated + (SELECT COUNT(*) FROM moved)
       WHERE id = $5`,
-    [row.id, toConfig.storageBackend, JSON.stringify(snapshotFn(toConfig)), row.storage_backend, jobId],
+    [
+      row.id,
+      toConfig.storageBackend,
+      JSON.stringify(snapshotFn(toConfig)),
+      row.storage_backend,
+      jobId,
+    ],
   );
 
   if (keepSourceCopies) {
@@ -192,7 +200,9 @@ async function startStorageMigration(fromConfig, toConfig, keepSourceCopies, dep
   const toBackend = to.storageBackend;
 
   if (!fromBackend || !toBackend) {
-    const error = new Error("startStorageMigration requires fromConfig.storageBackend and toConfig.storageBackend");
+    const error = new Error(
+      "startStorageMigration requires fromConfig.storageBackend and toConfig.storageBackend",
+    );
     error.statusCode = 400;
     throw error;
   }
@@ -291,13 +301,20 @@ async function migrateSegmentBatch(jobId, deps = {}) {
     const capacity = await checkCapacity();
     if (capacity.atCapacity) {
       if (job.status !== "paused") {
-        await db.query(`UPDATE storage_migration_jobs SET status = 'paused' WHERE id = $1`, [jobId]);
+        await db.query(`UPDATE storage_migration_jobs SET status = 'paused' WHERE id = $1`, [
+          jobId,
+        ]);
         await logEvent(
           "log_storage_migration_paused",
           `Storage migration ${jobId} paused at checkpoint ${job.checkpoint || "(start)"} — ` +
             `local log storage is at capacity (${capacity.usedBytes}/${capacity.limitBytes} bytes). ` +
             `This is expected to self-resolve once usage drops back under the cap.`,
-          { jobId, checkpoint: job.checkpoint, usedBytes: capacity.usedBytes, limitBytes: capacity.limitBytes },
+          {
+            jobId,
+            checkpoint: job.checkpoint,
+            usedBytes: capacity.usedBytes,
+            limitBytes: capacity.limitBytes,
+          },
         );
       }
       return { done: false, status: "paused" };
@@ -346,7 +363,11 @@ async function migrateSegmentBatch(jobId, deps = {}) {
   let migratedInBatch = 0;
   for (const row of rows) {
     try {
-      await migrateOneSegmentWithRetry(row, { toConfig, keepSourceCopies: job.keep_source, jobId }, deps);
+      await migrateOneSegmentWithRetry(
+        row,
+        { toConfig, keepSourceCopies: job.keep_source, jobId },
+        deps,
+      );
       migratedInBatch += 1;
     } catch (error) {
       // Unrecoverable (retries already exhausted): mark failed. Segments in
@@ -373,7 +394,10 @@ async function migrateSegmentBatch(jobId, deps = {}) {
   const newCheckpoint = rows[rows.length - 1].id;
   // Progress was credited per segment as each moved; only the checkpoint
   // advances at the batch boundary.
-  await db.query(`UPDATE storage_migration_jobs SET checkpoint = $2 WHERE id = $1`, [jobId, newCheckpoint]);
+  await db.query(`UPDATE storage_migration_jobs SET checkpoint = $2 WHERE id = $1`, [
+    jobId,
+    newCheckpoint,
+  ]);
 
   return { done: false, status: "running", migrated: migratedInBatch };
 }
@@ -429,7 +453,8 @@ let _resumeTimer = null;
 function ensureCapacityResumeTimer(deps = {}) {
   if (_resumeTimer) return _resumeTimer;
   const setIntervalFn = deps.setIntervalFn || setInterval;
-  const intervalMs = deps.capacityPollIntervalMs ?? segmentWriterModule.DEFAULT_CAPACITY_POLL_INTERVAL_MS;
+  const intervalMs =
+    deps.capacityPollIntervalMs ?? segmentWriterModule.DEFAULT_CAPACITY_POLL_INTERVAL_MS;
   _resumeTimer = setIntervalFn(() => {
     tryResumePausedJobs(deps).catch(() => {});
   }, intervalMs);

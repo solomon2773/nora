@@ -141,7 +141,9 @@ async function resolveSafeGatewayHost(host, label = "agent gateway") {
 
   const firstAllowed = addresses.find((entry) => !isBlockedGatewayIP(entry.address));
   if (!firstAllowed) {
-    throw new GatewayConnectionError(`${label} host does not resolve to an allowed gateway network`);
+    throw new GatewayConnectionError(
+      `${label} host does not resolve to an allowed gateway network`,
+    );
   }
   return firstAllowed.address;
 }
@@ -353,7 +355,9 @@ function createGatewayClient(agent, opts = {}) {
             sock = createSocket(target.url);
           } catch (error) {
             settleReject(
-              new GatewayConnectionError(`failed to open gateway socket: ${error.message}`, { cause: error }),
+              new GatewayConnectionError(`failed to open gateway socket: ${error.message}`, {
+                cause: error,
+              }),
             );
             return;
           }
@@ -413,7 +417,9 @@ function createGatewayClient(agent, opts = {}) {
               sock.send(JSON.stringify(connectFrame));
             } catch (error) {
               settleReject(
-                new GatewayConnectionError(`failed to send connect frame: ${error.message}`, { cause: error }),
+                new GatewayConnectionError(`failed to send connect frame: ${error.message}`, {
+                  cause: error,
+                }),
               );
             }
           };
@@ -452,9 +458,12 @@ function createGatewayClient(agent, opts = {}) {
               } else {
                 const serverError = msg.error || { message: "unknown" };
                 settleReject(
-                  new GatewayAuthError(`gateway handshake failed: ${serverError.message || "unknown"}`, {
-                    serverError,
-                  }),
+                  new GatewayAuthError(
+                    `gateway handshake failed: ${serverError.message || "unknown"}`,
+                    {
+                      serverError,
+                    },
+                  ),
                 );
                 teardownSocket();
               }
@@ -480,10 +489,13 @@ function createGatewayClient(agent, opts = {}) {
                 );
               } else {
                 rej(
-                  new GatewayRpcError(`gateway call failed: ${msg.error?.message || "unknown error"}`, {
-                    code: "GATEWAY_CALL_FAILED",
-                    serverError: msg.error,
-                  }),
+                  new GatewayRpcError(
+                    `gateway call failed: ${msg.error?.message || "unknown error"}`,
+                    {
+                      code: "GATEWAY_CALL_FAILED",
+                      serverError: msg.error,
+                    },
+                  ),
                 );
               }
               return;
@@ -517,7 +529,8 @@ function createGatewayClient(agent, opts = {}) {
             connected = false;
             settleReject(new GatewayConnectionError("gateway connection closed"));
             if (!closed) rejectAllPending(new GatewayConnectionError("gateway connection closed"));
-            if (wasSettled && wasConnectedBeforeClose && !closed && !unavailable) void runAttemptLoop();
+            if (wasSettled && wasConnectedBeforeClose && !closed && !unavailable)
+              void runAttemptLoop();
           };
 
           sock.addEventListener?.("open", onOpen);
@@ -539,7 +552,9 @@ function createGatewayClient(agent, opts = {}) {
           settleReject(
             error instanceof GatewayRpcError
               ? error
-              : new GatewayConnectionError(`failed to resolve gateway target: ${error.message}`, { cause: error }),
+              : new GatewayConnectionError(`failed to resolve gateway target: ${error.message}`, {
+                  cause: error,
+                }),
           );
         },
       );
@@ -627,7 +642,12 @@ function createGatewayClient(agent, opts = {}) {
         // event would trigger — rather than continuing to loop on
         // per-call timeouts forever.
         consecutiveTimeouts += 1;
-        if (consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_THRESHOLD && socket && !closed && !unavailable) {
+        if (
+          consecutiveTimeouts >= CONSECUTIVE_TIMEOUT_THRESHOLD &&
+          socket &&
+          !closed &&
+          !unavailable
+        ) {
           consecutiveTimeouts = 0;
           connected = false;
           teardownSocket();
@@ -646,7 +666,11 @@ function createGatewayClient(agent, opts = {}) {
       } catch (error) {
         clearTimeout(timer);
         pending.delete(id);
-        reject(new GatewayConnectionError(`failed to send gateway call: ${error.message}`, { cause: error }));
+        reject(
+          new GatewayConnectionError(`failed to send gateway call: ${error.message}`, {
+            cause: error,
+          }),
+        );
       }
     });
   }
@@ -655,7 +679,9 @@ function createGatewayClient(agent, opts = {}) {
     if (closed) return;
     closed = true;
     rejectAllPending(new GatewayConnectionError("gateway client closed"));
-    settleConnectWaiters(({ reject }) => reject(new GatewayConnectionError("gateway client closed")));
+    settleConnectWaiters(({ reject }) =>
+      reject(new GatewayConnectionError("gateway client closed")),
+    );
     teardownSocket();
   }
 

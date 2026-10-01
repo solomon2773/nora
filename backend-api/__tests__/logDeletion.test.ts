@@ -59,7 +59,9 @@ function fakeDb(overrides = {}) {
       }
       if (sql.includes("DELETE FROM log_segment_legacy_copies")) return { rows: [] };
       if (
-        sql.includes("SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE")
+        sql.includes(
+          "SELECT id, storage_key, storage_backend, storage_config FROM log_segments WHERE",
+        )
       ) {
         const column = sql.includes("workspace_id =") ? "workspace_id" : "agent_id";
         return {
@@ -119,8 +121,20 @@ describe("logDeletion.ts (Phase 5c)", () => {
   it("deleteAgentLogs removes only the target agent's segments and spans", async () => {
     const db = fakeDb({
       segments: [
-        { id: "seg-a", agent_id: "agent-a", storage_key: "k-a", storage_backend: "local", storage_config: {} },
-        { id: "seg-b", agent_id: "agent-b", storage_key: "k-b", storage_backend: "local", storage_config: {} },
+        {
+          id: "seg-a",
+          agent_id: "agent-a",
+          storage_key: "k-a",
+          storage_backend: "local",
+          storage_config: {},
+        },
+        {
+          id: "seg-b",
+          agent_id: "agent-b",
+          storage_key: "k-b",
+          storage_backend: "local",
+          storage_config: {},
+        },
       ],
       spans: [
         { id: "span-a", agent_id: "agent-a" },
@@ -143,7 +157,13 @@ describe("logDeletion.ts (Phase 5c)", () => {
   it("deleteWorkspaceLogs scopes by workspace_id", async () => {
     const db = fakeDb({
       segments: [
-        { id: "seg-ws", workspace_id: "ws-1", storage_key: "k-ws", storage_backend: "local", storage_config: {} },
+        {
+          id: "seg-ws",
+          workspace_id: "ws-1",
+          storage_key: "k-ws",
+          storage_backend: "local",
+          storage_config: {},
+        },
       ],
     });
 
@@ -160,9 +180,17 @@ describe("logDeletion.ts (Phase 5c)", () => {
   it("snapshotDeletedLogOwner creates a deleted_log_owners row with the resolved retention snapshot, and leaves segments untouched", async () => {
     const db = fakeDb({
       segments: [
-        { id: "seg-kept", agent_id: "agent-kept", storage_key: "k-kept", storage_backend: "local", storage_config: {} },
+        {
+          id: "seg-kept",
+          agent_id: "agent-kept",
+          storage_key: "k-kept",
+          storage_backend: "local",
+          storage_config: {},
+        },
       ],
-      workspaceLogSettings: new Map([["ws-1", { runtime_retention_days: 10, trace_retention_days: 10 }]]),
+      workspaceLogSettings: new Map([
+        ["ws-1", { runtime_retention_days: 10, trace_retention_days: 10 }],
+      ]),
     });
 
     const row = await snapshotDeletedLogOwner(
@@ -187,10 +215,18 @@ describe("logDeletion.ts (Phase 5c)", () => {
   it("purgeDeletedLogOwner removes segments/spans and the deleted_log_owners row itself", async () => {
     const db = fakeDb({
       segments: [
-        { id: "seg-p", agent_id: "agent-p", storage_key: "k-p", storage_backend: "local", storage_config: {} },
+        {
+          id: "seg-p",
+          agent_id: "agent-p",
+          storage_key: "k-p",
+          storage_backend: "local",
+          storage_config: {},
+        },
       ],
       spans: [{ id: "span-p", agent_id: "agent-p" }],
-      deletedLogOwners: [{ id: "owner-p", kind: "agent", source_id: "agent-p", retention_days: 30 }],
+      deletedLogOwners: [
+        { id: "owner-p", kind: "agent", source_id: "agent-p", retention_days: 30 },
+      ],
     });
 
     const result = await purgeDeletedLogOwner(

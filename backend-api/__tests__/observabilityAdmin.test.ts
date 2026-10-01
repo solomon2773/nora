@@ -218,9 +218,7 @@ describe("PUT /admin/log-storage (item 7a-ii)", () => {
       .mockResolvedValueOnce({ rows: [] }) // no active migration job (backend is changing: local -> s3)
       .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3", log_storage_s3_bucket: "b" }] }); // upsert RETURNING
     const res = await asAdmin(
-      request(app)
-        .put("/admin/log-storage")
-        .send({ storageBackend: "s3", s3Bucket: "b" }),
+      request(app).put("/admin/log-storage").send({ storageBackend: "s3", s3Bucket: "b" }),
     );
     expect(res.status).toBe(200);
     expect(mockLogEvent).toHaveBeenCalledTimes(1);
@@ -367,14 +365,19 @@ describe("PUT /admin/log-storage — pre-flight destination probe", () => {
 
   it("rejects the save and writes nothing when the destination fails verification", async () => {
     process.env.ENABLED_BACKENDS = "docker";
-    mockProbeStorageDestination.mockRejectedValueOnce(new Error("S3 storage is not fully configured"));
+    mockProbeStorageDestination.mockRejectedValueOnce(
+      new Error("S3 storage is not fully configured"),
+    );
     mockDb.query
       .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] }) // current row read
       .mockResolvedValueOnce({ rows: [] }); // no active migration job
     const res = await asAdmin(
-      request(app)
-        .put("/admin/log-storage")
-        .send({ storageBackend: "s3", s3Bucket: "b", s3AccessKeyId: "bad", s3SecretAccessKey: "bad" }),
+      request(app).put("/admin/log-storage").send({
+        storageBackend: "s3",
+        s3Bucket: "b",
+        s3AccessKeyId: "bad",
+        s3SecretAccessKey: "bad",
+      }),
     );
     expect(res.status).toBe(400);
     expect(res.body.code).toBe("log_storage_probe_failed");
@@ -398,12 +401,17 @@ describe("PUT /admin/log-storage — pre-flight destination probe", () => {
       .mockResolvedValueOnce({ rows: [{ log_storage_backend: "local" }] })
       .mockResolvedValueOnce({ rows: [] });
     const res = await asAdmin(
-      request(app)
-        .put("/admin/log-storage")
-        .send({ storageBackend: "s3", s3Bucket: "b", s3AccessKeyId: "bad", s3SecretAccessKey: "bad" }),
+      request(app).put("/admin/log-storage").send({
+        storageBackend: "s3",
+        s3Bucket: "b",
+        s3AccessKeyId: "bad",
+        s3SecretAccessKey: "bad",
+      }),
     );
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe("Destination check failed: Invalid access key ID or secret access key.");
+    expect(res.body.error).toBe(
+      "Destination check failed: Invalid access key ID or secret access key.",
+    );
   });
 
   it("skips the probe entirely for a local destination (no remote credentials to verify)", async () => {
@@ -427,13 +435,21 @@ describe("PUT /admin/log-storage — pre-flight destination probe", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ log_storage_backend: "s3", log_storage_s3_bucket: "b" }] });
     const res = await asAdmin(
-      request(app)
-        .put("/admin/log-storage")
-        .send({ storageBackend: "s3", s3Bucket: "b", s3AccessKeyId: "good", s3SecretAccessKey: "good" }),
+      request(app).put("/admin/log-storage").send({
+        storageBackend: "s3",
+        s3Bucket: "b",
+        s3AccessKeyId: "good",
+        s3SecretAccessKey: "good",
+      }),
     );
     expect(res.status).toBe(200);
     expect(mockProbeStorageDestination).toHaveBeenCalledWith(
-      expect.objectContaining({ storageBackend: "s3", bucket: "b", accessKeyId: "good", secretAccessKey: "good" }),
+      expect.objectContaining({
+        storageBackend: "s3",
+        bucket: "b",
+        accessKeyId: "good",
+        secretAccessKey: "good",
+      }),
     );
     expect(mockStartStorageMigration).toHaveBeenCalled();
   });
@@ -513,15 +529,15 @@ describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
   it("rejects a PUT from a caller without admin workspace role", async () => {
     mockDb.query.mockResolvedValueOnce(viewerMembershipRow);
     const res = await asUser(
-      request(app).put(`/workspaces/${WORKSPACE_ID}/log-settings`).send({ runtimeRetentionDays: 7 }),
+      request(app)
+        .put(`/workspaces/${WORKSPACE_ID}/log-settings`)
+        .send({ runtimeRetentionDays: 7 }),
     );
     expect(res.status).toBe(403);
   });
 
   it("rejects non-integer/invalid retention values", async () => {
-    mockDb.query
-      .mockResolvedValueOnce(adminMembershipRow)
-      .mockResolvedValueOnce({ rows: [] }); // current-settings read inside the PUT handler
+    mockDb.query.mockResolvedValueOnce(adminMembershipRow).mockResolvedValueOnce({ rows: [] }); // current-settings read inside the PUT handler
 
     const res = await asAdmin(
       request(app)
@@ -683,7 +699,11 @@ describe("log collection toggle", () => {
     });
 
     it("returns the state, what a delete would remove, the last delete request, and key health", async () => {
-      collectionDb({ stored: false, stats: SOME_LOGS, purgeJob: { id: "j1", status: "completed" } });
+      collectionDb({
+        stored: false,
+        stats: SOME_LOGS,
+        purgeJob: { id: "j1", status: "completed" },
+      });
       const res = await asAdmin(request(app).get("/admin/log-collection"));
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({
@@ -804,7 +824,9 @@ describe("log collection toggle", () => {
 
       expect(res.status).toBe(200);
       expect(writes).toEqual([{ kind: "collection", params: [true] }]);
-      expect(res.body).toMatchObject({ enabled: false /* re-read shows the scripted stored value */ });
+      expect(res.body).toMatchObject({
+        enabled: false /* re-read shows the scripted stored value */,
+      });
       expect(mockLogEvent).toHaveBeenCalledWith(
         "admin_log_collection_updated",
         expect.stringContaining("on"),

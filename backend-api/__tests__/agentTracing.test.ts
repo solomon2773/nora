@@ -97,7 +97,9 @@ describe("agentTracing", () => {
 
       process.env.NORA_OTLP_PUBLIC_ENDPOINT = "https://public.example.com";
       delta = agentTracing.buildTracingConfigDelta(agent, enabledSettings);
-      expect(delta.diagnostics.otel.tracesEndpoint).toBe("https://public.example.com/otlp/v1/traces");
+      expect(delta.diagnostics.otel.tracesEndpoint).toBe(
+        "https://public.example.com/otlp/v1/traces",
+      );
     });
   });
 
@@ -155,9 +157,9 @@ describe("agentTracing", () => {
 
       await agentTracing.applyTracingConfig(agentRow());
 
-      expect(
-        mockDb.query.mock.calls.some(([sql]) => /workspace_log_settings/.test(sql)),
-      ).toBe(false);
+      expect(mockDb.query.mock.calls.some(([sql]) => /workspace_log_settings/.test(sql))).toBe(
+        false,
+      );
     });
 
     test("isTracingEnabled only treats explicit truthy values as on", () => {
@@ -170,8 +172,7 @@ describe("agentTracing", () => {
     });
 
     test("enabling tracing on a running agent issues no restart — only the config-merge command runs", async () => {
-      mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
+      mockDb.query.mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
 
       const result = await agentTracing.applyTracingConfig(agentRow());
@@ -189,8 +190,7 @@ describe("agentTracing", () => {
     });
 
     test("falls back to runContainerCommand when the runtime sidecar is unreachable", async () => {
-      mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
+      mockDb.query.mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockRejectedValueOnce(new Error("unreachable"));
       mockAuthSync.runContainerCommand.mockResolvedValueOnce({ exitCode: 0 });
 
@@ -212,16 +212,14 @@ describe("agentTracing", () => {
 
     test("switching NORA_TRACES_ENABLED off removes/disables the config for agents", async () => {
       // First apply: enabled.
-      mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
+      mockDb.query.mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
       const enabledResult = await agentTracing.applyTracingConfig(agentRow());
       expect(enabledResult.delta.diagnostics.otel.enabled).toBe(true);
 
       // Second apply, after the platform switch was turned off.
       process.env.NORA_TRACES_ENABLED = "false";
-      mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
+      mockDb.query.mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
       const disabledResult = await agentTracing.applyTracingConfig(agentRow());
 
@@ -254,8 +252,12 @@ describe("agentTracing", () => {
 
       test("parseTracingOpenclawVersionFromOutput returns undefined for an empty or missing marker", () => {
         expect(agentTracing.parseTracingOpenclawVersionFromOutput("")).toBeUndefined();
-        expect(agentTracing.parseTracingOpenclawVersionFromOutput("__NORA_TRACING_OPENCLAW_VERSION__=")).toBeUndefined();
-        expect(agentTracing.parseTracingOpenclawVersionFromOutput("no marker here")).toBeUndefined();
+        expect(
+          agentTracing.parseTracingOpenclawVersionFromOutput("__NORA_TRACING_OPENCLAW_VERSION__="),
+        ).toBeUndefined();
+        expect(
+          agentTracing.parseTracingOpenclawVersionFromOutput("no marker here"),
+        ).toBeUndefined();
       });
 
       test("parseTracingCapabilityFromOutput reads the marker out of arbitrary surrounding output", () => {
@@ -272,7 +274,9 @@ describe("agentTracing", () => {
       test("parseTracingCapabilityFromOutput returns undefined when the marker never printed (unreachable agent, shell error before the check)", () => {
         expect(agentTracing.parseTracingCapabilityFromOutput("")).toBeUndefined();
         expect(agentTracing.parseTracingCapabilityFromOutput(undefined)).toBeUndefined();
-        expect(agentTracing.parseTracingCapabilityFromOutput("sh: command not found")).toBeUndefined();
+        expect(
+          agentTracing.parseTracingCapabilityFromOutput("sh: command not found"),
+        ).toBeUndefined();
       });
 
       test("persists 'supported' to agents.tracing_capability when the plugin check output says so", async () => {
@@ -319,8 +323,7 @@ describe("agentTracing", () => {
 
       test("does not touch tracing_capability at all when tracing is off -- no attempt means no new information", async () => {
         process.env.NORA_TRACES_ENABLED = "false";
-        mockDb.query
-          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
+        mockDb.query.mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
 
         const result = await agentTracing.applyTracingConfig(agentRow());
@@ -336,7 +339,10 @@ describe("agentTracing", () => {
         mockDb.query
           .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
           .mockResolvedValueOnce({ rows: [] }); // the optimistic pre-write
-        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "no marker here" });
+        mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({
+          exitCode: 0,
+          output: "no marker here",
+        });
 
         const result = await agentTracing.applyTracingConfig(agentRow());
 
@@ -352,11 +358,15 @@ describe("agentTracing", () => {
 
       test("shouldCheckTracingCapability: always checks when capability is unknown or absent", () => {
         expect(agentTracing.shouldCheckTracingCapability({})).toBe(true);
-        expect(agentTracing.shouldCheckTracingCapability({ tracing_capability: "unknown" })).toBe(true);
+        expect(agentTracing.shouldCheckTracingCapability({ tracing_capability: "unknown" })).toBe(
+          true,
+        );
       });
 
       test("shouldCheckTracingCapability: always checks when a known verdict has no checked_at timestamp", () => {
-        expect(agentTracing.shouldCheckTracingCapability({ tracing_capability: "unsupported" })).toBe(true);
+        expect(
+          agentTracing.shouldCheckTracingCapability({ tracing_capability: "unsupported" }),
+        ).toBe(true);
       });
 
       test("shouldCheckTracingCapability: skips a recent known verdict, within the recheck interval", () => {
@@ -411,7 +421,10 @@ describe("agentTracing", () => {
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
 
         await agentTracing.applyTracingConfig(
-          agentRow({ tracing_capability: "unsupported", tracing_capability_checked_at: freshlyChecked }),
+          agentRow({
+            tracing_capability: "unsupported",
+            tracing_capability_checked_at: freshlyChecked,
+          }),
           {},
           { forceCapabilityCheck: true },
         );
@@ -501,7 +514,10 @@ describe("agentTracing", () => {
             });
 
           await agentTracing.applyTracingConfig(
-            agentRow({ tracing_capability: "unsupported", tracing_capability_checked_at: staleCheckedAt }),
+            agentRow({
+              tracing_capability: "unsupported",
+              tracing_capability_checked_at: staleCheckedAt,
+            }),
           );
 
           const [, secondCommand] = mockAuthSync.runRuntimeCommand.mock.calls[1];

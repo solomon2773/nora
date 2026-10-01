@@ -17,8 +17,19 @@ const silent = { log() {}, warn() {}, error() {} };
  * A fake db that backs `platform_settings.log_purge_job` with plain state and
  * hands out span deletions from a queue.
  */
-function fakeDb({ job = null, spanBatches = [], spanError = null, collectionEnabled = false } = {}) {
-  const state = { job, patches: [], spanBatches: [...spanBatches], collectionEnabled, collectionReads: 0 };
+function fakeDb({
+  job = null,
+  spanBatches = [],
+  spanError = null,
+  collectionEnabled = false,
+} = {}) {
+  const state = {
+    job,
+    patches: [],
+    spanBatches: [...spanBatches],
+    collectionEnabled,
+    collectionReads: 0,
+  };
   return {
     state,
     async query(sql, params) {
@@ -68,7 +79,11 @@ const pendingJob = (overrides = {}) => ({
 test("does nothing when no purge was requested or the last one is finished", async () => {
   for (const job of [null, pendingJob({ status: "completed" }), pendingJob({ status: "failed" })]) {
     const db = fakeDb({ job });
-    const result = await runPendingPurge({ db, logger: silent, sweepExpiredSegmentsByScope: sweepFrom([]) });
+    const result = await runPendingPurge({
+      db,
+      logger: silent,
+      sweepExpiredSegmentsByScope: sweepFrom([]),
+    });
     assert.equal(result.ran, false);
     assert.equal(db.state.patches.length, 0);
   }
@@ -78,7 +93,12 @@ test("discards buffered lines BEFORE deleting, sweeps until empty, then complete
   const order = [];
   const db = fakeDb({ job: pendingJob(), spanBatches: [7, 3, 0] });
   const events = [];
-  const segmentWriter = { discardAll: async () => { order.push("discard"); return {}; } };
+  const segmentWriter = {
+    discardAll: async () => {
+      order.push("discard");
+      return {};
+    },
+  };
 
   const result = await runPendingPurge({
     db,
@@ -86,11 +106,22 @@ test("discards buffered lines BEFORE deleting, sweeps until empty, then complete
     segmentWriter,
     isCollectionEnabled: async () => false,
     sweepExpiredSegmentsByScope: sweepFrom([200, 150, 0, 0], order),
-    logEvent: async (...args) => { events.push(args); },
+    logEvent: async (...args) => {
+      events.push(args);
+    },
   });
 
-  assert.equal(order[0], "discard", "buffers must be discarded before any stored segment is deleted");
-  assert.deepEqual(result, { ran: true, segmentsDeleted: 350, objectsDeleted: 350, spansDeleted: 10 });
+  assert.equal(
+    order[0],
+    "discard",
+    "buffers must be discarded before any stored segment is deleted",
+  );
+  assert.deepEqual(result, {
+    ran: true,
+    segmentsDeleted: 350,
+    objectsDeleted: 350,
+    spansDeleted: 10,
+  });
   assert.equal(db.state.job.status, "completed");
   assert.equal(db.state.job.segmentsDeleted, 350);
   assert.equal(db.state.job.spansDeleted, 10);
@@ -111,7 +142,9 @@ test("sweeps once more after the span pass, to catch a flush that was in flight 
     sweepExpiredSegmentsByScope: async () => {
       sweeps += 1;
       order.push("sweep");
-      return sweeps === 2 ? { deletedSegments: 1, deletedObjects: 1, deletedLegacyCopies: 0 } : { deletedSegments: 0, deletedObjects: 0, deletedLegacyCopies: 0 };
+      return sweeps === 2
+        ? { deletedSegments: 1, deletedObjects: 1, deletedLegacyCopies: 0 }
+        : { deletedSegments: 0, deletedObjects: 0, deletedLegacyCopies: 0 };
     },
     logEvent: async () => {},
   });
@@ -126,8 +159,15 @@ test("refuses to run, and fails the job, if collection was turned back on", asyn
     db,
     logger: silent,
     isCollectionEnabled: async () => true,
-    segmentWriter: { discardAll: async () => { throw new Error("must not discard live buffers"); } },
-    sweepExpiredSegmentsByScope: async () => { swept = true; return { deletedSegments: 0 }; },
+    segmentWriter: {
+      discardAll: async () => {
+        throw new Error("must not discard live buffers");
+      },
+    },
+    sweepExpiredSegmentsByScope: async () => {
+      swept = true;
+      return { deletedSegments: 0 };
+    },
   });
   assert.equal(result.ran, false);
   assert.equal(result.abandoned, true);
@@ -148,7 +188,9 @@ test("a failure part-way marks the job failed with the partial counts and logs a
       if (calls === 1) return { deletedSegments: 5, deletedObjects: 5, deletedLegacyCopies: 0 };
       throw new Error("storage unreachable");
     },
-    logEvent: async (...args) => { events.push(args); },
+    logEvent: async (...args) => {
+      events.push(args);
+    },
   });
   assert.equal(result.failed, true);
   assert.equal(db.state.job.status, "failed");
@@ -159,7 +201,12 @@ test("a failure part-way marks the job failed with the partial counts and logs a
 
 test("a job left running by a restart is resumed and keeps counting from where it was", async () => {
   const db = fakeDb({
-    job: pendingJob({ status: "running", startedAt: "2026-10-01T00:00:00.000Z", segmentsDeleted: 40, objectsDeleted: 40 }),
+    job: pendingJob({
+      status: "running",
+      startedAt: "2026-10-01T00:00:00.000Z",
+      segmentsDeleted: 40,
+      objectsDeleted: 40,
+    }),
     spanBatches: [0],
   });
   await runPendingPurge({
@@ -170,7 +217,11 @@ test("a job left running by a restart is resumed and keeps counting from where i
   });
   assert.equal(db.state.job.status, "completed");
   assert.equal(db.state.job.segmentsDeleted, 50);
-  assert.equal(db.state.job.startedAt, "2026-10-01T00:00:00.000Z", "startedAt must not be reset by a resume");
+  assert.equal(
+    db.state.job.startedAt,
+    "2026-10-01T00:00:00.000Z",
+    "startedAt must not be reset by a resume",
+  );
 });
 
 test("requestLogPurge returns the in-progress job instead of starting a second", async () => {
@@ -182,7 +233,9 @@ test("requestLogPurge returns the in-progress job instead of starting a second",
 });
 
 test("requestLogPurge reports a freshly created job as created", async () => {
-  const db = { query: async (sql, params) => ({ rows: [{ log_purge_job: JSON.parse(params[0]) }] }) };
+  const db = {
+    query: async (sql, params) => ({ rows: [{ log_purge_job: JSON.parse(params[0]) }] }),
+  };
   const result = await requestLogPurge({ requestedBy: "admin-2" }, { db });
   assert.equal(result.created, true);
   assert.equal(result.job.status, "pending");
@@ -193,33 +246,65 @@ test("getLogStats totals the active logs and tolerates a database that has not b
   const db = {
     async query(sql) {
       if (/FROM log_segments/.test(sql)) {
-        return { rows: [{ segments: "12", lines: "3400", bytes: "98765", agents: 3, oldest: "2026-09-01T00:00:00Z", newest: "2026-10-01T00:00:00Z" }] };
+        return {
+          rows: [
+            {
+              segments: "12",
+              lines: "3400",
+              bytes: "98765",
+              agents: 3,
+              oldest: "2026-09-01T00:00:00Z",
+              newest: "2026-10-01T00:00:00Z",
+            },
+          ],
+        };
       }
       return { rows: [{ spans: "8" }] };
     },
   };
   assert.deepEqual(await getLogStats({ db }), {
-    segments: 12, lines: 3400, bytes: 98765, agents: 3, spans: 8,
-    oldest: "2026-09-01T00:00:00Z", newest: "2026-10-01T00:00:00Z",
+    segments: 12,
+    lines: 3400,
+    bytes: 98765,
+    agents: 3,
+    spans: 8,
+    oldest: "2026-09-01T00:00:00Z",
+    newest: "2026-10-01T00:00:00Z",
   });
 
-  const missing = { query: async () => { throw Object.assign(new Error("no table"), { code: "42P01" }); } };
+  const missing = {
+    query: async () => {
+      throw Object.assign(new Error("no table"), { code: "42P01" });
+    },
+  };
   assert.deepEqual(await getLogStats({ db: missing }), {
-    segments: 0, lines: 0, bytes: 0, agents: 0, spans: 0, oldest: null, newest: null,
+    segments: 0,
+    lines: 0,
+    bytes: 0,
+    agents: 0,
+    spans: 0,
+    oldest: null,
+    newest: null,
   });
   assert.equal(await readPurgeJob({ db: missing }), null);
 });
 
 test("the runner is single-flight: overlapping ticks do not start two purges", async () => {
   let release;
-  const gate = new Promise((resolve) => { release = resolve; });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
   const db = fakeDb({ job: pendingJob(), spanBatches: [0] });
   let sweeps = 0;
   const runner = startLogPurgeRunner({
     db,
     logger: silent,
     intervalMs: 3_600_000,
-    sweepExpiredSegmentsByScope: async () => { sweeps += 1; await gate; return { deletedSegments: 0, deletedObjects: 0 }; },
+    sweepExpiredSegmentsByScope: async () => {
+      sweeps += 1;
+      await gate;
+      return { deletedSegments: 0, deletedObjects: 0 };
+    },
     logEvent: async () => {},
   });
   try {
@@ -254,7 +339,10 @@ test("by default the safety check reads the setting fresh from the database, nev
   const abandoned = await runPendingPurge({
     db: on,
     logger: silent,
-    sweepExpiredSegmentsByScope: async () => { swept = true; return { deletedSegments: 0 }; },
+    sweepExpiredSegmentsByScope: async () => {
+      swept = true;
+      return { deletedSegments: 0 };
+    },
   });
   assert.equal(abandoned.abandoned, true);
   assert.equal(swept, false);

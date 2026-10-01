@@ -69,7 +69,8 @@ function fakeDb(workspaceByAgent = {}) {
 }
 
 function agentOwner(userId, agentId = "agent-1") {
-  return async (id, actor) => (id === agentId && actor.id === userId ? { id: agentId, user_id: userId } : null);
+  return async (id, actor) =>
+    id === agentId && actor.id === userId ? { id: agentId, user_id: userId } : null;
 }
 
 function agentAdminBypass(agentId = "agent-1") {
@@ -122,14 +123,20 @@ describe("mergeSegments / compareLines (item 5/6)", () => {
   });
 
   it("a late-arriving segment's lines appear in a re-run without breaking the cursor", () => {
-    const initial = [line({ ts: "2026-01-01T00:00:00.000Z", ord: 0 }), line({ ts: "2026-01-01T00:00:02.000Z", ord: 0 })];
+    const initial = [
+      line({ ts: "2026-01-01T00:00:00.000Z", ord: 0 }),
+      line({ ts: "2026-01-01T00:00:02.000Z", ord: 0 }),
+    ];
     const page1 = mergeSegments(initial, 1, null, "asc");
     expect(page1.lines[0].ts).toBe("2026-01-01T00:00:00.000Z");
     const cursor = decodeCursor(page1.nextCursor);
 
     // A segment covering ts=00:00:01 arrives late (e.g. a delayed gateway
     // flush) between the two calls.
-    const withLateArrival = [...initial, line({ ts: "2026-01-01T00:00:01.000Z", stream: "gateway", ord: 0 })];
+    const withLateArrival = [
+      ...initial,
+      line({ ts: "2026-01-01T00:00:01.000Z", stream: "gateway", ord: 0 }),
+    ];
     const page2 = mergeSegments(withLateArrival, 10, cursor, "asc");
     expect(page2.lines.map((l) => l.ts)).toEqual([
       "2026-01-01T00:00:01.000Z",
@@ -159,7 +166,9 @@ describe("fetchSegmentLines (items 4a/5/5a)", () => {
       cache: new Map(),
     });
 
-    expect(storageConfigForSegmentFn).toHaveBeenCalledWith(expect.objectContaining({ storage_backend: "s3" }));
+    expect(storageConfigForSegmentFn).toHaveBeenCalledWith(
+      expect.objectContaining({ storage_backend: "s3" }),
+    );
     expect(result).toHaveLength(1);
     expect(result[0].message).toBe("from s3");
   });
@@ -218,7 +227,13 @@ describe("fetchSegmentLines (items 4a/5/5a)", () => {
 });
 
 describe("searchLogs orchestration (items 1-7)", () => {
-  function makeDeps({ rows = [], linesByKey = {}, workspaceByAgent = {}, findAgent, fetchWorkerBuffer } = {}) {
+  function makeDeps({
+    rows = [],
+    linesByKey = {},
+    workspaceByAgent = {},
+    findAgent,
+    fetchWorkerBuffer,
+  } = {}) {
     const db = fakeDb(workspaceByAgent);
     return {
       db,
@@ -236,7 +251,9 @@ describe("searchLogs orchestration (items 1-7)", () => {
   }
 
   it("candidates are fetched concurrently, not serially", async () => {
-    const rows = Array.from({ length: 8 }, (_, i) => row({ id: `s${i}`, ts_to: `2026-01-01T00:${15 + i}:00.000Z` }));
+    const rows = Array.from({ length: 8 }, (_, i) =>
+      row({ id: `s${i}`, ts_to: `2026-01-01T00:${15 + i}:00.000Z` }),
+    );
     let concurrentActive = 0;
     let maxConcurrent = 0;
     const fetchSegmentLines = jest.fn(async () => {
@@ -272,7 +289,11 @@ describe("searchLogs orchestration (items 1-7)", () => {
   it("q filtering respects limit", async () => {
     const rows = [row({ id: "a" })];
     const linesByKey = {
-      "key-a": [line({ message: "match one" }), line({ message: "match two" }), line({ message: "no hit" })],
+      "key-a": [
+        line({ message: "match one" }),
+        line({ message: "match two" }),
+        line({ message: "no hit" }),
+      ],
     };
     const deps = makeDeps({ rows, linesByKey });
     // fetchSegmentLines is mocked directly above (bypassing the real q logic
@@ -301,11 +322,19 @@ describe("searchLogs orchestration (items 1-7)", () => {
         findAgent: agentAdminBypass("agent-1"),
       });
       await expect(
-        searchLogs({ agentId: "agent-1", workspaceId: "ws-B" }, { id: "admin-1", role: "admin" }, deps),
+        searchLogs(
+          { agentId: "agent-1", workspaceId: "ws-B" },
+          { id: "admin-1", role: "admin" },
+          deps,
+        ),
       ).rejects.toMatchObject({ statusCode: 403, code: "wrong_workspace" });
 
       // The matching workspace still succeeds for the same admin bypass.
-      const ok = await searchLogs({ agentId: "agent-1", workspaceId: "ws-A" }, { id: "admin-1", role: "admin" }, deps);
+      const ok = await searchLogs(
+        { agentId: "agent-1", workspaceId: "ws-A" },
+        { id: "admin-1", role: "admin" },
+        deps,
+      );
       expect(ok.lines).toHaveLength(1);
     });
 
@@ -319,7 +348,9 @@ describe("searchLogs orchestration (items 1-7)", () => {
       expect(ok.lines).toHaveLength(1);
 
       // Someone else (not the owner) is rejected by findAccessibleAgentForActor itself.
-      await expect(searchLogs({ agentId: "agent-1" }, { id: "someone-else" }, deps)).rejects.toMatchObject({
+      await expect(
+        searchLogs({ agentId: "agent-1" }, { id: "someone-else" }, deps),
+      ).rejects.toMatchObject({
         statusCode: 404,
       });
 
@@ -343,28 +374,45 @@ describe("searchLogs orchestration (items 1-7)", () => {
         return [line({ message: "readable" })];
       });
 
-      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+      const result = await searchLogs(
+        { agentId: "agent-1", streams: ["runtime"] },
+        { id: "user-1" },
+        deps,
+      );
 
       expect(result.lines.map((l) => l.message)).toEqual(["readable"]);
       expect(result.unreadableSegments).toBe(1);
-      expect(quiet.warn).toHaveBeenCalledWith(expect.stringContaining("skipping unreadable segment bad"));
+      expect(quiet.warn).toHaveBeenCalledWith(
+        expect.stringContaining("skipping unreadable segment bad"),
+      );
     });
 
     it("a missing object (restored backup: index row without a file) is skipped too", async () => {
-      const deps = makeDeps({ rows: [row({ id: "a" }), row({ id: "b", ts_to: "2026-01-01T00:30:00.000Z" })] });
+      const deps = makeDeps({
+        rows: [row({ id: "a" }), row({ id: "b", ts_to: "2026-01-01T00:30:00.000Z" })],
+      });
       deps.logger = quiet;
       deps.fetchSegmentLines = jest.fn(async (r) => {
-        if (r.id === "a") throw Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
+        if (r.id === "a")
+          throw Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
         return [line({ message: "still here" })];
       });
-      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+      const result = await searchLogs(
+        { agentId: "agent-1", streams: ["runtime"] },
+        { id: "user-1" },
+        deps,
+      );
       expect(result.lines.map((l) => l.message)).toEqual(["still here"]);
       expect(result.unreadableSegments).toBe(1);
     });
 
     it("omits the field entirely when every segment was readable", async () => {
       const deps = makeDeps({ rows: [row()], linesByKey: { "key-seg-1": [line()] } });
-      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+      const result = await searchLogs(
+        { agentId: "agent-1", streams: ["runtime"] },
+        { id: "user-1" },
+        deps,
+      );
       expect(result).not.toHaveProperty("unreadableSegments");
     });
 
@@ -393,7 +441,11 @@ describe("searchLogs orchestration (items 1-7)", () => {
           stream === "runtime" ? { lines: [recentLine], tsTo: recentLine.ts } : null,
         ),
       });
-      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+      const result = await searchLogs(
+        { agentId: "agent-1", streams: ["runtime"] },
+        { id: "user-1" },
+        deps,
+      );
       expect(result.lines.map((l) => l.message)).toContain("very recent");
     });
 
@@ -413,7 +465,11 @@ describe("searchLogs orchestration (items 1-7)", () => {
         fetchWorkerBuffer,
       });
 
-      const result = await searchLogs({ agentId: "agent-1", streams: ["runtime"] }, { id: "user-1" }, deps);
+      const result = await searchLogs(
+        { agentId: "agent-1", streams: ["runtime"] },
+        { id: "user-1" },
+        deps,
+      );
       const matches = result.lines.filter((l) => l.ts === overlapLine.ts && l.stream === "runtime");
       expect(matches).toHaveLength(1); // not 0 (gap), not 2 (duplicate)
     });
@@ -436,7 +492,9 @@ describe("searchLogs orchestration (items 1-7)", () => {
 describe("enforceWorkspaceScope (items 8a/8b) — direct unit coverage", () => {
   it("rejects a workspaceId that does not match the agent's real workspace", async () => {
     const db = fakeDb({ "agent-1": "ws-A" });
-    await expect(enforceWorkspaceScope({ agentId: "agent-1", workspaceId: "ws-B" }, { db })).rejects.toMatchObject({
+    await expect(
+      enforceWorkspaceScope({ agentId: "agent-1", workspaceId: "ws-B" }, { db }),
+    ).rejects.toMatchObject({
       statusCode: 403,
     });
   });
@@ -538,13 +596,39 @@ describe("listLoggingAgents", () => {
 
   it("attaches each agent's real workspace, or none for an unassigned agent", async () => {
     const db = capturingDb([
-      { id: "a1", name: "one", runtime_family: "openclaw", deploy_target: "docker", workspace_id: "ws-A", workspace_name: "A" },
-      { id: "a2", name: "two", runtime_family: "openclaw", deploy_target: "docker", workspace_id: null, workspace_name: null },
+      {
+        id: "a1",
+        name: "one",
+        runtime_family: "openclaw",
+        deploy_target: "docker",
+        workspace_id: "ws-A",
+        workspace_name: "A",
+      },
+      {
+        id: "a2",
+        name: "two",
+        runtime_family: "openclaw",
+        deploy_target: "docker",
+        workspace_id: null,
+        workspace_name: null,
+      },
     ]);
     const agents = await listLoggingAgents({ id: "admin-1", role: "admin" }, {}, { db });
     expect(agents).toEqual([
-      { id: "a1", name: "one", runtime_family: "openclaw", deploy_target: "docker", workspaces: [{ id: "ws-A", name: "A" }] },
-      { id: "a2", name: "two", runtime_family: "openclaw", deploy_target: "docker", workspaces: [] },
+      {
+        id: "a1",
+        name: "one",
+        runtime_family: "openclaw",
+        deploy_target: "docker",
+        workspaces: [{ id: "ws-A", name: "A" }],
+      },
+      {
+        id: "a2",
+        name: "two",
+        runtime_family: "openclaw",
+        deploy_target: "docker",
+        workspaces: [],
+      },
     ]);
   });
 });
@@ -556,7 +640,9 @@ describe("HTTP layer: API-key workspace binding (item 9)", () => {
       query: jest.fn(async (sql, params = []) => {
         if (sql.includes("FROM workspace_agents wa") && sql.includes("JOIN agents a")) {
           // enforceApiKeyAgentScope's lookup: agent-1 actually belongs to ws-B.
-          return { rows: params[0] === "ws-B" && params[1] === "agent-1" ? [{ id: "agent-1" }] : [] };
+          return {
+            rows: params[0] === "ws-B" && params[1] === "agent-1" ? [{ id: "agent-1" }] : [],
+          };
         }
         return { rows: [] };
       }),

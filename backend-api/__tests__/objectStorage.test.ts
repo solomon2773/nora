@@ -119,10 +119,7 @@ describe("local backend round-trip", () => {
     await fs.mkdir(path.join(tmpDir, "dir-that-is-not-a-file"));
     await fs.writeFile(path.join(tmpDir, "dir-that-is-not-a-file", "inner.txt"), "x");
 
-    const result = await deleteStorageObjects(
-      ["keep/a.txt", "dir-that-is-not-a-file"],
-      config,
-    );
+    const result = await deleteStorageObjects(["keep/a.txt", "dir-that-is-not-a-file"], config);
     expect(result.deleted).toBe(1);
     expect(result.errors).toEqual([expect.objectContaining({ key: "dir-that-is-not-a-file" })]);
   });
@@ -327,7 +324,10 @@ describe("probeStorageDestination", () => {
       fetchCalled = true;
       throw new Error("must not be called");
     });
-    const result = await probeStorageDestination({ storageBackend: "local", localPath: "/tmp/nora-probe-unused" });
+    const result = await probeStorageDestination({
+      storageBackend: "local",
+      localPath: "/tmp/nora-probe-unused",
+    });
     expect(result).toEqual({ ok: true });
     expect(fetchCalled).toBe(false);
   });
@@ -376,7 +376,10 @@ describe("probeStorageDestination", () => {
     });
     await expect(probeStorageDestination(s3TestConfig())).rejects.toThrow(StorageError);
     // The DELETE cleanup attempt happened even though GET failed above it.
-    expect(global.fetch).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "DELETE" }));
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ method: "DELETE" }),
+    );
   });
 
   it("throws STORAGE_S3_NOT_CONFIGURED (never touching the network) when credentials are missing — the original bug this exists to catch pre-flight", async () => {
@@ -416,15 +419,29 @@ describe("s3Request SigV4 signing with a query string", () => {
    * signatures diverge even though this test only observes s3Request's own
    * output (it doesn't hardcode a fixture signature).
    */
-  function recomputeSignature({ method, canonicalUri, queryString, headers, payloadHash, config, amzDate, dateStamp }) {
+  function recomputeSignature({
+    method,
+    canonicalUri,
+    queryString,
+    headers,
+    payloadHash,
+    config,
+    amzDate,
+    dateStamp,
+  }) {
     const sortedHeaderNames = Object.keys(headers).sort();
     const canonicalHeaders = sortedHeaderNames
       .map((name) => `${name}:${String(headers[name]).trim()}\n`)
       .join("");
     const signedHeaders = sortedHeaderNames.join(";");
-    const canonicalRequest = [method, canonicalUri, queryString, canonicalHeaders, signedHeaders, payloadHash].join(
-      "\n",
-    );
+    const canonicalRequest = [
+      method,
+      canonicalUri,
+      queryString,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join("\n");
     const scope = `${dateStamp}/${config.region}/s3/aws4_request`;
     const stringToSign = [
       "AWS4-HMAC-SHA256",

@@ -92,6 +92,9 @@ export function describeCollectionError(
 }
 
 /** True when the server says the disable request needs a keep-or-delete answer. */
-export function needsKeepOrDelete(status: number, payload: { code?: string } | null | undefined): boolean {
+export function needsKeepOrDelete(
+  status: number,
+  payload: { code?: string } | null | undefined,
+): boolean {
   return status === 400 && payload?.code === "delete_existing_required";
 }

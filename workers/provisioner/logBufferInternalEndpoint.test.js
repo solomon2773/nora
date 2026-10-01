@@ -33,7 +33,10 @@ function loadWorkerForInternalEndpointTests() {
     const rest = Array.prototype.slice.call(arguments, 1);
     if (parent?.filename?.endsWith(workerSuffix)) {
       if (request === "bullmq") {
-        return { Worker: StubWorker, UnrecoverableError: class UnrecoverableError extends Error {} };
+        return {
+          Worker: StubWorker,
+          UnrecoverableError: class UnrecoverableError extends Error {},
+        };
       }
       if (request === "crypto") return originalLoad.apply(this, arguments);
       if (request === "ioredis") return function StubRedis() {};
@@ -59,7 +62,11 @@ function loadWorkerForInternalEndpointTests() {
       // heavier, irrelevant-here provisioning modules are. Falls through to
       // the generic extensionless-`.ts` fixup below instead of being
       // resolved here directly.
-      if (request !== "./logs/segmentWriter" && request !== "./logs/logCollector" && request.startsWith(".")) {
+      if (
+        request !== "./logs/segmentWriter" &&
+        request !== "./logs/logCollector" &&
+        request.startsWith(".")
+      ) {
         return genericModule;
       }
     }

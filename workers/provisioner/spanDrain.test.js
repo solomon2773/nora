@@ -1,7 +1,12 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { drainSpanIngest, buildBatchInsert, isInsertableRow, SPAN_COLUMNS } = require("./spanDrain.ts");
+const {
+  drainSpanIngest,
+  buildBatchInsert,
+  isInsertableRow,
+  SPAN_COLUMNS,
+} = require("./spanDrain.ts");
 
 function makeFakePool() {
   const calls = [];
@@ -110,7 +115,10 @@ test("parent/child span relationships survive into the inserted rows", async () 
       agentId: "agent-1",
       workspaceId: "ws-1",
       spans: [
-        { span: sampleSpan({ name: "parent", spanIdB64: parentSpanIdB64 }), resource: { attributes: [] } },
+        {
+          span: sampleSpan({ name: "parent", spanIdB64: parentSpanIdB64 }),
+          resource: { attributes: [] },
+        },
         {
           span: sampleSpan({
             name: "child",

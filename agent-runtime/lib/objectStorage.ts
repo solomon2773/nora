@@ -34,7 +34,6 @@ function loadSshClient() {
   return cachedSshClient;
 }
 
-
 /**
  * Backend-neutral storage failure. Callers that need HTTP semantics (e.g.
  * backend-api's backups module) translate `code` into their own status
@@ -465,7 +464,9 @@ async function deleteS3Objects(keys, config, { signal } = {}) {
 // SSH/SFTP storage
 
 function sshRemoteObjectPath(config = {}, storageKey = "") {
-  const base = path.posix.normalize(String(config.sshRemotePath || "/backups/nora").replace(/\/+$/, ""));
+  const base = path.posix.normalize(
+    String(config.sshRemotePath || "/backups/nora").replace(/\/+$/, ""),
+  );
   const normalizedKey = String(storageKey).replace(/^\/+/, "");
   const resolved = path.posix.normalize(path.posix.join(base, normalizedKey));
   if (base !== "/" && resolved !== base && !resolved.startsWith(`${base}/`)) {
@@ -476,9 +477,13 @@ function sshRemoteObjectPath(config = {}, storageKey = "") {
 
 function connectSsh(config = {}, { signal } = {}) {
   if (!config.sshHost || !config.sshUsername) {
-    throw new StorageError("SSH storage requires a host and username", "STORAGE_SSH_NOT_CONFIGURED", {
-      detail: "host",
-    });
+    throw new StorageError(
+      "SSH storage requires a host and username",
+      "STORAGE_SSH_NOT_CONFIGURED",
+      {
+        detail: "host",
+      },
+    );
   }
   if (!config.sshPrivateKey && !config.sshPassword) {
     throw new StorageError(
@@ -641,7 +646,9 @@ async function deleteSshObject(storageKey, config = {}, { signal } = {}) {
  * `prefix`.
  */
 async function listSshObjects(prefix, config = {}, { signal } = {}) {
-  const base = path.posix.normalize(String(config.sshRemotePath || "/backups/nora").replace(/\/+$/, ""));
+  const base = path.posix.normalize(
+    String(config.sshRemotePath || "/backups/nora").replace(/\/+$/, ""),
+  );
   const results = [];
 
   await withSftp(
@@ -700,7 +707,8 @@ function isS3Backend(config) {
 async function putStorageObject(storageKey, buffer, config = {}, { signal } = {}) {
   const resolved = normalizeStorageConfig(config);
   if (isS3Backend(resolved)) return s3Request("PUT", storageKey, buffer, resolved, { signal });
-  if (resolved.storageBackend === "ssh") return putSshObject(storageKey, buffer, resolved, { signal });
+  if (resolved.storageBackend === "ssh")
+    return putSshObject(storageKey, buffer, resolved, { signal });
   return putLocalObject(storageKey, buffer, resolved, { signal });
 }
 

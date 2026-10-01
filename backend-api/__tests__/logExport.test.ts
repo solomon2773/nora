@@ -175,7 +175,9 @@ describe("streamLogExport (Phase 7)", () => {
   it("a request for an over-cap time range is rejected with a clear, actionable error", () => {
     const from = new Date(0).toISOString();
     const to = new Date(EXPORT_MAX_RANGE_MS * 2).toISOString();
-    expect(() => assertExportRangeWithinCap(from, to)).toThrow(/exceeds the maximum exportable range/);
+    expect(() => assertExportRangeWithinCap(from, to)).toThrow(
+      /exceeds the maximum exportable range/,
+    );
     try {
       assertExportRangeWithinCap(from, to);
     } catch (error) {

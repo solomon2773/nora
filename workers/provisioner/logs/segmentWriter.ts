@@ -113,9 +113,7 @@ function loadLogEncryptionKeys(env = process.env) {
       hex = part;
     }
     if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-      throw new Error(
-        `NORA_LOG_ENCRYPTION_KEY entry "${keyId}" is not a valid 64-char hex key`,
-      );
+      throw new Error(`NORA_LOG_ENCRYPTION_KEY entry "${keyId}" is not a valid 64-char hex key`);
     }
     keys.set(keyId, Buffer.from(hex, "hex"));
     if (currentKeyId === null) currentKeyId = keyId;
@@ -173,10 +171,7 @@ function decryptSegment(buffer, keyRing) {
   }
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));
-  return Buffer.concat([
-    decipher.update(buffer.slice(secondNewline + 1)),
-    decipher.final(),
-  ]);
+  return Buffer.concat([decipher.update(buffer.slice(secondNewline + 1)), decipher.final()]);
 }
 
 // ── ord assignment (Phase 3 items 12-13 / function list) ────────────────
@@ -362,15 +357,13 @@ function sanitizeStagingName(storageKey) {
 function createSegmentWriter(deps = {}) {
   const db = deps.db || require("../../../backend-api/db.ts");
   const putObj = deps.putStorageObject || objectStorage.putStorageObject;
-  const resolveStorageConfig =
-    deps.logStorageConfig || logStorageConfigModule.logStorageConfig;
+  const resolveStorageConfig = deps.logStorageConfig || logStorageConfigModule.logStorageConfig;
   const now = deps.now || (() => Date.now());
   const flushIntervalMs = deps.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
   const maxBufferBytes = deps.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
   const globalMaxBytes = deps.globalMaxBytes ?? DEFAULT_GLOBAL_MAX_BYTES;
   const stagingDir =
-    deps.stagingDir ||
-    path.join(process.env.NORA_LOG_DIR || "/var/lib/nora-logs", ".staging");
+    deps.stagingDir || path.join(process.env.NORA_LOG_DIR || "/var/lib/nora-logs", ".staging");
   const stagingMaxBytes = deps.stagingMaxBytes ?? DEFAULT_STAGING_MAX_BYTES;
   const retryDelaysMs = deps.retryDelaysMs || DEFAULT_RETRY_DELAYS_MS;
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -435,7 +428,9 @@ function createSegmentWriter(deps = {}) {
         buffer.capacityPaused = capacity.atCapacity;
       }
     } catch (error) {
-      logger.warn(`[segmentWriter] capacity poll failed, leaving pause state unchanged: ${error.message}`);
+      logger.warn(
+        `[segmentWriter] capacity poll failed, leaving pause state unchanged: ${error.message}`,
+      );
     }
   }
 
@@ -1081,7 +1076,9 @@ async function putWithRetryOrPark({
   const parked = await park(indexMeta);
   logger.warn(
     `[segmentWriter] storage write for ${storageKey} failed after ${attempts} attempts` +
-      (parked ? ", parked to local staging for later re-upload" : ", and staging is full — segment dropped") +
+      (parked
+        ? ", parked to local staging for later re-upload"
+        : ", and staging is full — segment dropped") +
       `: ${lastError.message}`,
   );
   return { parked };

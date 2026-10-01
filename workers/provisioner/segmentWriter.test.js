@@ -108,7 +108,10 @@ test("assignOrd sorts by (COALESCE(ts, observed_ts), arrival) and assigns positi
     ordered.map((l) => l.message),
     ["first", "second", "third-ish", "arrives-after-third-ish-same-ts"],
   );
-  assert.deepEqual(ordered.map((l) => l.ord), [0, 1, 2, 3]);
+  assert.deepEqual(
+    ordered.map((l) => l.ord),
+    [0, 1, 2, 3],
+  );
 });
 
 test("assignOrd is deterministic across two independent calls simulating crash-replay", () => {
@@ -146,7 +149,10 @@ test("buildStorageKey partitions by workspace, or by owning user when unassigned
     "2026-01-01T00:00:00.000Z",
     "2026-01-01T00:15:00.000Z",
   );
-  assert.equal(userKey, "logs/user_user-1/agent_agent-2/gateway/2026-01-01/0000-0015.ndjson.zst.enc");
+  assert.equal(
+    userKey,
+    "logs/user_user-1/agent_agent-2/gateway/2026-01-01/0000-0015.ndjson.zst.enc",
+  );
 });
 
 test("two unassigned owners never share a prefix", () => {
@@ -234,10 +240,9 @@ test("flush triggers at the 15-minute timer boundary", async () => {
   try {
     const deps = baseDeps();
     const writer = createSegmentWriter(deps);
-    await writer.append(
-      { agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" },
-      [line({ ts: "2026-01-01T00:00:00.000Z" })],
-    );
+    await writer.append({ agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" }, [
+      line({ ts: "2026-01-01T00:00:00.000Z" }),
+    ]);
     assert.equal(deps.putStorageObject.calls.length, 0);
     mock.timers.tick(15 * 60 * 1000);
     // Let the microtask queue draining catch up with the async flush kicked
@@ -255,10 +260,9 @@ test("flush triggers independently at the uncompressed-size threshold", async ()
   const deps = baseDeps({ maxBufferBytes: 200 });
   const writer = createSegmentWriter(deps);
   const bigMessage = "x".repeat(300);
-  await writer.append(
-    { agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" },
-    [line({ ts: "2026-01-01T00:00:00.000Z", message: bigMessage })],
-  );
+  await writer.append({ agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" }, [
+    line({ ts: "2026-01-01T00:00:00.000Z", message: bigMessage }),
+  ]);
   assert.equal(deps.putStorageObject.calls.length, 1);
 });
 
@@ -280,10 +284,7 @@ test("resident memory per buffer is bounded by tracked uncompressed bytes, not c
   // "AAAA...A" is tiny.
   assert.equal(deps.putStorageObject.calls.length, 1);
   const compressedLen = deps.putStorageObject.calls[0].buffer.length;
-  assert.ok(
-    compressedLen < 2000,
-    `expected highly-compressed output, got ${compressedLen} bytes`,
-  );
+  assert.ok(compressedLen < 2000, `expected highly-compressed output, got ${compressedLen} bytes`);
 });
 
 // ── stream end vs reattach vs restart-mid-window ─────────────────────────
@@ -392,7 +393,10 @@ test("discardAll drops buffered lines without writing a segment, and a later app
   const deps = baseDeps();
   const writer = createSegmentWriter(deps);
   const ctx = { agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" };
-  await writer.append(ctx, [line({ ts: "2026-01-01T00:00:00.000Z" }), line({ ts: "2026-01-01T00:00:01.000Z" })]);
+  await writer.append(ctx, [
+    line({ ts: "2026-01-01T00:00:00.000Z" }),
+    line({ ts: "2026-01-01T00:00:01.000Z" }),
+  ]);
 
   const result = await writer.discardAll();
 
@@ -403,12 +407,18 @@ test("discardAll drops buffered lines without writing a segment, and a later app
 
   await writer.append(ctx, [line({ ts: "2026-01-01T00:01:00.000Z" })]);
   await writer.flush("agent-1:runtime");
-  assert.equal(deps.putStorageObject.calls.length, 1, "appending after a discard builds a new buffer");
+  assert.equal(
+    deps.putStorageObject.calls.length,
+    1,
+    "appending after a discard builds a new buffer",
+  );
 });
 
 test("discardAll waits for an in-flight flush so nothing lands after the caller's sweep", async () => {
   let release;
-  const gate = new Promise((resolve) => { release = resolve; });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
   const calls = [];
   const deps = baseDeps({
     putStorageObject: async (...args) => {
@@ -424,7 +434,9 @@ test("discardAll waits for an in-flight flush so nothing lands after the caller'
   const flushing = writer.flush("agent-1:runtime");
   await new Promise((resolve) => setImmediate(resolve));
   let finished = false;
-  const discarding = writer.discardAll().then(() => { finished = true; });
+  const discarding = writer.discardAll().then(() => {
+    finished = true;
+  });
 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(finished, false, "discardAll must not return while a flush is still writing");
@@ -749,10 +761,7 @@ test("startParkedSegmentRetry re-uploads parked segments on its own timer", asyn
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     assert.equal((await fsp.readdir(stagingDir)).length, 0);
-    assert.equal(
-      deps.db.calls.filter((c) => c.sql.includes("INSERT INTO log_segments")).length,
-      1,
-    );
+    assert.equal(deps.db.calls.filter((c) => c.sql.includes("INSERT INTO log_segments")).length, 1);
   });
 });
 
@@ -818,7 +827,11 @@ test("capacityPaused clears via the independent poll timer even with no pending 
     let atCapacity = true;
     const deps = baseDeps({
       logStorageConfig: async () => ({ storageBackend: "local", localPath: "/tmp/x" }),
-      checkLocalCapacity: () => ({ usedBytes: atCapacity ? 1000 : 0, limitBytes: 1000, atCapacity }),
+      checkLocalCapacity: () => ({
+        usedBytes: atCapacity ? 1000 : 0,
+        limitBytes: 1000,
+        atCapacity,
+      }),
       capacityPollIntervalMs: 5000,
     });
     const writer = createSegmentWriter(deps);
@@ -886,6 +899,10 @@ test("capacity halt applies only to the local driver — s3 never halts collecti
   await writer.append(ctx, [line({ ts: "2026-01-01T00:00:00.000Z" })]);
 
   const result = await writer.flush("agent-1:runtime");
-  assert.equal(result.skipped, false, "an s3 flush must proceed regardless of the local capacity figure");
+  assert.equal(
+    result.skipped,
+    false,
+    "an s3 flush must proceed regardless of the local capacity figure",
+  );
   assert.equal(writer.isCapacityPaused("agent-1", "runtime"), false);
 });

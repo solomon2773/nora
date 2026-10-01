@@ -54,7 +54,10 @@ const router = express.Router();
 // Phase 6 item 9: logs:read gates both search and export for API-key
 // callers. Session callers (browser dashboards) pass through unchanged —
 // scopeByMethod only enforces scopes when `req.apiKey` is present.
-router.use(["/logs/search", "/logs/export", "/logs/agents", "/logs/collection-status"], scopeByMethod("logs:read", null));
+router.use(
+  ["/logs/search", "/logs/export", "/logs/agents", "/logs/collection-status"],
+  scopeByMethod("logs:read", null),
+);
 
 // Scope guards to this router's actual prefixes, matching adminMembers.ts's
 // convention, so an unrelated /admin/* request continues past this router to
@@ -87,12 +90,7 @@ router.delete(
     }
 
     try {
-      const result = await retentionSweeper.deleteLogsByAgentAndRange(
-        agentId,
-        from,
-        to,
-        req.user,
-      );
+      const result = await retentionSweeper.deleteLogsByAgentAndRange(agentId, from, to, req.user);
       res.json(result);
     } catch (error) {
       const status = error.statusCode || 500;
@@ -373,7 +371,8 @@ router.put(
       }
     }
 
-    const localPath = normalizeText(body.localPath) || current.log_storage_local_path || "/var/lib/nora-logs";
+    const localPath =
+      normalizeText(body.localPath) || current.log_storage_local_path || "/var/lib/nora-logs";
     const s3Bucket = normalizeText(body.s3Bucket) || current.log_storage_s3_bucket || "";
     const s3Region = normalizeText(body.s3Region) || current.log_storage_s3_region || "";
     const s3Endpoint = normalizeText(body.s3Endpoint) || current.log_storage_s3_endpoint || "";
@@ -507,7 +506,11 @@ router.put(
           { storageBackend: nextSettings.storageBackend },
           keepSourceCopies,
         );
-        migration = { jobId: started.jobId, segmentsTotal: started.segmentsTotal, status: "running" };
+        migration = {
+          jobId: started.jobId,
+          segmentsTotal: started.segmentsTotal,
+          status: "running",
+        };
       } catch (error) {
         // The pre-flight checks above should make this unreachable in
         // practice, but never let a race here silently drop the migration —
@@ -630,10 +633,14 @@ router.put(
   asyncHandler(async (req, res) => {
     const { enabled, deleteExisting } = req.body || {};
     if (typeof enabled !== "boolean") {
-      return res.status(400).json({ error: "enabled must be true or false", code: "invalid_enabled" });
+      return res
+        .status(400)
+        .json({ error: "enabled must be true or false", code: "invalid_enabled" });
     }
     if (deleteExisting !== undefined && typeof deleteExisting !== "boolean") {
-      return res.status(400).json({ error: "deleteExisting must be true or false", code: "invalid_delete_existing" });
+      return res
+        .status(400)
+        .json({ error: "deleteExisting must be true or false", code: "invalid_delete_existing" });
     }
 
     const previous = await logCollectionState.resolveLogCollectionState();
@@ -643,7 +650,8 @@ router.put(
     if (enabled) {
       if (purgeJob && logPurge.IN_PROGRESS.includes(purgeJob.status)) {
         return res.status(409).json({
-          error: "Logs are still being deleted. Wait for that to finish before turning collection back on.",
+          error:
+            "Logs are still being deleted. Wait for that to finish before turning collection back on.",
           code: "purge_in_progress",
           purge: purgeJob,
         });
@@ -669,7 +677,8 @@ router.put(
       const hasLogs = stats.segments > 0 || stats.spans > 0;
       if (hasLogs && deleteExisting === undefined) {
         return res.status(400).json({
-          error: "Logs have already been collected. Say whether to keep them or delete them (deleteExisting).",
+          error:
+            "Logs have already been collected. Say whether to keep them or delete them (deleteExisting).",
           code: "delete_existing_required",
           stats,
         });
@@ -691,7 +700,7 @@ router.put(
         actorId: req.user?.id,
         previous: { enabled: previous.enabled, decided: previous.decided, source: previous.source },
         next: { enabled },
-        deleteExisting: enabled ? null : deleteExisting ?? false,
+        deleteExisting: enabled ? null : (deleteExisting ?? false),
         statsAtDecision: stats,
         purgeJobId: wantsDelete ? purge?.id : null,
       },

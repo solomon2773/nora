@@ -675,8 +675,8 @@ function OperatorLens() {
         <div className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-wrap items-center gap-3 text-sm font-medium text-slate-500">
             <span>
-              Showing {formatCount(pageStart)}-{formatCount(pageEnd)} of{" "}
-              {formatCount(totalRecords)} events
+              Showing {formatCount(pageStart)}-{formatCount(pageEnd)} of {formatCount(totalRecords)}{" "}
+              events
             </span>
             {refreshing ? (
               <span className="inline-flex items-center gap-2 text-blue-600">
@@ -1006,7 +1006,9 @@ function RuntimeLens({
   const capability = useMemo(
     () =>
       resolveRuntimeLensCapability({
-        runtimeSupportsGatewayStream: agent ? runtimeSupportsGateway(agent.runtimeFamily || "") : true,
+        runtimeSupportsGatewayStream: agent
+          ? runtimeSupportsGateway(agent.runtimeFamily || "")
+          : true,
         streamsFilter: streams,
         storageBackend,
         deployTarget: agent?.deployTarget || null,
@@ -1040,7 +1042,9 @@ function RuntimeLens({
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-center text-slate-400">
         <ScrollText size={28} className="opacity-60" />
-        <p className="text-sm font-semibold">{t("Select an agent above to view its runtime logs.")}</p>
+        <p className="text-sm font-semibold">
+          {t("Select an agent above to view its runtime logs.")}
+        </p>
       </div>
     );
   }
@@ -1223,7 +1227,9 @@ function TracesLens({
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-slate-500">
         <Waypoints size={28} className="opacity-60" />
-        <p className="text-sm font-bold text-slate-700">{t("Tracing is not enabled on this Nora installation")}</p>
+        <p className="text-sm font-bold text-slate-700">
+          {t("Tracing is not enabled on this Nora installation")}
+        </p>
         <p className="max-w-md text-xs text-slate-400">
           {t(
             "Tracing is switched on for the whole installation by a platform admin (NORA_TRACES_ENABLED). Once enabled, new traces appear here as agents run.",
@@ -1264,7 +1270,9 @@ function TracesLens({
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-slate-500">
         <Waypoints size={28} className="opacity-60" />
-        <p className="text-sm font-bold text-slate-700">{t("Tracing support not yet verified for this agent")}</p>
+        <p className="text-sm font-bold text-slate-700">
+          {t("Tracing support not yet verified for this agent")}
+        </p>
         <p className="max-w-md text-xs text-slate-400">
           {t(
             "Nora only checks OpenClaw's tracing compatibility while an agent is running. Start this agent and it will be checked automatically within about 30 seconds.",
@@ -1280,7 +1288,9 @@ function TracesLens({
         <Waypoints size={28} className="opacity-60" />
         <p className="text-sm font-semibold">{t("No traces in this range.")}</p>
         <p className="max-w-sm text-xs text-slate-400">
-          {t("Tracing is enabled, but no spans were recorded for this agent in the selected time range.")}
+          {t(
+            "Tracing is enabled, but no spans were recorded for this agent in the selected time range.",
+          )}
         </p>
       </div>
     );
@@ -1541,9 +1551,10 @@ export default function LoggingPage() {
               // workspace, each carrying its real workspaces[] -- see the
               // NormalizedAgentOption type comment for why this must not be
               // left null just because no workspace FILTER is selected.
-              workspaceId: Array.isArray(row.workspaces) && row.workspaces[0]?.id
-                ? row.workspaces[0].id
-                : null,
+              workspaceId:
+                Array.isArray(row.workspaces) && row.workspaces[0]?.id
+                  ? row.workspaces[0].id
+                  : null,
             })),
           );
         }
@@ -1625,5 +1636,3 @@ export default function LoggingPage() {
     </Layout>
   );
 }
-
-

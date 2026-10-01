@@ -182,7 +182,11 @@ describe("listTraces (item 1)", () => {
       },
       tracingEnabled: true,
     });
-    const result = await listTraces({ agentId: "agent-1", workspaceId: "ws-A" }, { id: "user-1" }, deps);
+    const result = await listTraces(
+      { agentId: "agent-1", workspaceId: "ws-A" },
+      { id: "user-1" },
+      deps,
+    );
     expect(result.workspaceId).toBe("ws-A");
     expect(result.tracesEnabled).toBe(true);
     expect(result.traceSampleRate).toBe(1);
@@ -194,7 +198,11 @@ describe("listTraces (item 1)", () => {
         spans: [],
         workspaceByAgent: { "agent-1": "ws-A" },
       });
-      const result = await listTraces({ agentId: "agent-1", workspaceId: "ws-A" }, { id: "user-1" }, deps);
+      const result = await listTraces(
+        { agentId: "agent-1", workspaceId: "ws-A" },
+        { id: "user-1" },
+        deps,
+      );
       expect(result.tracesEnabled).toBe(false);
       expect(result.traces).toEqual([]);
     });
@@ -205,7 +213,11 @@ describe("listTraces (item 1)", () => {
         workspaceByAgent: { "agent-1": "ws-A" },
         tracingEnabled: true,
       });
-      const result = await listTraces({ agentId: "agent-1", workspaceId: "ws-A" }, { id: "user-1" }, deps);
+      const result = await listTraces(
+        { agentId: "agent-1", workspaceId: "ws-A" },
+        { id: "user-1" },
+        deps,
+      );
       expect(result.tracesEnabled).toBe(true);
       expect(result.traces).toEqual([]);
       // The two empty-list cases above are only distinguishable via
@@ -231,7 +243,11 @@ describe("listTraces (item 1)", () => {
         findAgent: agentAdminBypass("agent-1"),
       });
       await expect(
-        listTraces({ agentId: "agent-1", workspaceId: "ws-B" }, { id: "admin-1", role: "admin" }, deps),
+        listTraces(
+          { agentId: "agent-1", workspaceId: "ws-B" },
+          { id: "admin-1", role: "admin" },
+          deps,
+        ),
       ).rejects.toMatchObject({ statusCode: 403, code: "wrong_workspace" });
 
       const ok = await listTraces(
@@ -248,7 +264,11 @@ describe("listTraces (item 1)", () => {
         workspaceByAgent: { "agent-1": "ws-A" },
         findAgent: agentAdminBypass("agent-1"),
       });
-      const result = await listTraces({ agentId: "agent-1" }, { id: "admin-1", role: "admin" }, deps);
+      const result = await listTraces(
+        { agentId: "agent-1" },
+        { id: "admin-1", role: "admin" },
+        deps,
+      );
       expect(result.traces).toHaveLength(1);
     });
 
@@ -281,8 +301,16 @@ describe("buildSpanTree (parent/child nesting)", () => {
     const spans = [
       spanRow({ span_id: "root", parent_span_id: null, started_at: "2026-01-01T00:00:00.000Z" }),
       spanRow({ span_id: "child", parent_span_id: "root", started_at: "2026-01-01T00:00:00.100Z" }),
-      spanRow({ span_id: "grandchild", parent_span_id: "child", started_at: "2026-01-01T00:00:00.200Z" }),
-      spanRow({ span_id: "sibling", parent_span_id: "root", started_at: "2026-01-01T00:00:00.050Z" }),
+      spanRow({
+        span_id: "grandchild",
+        parent_span_id: "child",
+        started_at: "2026-01-01T00:00:00.200Z",
+      }),
+      spanRow({
+        span_id: "sibling",
+        parent_span_id: "root",
+        started_at: "2026-01-01T00:00:00.050Z",
+      }),
     ];
     const tree = buildSpanTree(spans);
     const bySpanId = Object.fromEntries(tree.map((n) => [n.spanId, n]));
@@ -328,7 +356,9 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
   }
 
   it("includes gateway lines whose trace_id matches, marked inTrace: true / category: 'trace'", async () => {
-    const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
+    const spans = [
+      spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 }),
+    ];
     const gatewayRow = segmentRow({ stream: "gateway", storage_key: "key-gw" });
     const deps = {
       selectCandidateSegments: jest.fn(async () => [gatewayRow]),
@@ -347,7 +377,9 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
   });
 
   it("includes an in-window gateway line from a different trace_id, flagged inTrace: false / category: 'window' (its trace_id is OpenClaw's own internal id, not the OTel trace_id, so it cannot be used to exclude)", async () => {
-    const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
+    const spans = [
+      spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 }),
+    ];
     const deps = {
       selectCandidateSegments: jest.fn(async () => [segmentRow({ stream: "gateway" })]),
       fetchSegmentLines: jest.fn(async () => [logLine({ trace_id: "some-other-trace" })]),
@@ -359,7 +391,9 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
   });
 
   it("excludes a gateway line from a different trace_id that falls OUTSIDE the time window", async () => {
-    const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
+    const spans = [
+      spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 }),
+    ];
     const deps = {
       selectCandidateSegments: jest.fn(async () => [segmentRow({ stream: "gateway" })]),
       fetchSegmentLines: jest.fn(async () => [
@@ -371,7 +405,9 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
   });
 
   it("includes untraced runtime lines in the same agent+time window, flagged inTrace: false / category: 'window'", async () => {
-    const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
+    const spans = [
+      spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 }),
+    ];
     const runtimeRow = segmentRow({ stream: "runtime", storage_key: "key-rt" });
     const deps = {
       selectCandidateSegments: jest.fn(async () => [runtimeRow]),
@@ -397,7 +433,9 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
   });
 
   it("does not silently merge traced and untraced lines -- both groups are distinctly flagged in one response", async () => {
-    const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
+    const spans = [
+      spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 }),
+    ];
     const deps = {
       selectCandidateSegments: jest.fn(async () => [
         segmentRow({ stream: "gateway", storage_key: "key-gw" }),
@@ -431,11 +469,20 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
   it("excludes a runtime line whose timestamp falls outside the trace's actual window even though its segment overlaps", async () => {
     // Segments are pruned by 15-minute buckets, which are wider than most
     // traces -- a runtime line elsewhere in the same bucket must not leak in.
-    const spans = [spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 })];
+    const spans = [
+      spanRow({ trace_id: "trace-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 1000 }),
+    ];
     const deps = {
-      selectCandidateSegments: jest.fn(async () => [segmentRow({ stream: "runtime", storage_key: "key-rt" })]),
+      selectCandidateSegments: jest.fn(async () => [
+        segmentRow({ stream: "runtime", storage_key: "key-rt" }),
+      ]),
       fetchSegmentLines: jest.fn(async () => [
-        logLine({ stream: "runtime", trace_id: null, ts: "2026-01-01T00:14:00.000Z", message: "far away" }),
+        logLine({
+          stream: "runtime",
+          trace_id: null,
+          ts: "2026-01-01T00:14:00.000Z",
+          message: "far away",
+        }),
       ]),
     };
     const result = await correlatedLogsForTrace(spans, deps);
@@ -444,12 +491,23 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
 
   it("prunes candidate segments by agent and time window, not by trace", async () => {
     const spans = [
-      spanRow({ trace_id: "trace-1", agent_id: "agent-1", started_at: "2026-01-01T00:00:00.000Z", duration_ms: 500 }),
+      spanRow({
+        trace_id: "trace-1",
+        agent_id: "agent-1",
+        started_at: "2026-01-01T00:00:00.000Z",
+        duration_ms: 500,
+      }),
     ];
     const selectCandidateSegments = jest.fn(async () => []);
-    await correlatedLogsForTrace(spans, { selectCandidateSegments, fetchSegmentLines: jest.fn(async () => []) });
+    await correlatedLogsForTrace(spans, {
+      selectCandidateSegments,
+      fetchSegmentLines: jest.fn(async () => []),
+    });
     expect(selectCandidateSegments).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: "agent-1", streams: expect.arrayContaining(["runtime", "gateway"]) }),
+      expect.objectContaining({
+        agentId: "agent-1",
+        streams: expect.arrayContaining(["runtime", "gateway"]),
+      }),
       expect.anything(),
     );
     // No trace_id anywhere in the call -- pruning is agent+time only.
@@ -459,12 +517,7 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
 });
 
 describe("getTraceDetail (item 2)", () => {
-  function makeDeps({
-    spans = [],
-    workspaceByAgent = {},
-    findAgent,
-    correlatedLogs = [],
-  } = {}) {
+  function makeDeps({ spans = [], workspaceByAgent = {}, findAgent, correlatedLogs = [] } = {}) {
     return {
       db: fakeDb({ spans, workspaceByAgent }),
       findAccessibleAgentForActor: findAgent || agentOwner("user-1"),
@@ -474,10 +527,25 @@ describe("getTraceDetail (item 2)", () => {
 
   it("returns the trace summary, a flat span list, and correlated logs", async () => {
     const spans = [
-      spanRow({ trace_id: "trace-1", span_id: "root", parent_span_id: null, started_at: "2026-01-01T00:00:00.000Z", duration_ms: 500 }),
-      spanRow({ trace_id: "trace-1", span_id: "child", parent_span_id: "root", started_at: "2026-01-01T00:00:00.100Z", duration_ms: 100 }),
+      spanRow({
+        trace_id: "trace-1",
+        span_id: "root",
+        parent_span_id: null,
+        started_at: "2026-01-01T00:00:00.000Z",
+        duration_ms: 500,
+      }),
+      spanRow({
+        trace_id: "trace-1",
+        span_id: "child",
+        parent_span_id: "root",
+        started_at: "2026-01-01T00:00:00.100Z",
+        duration_ms: 100,
+      }),
     ];
-    const deps = makeDeps({ spans, correlatedLogs: [{ message: "line", inTrace: true, category: "trace" }] });
+    const deps = makeDeps({
+      spans,
+      correlatedLogs: [{ message: "line", inTrace: true, category: "trace" }],
+    });
 
     const result = await getTraceDetail("trace-1", { id: "user-1" }, {}, deps);
 
@@ -491,7 +559,9 @@ describe("getTraceDetail (item 2)", () => {
 
   it("returns 404 for a trace_id with no rows", async () => {
     const deps = makeDeps({ spans: [] });
-    await expect(getTraceDetail("nope", { id: "user-1" }, {}, deps)).rejects.toMatchObject({ statusCode: 404 });
+    await expect(getTraceDetail("nope", { id: "user-1" }, {}, deps)).rejects.toMatchObject({
+      statusCode: 404,
+    });
   });
 
   describe("workspace scoping (item 8)", () => {

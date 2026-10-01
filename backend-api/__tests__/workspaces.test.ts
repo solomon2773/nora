@@ -274,9 +274,7 @@ describe("DELETE /workspaces/:id", () => {
         rows: [{ id: "ws-1", user_id: "user-1", role: "owner" }],
       });
 
-      const res = await auth(
-        request(app).delete("/workspaces/ws-1").send({ deleteLogs: "yes" }),
-      );
+      const res = await auth(request(app).delete("/workspaces/ws-1").send({ deleteLogs: "yes" }));
 
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/deleteLogs/i);
@@ -318,7 +316,9 @@ describe("DELETE /workspaces/:id", () => {
         ([sql, params]) => sql === "DELETE FROM workspaces WHERE id = $1" && params?.[0] === "ws-1",
       );
       expect(deleteWorkspaceIndex).toBeGreaterThanOrEqual(0);
-      expect(snapshotOrder).toBeLessThan(mockDb.query.mock.invocationCallOrder[deleteWorkspaceIndex]);
+      expect(snapshotOrder).toBeLessThan(
+        mockDb.query.mock.invocationCallOrder[deleteWorkspaceIndex],
+      );
     });
   });
 });

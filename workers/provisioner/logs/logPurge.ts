@@ -153,8 +153,11 @@ async function patchPurgeJob(jobId, patch, deps = {}) {
 async function runPendingPurge(deps = {}) {
   const db = deps.db || getDb();
   const logger = deps.logger || console;
-  const logEvent = deps.logEvent || ((...args) => require("../../../backend-api/monitoring.ts").logEvent(...args));
-  const sweep = deps.sweepExpiredSegmentsByScope || require("./retentionSweeper.ts").sweepExpiredSegmentsByScope;
+  const logEvent =
+    deps.logEvent || ((...args) => require("../../../backend-api/monitoring.ts").logEvent(...args));
+  const sweep =
+    deps.sweepExpiredSegmentsByScope ||
+    require("./retentionSweeper.ts").sweepExpiredSegmentsByScope;
   const segmentBatch = deps.segmentBatch || DEFAULT_SEGMENT_BATCH;
   const spanBatch = deps.spanBatch || DEFAULT_SPAN_BATCH;
 
@@ -168,17 +171,26 @@ async function runPendingPurge(deps = {}) {
   // an admin turns collection off it would still say "on".
   const isCollectionEnabled =
     deps.isCollectionEnabled ||
-    (async () => (await require("./logCollectionState.ts").resolveLogCollectionState({ db })).enabled);
+    (async () =>
+      (await require("./logCollectionState.ts").resolveLogCollectionState({ db })).enabled);
   if (await isCollectionEnabled()) {
-    await patchPurgeJob(job.id, {
-      status: "failed",
-      finishedAt: new Date().toISOString(),
-      error: "Log collection was turned back on before the deletion ran.",
-    }, { db });
+    await patchPurgeJob(
+      job.id,
+      {
+        status: "failed",
+        finishedAt: new Date().toISOString(),
+        error: "Log collection was turned back on before the deletion ran.",
+      },
+      { db },
+    );
     return { ran: false, abandoned: true };
   }
 
-  await patchPurgeJob(job.id, { status: "running", startedAt: job.startedAt || new Date().toISOString() }, { db });
+  await patchPurgeJob(
+    job.id,
+    { status: "running", startedAt: job.startedAt || new Date().toISOString() },
+    { db },
+  );
   logger.log?.(`[logPurge] deleting all collected logs (job ${job.id})`);
 
   let segmentsDeleted = job.segmentsDeleted || 0;
@@ -189,7 +201,10 @@ async function runPendingPurge(deps = {}) {
     if (deps.segmentWriter?.discardAll) await deps.segmentWriter.discardAll();
 
     for (;;) {
-      const outcome = await sweep(activeScopeSql("log_segments"), null, FOREVER, { db, limit: segmentBatch });
+      const outcome = await sweep(activeScopeSql("log_segments"), null, FOREVER, {
+        db,
+        limit: segmentBatch,
+      });
       if (!outcome.deletedSegments) break;
       segmentsDeleted += outcome.deletedSegments;
       objectsDeleted += outcome.deletedObjects;
@@ -213,20 +228,27 @@ async function runPendingPurge(deps = {}) {
     // One more pass: a flush that was already in flight when the buffers were
     // discarded has now finished, and may have written a final segment.
     for (;;) {
-      const outcome = await sweep(activeScopeSql("log_segments"), null, FOREVER, { db, limit: segmentBatch });
+      const outcome = await sweep(activeScopeSql("log_segments"), null, FOREVER, {
+        db,
+        limit: segmentBatch,
+      });
       if (!outcome.deletedSegments) break;
       segmentsDeleted += outcome.deletedSegments;
       objectsDeleted += outcome.deletedObjects;
     }
 
-    await patchPurgeJob(job.id, {
-      status: "completed",
-      finishedAt: new Date().toISOString(),
-      segmentsDeleted,
-      objectsDeleted,
-      spansDeleted,
-      error: null,
-    }, { db });
+    await patchPurgeJob(
+      job.id,
+      {
+        status: "completed",
+        finishedAt: new Date().toISOString(),
+        segmentsDeleted,
+        objectsDeleted,
+        spansDeleted,
+        error: null,
+      },
+      { db },
+    );
     await logEvent("log_purge_completed", "All collected logs were deleted", {
       jobId: job.id,
       requestedBy: job.requestedBy,
@@ -238,14 +260,18 @@ async function runPendingPurge(deps = {}) {
     return { ran: true, segmentsDeleted, objectsDeleted, spansDeleted };
   } catch (error) {
     logger.error?.(`[logPurge] failed: ${error.message}`);
-    await patchPurgeJob(job.id, {
-      status: "failed",
-      finishedAt: new Date().toISOString(),
-      segmentsDeleted,
-      objectsDeleted,
-      spansDeleted,
-      error: error.message,
-    }, { db }).catch(() => {});
+    await patchPurgeJob(
+      job.id,
+      {
+        status: "failed",
+        finishedAt: new Date().toISOString(),
+        segmentsDeleted,
+        objectsDeleted,
+        spansDeleted,
+        error: error.message,
+      },
+      { db },
+    ).catch(() => {});
     await logEvent("log_purge_failed", `Deleting all collected logs failed: ${error.message}`, {
       jobId: job.id,
       requestedBy: job.requestedBy,
