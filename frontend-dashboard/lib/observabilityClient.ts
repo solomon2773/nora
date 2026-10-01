@@ -682,7 +682,7 @@ export interface ListTracesResult {
   nextCursor: string | null;
   // Reconciled against the real Phase 13 backend: `GET /traces` embeds the
   // requesting agent's resolved `tracesEnabled`/`traceSampleRate` directly in
-  // its response (via `agentTracing.resolveWorkspaceLogSettings`), rather
+  // its response (via `agentTracing.resolveTracingSettings`), rather
   // than requiring a separate call to `GET /workspaces/:id/log-settings`.
   // That settings endpoint is guarded by `requireWorkspaceRole("admin", "id")`
   // (Phase 12), so a plain workspace viewer/editor legitimately using the

@@ -1216,10 +1216,10 @@ function TracesLens({
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-slate-500">
         <Waypoints size={28} className="opacity-60" />
-        <p className="text-sm font-bold text-slate-700">{t("Tracing is not enabled for this workspace")}</p>
+        <p className="text-sm font-bold text-slate-700">{t("Tracing is not enabled on this Nora installation")}</p>
         <p className="max-w-md text-xs text-slate-400">
           {t(
-            "Turn on tracing in this workspace's log settings to start collecting spans for its agents. Once enabled, new traces appear here as agents run.",
+            "Tracing is switched on for the whole installation by a platform admin (NORA_TRACES_ENABLED). Once enabled, new traces appear here as agents run.",
           )}
         </p>
       </div>

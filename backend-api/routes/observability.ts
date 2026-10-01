@@ -43,7 +43,6 @@ const retentionSweeper = require("../../workers/provisioner/logs/retentionSweepe
 const logStorageConfigModule = require("../../workers/provisioner/logs/logStorageConfig.ts");
 const storageMigration = require("../../workers/provisioner/logs/storageMigration.ts");
 const logSearch = require("../logSearch.ts");
-const agentTracing = require("../agentTracing.ts");
 const traceQuery = require("../traceQuery.ts");
 const db = require("../db");
 
@@ -700,17 +699,17 @@ router.get(
 // ─── 6. Workspace log settings (Phase 12 item 6) ───────────────────────────
 
 const WORKSPACE_LOG_SETTINGS_COLUMNS = `
-  runtime_retention_days, trace_retention_days,
-  gateway_logs_enabled, traces_enabled, trace_sample_rate
+  runtime_retention_days, trace_retention_days
 `;
 
 /**
- * Current effective workspace_log_settings row, or the same platform
- * defaults every other Phase 12/5 resolver falls back to when no row exists
+ * Current workspace retention settings, or the defaults when no row exists
  * yet (a workspace's row is created lazily, on first PUT).
  *
- * `trace_sample_rate` is included for visibility (the plan's Traces lens
- * eventually reads it) but is NOT accepted on PUT below — see item 3a.
+ * Retention is the only logging policy a workspace owns. Whether logs and
+ * traces are collected at all is platform-wide (NORA_LOG_ENABLED /
+ * NORA_TRACES_ENABLED), so the table's gateway_logs_enabled, traces_enabled,
+ * and trace_sample_rate columns are no longer read or written here.
  */
 async function readWorkspaceLogSettingsRow(workspaceId) {
   const result = await db.query(
@@ -722,25 +721,17 @@ async function readWorkspaceLogSettingsRow(workspaceId) {
     return {
       runtimeRetentionDays: row.runtime_retention_days,
       traceRetentionDays: row.trace_retention_days,
-      gatewayLogsEnabled: row.gateway_logs_enabled,
-      tracesEnabled: row.traces_enabled,
-      traceSampleRate: Number(row.trace_sample_rate),
     };
   }
   return {
     runtimeRetentionDays: 30,
     traceRetentionDays: 30,
-    gatewayLogsEnabled: agentTracing.PLATFORM_LOG_SETTINGS_DEFAULTS.gateway_logs_enabled,
-    tracesEnabled: agentTracing.PLATFORM_LOG_SETTINGS_DEFAULTS.traces_enabled,
-    traceSampleRate: agentTracing.PLATFORM_LOG_SETTINGS_DEFAULTS.trace_sample_rate,
   };
 }
 
 /**
  * GET /workspaces/:id/log-settings
- * Retention (Phase 5) and enablement (gateway_logs_enabled, traces_enabled)
- * together, so the settings UI has one call for the whole logging policy.
- * `traceSampleRate` is read-only here (item 3a) — no PUT field changes it.
+ * The workspace's log and trace retention periods.
  */
 router.get(
   "/workspaces/:id/log-settings",
@@ -752,18 +743,10 @@ router.get(
 
 /**
  * PUT /workspaces/:id/log-settings
- * Body: { runtimeRetentionDays?, traceRetentionDays?, gatewayLogsEnabled?,
- *   tracesEnabled? } — any subset; omitted fields keep their current (or
- * default) value. `traceSampleRate` is deliberately not accepted (item 3a):
- * it stays whatever the column already holds (1.0 by default) and is never
- * user-settable in this phase.
- *
- * When `tracesEnabled` actually changes, immediately re-applies (or removes)
- * the agent-side tracing config for every agent in this workspace, rather
- * than waiting for the next 30s reconcile tick — the reconcile loop still
- * exists as the self-healing backstop for restarts, but a deliberate
- * operator toggle should take effect right away. Best-effort per agent: one
- * unreachable agent doesn't fail the settings update itself.
+ * Body: { runtimeRetentionDays?, traceRetentionDays? } — either or both;
+ * an omitted field keeps its current (or default) value. Any other field in
+ * the body (for example the retired `tracesEnabled` / `gatewayLogsEnabled`)
+ * is ignored.
  */
 router.put(
   "/workspaces/:id/log-settings",
@@ -779,10 +762,6 @@ router.put(
       if (!Number.isInteger(parsed) || parsed < 1) return null;
       return parsed;
     }
-    function parseBooleanField(value, fallback) {
-      if (value === undefined) return fallback;
-      return Boolean(value);
-    }
 
     const runtimeRetentionDays = parseRetentionDays(
       body.runtimeRetentionDays,
@@ -797,28 +776,18 @@ router.put(
         .status(400)
         .json({ error: "runtimeRetentionDays and traceRetentionDays must be integers >= 1" });
     }
-    const gatewayLogsEnabled = parseBooleanField(
-      body.gatewayLogsEnabled,
-      current.gatewayLogsEnabled,
-    );
-    const tracesEnabledChanging =
-      body.tracesEnabled !== undefined && Boolean(body.tracesEnabled) !== current.tracesEnabled;
-    const tracesEnabled = parseBooleanField(body.tracesEnabled, current.tracesEnabled);
 
     const result = await db.query(
       `INSERT INTO workspace_log_settings(
-         workspace_id, runtime_retention_days, trace_retention_days,
-         gateway_logs_enabled, traces_enabled, updated_at
+         workspace_id, runtime_retention_days, trace_retention_days, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, NOW())
+       VALUES ($1, $2, $3, NOW())
        ON CONFLICT (workspace_id) DO UPDATE SET
          runtime_retention_days = EXCLUDED.runtime_retention_days,
          trace_retention_days = EXCLUDED.trace_retention_days,
-         gateway_logs_enabled = EXCLUDED.gateway_logs_enabled,
-         traces_enabled = EXCLUDED.traces_enabled,
          updated_at = NOW()
        RETURNING ${WORKSPACE_LOG_SETTINGS_COLUMNS}`,
-      [workspaceId, runtimeRetentionDays, traceRetentionDays, gatewayLogsEnabled, tracesEnabled],
+      [workspaceId, runtimeRetentionDays, traceRetentionDays],
     );
     const row = result.rows[0];
 
@@ -832,42 +801,9 @@ router.put(
       },
     );
 
-    if (tracesEnabledChanging) {
-      try {
-        const agentsResult = await db.query(
-          `SELECT a.id, a.user_id, a.container_id, a.backend_type, a.deploy_target,
-                  a.execution_target_id, a.runtime_family, a.sandbox_profile, a.status,
-                  a.host, a.runtime_host, a.runtime_port, a.gateway_host, a.gateway_port
-             FROM agents a
-             JOIN workspace_agents wa ON wa.agent_id = a.id
-            WHERE wa.workspace_id = $1
-              AND a.container_id IS NOT NULL
-              AND a.status IN ('running', 'warning')`,
-          [workspaceId],
-        );
-        for (const agent of agentsResult.rows) {
-          try {
-            // A deliberate operator toggle bypasses the 30s reconcile
-            // loop's throttle (see TRACING_CAPABILITY_RECHECK_INTERVAL_MS in
-            // agentTracing.ts) -- this fires once per actual settings
-            // change, not on a recurring timer, so it can't reproduce the
-            // repeated-check pile-up that throttle exists to prevent.
-            await agentTracing.applyTracingConfig(agent, {}, { forceCapabilityCheck: true });
-          } catch {
-            // Best-effort — the 30s reconcile loop will retry.
-          }
-        }
-      } catch {
-        // Best-effort — the 30s reconcile loop will retry.
-      }
-    }
-
     res.json({
       runtimeRetentionDays: row.runtime_retention_days,
       traceRetentionDays: row.trace_retention_days,
-      gatewayLogsEnabled: row.gateway_logs_enabled,
-      tracesEnabled: row.traces_enabled,
-      traceSampleRate: Number(row.trace_sample_rate),
     });
   }),
 );

@@ -136,30 +136,6 @@ async function saveCursor(agentId, sourceKind, cursor, { db } = {}) {
   );
 }
 
-// ── Gateway logs enabled (item 1) ─────────────────────────────────────
-
-/**
- * Resolve whether gateway log collection is enabled for `tenant`, through
- * the same fallback-chain shape Phase 5's `resolveLogRetention` uses: the
- * workspace's `workspace_log_settings` row when one exists, the column's
- * platform default (`true`) otherwise. An agent with no workspace has no
- * `workspace_log_settings` row by design (Phase 1) and always resolves to
- * the default.
- *
- * @param {{ workspaceId: string|null }} tenant
- * @param {{ db: Object }} deps
- * @returns {Promise<boolean>}
- */
-async function resolveGatewayLogsEnabled(tenant, { db } = {}) {
-  if (!tenant || !tenant.workspaceId) return true;
-  const result = await db.query(
-    `SELECT gateway_logs_enabled FROM workspace_log_settings WHERE workspace_id = $1`,
-    [tenant.workspaceId],
-  );
-  const row = result.rows[0];
-  return row ? Boolean(row.gateway_logs_enabled) : true;
-}
-
 // ── consoleLevel:warn config sync (item 7) ────────────────────────────
 
 /**
@@ -578,8 +554,11 @@ function createGatewayCollector(deps = {}) {
   /**
    * The 30s level-triggered reconcile (matching Phase 4's cadence, see
    * module header). Re-derives the desired agent set from `agents` on every
-   * call: running/warning OpenClaw agents whose workspace has
-   * `gateway_logs_enabled`. Hermes agents (or any non-OpenClaw runtime
+   * call: every running/warning OpenClaw agent. Whether gateway logs are
+   * collected at all is a platform-wide decision (`NORA_LOG_ENABLED`, which
+   * decides whether this collector is started) — there is no per-workspace
+   * switch, and `workspace_log_settings.gateway_logs_enabled` is no longer
+   * read. Hermes agents (or any non-OpenClaw runtime
    * family) are silently excluded — never attached, never logged as an
    * error (item 1 / test list: "a Hermes agent is skipped entirely, without
    * throwing or logging an error").
@@ -635,22 +614,9 @@ function createGatewayCollector(deps = {}) {
         continue;
       }
 
-      let gatewayLogsEnabled;
-      try {
-        gatewayLogsEnabled = await resolveGatewayLogsEnabled(tenant, { db });
-      } catch (error) {
-        logger.warn(
-          `[gatewayCollector] could not resolve gateway_logs_enabled for agent ${agent.id}, ` +
-            `assuming disabled this tick: ${error.message}`,
-        );
-        gatewayLogsEnabled = false;
-      }
-
-      // Item 7: reconcile consoleLevel for every eligible OpenClaw agent,
-      // independent of gateway_logs_enabled — the config sync is what
-      // prevents duplicate collection SHOULD gateway collection be (or
-      // later become) active for this agent, so it is applied regardless of
-      // today's workspace setting rather than only once collection is on.
+      // Item 7: reconcile consoleLevel for every eligible OpenClaw agent —
+      // the config sync is what prevents the runtime and gateway streams
+      // from duplicating the same console output.
       try {
         await applyConsoleLevel(agent, { db });
       } catch (error) {
@@ -659,7 +625,6 @@ function createGatewayCollector(deps = {}) {
         );
       }
 
-      if (!gatewayLogsEnabled) continue;
       desired.set(agent.id, { agent, tenant });
     }
 
@@ -734,7 +699,6 @@ module.exports = {
   loadCursor,
   saveCursor,
   applyConsoleLevelConfig,
-  resolveGatewayLogsEnabled,
   splitRunsOnMetaRecords,
   computeNextPollStep,
   GATEWAY_STREAM,

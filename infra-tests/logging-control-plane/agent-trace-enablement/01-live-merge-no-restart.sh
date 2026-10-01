@@ -3,20 +3,16 @@
 # container issues no restart, and the config actually lands on disk.
 #
 # Uses agent5 (re-resolved by name, not a hardcoded id — see this phase's
-# README/task briefing: "names/IDs can drift"), assigned to workspace2
-# (10dcb117-3d27-4a96-878a-df46e1e4f05e), which already has
-# tracesEnabled=true / traceSampleRate=1 set via a real
-# PUT /workspaces/:id/log-settings call.
+# README/task briefing: "names/IDs can drift").
 #
-# `backend-api/agentTracing.ts`'s own applyTracingConfig is called directly
-# via node_call, inside the REAL worker-provisioner container (backend-api
-# source is mounted at /backend-api there — confirmed empirically, same
-# mount phase10's 02 script already relies on for
-# /agent-runtime/lib/runtimeBootstrap.ts). This is more direct than round-
-# tripping through the PUT route (which only re-applies when tracesEnabled
-# actually CHANGES — see observability.ts's own doc comment — so toggling
-# it off/on would be needed to force a fresh apply through that path
-# instead).
+# Tracing is a platform-wide switch (NORA_TRACES_ENABLED), not a workspace
+# setting. `backend-api/agentTracing.ts`'s own applyTracingConfig is called
+# directly via node_call, inside the REAL worker-provisioner container
+# (backend-api source is mounted at /backend-api there — confirmed
+# empirically, same mount phase10's 02 script already relies on for
+# /agent-runtime/lib/runtimeBootstrap.ts), with the switch forced on through
+# its `env` test seam so this test doesn't depend on how the stack's own
+# .env happens to be set.
 #
 # "No restart" is verified via `docker inspect`'s StartedAt/Pid, which only
 # change across a real container restart — a live config-file merge inside
@@ -67,7 +63,7 @@ apply_result="$(node_call "
     const r = await db.query(\"SELECT id, user_id, container_id, backend_type, deploy_target, execution_target_id, runtime_family, sandbox_profile, status, host, runtime_host, runtime_port, gateway_host, gateway_port FROM agents WHERE id='${AGENT_ID}'\");
     const agent = r.rows[0];
     if (!agent) throw new Error('agent row not found');
-    const result = await agentTracing.applyTracingConfig(agent);
+    const result = await agentTracing.applyTracingConfig(agent, { env: { ...process.env, NORA_TRACES_ENABLED: 'true' } });
     console.log(JSON.stringify(result));
     process.exit(0);
   })().catch(e => { console.error('ERR', e.message); process.exit(1); });

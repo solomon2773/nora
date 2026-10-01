@@ -16,6 +16,10 @@ jest.mock("../authSync", () => mockAuthSync);
 jest.mock("../redisQueue", () => ({ addSpanIngestJob: jest.fn() }));
 
 describe("agentTracing", () => {
+  afterAll(() => {
+    delete process.env.NORA_TRACES_ENABLED;
+  });
+
   const AGENT_ID = "11111111-1111-1111-1111-111111111111";
   const WORKSPACE_ID = "22222222-2222-2222-2222-222222222222";
 
@@ -31,6 +35,9 @@ describe("agentTracing", () => {
     delete process.env.NORA_OTLP_PUBLIC_ENDPOINT;
     delete process.env.AGENT_RUNTIME_BACKEND_API_URL;
     delete process.env.BACKEND_API_URL;
+    // Tracing is a platform-wide switch. Most tests here exercise the
+    // enabled path; the ones about it being off override this themselves.
+    process.env.NORA_TRACES_ENABLED = "true";
 
     // Re-require inside beforeEach (after resetModules) so this file's mocks
     // for ../db and ../authSync are the same instances agentTracing.js and
@@ -114,7 +121,8 @@ describe("agentTracing", () => {
       };
     }
 
-    test("an agent with no workspace still receives its tracing config via platform defaults", async () => {
+    test("with NORA_TRACES_ENABLED unset, tracing is off and the disabling config is still applied", async () => {
+      delete process.env.NORA_TRACES_ENABLED;
       // workspace_agents lookup returns no row -> null workspace.
       mockDb.query.mockResolvedValueOnce({ rows: [] });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
@@ -123,19 +131,47 @@ describe("agentTracing", () => {
 
       expect(result.applied).toBe(true);
       expect(result.workspaceId).toBeNull();
-      // Platform default traces_enabled is false, so the applied delta must
-      // be the disabling shape — but it MUST have been applied (not skipped)
-      // rather than silently never receiving diagnostics.otel at all.
+      // Off by default, so the applied delta must be the disabling shape —
+      // but it MUST have been applied (not skipped) rather than silently
+      // never receiving diagnostics.otel at all.
       expect(result.settings.traces_enabled).toBe(false);
       expect(mockAuthSync.runRuntimeCommand).toHaveBeenCalledTimes(1);
     });
 
+    test("an agent with no workspace is traced like any other when tracing is on", async () => {
+      mockDb.query.mockResolvedValue({ rows: [] }); // no workspace_agents row
+      mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
+
+      const result = await agentTracing.applyTracingConfig(agentRow());
+
+      expect(result.workspaceId).toBeNull();
+      expect(result.settings.traces_enabled).toBe(true);
+      expect(result.delta.diagnostics.otel.enabled).toBe(true);
+    });
+
+    test("the switch never reads workspace_log_settings", async () => {
+      mockDb.query.mockResolvedValue({ rows: [{ workspace_id: WORKSPACE_ID }] });
+      mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
+
+      await agentTracing.applyTracingConfig(agentRow());
+
+      expect(
+        mockDb.query.mock.calls.some(([sql]) => /workspace_log_settings/.test(sql)),
+      ).toBe(false);
+    });
+
+    test("isTracingEnabled only treats explicit truthy values as on", () => {
+      for (const value of ["true", "TRUE", "1", "yes", "on"]) {
+        expect(agentTracing.isTracingEnabled({ NORA_TRACES_ENABLED: value })).toBe(true);
+      }
+      for (const value of [undefined, "", "false", "0", "off", "maybe"]) {
+        expect(agentTracing.isTracingEnabled({ NORA_TRACES_ENABLED: value })).toBe(false);
+      }
+    });
+
     test("enabling tracing on a running agent issues no restart — only the config-merge command runs", async () => {
       mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-        .mockResolvedValueOnce({
-          rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-        });
+        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
 
       const result = await agentTracing.applyTracingConfig(agentRow());
@@ -154,10 +190,7 @@ describe("agentTracing", () => {
 
     test("falls back to runContainerCommand when the runtime sidecar is unreachable", async () => {
       mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-        .mockResolvedValueOnce({
-          rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-        });
+        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockRejectedValueOnce(new Error("unreachable"));
       mockAuthSync.runContainerCommand.mockResolvedValueOnce({ exitCode: 0 });
 
@@ -177,23 +210,18 @@ describe("agentTracing", () => {
       expect(mockAuthSync.runContainerCommand).not.toHaveBeenCalled();
     });
 
-    test("disabling a workspace's traces_enabled removes/disables the config for its agents", async () => {
+    test("switching NORA_TRACES_ENABLED off removes/disables the config for agents", async () => {
       // First apply: enabled.
       mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-        .mockResolvedValueOnce({
-          rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-        });
+        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
       const enabledResult = await agentTracing.applyTracingConfig(agentRow());
       expect(enabledResult.delta.diagnostics.otel.enabled).toBe(true);
 
-      // Second apply, after the workspace toggled traces_enabled off.
+      // Second apply, after the platform switch was turned off.
+      process.env.NORA_TRACES_ENABLED = "false";
       mockDb.query
-        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-        .mockResolvedValueOnce({
-          rows: [{ gateway_logs_enabled: true, traces_enabled: false, trace_sample_rate: 1.0 }],
-        });
+        .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
       const disabledResult = await agentTracing.applyTracingConfig(agentRow());
 
@@ -250,9 +278,6 @@ describe("agentTracing", () => {
       test("persists 'supported' to agents.tracing_capability when the plugin check output says so", async () => {
         mockDb.query
           .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-          .mockResolvedValueOnce({
-            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-          })
           .mockResolvedValueOnce({ rows: [] }) // optimistic pre-write of checked_at
           .mockResolvedValueOnce({ rows: [] }); // the final capability UPDATE
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({
@@ -274,9 +299,6 @@ describe("agentTracing", () => {
       test("persists 'unsupported' the same way when the plugin check fails", async () => {
         mockDb.query
           .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-          .mockResolvedValueOnce({
-            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-          })
           .mockResolvedValueOnce({ rows: [] })
           .mockResolvedValueOnce({ rows: [] });
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({
@@ -295,38 +317,33 @@ describe("agentTracing", () => {
         );
       });
 
-      test("does not touch tracing_capability at all when traces_enabled is false -- no attempt means no new information", async () => {
+      test("does not touch tracing_capability at all when tracing is off -- no attempt means no new information", async () => {
+        process.env.NORA_TRACES_ENABLED = "false";
         mockDb.query
-          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-          .mockResolvedValueOnce({
-            rows: [{ gateway_logs_enabled: true, traces_enabled: false, trace_sample_rate: 1.0 }],
-          });
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
 
         const result = await agentTracing.applyTracingConfig(agentRow());
 
         expect(result.tracingCapability).toBeUndefined();
-        // Exactly the two lookups from above -- no plugin check attempted at
-        // all when traces_enabled is false, so no checked_at pre-write and
-        // no capability UPDATE either.
-        expect(mockDb.query).toHaveBeenCalledTimes(2);
+        // Exactly the one workspace lookup from above -- no plugin check
+        // attempted at all when tracing is off, so no checked_at pre-write
+        // and no capability UPDATE either.
+        expect(mockDb.query).toHaveBeenCalledTimes(1);
       });
 
       test("does not persist a capability verdict when the marker never printed, but still records the attempt via checked_at", async () => {
         mockDb.query
           .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-          .mockResolvedValueOnce({
-            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-          })
           .mockResolvedValueOnce({ rows: [] }); // the optimistic pre-write
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "no marker here" });
 
         const result = await agentTracing.applyTracingConfig(agentRow());
 
         expect(result.tracingCapability).toBeUndefined();
-        // workspace lookup, settings lookup, and the pre-write -- no 4th
-        // (final capability) UPDATE since no verdict was ever parsed.
-        expect(mockDb.query).toHaveBeenCalledTimes(3);
+        // workspace lookup and the pre-write -- no 3rd (final capability)
+        // UPDATE since no verdict was ever parsed.
+        expect(mockDb.query).toHaveBeenCalledTimes(2);
         expect(mockDb.query).toHaveBeenLastCalledWith(
           expect.stringContaining("UPDATE agents SET tracing_capability_checked_at = NOW()"),
           [AGENT_ID],
@@ -375,10 +392,7 @@ describe("agentTracing", () => {
               }),
             ],
           })
-          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-          .mockResolvedValueOnce({
-            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-          });
+          .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
 
         await agentTracing.reconcileTracingConfig({});
@@ -393,9 +407,6 @@ describe("agentTracing", () => {
         const freshlyChecked = new Date().toISOString();
         mockDb.query
           .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-          .mockResolvedValueOnce({
-            rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-          })
           .mockResolvedValueOnce({ rows: [] });
         mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0, output: "" });
 
@@ -425,9 +436,6 @@ describe("agentTracing", () => {
         test("an unchanged version skips the real plugin check entirely -- only the cheap probe and the config merge run", async () => {
           mockDb.query
             .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-            .mockResolvedValueOnce({
-              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-            })
             .mockResolvedValueOnce({ rows: [] }); // checked_at refresh
           mockAuthSync.runRuntimeCommand
             .mockResolvedValueOnce({ exitCode: 0, output: "OpenClaw 2026.6.11 (e085fa1)" }) // the probe
@@ -449,17 +457,14 @@ describe("agentTracing", () => {
           // No verdict was re-derived -- the existing one stands unreported
           // (the caller already knows it from the agent row it passed in).
           expect(result.tracingCapability).toBeUndefined();
-          // workspace lookup, settings lookup, checked_at refresh -- no 4th
+          // workspace lookup, checked_at refresh -- no 3rd
           // (capability-persisting) UPDATE, since nothing changed.
-          expect(mockDb.query).toHaveBeenCalledTimes(3);
+          expect(mockDb.query).toHaveBeenCalledTimes(2);
         });
 
         test("a changed version escalates to the real plugin check", async () => {
           mockDb.query
             .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-            .mockResolvedValueOnce({
-              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-            })
             .mockResolvedValueOnce({ rows: [] }) // checked_at refresh
             .mockResolvedValueOnce({ rows: [] }); // final capability persist
           mockAuthSync.runRuntimeCommand
@@ -486,9 +491,6 @@ describe("agentTracing", () => {
         test("a known verdict with no previously-recorded version treats any real probe result as a change (safe default)", async () => {
           mockDb.query
             .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-            .mockResolvedValueOnce({
-              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-            })
             .mockResolvedValueOnce({ rows: [] })
             .mockResolvedValueOnce({ rows: [] });
           mockAuthSync.runRuntimeCommand
@@ -509,9 +511,6 @@ describe("agentTracing", () => {
         test("a probe that fails on both the runtime sidecar AND the container-exec fallback falls through to the real check rather than silently trusting a stale verdict", async () => {
           mockDb.query
             .mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] })
-            .mockResolvedValueOnce({
-              rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-            })
             .mockResolvedValueOnce({ rows: [] });
           // applyConfigMergeCommand's own runRuntimeCommand -> runContainerCommand
           // fallback means the probe only truly fails (and reaches this
@@ -549,10 +548,6 @@ describe("agentTracing", () => {
       mockDb.query.mockResolvedValueOnce({ rows: [agent] });
       // 2. Inside applyTracingConfig: workspace lookup.
       mockDb.query.mockResolvedValueOnce({ rows: [{ workspace_id: WORKSPACE_ID }] });
-      // 3. Inside applyTracingConfig: settings lookup.
-      mockDb.query.mockResolvedValueOnce({
-        rows: [{ gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1.0 }],
-      });
       mockAuthSync.runRuntimeCommand.mockResolvedValueOnce({ exitCode: 0 });
 
       await agentTracing.reconcileTracingConfig();

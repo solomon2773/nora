@@ -20,7 +20,6 @@ const {
   pollAgentGatewayLogs,
   splitRunsOnMetaRecords,
   computeNextPollStep,
-  resolveGatewayLogsEnabled,
   GATEWAY_STREAM,
   POLL_BACKOFF_STEPS_MS,
   DEFAULT_SOURCE_KIND,
@@ -462,17 +461,38 @@ test("splitRunsOnMetaRecords with no meta records returns a single run attribute
   assert.equal(runs[0].records.length, 2);
 });
 
-test("resolveGatewayLogsEnabled falls back to true when no workspace_log_settings row exists", async () => {
-  const db = fakeDb();
-  const enabledNoWorkspace = await resolveGatewayLogsEnabled({ workspaceId: null }, { db });
-  assert.equal(enabledNoWorkspace, true);
+test("a workspace's old gateway_logs_enabled=false no longer stops collection (the switch is platform-wide now)", async () => {
+  const agent = agentRow();
+  const db = fakeDb({
+    // A row left behind from when workspaces could switch gateway logs off.
+    gatewaySettings: new Map([["ws-1", false]]),
+    extra: (sql) => {
+      if (/FROM agents\s+WHERE status IN/.test(sql)) {
+        return { rows: [agent] };
+      }
+      return null;
+    },
+  });
 
-  const enabledNoRow = await resolveGatewayLogsEnabled({ workspaceId: "ws-missing" }, { db });
-  assert.equal(enabledNoRow, true);
-});
+  const collector = createGatewayCollector({
+    db,
+    segmentWriter: fakeSegmentWriter(),
+    logger: silentLogger(),
+    resolveTenantForAgent: async () => ({ workspaceId: "ws-1", ownerUserId: null }),
+    resolveLogRetention: alwaysAllowRetention,
+    applyConsoleLevelConfig: async () => {},
+    createGatewayClient: () => fakeGatewayClient([{ lines: [], cursor: null, sourceKind: "file" }]),
+  });
 
-test("resolveGatewayLogsEnabled honors an explicit workspace_log_settings row", async () => {
-  const db = fakeDb({ gatewaySettings: new Map([["ws-1", false]]) });
-  const disabled = await resolveGatewayLogsEnabled({ workspaceId: "ws-1" }, { db });
-  assert.equal(disabled, false);
+  try {
+    await collector.reconcileStreams();
+    assert.equal(collector.heldAgentCount(), 1);
+    assert.equal(
+      db.calls.some((call) => /workspace_log_settings/.test(call.sql)),
+      false,
+      "the collector must not consult workspace_log_settings to decide whether to collect",
+    );
+  } finally {
+    collector.stop?.();
+  }
 });

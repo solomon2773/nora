@@ -85,7 +85,6 @@ const mockApplyTracingConfig = jest.fn().mockResolvedValue({ applied: true });
 jest.mock("../agentTracing.ts", () => ({
   applyTracingConfig: (...args) => mockApplyTracingConfig(...args),
   PLATFORM_LOG_SETTINGS_DEFAULTS: {
-    gateway_logs_enabled: true,
     traces_enabled: false,
     trace_sample_rate: 1.0,
   },
@@ -490,9 +489,6 @@ describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
     expect(res.body).toEqual({
       runtimeRetentionDays: 30,
       traceRetentionDays: 30,
-      gatewayLogsEnabled: true,
-      tracesEnabled: false,
-      traceSampleRate: 1.0,
     });
   });
 
@@ -502,9 +498,6 @@ describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
         {
           runtime_retention_days: 14,
           trace_retention_days: 7,
-          gateway_logs_enabled: false,
-          traces_enabled: true,
-          trace_sample_rate: 1.0,
         },
       ],
     });
@@ -514,19 +507,15 @@ describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
     expect(res.body).toEqual({
       runtimeRetentionDays: 14,
       traceRetentionDays: 7,
-      gatewayLogsEnabled: false,
-      tracesEnabled: true,
-      traceSampleRate: 1.0,
     });
   });
 
   it("rejects a PUT from a caller without admin workspace role", async () => {
     mockDb.query.mockResolvedValueOnce(viewerMembershipRow);
     const res = await asUser(
-      request(app).put(`/workspaces/${WORKSPACE_ID}/log-settings`).send({ tracesEnabled: true }),
+      request(app).put(`/workspaces/${WORKSPACE_ID}/log-settings`).send({ runtimeRetentionDays: 7 }),
     );
     expect(res.status).toBe(403);
-    expect(mockApplyTracingConfig).not.toHaveBeenCalled();
   });
 
   it("rejects non-integer/invalid retention values", async () => {
@@ -542,140 +531,55 @@ describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
     expect(res.status).toBe(400);
   });
 
-  it("does not accept traceSampleRate as a settable field (item 3a)", async () => {
+  it("ignores collection switches — they are platform-wide, not workspace settings", async () => {
     mockDb.query
       .mockResolvedValueOnce(adminMembershipRow)
       .mockResolvedValueOnce({ rows: [] }) // current settings read
       .mockResolvedValueOnce({
-        rows: [
-          {
-            runtime_retention_days: 30,
-            trace_retention_days: 30,
-            gateway_logs_enabled: true,
-            traces_enabled: false,
-            trace_sample_rate: 1.0,
-          },
-        ],
+        rows: [{ runtime_retention_days: 30, trace_retention_days: 30 }],
       }); // upsert RETURNING
 
     const res = await asAdmin(
-      request(app)
-        .put(`/workspaces/${WORKSPACE_ID}/log-settings`)
-        .send({ traceSampleRate: 0.1 }),
+      request(app).put(`/workspaces/${WORKSPACE_ID}/log-settings`).send({
+        // All retired workspace fields: none may be stored or echoed back.
+        tracesEnabled: true,
+        gatewayLogsEnabled: false,
+        traceSampleRate: 0.1,
+      }),
     );
+
     expect(res.status).toBe(200);
-    // Column default (1.0) survives untouched — the request body's
-    // traceSampleRate is simply ignored, not applied.
-    expect(res.body.traceSampleRate).toBe(1.0);
-    const upsertCall = mockDb.query.mock.calls.find(([sql]) =>
+    expect(res.body).toEqual({ runtimeRetentionDays: 30, traceRetentionDays: 30 });
+    const upsertSql = mockDb.query.mock.calls.find(([sql]) =>
       sql.includes("INSERT INTO workspace_log_settings"),
-    );
-    const insertColumnsAndSetClause = upsertCall[0].split("RETURNING")[0];
-    expect(insertColumnsAndSetClause).not.toMatch(/trace_sample_rate/);
+    )[0];
+    expect(upsertSql).not.toMatch(/traces_enabled|gateway_logs_enabled|trace_sample_rate/);
+    // Only the role check, the current-settings read, and the upsert ran —
+    // no lookup of the workspace's agents to push tracing config to.
+    expect(mockDb.query).toHaveBeenCalledTimes(3);
   });
 
-  it("upserts retention/enablement and logs an audit event", async () => {
+  it("upserts retention and logs an audit event", async () => {
     mockDb.query
       .mockResolvedValueOnce(adminMembershipRow)
       .mockResolvedValueOnce({ rows: [] }) // current settings read (defaults)
       .mockResolvedValueOnce({
-        rows: [
-          {
-            runtime_retention_days: 14,
-            trace_retention_days: 14,
-            gateway_logs_enabled: false,
-            traces_enabled: false,
-            trace_sample_rate: 1.0,
-          },
-        ],
+        rows: [{ runtime_retention_days: 14, trace_retention_days: 7 }],
       }); // upsert RETURNING
 
     const res = await asAdmin(
       request(app).put(`/workspaces/${WORKSPACE_ID}/log-settings`).send({
         runtimeRetentionDays: 14,
-        traceRetentionDays: 14,
-        gatewayLogsEnabled: false,
+        traceRetentionDays: 7,
       }),
     );
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      runtimeRetentionDays: 14,
-      traceRetentionDays: 14,
-      gatewayLogsEnabled: false,
-      tracesEnabled: false,
-      traceSampleRate: 1.0,
-    });
+    expect(res.body).toEqual({ runtimeRetentionDays: 14, traceRetentionDays: 7 });
     expect(mockLogEvent).toHaveBeenCalledWith(
       "workspace_log_settings_updated",
       expect.any(String),
       expect.objectContaining({ workspace: { id: WORKSPACE_ID } }),
     );
-    // tracesEnabled did not change (stayed false) — no immediate tracing apply.
-    expect(mockApplyTracingConfig).not.toHaveBeenCalled();
-  });
-
-  it("immediately applies tracing config to the workspace's running agents when tracesEnabled toggles on", async () => {
-    mockDb.query
-      .mockResolvedValueOnce(adminMembershipRow)
-      .mockResolvedValueOnce({ rows: [] }) // current settings read: traces_enabled defaults false
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            runtime_retention_days: 30,
-            trace_retention_days: 30,
-            gateway_logs_enabled: true,
-            traces_enabled: true,
-            trace_sample_rate: 1.0,
-          },
-        ],
-      }) // upsert RETURNING
-      .mockResolvedValueOnce({
-        rows: [
-          { id: "agent-1", runtime_family: "openclaw", status: "running", container_id: "c-1" },
-        ],
-      }); // workspace's running agents
-
-    const res = await asAdmin(
-      request(app).put(`/workspaces/${WORKSPACE_ID}/log-settings`).send({ tracesEnabled: true }),
-    );
-
-    expect(res.status).toBe(200);
-    expect(res.body.tracesEnabled).toBe(true);
-    expect(mockApplyTracingConfig).toHaveBeenCalledTimes(1);
-    expect(mockApplyTracingConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "agent-1" }),
-      expect.anything(),
-      { forceCapabilityCheck: true },
-    );
-  });
-
-  it("does not fail the settings update when applying tracing config to an agent throws", async () => {
-    mockDb.query
-      .mockResolvedValueOnce(adminMembershipRow)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            runtime_retention_days: 30,
-            trace_retention_days: 30,
-            gateway_logs_enabled: true,
-            traces_enabled: true,
-            trace_sample_rate: 1.0,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          { id: "agent-1", runtime_family: "openclaw", status: "running", container_id: "c-1" },
-        ],
-      });
-    mockApplyTracingConfig.mockRejectedValueOnce(new Error("agent unreachable"));
-
-    const res = await asAdmin(
-      request(app).put(`/workspaces/${WORKSPACE_ID}/log-settings`).send({ tracesEnabled: true }),
-    );
-
-    expect(res.status).toBe(200);
   });
 });

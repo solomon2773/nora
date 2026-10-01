@@ -425,13 +425,14 @@ test.describe("Complete platform journey", () => {
     // Agent Logs section: Runtime lens shows real container log lines for
     // the already-deployed primaryAgent (its own startup output is enough
     // — no chat turn needed), and the Traces lens shows the correct
-    // enable-tracing CTA for a workspace that never turned tracing on.
+    // not-enabled message for an installation with tracing left off (the
+    // NORA_TRACES_ENABLED default).
     await page.getByRole("button", { name: "Agent Logs" }).click();
     await page.getByLabel("Agent").selectOption({ label: primaryAgent.name });
     await expect(page.getByText(/no log lines in this range/i)).not.toBeVisible({ timeout: 15000 });
 
     await page.getByRole("button", { name: "Traces", exact: true }).click();
-    await expect(page.getByText(/tracing is not enabled for this workspace/i)).toBeVisible();
+    await expect(page.getByText(/tracing is not enabled on this nora installation/i)).toBeVisible();
   });
 
   test("admin pages show global state and can approve the listing", async ({ page, request }) => {

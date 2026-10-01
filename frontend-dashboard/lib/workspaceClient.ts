@@ -520,14 +520,12 @@ export function roleSatisfies(actual: WorkspaceRole | null, required: WorkspaceR
 
 // `GET`/`PUT /workspaces/:id/log-settings` — see backend-api/routes/
 // observability.ts's `readWorkspaceLogSettingsRow`/PUT handler for the exact
-// contract. `traceSampleRate` is read-only here on purpose (see that file):
-// no PUT field changes it, it stays whatever the column already holds.
+// contract. Retention is the only logging policy a workspace owns; whether
+// logs and traces are collected is platform-wide (NORA_LOG_ENABLED /
+// NORA_TRACES_ENABLED).
 export interface WorkspaceLogSettings {
   runtimeRetentionDays: number;
   traceRetentionDays: number;
-  gatewayLogsEnabled: boolean;
-  tracesEnabled: boolean;
-  traceSampleRate: number;
 }
 
 export async function getWorkspaceLogSettings(workspaceId: string): Promise<WorkspaceLogSettings> {
@@ -540,8 +538,6 @@ export async function updateWorkspaceLogSettings(
   payload: Partial<{
     runtimeRetentionDays: number;
     traceRetentionDays: number;
-    gatewayLogsEnabled: boolean;
-    tracesEnabled: boolean;
   }>,
 ): Promise<WorkspaceLogSettings> {
   const res = await fetchWithAuth(`/api/workspaces/${workspaceId}/log-settings`, {

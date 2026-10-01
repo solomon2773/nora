@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/router";
 import {
-  AlertTriangle,
   ArrowRight,
   Bell,
   DollarSign,
@@ -20,21 +19,6 @@ import {
   updateWorkspaceLogSettings,
 } from "../../../lib/workspaceClient";
 
-// Tracing requires the OpenClaw `diagnostics-otel` plugin, which in turn
-// requires OpenClaw's own plugin API >=2026.9.3 -- newer than the version
-// every Nora-managed agent ships with today, and there is no supported,
-// safe way to change an agent's OpenClaw version yet (manually running
-// `openclaw update` is confirmed unreliable and can corrupt the agent or
-// break its provider auth). This copy is deliberately NOT an instruction to
-// go update anything -- under Nora's current feature set, no agent can
-// legitimately reach a supported version, so telling operators to try would
-// just be steering them into a known-broken workaround. The PER-AGENT
-// status still lives in the Traces lens (a fact about that agent's own
-// install), this note is just the workspace-level context for why the
-// toggle above may not visibly do anything yet.
-const TRACING_CAPABILITY_NOTE =
-  "Tracing isn't available yet on Nora's default OpenClaw version. Enabling this is safe, but you won't see traces yet. No action needed.";
-
 export default function WorkspaceSettingsPage() {
   const router = useRouter();
   const workspaceId = typeof router.query.id === "string" ? router.query.id : null;
@@ -45,8 +29,6 @@ export default function WorkspaceSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [gatewayLogsEnabled, setGatewayLogsEnabled] = useState(true);
-  const [tracesEnabled, setTracesEnabled] = useState(false);
   const [runtimeRetentionDays, setRuntimeRetentionDays] = useState(30);
   const [matchTraceRetention, setMatchTraceRetention] = useState(true);
   const [traceRetentionDays, setTraceRetentionDays] = useState(30);
@@ -57,13 +39,11 @@ export default function WorkspaceSettingsPage() {
     try {
       const result = await getWorkspaceLogSettings(workspaceId);
       setSettings(result);
-      setGatewayLogsEnabled(result.gatewayLogsEnabled);
-      setTracesEnabled(result.tracesEnabled);
       setRuntimeRetentionDays(result.runtimeRetentionDays);
       setTraceRetentionDays(result.traceRetentionDays);
       setMatchTraceRetention(result.traceRetentionDays === result.runtimeRetentionDays);
     } catch (err: any) {
-      toast.error(err?.message || t("Failed to load logging settings"));
+      toast.error(err?.message || t("Failed to load retention settings"));
     } finally {
       setLoading(false);
     }
@@ -83,14 +63,12 @@ export default function WorkspaceSettingsPage() {
         ? runtimeRetentionDays
         : traceRetentionDays;
       const result = await updateWorkspaceLogSettings(workspaceId, {
-        gatewayLogsEnabled,
-        tracesEnabled,
         runtimeRetentionDays,
         traceRetentionDays: effectiveTraceRetentionDays,
       });
       setSettings(result);
       setTraceRetentionDays(result.traceRetentionDays);
-      toast.success(t("Logging settings saved"));
+      toast.success(t("Retention settings saved"));
     } catch (err: any) {
       toast.error(err?.message || t("Save failed"));
     } finally {
@@ -123,9 +101,9 @@ export default function WorkspaceSettingsPage() {
               <ScrollText size={18} />
             </div>
             <div>
-              <h2 className="text-sm font-black text-slate-900">{t("Logging & traces")}</h2>
+              <h2 className="text-sm font-black text-slate-900">{t("Log retention")}</h2>
               <p className="text-xs text-slate-500">
-                {t("What Nora collects for every agent in this workspace, and for how long.")}
+                {t("How long Nora keeps logs and traces for agents in this workspace. Capped at the platform's limit.")}
               </p>
             </div>
           </div>
@@ -135,47 +113,6 @@ export default function WorkspaceSettingsPage() {
             </div>
           ) : (
             <form onSubmit={handleSave} className="flex flex-col gap-6">
-              <label className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={gatewayLogsEnabled}
-                  onChange={(e) => setGatewayLogsEnabled(e.target.checked)}
-                />
-                <span>
-                  <span className="block text-sm font-bold text-slate-900">
-                    {t("Collect runtime & gateway logs")}
-                  </span>
-                  <span className="block text-xs text-slate-500 mt-0.5">
-                    {t("Container stdout/stderr and gateway RPC activity for every agent in this workspace.")}
-                  </span>
-                </span>
-              </label>
-
-              <label className="flex items-start gap-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={tracesEnabled}
-                  onChange={(e) => setTracesEnabled(e.target.checked)}
-                />
-                <span>
-                  <span className="block text-sm font-bold text-slate-900">
-                    {t("Enable tracing")}
-                  </span>
-                  <span className="block text-xs text-slate-500 mt-0.5">
-                    {t("Per-turn OpenTelemetry spans: model calls, timing, and token usage, viewable in each agent's Traces tab.")}
-                  </span>
-                </span>
-              </label>
-
-              <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
-                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                <p className="text-xs leading-relaxed">{t(TRACING_CAPABILITY_NOTE)}</p>
-              </div>
-
-              <div className="h-px bg-slate-100" />
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <label className="flex flex-col gap-1">
                   <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-400">
@@ -221,7 +158,7 @@ export default function WorkspaceSettingsPage() {
                   className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow hover:bg-blue-700 disabled:opacity-50"
                 >
                   {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                  {t("Save logging settings")}
+                  {t("Save retention settings")}
                 </button>
               </div>
             </form>

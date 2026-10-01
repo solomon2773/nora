@@ -23,16 +23,16 @@
 //     same "try the runtime sidecar, fall back to a direct container exec"
 //     pair authSync already uses to apply managed OpenClaw config to a
 //     running agent without restarting it.
-//   - workspace_log_settings (Phase 1/5) — traces_enabled/trace_sample_rate
-//     columns; resolved through the same fallback chain as retention
-//     (workspace row when one exists, platform defaults otherwise).
+//   - NORA_TRACES_ENABLED — the platform-wide switch. Tracing is on or off
+//     for every OpenClaw agent on the installation, the same way
+//     NORA_LOG_ENABLED governs log collection; there is no per-workspace
+//     switch (workspace_log_settings.traces_enabled is no longer read).
 //
 // Data-sensitivity note (do not "fix" this without reading the plan):
 // `captureContent` is hardcoded `false` with no configuration knob — setting
 // it `true` would put prompt/tool-output content into span attributes.
-// `trace_sample_rate` is read from whatever workspace_log_settings holds
-// (1.0 by default) but is NOT exposed as user-settable anywhere in this
-// phase; sampling below 1.0 would break the Traces lens's cost aggregates
+// The sample rate is fixed at 1.0 and is NOT user-settable anywhere;
+// sampling below 1.0 would break the Traces lens's cost aggregates
 // and leave gateway-log `trace_id`s pointing at traces that were never
 // exported.
 
@@ -41,16 +41,25 @@ const { buildOpenClawConfigMergeCommand, buildRuntimeEnv } = require("../agent-r
 const { resolveAgentRuntimeFamily } = require("../agent-runtime/lib/agentRuntimeFields");
 const otlpRoutes = require("./routes/otlp");
 
-// Platform defaults mirror the workspace_log_settings column defaults
-// exactly (see the CREATE TABLE in server.ts) — an agent with no workspace
-// has no row there by design, and must resolve to these rather than silently
-// receiving no tracing config at all (the specific failure mode Phase 12
-// exists to avoid).
+// Tracing defaults when NORA_TRACES_ENABLED is unset. Off by default: the
+// `diagnostics-otel` plugin needs a newer OpenClaw than Nora currently
+// deploys, so switching it on today only makes every agent attempt a plugin
+// install that cannot succeed.
 const PLATFORM_LOG_SETTINGS_DEFAULTS = Object.freeze({
-  gateway_logs_enabled: true,
   traces_enabled: false,
   trace_sample_rate: 1.0,
 });
+
+/**
+ * Platform-wide tracing switch. Only an explicit truthy
+ * `NORA_TRACES_ENABLED` turns tracing on — unset, empty, or anything else
+ * leaves it off.
+ */
+function isTracingEnabled(env = process.env) {
+  const raw = String(env.NORA_TRACES_ENABLED ?? "").trim().toLowerCase();
+  if (!raw) return PLATFORM_LOG_SETTINGS_DEFAULTS.traces_enabled;
+  return ["true", "1", "yes", "on"].includes(raw);
+}
 
 function lazyDb(deps) {
   return deps.dbClient || deps.db || db;
@@ -59,18 +68,15 @@ function lazyDb(deps) {
 // How long a known tracing_capability verdict is trusted before
 // reconcileTracingConfig's 30s tick will re-run the plugin install/enable/
 // list check (buildEnableTracingPluginCommand) against the SAME agent again.
-// Confirmed empirically this matters: an agent whose workspace has tracing
-// on gets this check re-run on literally every 30s reconcile tick forever
+// Confirmed empirically this matters: with tracing switched on, an agent
+// gets this check re-run on literally every 30s reconcile tick forever
 // once nothing throttles it — and a real manual `openclaw update` on such an
 // agent, running concurrently with Nora's own automatic plugin install
 // hitting the same on-disk OpenClaw install/state, produced worse, disk-
 // persisted corruption (surviving a container restart) than an interrupted
 // update alone would. 30 minutes is long enough to eliminate that collision
 // window for all practical purposes while still picking up a manual
-// version upgrade in a reasonable time (the settings PUT's own immediate
-// reapply — see routes/observability.ts's tracesEnabledChanging branch —
-// still forces an unthrottled check right when an operator deliberately
-// flips the workspace toggle).
+// version upgrade in a reasonable time.
 const TRACING_CAPABILITY_RECHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 /**
@@ -155,7 +161,7 @@ function resolveOtlpBase() {
 
 /**
  * Build the OpenClaw config delta that turns tracing on (or off) for an
- * agent, per the resolved workspace log settings. Pure function: no I/O
+ * agent, per the resolved platform tracing settings. Pure function: no I/O
  * beyond reading NORA_OTLP_INGEST_SECRET/NORA_OTLP_PUBLIC_ENDPOINT/
  * BACKEND_API_URL from process.env via mintIngestKey/resolveOtlpBase.
  *
@@ -232,40 +238,18 @@ async function resolveAgentWorkspaceId(agentId, deps = {}) {
 }
 
 /**
- * Resolve the effective enablement/sampling settings for a workspace through
- * the Phase 5 fallback chain: the workspace's `workspace_log_settings` row
- * when one exists, platform defaults otherwise. An agent with no workspace
- * (`workspaceId == null`) always resolves to the platform defaults — this is
- * the specific case that would otherwise silently never export any traces.
+ * Resolve the effective tracing settings. Platform-wide: the same answer for
+ * every agent, whether or not it belongs to a workspace, so an agent with no
+ * workspace is traced exactly like any other when tracing is on.
  *
- * @param {string|null} workspaceId
- * @param {Object} [deps]
- * @returns {Promise<{gateway_logs_enabled: boolean, traces_enabled: boolean, trace_sample_rate: number}>}
+ * @param {Object} [deps] - Test seam: `env`.
+ * @returns {Promise<{traces_enabled: boolean, trace_sample_rate: number}>}
  */
-async function resolveWorkspaceLogSettings(workspaceId, deps = {}) {
-  const dbClient = lazyDb(deps);
-  if (workspaceId) {
-    try {
-      const result = await dbClient.query(
-        `SELECT gateway_logs_enabled, traces_enabled, trace_sample_rate
-           FROM workspace_log_settings
-          WHERE workspace_id = $1`,
-        [workspaceId],
-      );
-      const row = result.rows[0];
-      if (row) {
-        return {
-          gateway_logs_enabled: Boolean(row.gateway_logs_enabled),
-          traces_enabled: Boolean(row.traces_enabled),
-          trace_sample_rate: Number(row.trace_sample_rate),
-        };
-      }
-    } catch {
-      // Fall through to platform defaults on a lookup failure — conservative
-      // and consistent with resolveRetentionDaysForColumn's own fallback.
-    }
-  }
-  return { ...PLATFORM_LOG_SETTINGS_DEFAULTS };
+async function resolveTracingSettings(deps = {}) {
+  return {
+    traces_enabled: isTracingEnabled(deps.env),
+    trace_sample_rate: PLATFORM_LOG_SETTINGS_DEFAULTS.trace_sample_rate,
+  };
 }
 
 /**
@@ -381,15 +365,11 @@ async function applyConfigMergeCommand(agent, command, deps = {}) {
  *   `runContainerCommand` to reach it (host/runtime_port/backend_type/etc.).
  *   Also reads `tracing_capability`/`tracing_capability_checked_at` off this
  *   row, when present, to decide whether the plugin check below is due —
- *   see `shouldCheckTracingCapability`. A caller whose own SELECT doesn't
- *   carry those columns (e.g. a deliberate operator toggle re-apply) should
- *   pass `options.forceCapabilityCheck: true` instead of relying on the
- *   absent columns defaulting to "always check".
- * @param {Object} [deps] - Test seams: dbClient, authSync.
+ *   see `shouldCheckTracingCapability`.
+ * @param {Object} [deps] - Test seams: dbClient, authSync, env.
  * @param {Object} [options] - `{ forceCapabilityCheck?: boolean }` — skip
- *   the throttle and always attempt the plugin check when true (used for a
- *   deliberate, one-shot operator settings change, never for the recurring
- *   30s reconcile loop).
+ *   the throttle and always attempt the plugin check when true (never for
+ *   the recurring 30s reconcile loop).
  * @returns {Promise<{applied: boolean, skipped?: string, delta?: Object}>}
  */
 async function applyTracingConfig(agent, deps = {}, options = {}) {
@@ -403,7 +383,7 @@ async function applyTracingConfig(agent, deps = {}, options = {}) {
   }
 
   const workspaceId = await resolveAgentWorkspaceId(agent.id, deps);
-  const settings = await resolveWorkspaceLogSettings(workspaceId, deps);
+  const settings = await resolveTracingSettings(deps);
   const delta = buildTracingConfigDelta(agent, settings);
   const configMergeCommand = buildOpenClawConfigMergeCommand(delta);
 
@@ -500,7 +480,7 @@ async function applyTracingConfig(agent, deps = {}, options = {}) {
 
 /**
  * Walk running OpenClaw agents and re-apply/remove tracing config per each
- * agent's currently-resolved `traces_enabled` state. Called from the
+ * the platform's `NORA_TRACES_ENABLED` setting. Called from the
  * existing 30s agent-status reconcile loop (backgroundTasks.js) so an agent
  * that restarted — and thus lost its in-memory-applied config merge, since
  * this is a running-container merge with no persistence across a real
@@ -549,7 +529,8 @@ module.exports = {
   shouldCheckTracingCapability,
   TRACING_CAPABILITY_RECHECK_INTERVAL_MS,
   resolveAgentWorkspaceId,
-  resolveWorkspaceLogSettings,
+  isTracingEnabled,
+  resolveTracingSettings,
   applyTracingConfig,
   reconcileTracingConfig,
 };

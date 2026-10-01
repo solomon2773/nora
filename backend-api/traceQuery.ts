@@ -15,7 +15,7 @@
 //     agentId: string,
 //     workspaceId: string | null,   // the agent's ACTUAL workspace (via
 //                                    // workspace_agents), null if unassigned
-//     tracesEnabled: boolean,       // resolved workspace_log_settings —
+//     tracesEnabled: boolean,       // platform-wide NORA_TRACES_ENABLED —
 //                                    // see "tracing disabled vs empty" below
 //     traceSampleRate: number,
 //     traces: [
@@ -115,7 +115,7 @@
 //
 // ── "tracing disabled" vs "enabled but empty" (item 7) ────────────────────
 // Chosen approach: `GET /traces` resolves and returns `tracesEnabled` /
-// `traceSampleRate` itself (via agentTracing.resolveWorkspaceLogSettings),
+// `traceSampleRate` itself (via agentTracing.resolveTracingSettings),
 // rather than telling the frontend to make a second call to Phase 12's
 // `GET /workspaces/:id/log-settings`. That endpoint requires
 // `requireWorkspaceRole("admin", "id")` -- a plain workspace viewer who can
@@ -418,7 +418,7 @@ async function listTraces(params, actor, deps = {}) {
   const db = deps.db || require("./db");
   const findAgentFn = deps.findAccessibleAgentForActor || findAccessibleAgentForActor;
   const resolveWorkspaceIdFn = deps.resolveAgentWorkspaceId || agentTracing.resolveAgentWorkspaceId;
-  const resolveSettingsFn = deps.resolveWorkspaceLogSettings || agentTracing.resolveWorkspaceLogSettings;
+  const resolveSettingsFn = deps.resolveTracingSettings || agentTracing.resolveTracingSettings;
 
   const agentId = requireAgentId(params);
   const agent = await findAgentFn(agentId, actor, "viewer");
@@ -428,7 +428,7 @@ async function listTraces(params, actor, deps = {}) {
   await logSearch.enforceWorkspaceScope({ agentId, workspaceId, actor }, { db });
 
   const actualWorkspaceId = await resolveWorkspaceIdFn(agentId, { db });
-  const settings = await resolveSettingsFn(actualWorkspaceId, { db });
+  const settings = await resolveSettingsFn({ db });
 
   const conditions = ["agent_id = $1"];
   const values = [agentId];
@@ -458,10 +458,11 @@ async function listTraces(params, actor, deps = {}) {
     agentId,
     workspaceId: actualWorkspaceId,
     tracesEnabled: Boolean(settings.traces_enabled),
-    // The workspace-level POLICY toggle above says whether Nora should try.
+    // The platform-wide switch above (NORA_TRACES_ENABLED) says whether Nora
+    // should try.
     // This says whether trying actually works on THIS agent's own OpenClaw
     // install -- 'unknown' until applyTracingConfig has run against it at
-    // least once (e.g. tracesEnabled just turned on and the 30s reconcile
+    // least once (e.g. tracing was just switched on and the 30s reconcile
     // tick hasn't reached this agent yet).
     tracingCapability: agent.tracing_capability || "unknown",
     // Diagnostic-only, alongside tracingCapability -- see the migration

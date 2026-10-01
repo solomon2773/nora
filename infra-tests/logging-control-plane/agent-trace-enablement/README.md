@@ -29,6 +29,11 @@ thoroughly unit-tested and not repeated here. What remains is exercising
 the live-merge mechanism against something that can actually restart —
 or not restart — for real.
 
+**Prerequisite:** tracing is a platform-wide switch, off by default. Tests
+that rely on the real backend reconcile loop (2 and 3) need
+`NORA_TRACES_ENABLED=true` in the stack's `.env` and a `backend-api`
+restart. Test 1 forces the switch on itself.
+
 ## Test matrix
 
 | # | Test | Description | Status | Notes |

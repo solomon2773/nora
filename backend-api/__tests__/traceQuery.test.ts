@@ -46,7 +46,7 @@ function spanRow(overrides = {}) {
  *   - `FROM workspace_agents WHERE agent_id` (enforceWorkspaceScope /
  *     resolveAgentWorkspaceId, both from already-shipped modules)
  *   - `FROM workspace_log_settings WHERE workspace_id` (agentTracing's
- *     resolveWorkspaceLogSettings)
+ *     resolveTracingSettings)
  *   - `FROM agent_spans WHERE agent_id` (listTraces) or
  *     `FROM agent_spans WHERE trace_id` (getTraceDetail)
  */
@@ -86,8 +86,20 @@ function agentAdminBypass(agentId = "agent-1") {
 }
 
 describe("listTraces (item 1)", () => {
-  function makeDeps({ spans = [], workspaceByAgent = {}, logSettingsByWorkspace = {}, findAgent } = {}) {
+  // Tracing is a platform-wide switch (NORA_TRACES_ENABLED), injected here
+  // through listTraces' `resolveTracingSettings` seam.
+  function makeDeps({
+    spans = [],
+    workspaceByAgent = {},
+    logSettingsByWorkspace = {},
+    tracingEnabled = false,
+    findAgent,
+  } = {}) {
     return {
+      resolveTracingSettings: async () => ({
+        traces_enabled: tracingEnabled,
+        trace_sample_rate: 1,
+      }),
       db: fakeDb({ spans, workspaceByAgent, logSettingsByWorkspace }),
       findAccessibleAgentForActor: findAgent || agentOwner("user-1"),
     };
@@ -160,28 +172,27 @@ describe("listTraces (item 1)", () => {
     expect(result.traces.map((t) => t.traceId).sort()).toEqual(["trace-1", "trace-2"]);
   });
 
-  it("reports tracesEnabled/traceSampleRate resolved from workspace_log_settings", async () => {
+  it("reports tracesEnabled/traceSampleRate from the platform switch, ignoring any workspace row", async () => {
     const deps = makeDeps({
       spans: [],
       workspaceByAgent: { "agent-1": "ws-A" },
+      // A row left over from when tracing was a workspace setting.
       logSettingsByWorkspace: {
-        "ws-A": { gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 0.5 },
+        "ws-A": { traces_enabled: false, trace_sample_rate: 0.5 },
       },
+      tracingEnabled: true,
     });
     const result = await listTraces({ agentId: "agent-1", workspaceId: "ws-A" }, { id: "user-1" }, deps);
     expect(result.workspaceId).toBe("ws-A");
     expect(result.tracesEnabled).toBe(true);
-    expect(result.traceSampleRate).toBe(0.5);
+    expect(result.traceSampleRate).toBe(1);
   });
 
   describe("distinguishing 'tracing disabled' from 'enabled but empty' (item 7)", () => {
-    it("tracesEnabled is false and traces is empty when a workspace never turned tracing on", async () => {
+    it("tracesEnabled is false and traces is empty when tracing is off for the installation", async () => {
       const deps = makeDeps({
         spans: [],
         workspaceByAgent: { "agent-1": "ws-A" },
-        logSettingsByWorkspace: {
-          "ws-A": { gateway_logs_enabled: true, traces_enabled: false, trace_sample_rate: 1 },
-        },
       });
       const result = await listTraces({ agentId: "agent-1", workspaceId: "ws-A" }, { id: "user-1" }, deps);
       expect(result.tracesEnabled).toBe(false);
@@ -192,9 +203,7 @@ describe("listTraces (item 1)", () => {
       const deps = makeDeps({
         spans: [],
         workspaceByAgent: { "agent-1": "ws-A" },
-        logSettingsByWorkspace: {
-          "ws-A": { gateway_logs_enabled: true, traces_enabled: true, trace_sample_rate: 1 },
-        },
+        tracingEnabled: true,
       });
       const result = await listTraces({ agentId: "agent-1", workspaceId: "ws-A" }, { id: "user-1" }, deps);
       expect(result.tracesEnabled).toBe(true);
