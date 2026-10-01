@@ -12,6 +12,7 @@ Updates or appends:
   NORA_GITHUB_REPO (when provided)
   DOCKER_GID (from the live Docker socket)
   NORA_AGENT_HUB_API_KEY_HASH_SECRET (only when missing or empty)
+  Logging settings via infra/ensure-log-env.sh (only when missing or empty)
 
 Removes retired release metadata token keys:
   NORA_GITHUB_TOKEN
@@ -180,3 +181,8 @@ awk \
   ' "$env_file" > "$tmp_file"
 
 mv "$tmp_file" "$env_file"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$script_dir/ensure-log-env.sh" ]; then
+  bash "$script_dir/ensure-log-env.sh" "$env_file"
+fi
