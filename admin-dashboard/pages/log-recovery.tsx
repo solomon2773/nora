@@ -58,44 +58,44 @@ function LogLineRow({ line }) {
   );
 }
 
+// Expanding an entry shows a bounded preview — enough to tell which entry is
+// which — not the full log. The complete set is only available via export.
+const PREVIEW_LINE_LIMIT = 50;
+
 function RecoveryEntry({ entry, onPurged }) {
   const [expanded, setExpanded] = useState(false);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [logsError, setLogsError] = useState("");
   const [lines, setLines] = useState([]);
-  const [nextCursor, setNextCursor] = useState(null);
+  const [hasMore, setHasMore] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [purging, setPurging] = useState(false);
   const [confirmingPurge, setConfirmingPurge] = useState(false);
 
-  const loadLogs = useCallback(
-    async ({ cursor = null, replace = false } = {}) => {
-      setLoadingLogs(true);
-      setLogsError("");
-      try {
-        const params = new URLSearchParams({ limit: "100" });
-        if (cursor) params.set("cursor", cursor);
-        const response = await fetchWithAuth(
-          `/api/admin/log-recovery/${entry.id}/logs?${params.toString()}`,
-        );
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(payload?.error || "Failed to load logs");
-        setLines((current) => (replace ? payload.lines || [] : [...current, ...(payload.lines || [])]));
-        setNextCursor(payload.nextCursor || null);
-      } catch (error) {
-        setLogsError(error.message || "Failed to load logs");
-      } finally {
-        setLoadingLogs(false);
-      }
-    },
-    [entry.id],
-  );
+  const loadPreview = useCallback(async () => {
+    setLoadingLogs(true);
+    setLogsError("");
+    try {
+      const params = new URLSearchParams({ limit: String(PREVIEW_LINE_LIMIT) });
+      const response = await fetchWithAuth(
+        `/api/admin/log-recovery/${entry.id}/logs?${params.toString()}`,
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "Failed to load logs");
+      setLines((payload.lines || []).slice(0, PREVIEW_LINE_LIMIT));
+      setHasMore(Boolean(payload.nextCursor));
+    } catch (error) {
+      setLogsError(error.message || "Failed to load logs");
+    } finally {
+      setLoadingLogs(false);
+    }
+  }, [entry.id]);
 
   const toggleExpanded = () => {
     const next = !expanded;
     setExpanded(next);
     if (next && lines.length === 0) {
-      loadLogs({ replace: true });
+      loadPreview();
     }
   };
 
@@ -242,13 +242,10 @@ function RecoveryEntry({ entry, onPurged }) {
           <div className="flex items-center justify-center border-t border-slate-100 bg-slate-50 px-3 py-2">
             {loadingLogs ? (
               <Loader2 size={14} className="animate-spin text-slate-400" />
-            ) : nextCursor ? (
-              <button
-                onClick={() => loadLogs({ cursor: nextCursor })}
-                className="text-xs font-semibold text-slate-600 hover:text-slate-950"
-              >
-                Load more
-              </button>
+            ) : hasMore ? (
+              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                Preview of first {PREVIEW_LINE_LIMIT} lines — export for the full log
+              </span>
             ) : (
               <span className="text-[11px] font-medium uppercase tracking-wide text-slate-300">
                 End of recovered logs
@@ -306,8 +303,8 @@ export default function LogRecoveryPage() {
               Log recovery
             </h1>
             <p className="mt-2 max-w-2xl text-sm font-medium leading-relaxed text-slate-500">
-              Logs kept when an agent or workspace was deleted with "keep logs" chosen. View or
-              export what was kept, or purge an entry to permanently reclaim its storage — there is
+              Logs kept when an agent or workspace was deleted with "keep logs" chosen. Preview
+              or export what was kept, or purge an entry to permanently reclaim its storage — there is
               no way back once purged.
             </p>
           </div>
