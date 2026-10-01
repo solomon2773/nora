@@ -188,9 +188,12 @@ set_env_value() {
 }
 
 resolve_docker_gid() {
-  if [ -e /var/run/docker.sock ]; then
-    stat -c '%g' /var/run/docker.sock 2>/dev/null ||
-      stat -f '%g' /var/run/docker.sock 2>/dev/null ||
+  # Docker Desktop on macOS exposes the socket as root:root (gid 0) inside its
+  # VM; the host symlink's gid (e.g. "daemon" = 1) is meaningless to containers.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    printf '0\n'
+  elif [ -e /var/run/docker.sock ]; then
+    stat -L -c '%g' /var/run/docker.sock 2>/dev/null ||
       printf '0\n'
   else
     printf '0\n'
