@@ -81,16 +81,44 @@ test("chart renders successfully with an r2 log storage destination", () => {
   assert.match(rendered, /kind: ConfigMap/);
 });
 
-test("chart refuses to render when NORA_LOG_STORAGE is left unset (defaults to local)", () => {
-  const output = helmTemplateExpectFailure([]);
+test("chart renders with no log settings at all, because log collection is opt-in", () => {
+  const rendered = helmTemplate([]);
+  assert.match(rendered, /kind: ConfigMap/);
+});
+
+test("chart renders with local storage while collection is not enabled", () => {
+  assert.match(helmTemplate(["--set", "backendEnv.NORA_LOG_STORAGE=local"]), /kind: ConfigMap/);
+  assert.match(
+    helmTemplate(["--set", "backendEnv.NORA_LOG_STORAGE=local", "--set-string", "backendEnv.NORA_LOG_ENABLED=false"]),
+    /kind: ConfigMap/,
+  );
+});
+
+test("chart refuses to render when collection is enabled and NORA_LOG_STORAGE is left unset (defaults to local)", () => {
+  const output = helmTemplateExpectFailure(["--set-string", "backendEnv.NORA_LOG_ENABLED=true"]);
   assert.match(output, /NORA_LOG_STORAGE/);
   assert.match(output, /local/);
 });
 
-test("chart refuses to render when NORA_LOG_STORAGE is explicitly local", () => {
-  const output = helmTemplateExpectFailure(["--set", "backendEnv.NORA_LOG_STORAGE=local"]);
+test("chart refuses to render when collection is enabled and NORA_LOG_STORAGE is explicitly local", () => {
+  const output = helmTemplateExpectFailure([
+    "--set-string",
+    "backendEnv.NORA_LOG_ENABLED=true",
+    "--set",
+    "backendEnv.NORA_LOG_STORAGE=local",
+  ]);
   assert.match(output, /NORA_LOG_STORAGE/);
   assert.match(output, /local/);
+});
+
+test("chart renders with collection enabled once an s3 destination is set", () => {
+  const rendered = helmTemplate([
+    "--set-string",
+    "backendEnv.NORA_LOG_ENABLED=true",
+    "--set",
+    "backendEnv.NORA_LOG_STORAGE=s3",
+  ]);
+  assert.match(rendered, /kind: ConfigMap/);
 });
 
 test("chart refuses to render when workerProvisioner.replicas is above 1", () => {

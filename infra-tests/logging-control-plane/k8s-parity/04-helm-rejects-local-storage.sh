@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Phase 14, test 4: `helm template infra/helm/nora` refuses to render with
-# `NORA_LOG_STORAGE=local` (or unset, which defaults to `local`), and the
+# `NORA_LOG_STORAGE=local` (or unset, which defaults to `local`) once log
+# collection is enabled (`backendEnv.NORA_LOG_ENABLED=true`; collection is
+# opt-in, so an install that never enables it needs no log storage), and the
 # error names the unsupported combination.
 #
 # See 03-helm-renders-s3-and-r2.sh's header for why this is cheap/safe
@@ -48,13 +50,13 @@ EOF
 # assertion.
 EXPECTED_SUBSTRING='must not be "local" (or unset, which defaults to "local") for the Helm deployment'
 
-log_step "rendering with NORA_LOG_STORAGE unset (the application default, which is 'local')"
-unset_output="$(helm template "$CHART_DIR" -f "$DUMMY_SECRETS_FILE" 2>&1)"
+log_step "rendering with log collection enabled and NORA_LOG_STORAGE unset (the application default, which is 'local')"
+unset_output="$(helm template "$CHART_DIR" -f "$DUMMY_SECRETS_FILE" --set-string backendEnv.NORA_LOG_ENABLED=true 2>&1)"
 unset_status=$?
 log_info "unset render exit=$unset_status"
 
-log_step "rendering with NORA_LOG_STORAGE explicitly set to 'local'"
-local_output="$(helm template "$CHART_DIR" -f "$DUMMY_SECRETS_FILE" --set backendEnv.NORA_LOG_STORAGE=local 2>&1)"
+log_step "rendering with log collection enabled and NORA_LOG_STORAGE explicitly set to 'local'"
+local_output="$(helm template "$CHART_DIR" -f "$DUMMY_SECRETS_FILE" --set-string backendEnv.NORA_LOG_ENABLED=true --set backendEnv.NORA_LOG_STORAGE=local 2>&1)"
 local_status=$?
 log_info "explicit-local render exit=$local_status"
 
