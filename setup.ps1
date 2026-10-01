@@ -867,6 +867,59 @@ function New-HexSecret {
     return ($secretBytes | ForEach-Object { $_.ToString("x2") }) -join ''
 }
 
+# Mirrors infra/ensure-log-env.sh: recommended local log cap is the smaller of
+# 10 GB and 20% of free disk, or 0 when under 5 GB is free.
+function Get-RecommendedLogMaxBytes {
+    $gb = [int64]1073741824
+    try {
+        $root = [System.IO.Path]::GetPathRoot((Get-Location).Path)
+        $free = [int64]([System.IO.DriveInfo]::new($root).AvailableFreeSpace)
+    } catch {
+        $free = [int64]0
+    }
+    $cap = [int64][math]::Floor($free / 5)
+    if ($cap -gt 10 * $gb) { $cap = 10 * $gb }
+    if ($cap -lt $gb) { $cap = [int64]0 }
+    return $cap
+}
+
+# Fills in missing logging settings on update, never touching a value that is
+# already set. NORA_LOG_ENCRYPTION_KEY in particular may hold a rotation key
+# ring; replacing it would make every stored log segment unreadable.
+function Ensure-LogEnv {
+    param([string]$EnvPath)
+    if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENCRYPTION_KEY" -Default "")) {
+        Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENCRYPTION_KEY" -Value (New-HexSecret)
+        Write-Ok "NORA_LOG_ENCRYPTION_KEY generated (64-char hex). Keep a copy with your .env backup."
+    }
+    if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_OTLP_INGEST_SECRET" -Default "")) {
+        Set-EnvValue -EnvPath $EnvPath -Name "NORA_OTLP_INGEST_SECRET" -Value (New-HexSecret)
+        Write-Ok "NORA_OTLP_INGEST_SECRET generated (64-char hex)"
+    }
+    if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_RETENTION_CEILING_DAYS" -Default "")) {
+        Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_RETENTION_CEILING_DAYS" -Value "30"
+        Write-Ok "NORA_LOG_RETENTION_CEILING_DAYS set to 30 (platform-wide maximum days logs are kept)"
+    }
+    if (-not (Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Default "")) {
+        $currentCap = Read-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Default ""
+        if ($currentCap) {
+            Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Value "true"
+            Write-Ok "Log collection enabled (existing NORA_LOG_LOCAL_MAX_BYTES=$currentCap kept)"
+        } else {
+            $recommended = Get-RecommendedLogMaxBytes
+            if ($recommended -gt 0) {
+                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Value "true"
+                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Value ([string]$recommended)
+                Write-Ok "Log collection enabled with a $([math]::Floor($recommended / 1048576)) MiB local disk cap"
+            } else {
+                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_ENABLED" -Value "false"
+                Set-EnvValue -EnvPath $EnvPath -Name "NORA_LOG_LOCAL_MAX_BYTES" -Value "1073741824"
+                Write-Warn "Less than 5 GB free disk: log collection left off (1 GB cap preset). Set NORA_LOG_ENABLED=true in .env to turn it on."
+            }
+        }
+    }
+}
+
 # ── Helper: refresh PATH from registry ─────────────────────
 
 function Refresh-Path {
@@ -1546,6 +1599,7 @@ if ($SETUP_MODE -eq "update") {
     Ensure-AgentHubHashSecretEnv -EnvPath $ENV_FILE
     Ensure-ApiKeyHashSecretEnv -EnvPath $ENV_FILE
     Ensure-BackupEncryptionKeyEnv -EnvPath $ENV_FILE
+    Ensure-LogEnv -EnvPath $ENV_FILE
     Write-ComposeSecretFiles -EnvPath $ENV_FILE
     Update-ReleaseTrackingEnv -EnvPath $ENV_FILE
     if ($nginxConfig -eq $PUBLIC_NGINX_CONF) {
@@ -1613,6 +1667,12 @@ $NORA_BACKUP_ENCRYPTION_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_BACKU
 if ($NORA_BACKUP_ENCRYPTION_KEY -notmatch '^[0-9a-fA-F]{64}$') { $NORA_BACKUP_ENCRYPTION_KEY = New-HexSecret }
 $NORA_AGENT_HUB_API_KEY_HASH_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_AGENT_HUB_API_KEY_HASH_SECRET" -Default ""
 if ($NORA_AGENT_HUB_API_KEY_HASH_SECRET -notmatch '^[0-9a-fA-F]{64}$') { $NORA_AGENT_HUB_API_KEY_HASH_SECRET = New-HexSecret }
+# The log key may hold a comma-separated rotation ring, so any existing value
+# is kept as-is; replacing it would make every stored log segment unreadable.
+$NORA_LOG_ENCRYPTION_KEY = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_ENCRYPTION_KEY" -Default ""
+if (-not $NORA_LOG_ENCRYPTION_KEY) { $NORA_LOG_ENCRYPTION_KEY = New-HexSecret }
+$NORA_OTLP_INGEST_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_OTLP_INGEST_SECRET" -Default ""
+if (-not $NORA_OTLP_INGEST_SECRET) { $NORA_OTLP_INGEST_SECRET = New-HexSecret }
 $NORA_API_KEY_HASH_SECRET = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_API_KEY_HASH_SECRET" -Default ""
 if (-not $NORA_API_KEY_HASH_SECRET) {
     if (Test-Path $ENV_FILE) {
@@ -1630,6 +1690,8 @@ Write-Ok "JWT_SECRET            (64-char hex)"
 Write-Ok "ENCRYPTION_KEY        (64-char hex — AES-256-GCM)"
 Write-Ok "BACKUP_ENCRYPTION_KEY (64-char hex — managed backup archives)"
 Write-Ok "AGENT_HUB_HASH        (64-char hex)"
+Write-Ok "LOG_ENCRYPTION_KEY    (64-char hex — stored log segments)"
+Write-Ok "OTLP_INGEST_SECRET    (64-char hex — agent trace-ingest keys)"
 Write-Ok "API_KEY_HASH          (preserved primary/fallback secret)"
 Write-Ok "DB_PASSWORD           (48-char hex)"
 
@@ -1805,6 +1867,69 @@ if ($enabledBackends.Count -eq 0) {
 
 $ENABLED_BACKENDS = $enabledBackends -join ","
 Write-Ok "Enabled backends: $ENABLED_BACKENDS"
+
+# ── Log collection ───────────────────────────────────────────
+
+Write-Header "Log Collection"
+
+# Reconfigure keeps the operator's previous answers as the defaults.
+$gbBytes = [int64]1073741824
+$logRecommendedBytes = Get-RecommendedLogMaxBytes
+$NORA_LOG_ENABLED = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_ENABLED" -Default ""
+$NORA_LOG_LOCAL_MAX_BYTES = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_LOCAL_MAX_BYTES" -Default ""
+if ($NORA_LOG_LOCAL_MAX_BYTES -notmatch '^[0-9]+$') { $NORA_LOG_LOCAL_MAX_BYTES = "" }
+$NORA_LOG_RETENTION_CEILING_DAYS = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_LOG_RETENTION_CEILING_DAYS" -Default "30"
+# Tracing is off unless an operator already turned it on; setup never asks.
+$NORA_TRACES_ENABLED = Read-EnvValue -EnvPath $ENV_FILE -Name "NORA_TRACES_ENABLED" -Default "false"
+if ($NORA_TRACES_ENABLED -ne "true") { $NORA_TRACES_ENABLED = "false" }
+if ($NORA_LOG_RETENTION_CEILING_DAYS -notmatch '^[0-9]+$' -or [int64]$NORA_LOG_RETENTION_CEILING_DAYS -lt 1) {
+    $NORA_LOG_RETENTION_CEILING_DAYS = "30"
+}
+
+Write-Host "  Nora can collect agent runtime and gateway logs and keep them for a set"
+Write-Host "  number of days (workspaces can choose a shorter period in their settings)."
+Write-Host "  Logs are stored encrypted on this server; S3, R2, or SSH storage can be"
+Write-Host "  configured later in Admin → Log Storage (required for Kubernetes agents).`n"
+if ($logRecommendedBytes -eq 0 -and -not $NORA_LOG_LOCAL_MAX_BYTES) {
+    Write-Warn "Less than 5 GB of free disk — log collection is not recommended here."
+    $logEnabledAnswer = Read-Host "  Enable log collection? [y/N]"
+    $NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
+} elseif ($NORA_LOG_ENABLED -eq "false") {
+    $logEnabledAnswer = Read-Host "  Enable log collection? (recommended) [y/N]"
+    $NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Yy]$') { "true" } else { "false" }
+} else {
+    $logEnabledAnswer = Read-Host "  Enable log collection? (recommended) [Y/n]"
+    $NORA_LOG_ENABLED = if ($logEnabledAnswer -match '^[Nn]$') { "false" } else { "true" }
+}
+
+if ($NORA_LOG_ENABLED -eq "true") {
+    while ($true) {
+        $logDaysAnswer = Read-Host "  Keep logs for how many days? [$NORA_LOG_RETENTION_CEILING_DAYS]"
+        if (-not $logDaysAnswer) { $logDaysAnswer = $NORA_LOG_RETENTION_CEILING_DAYS }
+        if ($logDaysAnswer -match '^[0-9]+$' -and [int64]$logDaysAnswer -ge 1 -and [int64]$logDaysAnswer -le 3650) { break }
+        Write-Warn "Enter a whole number of days between 1 and 3650."
+    }
+    $NORA_LOG_RETENTION_CEILING_DAYS = [string]$logDaysAnswer
+    if ($NORA_LOG_LOCAL_MAX_BYTES) {
+        $logDefaultGb = [int64][math]::Ceiling([int64]$NORA_LOG_LOCAL_MAX_BYTES / $gbBytes)
+    } else {
+        $logDefaultGb = [int64][math]::Floor($logRecommendedBytes / $gbBytes)
+    }
+    if ($logDefaultGb -lt 1) { $logDefaultGb = 1 }
+    while ($true) {
+        $logGbAnswer = Read-Host "  Max disk space for logs in GB [$logDefaultGb]"
+        if (-not $logGbAnswer) { $logGbAnswer = [string]$logDefaultGb }
+        if ($logGbAnswer -match '^[0-9]+$' -and [int64]$logGbAnswer -ge 1) { break }
+        Write-Warn "Enter a whole number of GB (1 or more)."
+    }
+    $NORA_LOG_LOCAL_MAX_BYTES = [string]([int64]$logGbAnswer * $gbBytes)
+    Write-Ok "Log collection enabled — kept $NORA_LOG_RETENTION_CEILING_DAYS days, local cap $logGbAnswer GB (collection pauses when full)"
+} else {
+    if (-not $NORA_LOG_LOCAL_MAX_BYTES) {
+        $NORA_LOG_LOCAL_MAX_BYTES = [string]([math]::Max([int64]$logRecommendedBytes, $gbBytes))
+    }
+    Write-Info "Log collection disabled — set NORA_LOG_ENABLED=true in .env to turn it on later"
+}
 
 $enabledRuntimeFamilies = @()
 if ($OPENCLAW_RUNTIME_ENABLED) { $enabledRuntimeFamilies += "openclaw" }
@@ -2087,6 +2212,10 @@ ENCRYPTION_KEY=$ENCRYPTION_KEY
 NORA_BACKUP_ENCRYPTION_KEY=$NORA_BACKUP_ENCRYPTION_KEY
 NORA_AGENT_HUB_API_KEY_HASH_SECRET=$NORA_AGENT_HUB_API_KEY_HASH_SECRET
 NORA_API_KEY_HASH_SECRET=$NORA_API_KEY_HASH_SECRET
+# Encrypts stored logs. Keep a copy with your .env backup: a new key cannot
+# read logs written under the old one, including logs stored in S3/R2/SSH.
+NORA_LOG_ENCRYPTION_KEY=$NORA_LOG_ENCRYPTION_KEY
+NORA_OTLP_INGEST_SECRET=$NORA_OTLP_INGEST_SECRET
 
 # ── Bootstrap Admin Account (optional; seeded only when both are set securely) ──
 DEFAULT_ADMIN_EMAIL=$DEFAULT_ADMIN_EMAIL_ENV
@@ -2288,6 +2417,16 @@ NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
 # clusters, build/preload nora-nemoclaw-agent:local and override this value.
 NEMOCLAW_SANDBOX_IMAGE=$NEMOCLAW_SANDBOX_IMAGE
 
+# ── Log collection (storage destination: Admin → Log Storage) ──
+NORA_LOG_ENABLED=$NORA_LOG_ENABLED
+NORA_LOG_LOCAL_MAX_BYTES=$NORA_LOG_LOCAL_MAX_BYTES
+# Platform-wide maximum days logs and traces are kept. Workspaces can choose
+# a shorter period in their settings, never a longer one.
+NORA_LOG_RETENTION_CEILING_DAYS=$NORA_LOG_RETENTION_CEILING_DAYS
+# Platform-wide OpenClaw trace collection. Leave off for now: it needs a newer
+# OpenClaw than Nora currently deploys.
+NORA_TRACES_ENABLED=$NORA_TRACES_ENABLED
+
 # ── Security ─────────────────────────────────────────────────
 CORS_ORIGINS=$CORS_ORIGINS
 
@@ -2323,7 +2462,7 @@ if ($DEFAULT_ADMIN_EMAIL) {
     Write-Host "  Admin:        Not pre-seeded (create via signup)"
     Write-Host "  Password:     Not set"
 }
-Write-Host "  Secrets:      auto-generated (JWT, AES, backups, Agent Hub)"
+Write-Host "  Secrets:      auto-generated (JWT, AES, backups, Agent Hub, logs)"
 Write-Host "  Database:     PostgreSQL 15 (Docker Compose)"
 Write-Host "  DB Access:    $DB_USER / auto-generated / $DB_NAME (.env)"
 Write-Host "  Redis:        Redis 7 (Docker Compose)"
@@ -2350,6 +2489,11 @@ if ($PLATFORM_MODE -eq "paas") {
 Write-Host "  Families:     $ENABLED_RUNTIME_FAMILIES"
 Write-Host "  Backends:     $ENABLED_BACKENDS"
 Write-Host "  Sandboxes:    $ENABLED_SANDBOX_PROFILES"
+if ($NORA_LOG_ENABLED -eq "true") {
+    Write-Host "  Logs:         on — kept $NORA_LOG_RETENTION_CEILING_DAYS days, up to $([math]::Floor([int64]$NORA_LOG_LOCAL_MAX_BYTES / 1073741824)) GB on this server"
+} else {
+    Write-Host "  Logs:         off"
+}
 
 if ($GOOGLE_CLIENT_ID -or $GITHUB_CLIENT_ID) {
     $providers = @()
@@ -2418,6 +2562,9 @@ if ($DEFAULT_ADMIN_EMAIL) {
 Write-Host ""
 
 Write-Info "Next: sign in, add an LLM provider in Settings, then open Deploy when you're ready to create your first agent."
+Write-Host ""
+Write-Warn "Back up .env somewhere off this server. It holds the keys for encrypted"
+Write-Warn "backups and logs (NORA_BACKUP_ENCRYPTION_KEY, NORA_LOG_ENCRYPTION_KEY)."
 
 Write-Host ""
 Write-Info "Useful commands:"
