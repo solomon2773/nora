@@ -279,10 +279,13 @@ async function sweepExpiredSegmentsByScope(whereSql, param, cutoff, deps = {}) {
   const resolveConfig = deps.storageConfigForSegment || logStorageConfigModule.storageConfigForSegment;
 
   const params = param == null ? [cutoff] : [cutoff, param];
+  // `deps.limit` bounds one pass so a very large store can be swept in batches
+  // (the delete-all-logs job); the hourly sweep leaves it unset.
+  const limit = Number(deps.limit) > 0 ? Math.floor(Number(deps.limit)) : null;
   const result = await db.query(
     `SELECT id, storage_key, storage_backend, storage_config
        FROM log_segments
-      WHERE ts_to < $1 AND ${whereSql}`,
+      WHERE ts_to < $1 AND ${whereSql}${limit ? ` ORDER BY ts_to ASC LIMIT ${limit}` : ""}`,
     params,
   );
   const rows = result.rows || [];
@@ -848,6 +851,7 @@ function startRetentionSweeper(deps = {}) {
 module.exports = {
   startRetentionSweeper,
   sweepExpiredSegments,
+  sweepExpiredSegmentsByScope,
   sweepExpiredSegmentsForDeletedOwner,
   sweepExpiredSpans,
   sweepExpiredSpansForDeletedOwner,

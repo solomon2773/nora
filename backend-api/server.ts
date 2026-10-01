@@ -2724,6 +2724,13 @@ async function migrateDB(database = db, env = process.env) {
     `DROP INDEX IF EXISTS idx_workspace_agents_agent`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agents_agent_unique
        ON workspace_agents(agent_id)`,
+    // Whether agent logs are collected at all (NULL = nobody has decided yet) and
+    // the state of a "delete all collected logs" request. Append-only: leave the
+    // statements above untouched.
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_collection_enabled BOOLEAN,
+       ADD COLUMN IF NOT EXISTS log_collection_updated_at TIMESTAMPTZ,
+       ADD COLUMN IF NOT EXISTS log_purge_job JSONB`,
   ];
 
   return runVersionedMigrations(database, migrations, {

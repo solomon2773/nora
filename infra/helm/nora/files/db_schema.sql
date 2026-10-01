@@ -365,6 +365,16 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   -- defaults live in backend-api/platformSettings.ts
   -- (DEFAULT_LOG_RETENTION_PLAN_LIMITS), mirroring backup_plan_limits above.
   log_retention_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Logging control plane: whether agent logs are collected at all. NULL means
+  -- nobody has decided yet (collection stays off and the admin dashboard
+  -- asks); once an admin sets it here the database is authoritative over
+  -- NORA_LOG_ENABLED, mirroring log_storage_backend below.
+  log_collection_enabled BOOLEAN,
+  log_collection_updated_at TIMESTAMPTZ,
+  -- State of the most recent "delete all collected logs" request, e.g.
+  -- { id, status: pending|running|completed|failed, requestedAt, ... }.
+  -- NULL when none has been requested.
+  log_purge_job JSONB,
   -- Logging control plane (Phase 5): platform-wide log segment storage
   -- destination, changeable after setup exactly like the backup_* columns
   -- above. NORA_LOG_STORAGE and the NORA_LOG_* env block seed the initial

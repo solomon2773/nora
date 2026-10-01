@@ -583,3 +583,259 @@ describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
     );
   });
 });
+
+// ── Log collection on/off (opt-in, platform-wide) ─────────────────────────
+
+describe("log collection toggle", () => {
+  const VALID_KEY = "a".repeat(64);
+  const SOME_LOGS = { segments: 12, lines: 3400, bytes: 98765, agents: 3, spans: 0 };
+  const NO_LOGS = { segments: 0, lines: 0, bytes: 0, agents: 0, spans: 0 };
+
+  /**
+   * Scripts the database by SQL shape and records the writes the route makes.
+   * `stored` is platform_settings.log_collection_enabled (null = nobody has
+   * decided), `purgeJob` is platform_settings.log_purge_job.
+   */
+  function collectionDb({ stored = null, stats = NO_LOGS, purgeJob = null } = {}) {
+    const writes = [];
+    mockDb.query.mockImplementation(async (sql, params) => {
+      if (/SELECT log_collection_enabled/.test(sql)) {
+        return { rows: [{ log_collection_enabled: stored }] };
+      }
+      if (/COUNT\(\*\)::bigint AS segments/.test(sql)) {
+        return {
+          rows: [
+            {
+              segments: String(stats.segments),
+              lines: String(stats.lines),
+              bytes: String(stats.bytes),
+              agents: stats.agents,
+              oldest: null,
+              newest: null,
+            },
+          ],
+        };
+      }
+      if (/FROM agent_spans/.test(sql)) return { rows: [{ spans: String(stats.spans) }] };
+      if (/SELECT log_purge_job FROM platform_settings/.test(sql)) {
+        return { rows: [{ log_purge_job: purgeJob }] };
+      }
+      if (/INSERT INTO platform_settings\(singleton, log_purge_job/.test(sql)) {
+        writes.push({ kind: "purge", params });
+        return { rows: [{ log_purge_job: JSON.parse(params[0]) }] };
+      }
+      if (/INSERT INTO platform_settings\(singleton, log_collection_enabled/.test(sql)) {
+        writes.push({ kind: "collection", params });
+        return { rows: [] };
+      }
+      return { rows: [] };
+    });
+    return writes;
+  }
+
+  // The route asks which storage destination is active. objectStorage is
+  // mocked in this file, so stub the resolver rather than run the real one.
+  const logStorageConfigModule = require("../../workers/provisioner/logs/logStorageConfig.ts");
+  let storageSpy;
+
+  beforeEach(() => {
+    process.env.NORA_LOG_ENCRYPTION_KEY = VALID_KEY;
+    delete process.env.NORA_LOG_ENABLED;
+    delete process.env.NORA_LOG_STORAGE;
+    storageSpy = jest
+      .spyOn(logStorageConfigModule, "logStorageConfig")
+      .mockResolvedValue({ storageBackend: "local" });
+  });
+
+  afterEach(() => {
+    storageSpy.mockRestore();
+    delete process.env.NORA_LOG_ENCRYPTION_KEY;
+    delete process.env.NORA_LOG_ENABLED;
+    delete process.env.ENABLED_BACKENDS;
+  });
+
+  describe("GET /logs/collection-status", () => {
+    it("reports off and undecided when nobody has chosen", async () => {
+      collectionDb();
+      const res = await asUser(request(app).get("/logs/collection-status"));
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ enabled: false, decided: false });
+    });
+
+    it("reports the stored decision", async () => {
+      collectionDb({ stored: true });
+      const res = await asUser(request(app).get("/logs/collection-status"));
+      expect(res.body).toEqual({ enabled: true, decided: true });
+    });
+
+    it("falls back to NORA_LOG_ENABLED when nothing is stored", async () => {
+      process.env.NORA_LOG_ENABLED = "true";
+      collectionDb();
+      const res = await asUser(request(app).get("/logs/collection-status"));
+      expect(res.body).toEqual({ enabled: true, decided: true });
+    });
+  });
+
+  describe("GET /admin/log-collection", () => {
+    it("is admin-only", async () => {
+      collectionDb();
+      expect((await asUser(request(app).get("/admin/log-collection"))).status).toBe(403);
+    });
+
+    it("returns the state, what a delete would remove, the last delete request, and key health", async () => {
+      collectionDb({ stored: false, stats: SOME_LOGS, purgeJob: { id: "j1", status: "completed" } });
+      const res = await asAdmin(request(app).get("/admin/log-collection"));
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        enabled: false,
+        decided: true,
+        source: "database",
+        envValue: null,
+        stats: { segments: 12, lines: 3400, agents: 3 },
+        purge: { id: "j1", status: "completed" },
+        encryptionKeyProblem: null,
+      });
+    });
+
+    it("reports an unusable encryption key", async () => {
+      delete process.env.NORA_LOG_ENCRYPTION_KEY;
+      collectionDb();
+      const res = await asAdmin(request(app).get("/admin/log-collection"));
+      expect(res.body.encryptionKeyProblem).toMatch(/NORA_LOG_ENCRYPTION_KEY is not configured/);
+    });
+  });
+
+  describe("PUT /admin/log-collection — validation and access", () => {
+    it("is admin-only", async () => {
+      const writes = collectionDb();
+      const res = await asUser(request(app).put("/admin/log-collection").send({ enabled: true }));
+      expect(res.status).toBe(403);
+      expect(writes).toHaveLength(0);
+    });
+
+    it("rejects a body without a boolean enabled", async () => {
+      const writes = collectionDb();
+      for (const body of [{}, { enabled: "yes" }, { enabled: 1 }]) {
+        const res = await asAdmin(request(app).put("/admin/log-collection").send(body));
+        expect(res.status).toBe(400);
+        expect(res.body.code).toBe("invalid_enabled");
+      }
+      expect(writes).toHaveLength(0);
+    });
+
+    it("rejects a non-boolean deleteExisting", async () => {
+      const writes = collectionDb();
+      const res = await asAdmin(
+        request(app).put("/admin/log-collection").send({ enabled: false, deleteExisting: "no" }),
+      );
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("invalid_delete_existing");
+      expect(writes).toHaveLength(0);
+    });
+  });
+
+  describe("PUT /admin/log-collection — turning collection off", () => {
+    it("demands an explicit keep-or-delete choice when logs exist, and changes nothing without it", async () => {
+      const writes = collectionDb({ stored: true, stats: SOME_LOGS });
+      const res = await asAdmin(request(app).put("/admin/log-collection").send({ enabled: false }));
+
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("delete_existing_required");
+      expect(res.body.stats).toMatchObject({ segments: 12, lines: 3400, agents: 3 });
+      expect(writes).toHaveLength(0);
+      expect(mockLogEvent).not.toHaveBeenCalled();
+    });
+
+    it("also counts spans as existing logs", async () => {
+      collectionDb({ stored: true, stats: { ...NO_LOGS, spans: 5 } });
+      const res = await asAdmin(request(app).put("/admin/log-collection").send({ enabled: false }));
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("delete_existing_required");
+    });
+
+    it("keep: turns collection off, requests no deletion, and audits the decision", async () => {
+      const writes = collectionDb({ stored: true, stats: SOME_LOGS });
+      const res = await asAdmin(
+        request(app).put("/admin/log-collection").send({ enabled: false, deleteExisting: false }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(writes).toEqual([{ kind: "collection", params: [false] }]);
+      expect(mockLogEvent).toHaveBeenCalledWith(
+        "admin_log_collection_updated",
+        expect.stringContaining("off"),
+        expect.objectContaining({
+          actorId: "admin-1",
+          next: { enabled: false },
+          deleteExisting: false,
+          purgeJobId: null,
+        }),
+      );
+    });
+
+    it("delete: turns collection off and records a delete-everything request", async () => {
+      const writes = collectionDb({ stored: true, stats: SOME_LOGS });
+      const res = await asAdmin(
+        request(app).put("/admin/log-collection").send({ enabled: false, deleteExisting: true }),
+      );
+
+      expect(res.status).toBe(200);
+      expect(writes.map((w) => w.kind)).toEqual(["collection", "purge"]);
+      expect(res.body.purge).toMatchObject({ status: "pending", requestedBy: "admin-1" });
+      expect(mockLogEvent).toHaveBeenCalledWith(
+        "admin_log_collection_updated",
+        expect.stringContaining("deletion"),
+        expect.objectContaining({ deleteExisting: true, purgeJobId: res.body.purge.id }),
+      );
+    });
+
+    it("does not ask when there is nothing to keep or delete", async () => {
+      const writes = collectionDb({ stored: true, stats: NO_LOGS });
+      const res = await asAdmin(request(app).put("/admin/log-collection").send({ enabled: false }));
+      expect(res.status).toBe(200);
+      expect(writes).toEqual([{ kind: "collection", params: [false] }]);
+    });
+  });
+
+  describe("PUT /admin/log-collection — turning collection on", () => {
+    it("enables and audits it", async () => {
+      const writes = collectionDb();
+      const res = await asAdmin(request(app).put("/admin/log-collection").send({ enabled: true }));
+
+      expect(res.status).toBe(200);
+      expect(writes).toEqual([{ kind: "collection", params: [true] }]);
+      expect(res.body).toMatchObject({ enabled: false /* re-read shows the scripted stored value */ });
+      expect(mockLogEvent).toHaveBeenCalledWith(
+        "admin_log_collection_updated",
+        expect.stringContaining("on"),
+        expect.objectContaining({ next: { enabled: true } }),
+      );
+    });
+
+    it("refuses while a delete is still running, so live logs are not deleted", async () => {
+      const writes = collectionDb({ purgeJob: { id: "j1", status: "running" } });
+      const res = await asAdmin(request(app).put("/admin/log-collection").send({ enabled: true }));
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("purge_in_progress");
+      expect(writes).toHaveLength(0);
+    });
+
+    it("refuses when logs could not be saved because the encryption key is unusable", async () => {
+      delete process.env.NORA_LOG_ENCRYPTION_KEY;
+      const writes = collectionDb();
+      const res = await asAdmin(request(app).put("/admin/log-collection").send({ enabled: true }));
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("log_encryption_key_unusable");
+      expect(writes).toHaveLength(0);
+    });
+
+    it("refuses local storage while Kubernetes is an enabled deploy target", async () => {
+      process.env.ENABLED_BACKENDS = "docker,k8s";
+      const writes = collectionDb();
+      const res = await asAdmin(request(app).put("/admin/log-collection").send({ enabled: true }));
+      expect(res.status).toBe(409);
+      expect(res.body.code).toBe("local_unsupported_with_k8s");
+      expect(writes).toHaveLength(0);
+    });
+  });
+});

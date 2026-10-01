@@ -453,6 +453,49 @@ test("an agent found without consoleLevel:warn already applied has it applied by
   assert.deepEqual(consoleLevelCalls, ["agent-1"]);
 });
 
+test("while collection is disabled the gateway collector polls nothing and pushes no config into agents; re-enabling resumes", async () => {
+  const agent = agentRow();
+  const db = fakeDb({ extra: (sql) => {
+    if (/FROM agents\s+WHERE status IN/.test(sql)) {
+      return { rows: [agent] };
+    }
+    return null;
+  } });
+  let enabled = true;
+  const consoleLevelCalls = [];
+  const collector = createGatewayCollector({
+    db,
+    segmentWriter: fakeSegmentWriter(),
+    logger: silentLogger(),
+    isCollectionEnabled: async () => enabled,
+    resolveTenantForAgent: async () => ({ workspaceId: null, ownerUserId: "user-1" }),
+    resolveLogRetention: alwaysAllowRetention,
+    applyConsoleLevelConfig: async (a) => {
+      consoleLevelCalls.push(a.id);
+    },
+    createGatewayClient: () => fakeGatewayClient([{ lines: [], cursor: null, sourceKind: "file" }]),
+  });
+
+  try {
+    await collector.reconcileStreams();
+    assert.equal(collector.heldAgentCount(), 1);
+    assert.deepEqual(consoleLevelCalls, ["agent-1"]);
+
+    enabled = false;
+    const callsBefore = db.calls.length;
+    await collector.reconcileStreams();
+    assert.equal(collector.heldAgentCount(), 0, "turning collection off must stop polling every agent");
+    assert.equal(db.calls.length, callsBefore, "a disabled tick must not even list agents");
+    assert.deepEqual(consoleLevelCalls, ["agent-1"], "a disabled tick must not rewrite agents' config");
+
+    enabled = true;
+    await collector.reconcileStreams();
+    assert.equal(collector.heldAgentCount(), 1);
+  } finally {
+    collector.stop?.();
+  }
+});
+
 test("splitRunsOnMetaRecords with no meta records returns a single run attributed to the response's sourceKind", () => {
   const records = [{ msg: "a" }, { msg: "b" }];
   const runs = splitRunsOnMetaRecords(records, "file", "file");

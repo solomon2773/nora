@@ -134,6 +134,9 @@ function createLogCollector(deps = {}) {
   const setIntervalFn = deps.setIntervalFn || setInterval;
   const clearIntervalFn = deps.clearIntervalFn || clearInterval;
   const logger = deps.logger || console;
+  // Policy lives with the caller (worker.ts passes the platform's log
+  // collection gate); a collector built without one just collects.
+  const isCollectionEnabled = deps.isCollectionEnabled || (async () => true);
 
   if (!segmentWriter) {
     throw new Error("createLogCollector requires deps.segmentWriter");
@@ -289,6 +292,15 @@ function createLogCollector(deps = {}) {
    */
   async function reconcileStreams() {
     if (stopped) return;
+
+    // Collection is opt-in and an admin can turn it off while the worker runs:
+    // hold no streams while it is off. Buffered lines are not touched here —
+    // each buffer's own flush timer saves them (keep), or the purge discards
+    // them (delete).
+    if (!(await isCollectionEnabled())) {
+      for (const agentId of Array.from(streams.keys())) detach(agentId);
+      return;
+    }
 
     const result = await db.query(
       `SELECT id, user_id, container_id, status, backend_type, deploy_target,

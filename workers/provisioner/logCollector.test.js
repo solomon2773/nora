@@ -160,6 +160,32 @@ test("reconcile starts a stream for a newly-running agent and stops one for a no
   assert.equal(streamA.destroyed, true, "the stream must be disconnected once the agent is no longer desired");
 });
 
+// ── opt-in gate ──────────────────────────────────────────────────────────
+
+test("while collection is disabled the collector holds no streams and does not query agents; re-enabling attaches again", async () => {
+  const stream = new FakeLogStream();
+  const db = fakeDb({ agents: [agentRow()] });
+  const containerManager = fakeContainerManager(async () => stream);
+  let enabled = true;
+  const collector = createLogCollector(
+    baseDeps({ db, containerManager, isCollectionEnabled: async () => enabled }),
+  );
+
+  await collector.reconcileStreams();
+  assert.equal(collector.heldStreamCount(), 1);
+
+  enabled = false;
+  const callsBefore = db.calls.length;
+  await collector.reconcileStreams();
+  assert.equal(collector.heldStreamCount(), 0, "turning collection off must release every held stream");
+  assert.equal(stream.destroyed, true);
+  assert.equal(db.calls.length, callsBefore, "a disabled tick must not even list agents");
+
+  enabled = true;
+  await collector.reconcileStreams();
+  assert.equal(collector.heldStreamCount(), 1, "turning it back on must attach again without a restart");
+});
+
 // ── reattach on dead stream ───────────────────────────────────────────────
 
 test("a dead stream (after end/error) is reattached on the next reconcile tick", async () => {

@@ -386,6 +386,77 @@ test("deleting an agent flushes and releases its buffer", async () => {
   assert.equal(noop.skipped, true);
 });
 
+// ── discard all (delete-all-logs) ─────────────────────────────────────────
+
+test("discardAll drops buffered lines without writing a segment, and a later append starts fresh", async () => {
+  const deps = baseDeps();
+  const writer = createSegmentWriter(deps);
+  const ctx = { agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" };
+  await writer.append(ctx, [line({ ts: "2026-01-01T00:00:00.000Z" }), line({ ts: "2026-01-01T00:00:01.000Z" })]);
+
+  const result = await writer.discardAll();
+
+  assert.equal(result.buffers, 1);
+  assert.equal(result.lines, 2);
+  assert.equal(deps.putStorageObject.calls.length, 0, "discarded lines must never be written");
+  assert.equal((await writer.flush("agent-1:runtime")).skipped, true, "the buffer is gone");
+
+  await writer.append(ctx, [line({ ts: "2026-01-01T00:01:00.000Z" })]);
+  await writer.flush("agent-1:runtime");
+  assert.equal(deps.putStorageObject.calls.length, 1, "appending after a discard builds a new buffer");
+});
+
+test("discardAll waits for an in-flight flush so nothing lands after the caller's sweep", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const calls = [];
+  const deps = baseDeps({
+    putStorageObject: async (...args) => {
+      calls.push(args);
+      await gate;
+    },
+  });
+  const writer = createSegmentWriter(deps);
+  await writer.append({ agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" }, [
+    line({ ts: "2026-01-01T00:00:00.000Z" }),
+  ]);
+
+  const flushing = writer.flush("agent-1:runtime");
+  await new Promise((resolve) => setImmediate(resolve));
+  let finished = false;
+  const discarding = writer.discardAll().then(() => { finished = true; });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(finished, false, "discardAll must not return while a flush is still writing");
+
+  release();
+  await flushing;
+  await discarding;
+  assert.equal(finished, true);
+});
+
+test("discardAll also removes segments parked for re-upload", async () => {
+  await withTempDir(async (stagingDir) => {
+    const deps = baseDeps({
+      putStorageObject: fakePutStorageObject({ failTimes: 999 }),
+      logStorageConfig: async () => ({ storageBackend: "s3", bucket: "b" }),
+      stagingDir,
+      retryDelaysMs: [1],
+    });
+    const writer = createSegmentWriter(deps);
+    await writer.append({ agentId: "agent-1", stream: "runtime", ownerUserId: "user-1" }, [
+      line({ ts: "2026-01-01T00:00:00.000Z" }),
+    ]);
+    assert.equal((await writer.flush("agent-1:runtime")).parked, true);
+    assert.ok((await fsp.readdir(stagingDir)).length >= 2);
+
+    const result = await writer.discardAll();
+
+    assert.equal(result.parkedSegments, 1);
+    assert.deepEqual(await fsp.readdir(stagingDir), []);
+  });
+});
+
 // ── round trip / index row correctness ───────────────────────────────────
 
 test("round-trip: a written segment decrypts and decompresses to the exact input lines", async () => {

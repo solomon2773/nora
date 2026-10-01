@@ -471,6 +471,9 @@ function createGatewayCollector(deps = {}) {
   const setTimeoutFn = deps.setTimeoutFn || setTimeout;
   const clearTimeoutFn = deps.clearTimeoutFn || clearTimeout;
   const logger = deps.logger || console;
+  // Policy lives with the caller (worker.ts passes the platform's log
+  // collection gate); a collector built without one just collects.
+  const isCollectionEnabled = deps.isCollectionEnabled || (async () => true);
 
   if (!segmentWriter) {
     throw new Error("createGatewayCollector requires deps.segmentWriter");
@@ -587,6 +590,13 @@ function createGatewayCollector(deps = {}) {
    */
   async function reconcileStreams() {
     if (stopped) return;
+
+    // Collection is opt-in and an admin can turn it off while the worker runs:
+    // poll nothing, and push no config into agents, while it is off.
+    if (!(await isCollectionEnabled())) {
+      for (const agentId of Array.from(agents.keys())) detach(agentId);
+      return;
+    }
 
     const result = await db.query(
       `SELECT id, user_id, container_id, status, backend_type, deploy_target,

@@ -42,6 +42,9 @@ const { getEnabledBackends } = require("../../agent-runtime/lib/backendCatalog.t
 const retentionSweeper = require("../../workers/provisioner/logs/retentionSweeper.ts");
 const logStorageConfigModule = require("../../workers/provisioner/logs/logStorageConfig.ts");
 const storageMigration = require("../../workers/provisioner/logs/storageMigration.ts");
+const logCollectionState = require("../../workers/provisioner/logs/logCollectionState.ts");
+const logPurge = require("../../workers/provisioner/logs/logPurge.ts");
+const { logEncryptionKeyProblem } = require("../../workers/provisioner/logs/logKeyCheck.ts");
 const logSearch = require("../logSearch.ts");
 const traceQuery = require("../traceQuery.ts");
 const db = require("../db");
@@ -51,12 +54,13 @@ const router = express.Router();
 // Phase 6 item 9: logs:read gates both search and export for API-key
 // callers. Session callers (browser dashboards) pass through unchanged —
 // scopeByMethod only enforces scopes when `req.apiKey` is present.
-router.use(["/logs/search", "/logs/export", "/logs/agents"], scopeByMethod("logs:read", null));
+router.use(["/logs/search", "/logs/export", "/logs/agents", "/logs/collection-status"], scopeByMethod("logs:read", null));
 
 // Scope guards to this router's actual prefixes, matching adminMembers.ts's
 // convention, so an unrelated /admin/* request continues past this router to
 // routes/admin.ts rather than being intercepted by a mount-wide guard.
 router.use("/admin/log-storage", requireAdmin);
+router.use("/admin/log-collection", requireAdmin);
 
 // ─── 1. Manual log deletion (item 7b) ──────────────────────────────────────
 
@@ -560,6 +564,149 @@ router.post(
       const status = error.statusCode || 500;
       res.status(status).json({ error: error.message, code: error.code });
     }
+  }),
+);
+
+// ─── 3b. Log collection on/off (platform-wide) ─────────────────────────────
+
+/**
+ * Collection stores agent output on disk, so it is opt-in. The state is the
+ * database value once an admin has chosen, else NORA_LOG_ENABLED, else "not
+ * decided yet" (off) — see logs/logCollectionState.ts. worker-provisioner
+ * polls the same state, so a change here takes effect within seconds with no
+ * restart.
+ */
+
+/**
+ * GET /logs/collection-status
+ * Any signed-in caller: the Logs page uses it to say "collection is off"
+ * instead of showing an empty table.
+ */
+router.get(
+  "/logs/collection-status",
+  asyncHandler(async (_req, res) => {
+    const state = await logCollectionState.resolveLogCollectionState();
+    res.json({ enabled: state.enabled, decided: state.decided });
+  }),
+);
+
+/**
+ * GET /admin/log-collection
+ * The state, what a delete would remove, the last delete request, and
+ * whether enabling would currently work.
+ */
+router.get(
+  "/admin/log-collection",
+  asyncHandler(async (_req, res) => {
+    const [state, stats, purge] = await Promise.all([
+      logCollectionState.resolveLogCollectionState(),
+      logPurge.getLogStats(),
+      logPurge.readPurgeJob(),
+    ]);
+    res.json({
+      ...state,
+      envValue: logCollectionState.parseEnvDecision(process.env) ?? null,
+      stats,
+      purge,
+      encryptionKeyProblem: logEncryptionKeyProblem(),
+    });
+  }),
+);
+
+/**
+ * PUT /admin/log-collection
+ * Body: { enabled: boolean, deleteExisting?: boolean }
+ *
+ * Turning collection OFF while logs exist requires an explicit
+ * `deleteExisting` — there is no default, the same rule agent and workspace
+ * deletion follow, so a script cannot silently pick. `true` records a
+ * delete-everything request that worker-provisioner carries out; `false`
+ * keeps what is stored (it still expires on the normal retention schedule).
+ * Turning it ON is refused when it could not work: an unusable encryption
+ * key, local storage with Kubernetes enabled, or a delete still running.
+ */
+router.put(
+  "/admin/log-collection",
+  asyncHandler(async (req, res) => {
+    const { enabled, deleteExisting } = req.body || {};
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be true or false", code: "invalid_enabled" });
+    }
+    if (deleteExisting !== undefined && typeof deleteExisting !== "boolean") {
+      return res.status(400).json({ error: "deleteExisting must be true or false", code: "invalid_delete_existing" });
+    }
+
+    const previous = await logCollectionState.resolveLogCollectionState();
+    const purgeJob = await logPurge.readPurgeJob();
+    let stats = null;
+
+    if (enabled) {
+      if (purgeJob && logPurge.IN_PROGRESS.includes(purgeJob.status)) {
+        return res.status(409).json({
+          error: "Logs are still being deleted. Wait for that to finish before turning collection back on.",
+          code: "purge_in_progress",
+          purge: purgeJob,
+        });
+      }
+      const keyProblem = logEncryptionKeyProblem();
+      if (keyProblem) {
+        return res.status(409).json({
+          error: `Logs cannot be saved: ${keyProblem}. Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart.`,
+          code: "log_encryption_key_unusable",
+        });
+      }
+      const storage = await logStorageConfigModule.logStorageConfig();
+      if (storage.storageBackend === "local" && getEnabledBackends(process.env).includes("k8s")) {
+        return res.status(409).json({
+          error:
+            "Local log storage cannot be used while Kubernetes is an enabled deploy target. " +
+            "Choose S3, R2 or SSH storage first.",
+          code: "local_unsupported_with_k8s",
+        });
+      }
+    } else {
+      stats = await logPurge.getLogStats();
+      const hasLogs = stats.segments > 0 || stats.spans > 0;
+      if (hasLogs && deleteExisting === undefined) {
+        return res.status(400).json({
+          error: "Logs have already been collected. Say whether to keep them or delete them (deleteExisting).",
+          code: "delete_existing_required",
+          stats,
+        });
+      }
+    }
+
+    await db.query(
+      `INSERT INTO platform_settings(singleton, log_collection_enabled, log_collection_updated_at, updated_at)
+       VALUES (TRUE, $1, NOW(), NOW())
+       ON CONFLICT (singleton) DO UPDATE SET
+         log_collection_enabled = EXCLUDED.log_collection_enabled,
+         log_collection_updated_at = NOW(),
+         updated_at = NOW()`,
+      [enabled],
+    );
+
+    let purge = purgeJob;
+    const wantsDelete = !enabled && deleteExisting === true;
+    if (wantsDelete) {
+      purge = (await logPurge.requestLogPurge({ requestedBy: req.user?.id || null })).job;
+    }
+
+    await monitoring.logEvent(
+      "admin_log_collection_updated",
+      `Admin turned log collection ${enabled ? "on" : "off"}${wantsDelete ? " and requested deletion of all collected logs" : ""}`,
+      {
+        actorId: req.user?.id,
+        previous: { enabled: previous.enabled, decided: previous.decided, source: previous.source },
+        next: { enabled },
+        deleteExisting: enabled ? null : deleteExisting ?? false,
+        statsAtDecision: stats,
+        purgeJobId: wantsDelete ? purge?.id : null,
+      },
+    );
+
+    const next = await logCollectionState.resolveLogCollectionState();
+    res.json({ ...next, purge, stats });
   }),
 );
 

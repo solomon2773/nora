@@ -903,6 +903,42 @@ function createSegmentWriter(deps = {}) {
     return results;
   }
 
+  /**
+   * Throw away everything not yet saved — buffered lines and segments parked
+   * for re-upload — without writing it. For "delete all collected logs": the
+   * caller is about to remove every stored segment, and a buffer flushed after
+   * that would resurrect a few minutes of logs the admin asked to be gone.
+   * Waits for any in-flight flush first so none can land after the caller's
+   * sweep, and stops the buffers' timers (a later attach builds fresh ones).
+   */
+  async function discardAll() {
+    const inFlight = [];
+    for (const buffer of buffers.values()) {
+      clearIntervalFn(buffer.timer);
+      if (buffer.flushing) inFlight.push(buffer.flushing.catch(() => {}));
+    }
+    await Promise.all(inFlight);
+
+    let discardedLines = 0;
+    for (const buffer of buffers.values()) discardedLines += buffer.lines.length;
+    const discardedBuffers = buffers.size;
+    buffers.clear();
+
+    let discardedParked = 0;
+    let entries = [];
+    try {
+      entries = await fsp.readdir(stagingDir);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    for (const name of entries) {
+      if (!name.endsWith(".seg") && !name.endsWith(".json")) continue;
+      await fsp.rm(path.join(stagingDir, name), { force: true });
+      if (name.endsWith(".seg")) discardedParked += 1;
+    }
+    return { buffers: discardedBuffers, lines: discardedLines, parkedSegments: discardedParked };
+  }
+
   function isCapacityPaused(agentId, stream) {
     const buffer = buffers.get(bufferKey(agentId, stream));
     return Boolean(buffer && buffer.capacityPaused);
@@ -1004,6 +1040,7 @@ function createSegmentWriter(deps = {}) {
     flushAll,
     shutdown,
     deleteAgent,
+    discardAll,
     retryParkedSegments,
     startParkedSegmentRetry,
     isCapacityPaused,

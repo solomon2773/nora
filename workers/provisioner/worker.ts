@@ -5795,32 +5795,48 @@ segmentWriter?.startParkedSegmentRetry?.();
 // into the shutdown coordinator below via `registerLogPipelineHooks`, in
 // the exact two-hook shape it already expects.
 //
-// Collection is opt-in: both collectors are skipped unless NORA_LOG_ENABLED=true (see isLogCollectionEnabled);
-// the no-op stand-in keeps the shutdown hooks below uniform. Compared with
-// `!== false` so shutdownCoordinator.test.js's catch-all module stub (which
-// returns undefined) keeps exercising the collector path it did before.
-const { isLogCollectionEnabled } = require("./logs/logStorageConfig");
-const LOG_COLLECTION_ENABLED = isLogCollectionEnabled() !== false;
-const disabledCollector = { stopReconciler() {}, stopCollector() {} };
-if (!LOG_COLLECTION_ENABLED) {
-  console.log("[worker] Log collection is off (set NORA_LOG_ENABLED=true to enable); retention sweeps still run.");
-} else {
-  // The key is otherwise only read on the first flush (~15 minutes after an
-  // agent starts), and the healthcheck stays green meanwhile — say so now.
-  const { logEncryptionKeyProblem } = require("./logs/logKeyCheck");
-  const keyProblem = logEncryptionKeyProblem();
-  if (keyProblem) {
-    console.warn(
-      `[worker] Log collection is on but logs cannot be saved: ${keyProblem}. ` +
-        "Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart worker-provisioner, " +
-        "or set NORA_LOG_ENABLED=false to turn collection off.",
-    );
+// Collection is opt-in and an admin can switch it while the worker runs, so
+// the collectors always start and ask this gate on every reconcile tick
+// (database setting first, then NORA_LOG_ENABLED, otherwise off — see
+// logs/logCollectionState.ts). Retention sweeps run either way.
+const { getLogCollectionGate } = require("./logs/logCollectionState");
+const logCollectionGate = getLogCollectionGate();
+const isCollectionEnabled = () => logCollectionGate.isEnabled();
+(async () => {
+  try {
+    const state = await logCollectionGate.state();
+    if (!state.enabled) {
+      console.log(
+        state.decided
+          ? `[worker] Log collection is off (${state.source}); retention sweeps still run.`
+          : "[worker] Log collection is off until an admin enables it (Admin -> Settings -> Log Storage, or NORA_LOG_ENABLED=true); retention sweeps still run.",
+      );
+      return;
+    }
+    // The key is otherwise only read on the first flush (~15 minutes after an
+    // agent starts), and the healthcheck stays green meanwhile — say so now.
+    const { logEncryptionKeyProblem } = require("./logs/logKeyCheck");
+    const keyProblem = logEncryptionKeyProblem();
+    if (keyProblem) {
+      console.warn(
+        `[worker] Log collection is on but logs cannot be saved: ${keyProblem}. ` +
+          "Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart worker-provisioner, " +
+          "or turn collection off.",
+      );
+    }
+  } catch (error) {
+    console.warn(`[worker] Could not read the log collection setting at startup: ${error.message}`);
   }
-}
+})();
 const { startLogCollector } = require("./logs/logCollector");
-const logCollector = LOG_COLLECTION_ENABLED
-  ? startLogCollector({ segmentWriter })
-  : disabledCollector;
+const logCollector = startLogCollector({ segmentWriter, isCollectionEnabled });
+
+// "Delete all collected logs" requests recorded by backend-api are carried out
+// here, because this process owns the segment writer's buffers (they must be
+// discarded first). A request survives a restart: the job state is in the
+// database and an interrupted job resumes.
+const { startLogPurgeRunner } = require("./logs/logPurge");
+startLogPurgeRunner({ segmentWriter, isCollectionEnabled });
 
 // ── Gateway Log Collector (Logging Control Plane Phase 10) ────────────
 //
@@ -5843,9 +5859,7 @@ const logCollector = LOG_COLLECTION_ENABLED
 // combined registration for why calling it twice would silently drop
 // whichever collector registered first.
 const { startGatewayCollector } = require("./logs/gatewayCollector");
-const gatewayCollector = LOG_COLLECTION_ENABLED
-  ? startGatewayCollector({ segmentWriter })
-  : disabledCollector;
+const gatewayCollector = startGatewayCollector({ segmentWriter, isCollectionEnabled });
 
 // ── Storage Migration Resume (Logging Control Plane Phase 5b item 10) ────
 //

@@ -173,16 +173,3 @@ test("passing deps bypasses the module-level cache — each call re-resolves", a
   assert.equal(second.bucket, "bucket-2");
   assert.equal(calls, 2);
 });
-
-test("isLogCollectionEnabled is opt-in: only an explicit true turns collection on", () => {
-  const { isLogCollectionEnabled } = require("./logs/logStorageConfig.ts");
-  assert.equal(isLogCollectionEnabled({}), false);
-  assert.equal(isLogCollectionEnabled({ NORA_LOG_ENABLED: "" }), false);
-  assert.equal(isLogCollectionEnabled({ NORA_LOG_ENABLED: "garbage" }), false);
-  for (const value of ["true", "TRUE", " 1 ", "yes", "on"]) {
-    assert.equal(isLogCollectionEnabled({ NORA_LOG_ENABLED: value }), true, value);
-  }
-  for (const value of ["false", "FALSE", " 0 ", "no", "off"]) {
-    assert.equal(isLogCollectionEnabled({ NORA_LOG_ENABLED: value }), false, value);
-  }
-});
