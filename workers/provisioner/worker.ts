@@ -5794,6 +5794,18 @@ segmentWriter?.startParkedSegmentRetry?.();
 // reconcile timer immediately; `stopReconciler`/`stopCollector` are wired
 // into the shutdown coordinator below via `registerLogPipelineHooks`, in
 // the exact two-hook shape it already expects.
+// The key is otherwise only read on the first flush (~15 minutes after an
+// agent starts), and the healthcheck stays green meanwhile — say so now.
+{
+  const { logEncryptionKeyProblem } = require("./logs/logKeyCheck");
+  const keyProblem = logEncryptionKeyProblem();
+  if (keyProblem) {
+    console.warn(
+      `[worker] Log collection is on but logs cannot be saved: ${keyProblem}. ` +
+        "Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart worker-provisioner.",
+    );
+  }
+}
 const { startLogCollector } = require("./logs/logCollector");
 const logCollector = startLogCollector({ segmentWriter });
 
