@@ -61,7 +61,7 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
   async function reset() {
     await pool.query(`TRUNCATE log_segment_legacy_copies, log_segments, agent_spans, deleted_log_owners`);
     await pool.query(
-      `UPDATE platform_settings SET log_purge_job = NULL, log_collection_enabled = NULL WHERE singleton = TRUE`,
+      `UPDATE platform_settings SET log_purge_job = NULL, log_collection_enabled = NULL, log_collection_updated_at = NULL WHERE singleton = TRUE`,
     );
     await pool.query(
       `INSERT INTO platform_settings(singleton) VALUES (TRUE) ON CONFLICT (singleton) DO NOTHING`,
@@ -193,16 +193,53 @@ describeWithPostgres("log purge and collection state on PostgreSQL", () => {
     expect((await logPurge.readPurgeJob({ db: pool })).status).toBe("completed");
   });
 
+  it("setLogCollectionEnabled moves the 'since' timestamp only when the value actually changes", async () => {
+    const read = async () =>
+      (await pool.query(`SELECT log_collection_enabled AS v, log_collection_updated_at AS at FROM platform_settings WHERE singleton = TRUE`)).rows[0];
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    await logCollectionState.setLogCollectionEnabled(true, { db: pool });
+    const first = await read();
+    expect(first.v).toBe(true);
+    expect(first.at).toBeTruthy();
+
+    await sleep(30);
+    await logCollectionState.setLogCollectionEnabled(true, { db: pool }); // repeating "on" while on
+    const repeated = await read();
+    expect(repeated.at.getTime()).toBe(first.at.getTime());
+
+    await sleep(30);
+    await logCollectionState.setLogCollectionEnabled(false, { db: pool });
+    const off = await read();
+    expect(off.v).toBe(false);
+    expect(off.at.getTime()).toBeGreaterThan(first.at.getTime());
+
+    await sleep(30);
+    await logCollectionState.setLogCollectionEnabled(true, { db: pool }); // turned back on: a new 'since'
+    const again = await read();
+    expect(again.at.getTime()).toBeGreaterThan(off.at.getTime());
+  });
+
+  it("the resolved state carries 'since' only for an enabled, stored decision", async () => {
+    await logCollectionState.setLogCollectionEnabled(true, { db: pool });
+    const on = await logCollectionState.resolveLogCollectionState({ db: pool, env: {} });
+    expect(on).toMatchObject({ enabled: true, source: "database" });
+    expect(Number.isNaN(Date.parse(on.since))).toBe(false);
+
+    await logCollectionState.setLogCollectionEnabled(false, { db: pool });
+    expect((await logCollectionState.resolveLogCollectionState({ db: pool, env: {} })).since).toBeNull();
+  });
+
   it("collection state follows the stored value, then the environment, then 'undecided'", async () => {
     const state = (env = {}) => logCollectionState.resolveLogCollectionState({ db: pool, env });
 
-    expect(await state()).toEqual({ enabled: false, decided: false, source: "default" });
-    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({ enabled: true, decided: true, source: "env" });
+    expect(await state()).toEqual({ enabled: false, decided: false, source: "default", since: null });
+    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({ enabled: true, decided: true, source: "env", since: null });
 
     await pool.query(`UPDATE platform_settings SET log_collection_enabled = FALSE WHERE singleton = TRUE`);
-    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({ enabled: false, decided: true, source: "database" });
+    expect(await state({ NORA_LOG_ENABLED: "true" })).toEqual({ enabled: false, decided: true, source: "database", since: null });
 
     await pool.query(`UPDATE platform_settings SET log_collection_enabled = TRUE WHERE singleton = TRUE`);
-    expect(await state()).toEqual({ enabled: true, decided: true, source: "database" });
+    expect(await state()).toEqual({ enabled: true, decided: true, source: "database", since: null });
   });
 });

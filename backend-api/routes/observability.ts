@@ -676,15 +676,7 @@ router.put(
       }
     }
 
-    await db.query(
-      `INSERT INTO platform_settings(singleton, log_collection_enabled, log_collection_updated_at, updated_at)
-       VALUES (TRUE, $1, NOW(), NOW())
-       ON CONFLICT (singleton) DO UPDATE SET
-         log_collection_enabled = EXCLUDED.log_collection_enabled,
-         log_collection_updated_at = NOW(),
-         updated_at = NOW()`,
-      [enabled],
-    );
+    await logCollectionState.setLogCollectionEnabled(enabled);
 
     let purge = purgeJob;
     const wantsDelete = !enabled && deleteExisting === true;

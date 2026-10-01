@@ -6,6 +6,7 @@ const { test } = require("node:test");
 const {
   parseEnvDecision,
   readStoredDecision,
+  readStoredState,
   stateFrom,
   resolveLogCollectionState,
   createLogCollectionGate,
@@ -22,11 +23,11 @@ test("parseEnvDecision: only recognised values decide; anything else is undecide
 });
 
 test("stateFrom: the database wins over .env, .env wins over the default, nothing set is off and undecided", () => {
-  assert.deepEqual(stateFrom(true, { NORA_LOG_ENABLED: "false" }), { enabled: true, decided: true, source: "database" });
-  assert.deepEqual(stateFrom(false, { NORA_LOG_ENABLED: "true" }), { enabled: false, decided: true, source: "database" });
-  assert.deepEqual(stateFrom(null, { NORA_LOG_ENABLED: "true" }), { enabled: true, decided: true, source: "env" });
-  assert.deepEqual(stateFrom(null, { NORA_LOG_ENABLED: "false" }), { enabled: false, decided: true, source: "env" });
-  assert.deepEqual(stateFrom(null, {}), { enabled: false, decided: false, source: "default" });
+  assert.deepEqual(stateFrom(true, { NORA_LOG_ENABLED: "false" }), { enabled: true, decided: true, source: "database", since: null });
+  assert.deepEqual(stateFrom(false, { NORA_LOG_ENABLED: "true" }), { enabled: false, decided: true, source: "database", since: null });
+  assert.deepEqual(stateFrom(null, { NORA_LOG_ENABLED: "true" }), { enabled: true, decided: true, source: "env", since: null });
+  assert.deepEqual(stateFrom(null, { NORA_LOG_ENABLED: "false" }), { enabled: false, decided: true, source: "env", since: null });
+  assert.deepEqual(stateFrom(null, {}), { enabled: false, decided: false, source: "default", since: null });
 });
 
 test("readStoredDecision: null when unset, boolean when set, null when the column does not exist yet", async () => {
@@ -42,8 +43,8 @@ test("readStoredDecision: null when unset, boolean when set, null when the colum
 });
 
 test("resolveLogCollectionState combines the stored value with the environment", async () => {
-  assert.deepEqual(await resolveLogCollectionState({ db: row(null), env: {} }), { enabled: false, decided: false, source: "default" });
-  assert.deepEqual(await resolveLogCollectionState({ db: row(true), env: {} }), { enabled: true, decided: true, source: "database" });
+  assert.deepEqual(await resolveLogCollectionState({ db: row(null), env: {} }), { enabled: false, decided: false, source: "default", since: null });
+  assert.deepEqual(await resolveLogCollectionState({ db: row(true), env: {} }), { enabled: true, decided: true, source: "database", since: null });
 });
 
 test("gate caches for the TTL, then rereads, and invalidate forces a reread", async () => {
@@ -71,7 +72,7 @@ test("gate caches for the TTL, then rereads, and invalidate forces a reread", as
 test("gate shares one in-flight read between concurrent callers", async () => {
   let reads = 0;
   const gate = createLogCollectionGate({
-    resolve: async () => { reads += 1; await new Promise((r) => setTimeout(r, 10)); return { enabled: true, decided: true, source: "env" }; },
+    resolve: async () => { reads += 1; await new Promise((r) => setTimeout(r, 10)); return { enabled: true, decided: true, source: "env", since: null }; },
   });
   await Promise.all([gate.isEnabled(), gate.isEnabled(), gate.isEnabled()]);
   assert.equal(reads, 1);
@@ -82,7 +83,7 @@ test("gate keeps the last known answer when the database read fails, instead of 
   let clock = 0;
   const warnings = [];
   const gate = createLogCollectionGate({
-    resolve: async () => { if (fail) throw new Error("db down"); return { enabled: true, decided: true, source: "database" }; },
+    resolve: async () => { if (fail) throw new Error("db down"); return { enabled: true, decided: true, source: "database", since: null }; },
     ttlMs: 1_000,
     now: () => clock,
     logger: { warn: (m) => warnings.push(m) },
@@ -101,7 +102,7 @@ test("gate falls back to the env-derived state when the very first read fails", 
     env: { NORA_LOG_ENABLED: "true" },
     logger: { warn() {} },
   });
-  assert.deepEqual(await gate.state(), { enabled: true, decided: true, source: "env" });
+  assert.deepEqual(await gate.state(), { enabled: true, decided: true, source: "env", since: null });
 
   const undecided = createLogCollectionGate({
     resolve: async () => { throw new Error("db down"); },
@@ -109,4 +110,31 @@ test("gate falls back to the env-derived state when the very first read fails", 
     logger: { warn() {} },
   });
   assert.equal(await undecided.isEnabled(), false);
+});
+
+test("an enabled stored decision carries 'since', so output from before it is never collected", () => {
+  const at = "2026-10-01T15:44:33.000Z";
+  assert.deepEqual(stateFrom(true, {}, at), { enabled: true, decided: true, source: "database", since: at });
+});
+
+test("a disabled decision, an env decision, and no decision carry no 'since'", () => {
+  const at = "2026-10-01T15:44:33.000Z";
+  assert.equal(stateFrom(false, {}, at).since, null);
+  assert.equal(stateFrom(null, { NORA_LOG_ENABLED: "true" }, at).since, null);
+  assert.equal(stateFrom(null, {}, at).since, null);
+});
+
+test("readStoredState returns when the decision last changed, as an ISO string", async () => {
+  const db = { query: async () => ({ rows: [{ log_collection_enabled: true, log_collection_updated_at: new Date("2026-10-01T15:44:33Z") }] }) };
+  assert.deepEqual(await readStoredState({ db }), { value: true, updatedAt: "2026-10-01T15:44:33.000Z" });
+  const empty = { query: async () => ({ rows: [{ log_collection_enabled: null, log_collection_updated_at: null }] }) };
+  assert.deepEqual(await readStoredState({ db: empty }), { value: null, updatedAt: null });
+});
+
+test("the gate exposes 'since' from the same cached state", async () => {
+  const at = "2026-10-01T15:44:33.000Z";
+  const gate = createLogCollectionGate({ resolve: async () => ({ enabled: true, decided: true, source: "database", since: at }) });
+  assert.equal(await gate.since(), at);
+  const none = createLogCollectionGate({ resolve: async () => ({ enabled: true, decided: true, source: "env", since: null }) });
+  assert.equal(await none.since(), null);
 });

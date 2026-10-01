@@ -496,6 +496,36 @@ test("while collection is disabled the gateway collector polls nothing and pushe
   }
 });
 
+test("gateway lines older than when collection was turned on are skipped, and the cursor still moves past them", async () => {
+  const db = fakeDb();
+  const segmentWriter = fakeSegmentWriter();
+  const agent = agentRow();
+  const tenant = { workspaceId: "ws-1", ownerUserId: null };
+
+  const records = [
+    { level: "info", msg: "written while collection was off", ts: "2026-10-01T15:44:11.000Z" },
+    { level: "info", msg: "written after it was turned on", ts: "2026-10-01T15:44:50.000Z" },
+  ];
+  const client = fakeGatewayClient([{ lines: records, cursor: "c9", sourceKind: "file" }]);
+  const cursorState = { currentSourceKind: "file", sourceCursors: new Map() };
+
+  const result = await pollAgentGatewayLogs(agent, cursorState, {
+    db,
+    client,
+    callLogsTail: fakeCallLogsTail(client),
+    segmentWriter,
+    tenant,
+    resolveLogRetention: alwaysAllowRetention,
+    getCollectionSince: async () => "2026-10-01T15:44:33.000Z",
+    logger: silentLogger(),
+  });
+
+  assert.equal(result.dropped, 1);
+  assert.equal(result.appended, 1);
+  assert.equal(segmentWriter.appendCalls[0].lines[0].message, "written after it was turned on");
+  assert.equal(db.cursors.get("agent-1:file"), "c9", "the skipped backlog must not be fetched again next poll");
+});
+
 test("splitRunsOnMetaRecords with no meta records returns a single run attributed to the response's sourceKind", () => {
   const records = [{ msg: "a" }, { msg: "b" }];
   const runs = splitRunsOnMetaRecords(records, "file", "file");

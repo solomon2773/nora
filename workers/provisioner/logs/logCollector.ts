@@ -101,6 +101,13 @@ async function lastFlushedCursor(agentId, stream, { db } = {}) {
   return cursor ? new Date(cursor).toISOString() : null;
 }
 
+/** The later of two ISO timestamps; either may be null. */
+function laterIso(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return Date.parse(b) > Date.parse(a) ? b : a;
+}
+
 /**
  * @param {Object} [deps]
  * @param {Object} [deps.db] - pg-like `{ query(sql, params) }`.
@@ -137,6 +144,11 @@ function createLogCollector(deps = {}) {
   // Policy lives with the caller (worker.ts passes the platform's log
   // collection gate); a collector built without one just collects.
   const isCollectionEnabled = deps.isCollectionEnabled || (async () => true);
+  // When collection was last turned on. Output produced before this must not be
+  // collected — the container's retained history still holds what was written
+  // while collection was off (or before an admin deleted it), and replaying it
+  // would quietly undo the admin's choice.
+  const getCollectionSince = deps.getCollectionSince || (async () => null);
 
   if (!segmentWriter) {
     throw new Error("createLogCollector requires deps.segmentWriter");
@@ -187,7 +199,10 @@ function createLogCollector(deps = {}) {
     // life of this attach, and re-resolved on every subsequent reconnect —
     // never per line.
     const tenant = await resolveTenantForAgent(agentId, { db });
-    const since = await lastFlushedCursor(agentId, RUNTIME_STREAM, { db });
+    const cursor = await lastFlushedCursor(agentId, RUNTIME_STREAM, { db });
+    const collectionSince = await getCollectionSince();
+    const since = laterIso(cursor, collectionSince);
+    const collectionSinceMs = collectionSince ? Date.parse(collectionSince) : NaN;
 
     const logOpts = { follow: true };
     if (since) logOpts.since = since;
@@ -222,7 +237,16 @@ function createLogCollector(deps = {}) {
     // partial state across chunks instead.
     const chunkParser = makeChunkParser({ stream: RUNTIME_STREAM });
 
-    function appendLines(lines) {
+    function appendLines(incoming) {
+      let lines = incoming;
+      // The source's `since` is only second-accurate, so drop anything older
+      // than the moment collection was turned on here as well.
+      if (lines && Number.isFinite(collectionSinceMs)) {
+        lines = lines.filter((line) => {
+          const ms = Date.parse(line.ts || line.observed_ts);
+          return !Number.isFinite(ms) || ms >= collectionSinceMs;
+        });
+      }
       if (!lines || lines.length === 0) return;
       Promise.resolve(
         segmentWriter.append(

@@ -247,6 +247,65 @@ test("reattach passes since derived from the last FLUSHED cursor, not merely the
   assert.equal(Object.prototype.hasOwnProperty.call(containerManager.calls[0].opts, "tail"), false);
 });
 
+// ── no back-fill from before collection was turned on ────────────────────
+
+test("with no prior flush, 'since' is when collection was turned on, so earlier output is not replayed", async () => {
+  const db = fakeDb({ agents: [agentRow()] });
+  const containerManager = fakeContainerManager(async () => new FakeLogStream());
+  const collector = createLogCollector(
+    baseDeps({ db, containerManager, getCollectionSince: async () => "2026-10-01T15:44:33.000Z" }),
+  );
+
+  await collector.reconcileStreams();
+
+  assert.equal(containerManager.calls[0].opts.since, "2026-10-01T15:44:33.000Z");
+});
+
+test("'since' is the LATER of the last flushed cursor and when collection was turned on", async () => {
+  const run = async (cursor, enabledAt) => {
+    const db = fakeDb({
+      agents: [agentRow()],
+      segments: cursor ? [{ agent_id: "agent-1", stream: "runtime", ts_to: cursor }] : [],
+    });
+    const containerManager = fakeContainerManager(async () => new FakeLogStream());
+    const collector = createLogCollector(baseDeps({ db, containerManager, getCollectionSince: async () => enabledAt }));
+    await collector.reconcileStreams();
+    return containerManager.calls[0].opts.since;
+  };
+
+  // Cursor older than the enable time (a re-enable after an off period): the enable time wins.
+  assert.equal(await run("2026-10-01T10:00:00.000Z", "2026-10-01T15:44:33.000Z"), "2026-10-01T15:44:33.000Z");
+  // Cursor newer (collection has been on since): the cursor wins, as before.
+  assert.equal(await run("2026-10-01T16:00:00.000Z", "2026-10-01T15:44:33.000Z"), "2026-10-01T16:00:00.000Z");
+  // No enable time known (decided by .env): unchanged behaviour.
+  assert.equal(await run("2026-10-01T10:00:00.000Z", null), "2026-10-01T10:00:00.000Z");
+  assert.equal(await run(null, null), undefined);
+});
+
+test("lines older than when collection was turned on are dropped even if the source sends them", async () => {
+  const stream = new FakeLogStream();
+  const db = fakeDb({ agents: [agentRow()] });
+  const segmentWriter = fakeSegmentWriter();
+  const collector = createLogCollector(
+    baseDeps({
+      db,
+      segmentWriter,
+      containerManager: fakeContainerManager(async () => stream),
+      getCollectionSince: async () => "2026-01-01T00:00:01.500Z",
+    }),
+  );
+
+  await collector.reconcileStreams();
+  stream.emit("data", Buffer.from("2026-01-01T00:00:00.000Z written while collection was off\n"));
+  stream.emit("data", Buffer.from("2026-01-01T00:00:01.000Z also before it was turned on\n"));
+  stream.emit("data", Buffer.from("2026-01-01T00:00:02.000Z written after\n"));
+
+  await new Promise((resolve) => setImmediate(resolve));
+  const messages = segmentWriter.appendCalls.flatMap((call) => call.lines.map((l) => l.message));
+  assert.equal(messages.length, 1, `expected only the later line, got: ${JSON.stringify(messages)}`);
+  assert.match(messages[0], /written after/);
+});
+
 test("first-ever attach (no prior flush) omits since entirely", async () => {
   const db = fakeDb({ agents: [agentRow()] }); // no segments
   const containerManager = fakeContainerManager(async () => new FakeLogStream());

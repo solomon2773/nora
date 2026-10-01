@@ -369,6 +369,11 @@ async function pollAgentGatewayLogs(agent, cursorState, deps = {}) {
 
   const retentionDays = await resolveRetention(tenant.workspaceId, { db });
   const cutoffMs = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  // Lines written before collection was turned on (still in the agent's log
+  // file) are skipped, but the cursor still moves past them so they are not
+  // fetched again.
+  const collectionSince = deps.getCollectionSince ? await deps.getCollectionSince() : null;
+  const sinceMs = collectionSince ? Date.parse(collectionSince) : NaN;
 
   let appended = 0;
   let dropped = 0;
@@ -378,7 +383,7 @@ async function pollAgentGatewayLogs(agent, cursorState, deps = {}) {
       const normalized = normalize(record, { stream: GATEWAY_STREAM, now });
       if (!normalized) continue; // silent-level record — suppressed, not a real event
       const effectiveTsMs = Date.parse(normalized.ts || normalized.observed_ts);
-      if (Number.isFinite(effectiveTsMs) && effectiveTsMs < cutoffMs) {
+      if (Number.isFinite(effectiveTsMs) && (effectiveTsMs < cutoffMs || effectiveTsMs < sinceMs)) {
         dropped += 1;
         continue;
       }
@@ -474,6 +479,9 @@ function createGatewayCollector(deps = {}) {
   // Policy lives with the caller (worker.ts passes the platform's log
   // collection gate); a collector built without one just collects.
   const isCollectionEnabled = deps.isCollectionEnabled || (async () => true);
+  // See logCollector.ts: output older than the moment collection was turned on
+  // is never collected.
+  const getCollectionSince = deps.getCollectionSince || (async () => null);
 
   if (!segmentWriter) {
     throw new Error("createGatewayCollector requires deps.segmentWriter");
@@ -519,6 +527,7 @@ function createGatewayCollector(deps = {}) {
         resolveLogRetention: resolveRetention,
         logger,
         callLogsTail: callTail,
+        getCollectionSince,
       });
     } catch (error) {
       logger.warn(

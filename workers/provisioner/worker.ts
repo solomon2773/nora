@@ -5802,6 +5802,8 @@ segmentWriter?.startParkedSegmentRetry?.();
 const { getLogCollectionGate } = require("./logs/logCollectionState");
 const logCollectionGate = getLogCollectionGate();
 const isCollectionEnabled = () => logCollectionGate.isEnabled();
+// Output older than the moment an admin turned collection on is never collected.
+const getCollectionSince = () => logCollectionGate.since();
 (async () => {
   try {
     const state = await logCollectionGate.state();
@@ -5829,7 +5831,7 @@ const isCollectionEnabled = () => logCollectionGate.isEnabled();
   }
 })();
 const { startLogCollector } = require("./logs/logCollector");
-const logCollector = startLogCollector({ segmentWriter, isCollectionEnabled });
+const logCollector = startLogCollector({ segmentWriter, isCollectionEnabled, getCollectionSince });
 
 // "Delete all collected logs" requests recorded by backend-api are carried out
 // here, because this process owns the segment writer's buffers (they must be
@@ -5860,7 +5862,7 @@ startLogPurgeRunner({ segmentWriter });
 // combined registration for why calling it twice would silently drop
 // whichever collector registered first.
 const { startGatewayCollector } = require("./logs/gatewayCollector");
-const gatewayCollector = startGatewayCollector({ segmentWriter, isCollectionEnabled });
+const gatewayCollector = startGatewayCollector({ segmentWriter, isCollectionEnabled, getCollectionSince });
 
 // An admin flipping the setting should take effect within seconds, not at the
 // collectors' next 30-second reconcile tick — after "turn off", agent output
