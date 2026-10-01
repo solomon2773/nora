@@ -191,8 +191,6 @@ async function readPlatformLogStorageRow(deps = {}) {
   }
 }
 
-let cachedConfigPromise = null;
-
 /**
  * Resolve the platform-wide log segment storage destination: platform
  * settings row when one exists (once Phase 5 lands it), the NORA_LOG_* env
@@ -233,35 +231,68 @@ async function resolveLogStorageConfig(deps) {
   return objectStorage.normalizeStorageConfig(raw);
 }
 
+// Short-lived cache of the resolved destination. worker-provisioner and
+// backend-api are separate processes, so when an admin changes the destination
+// through backend-api, invalidating backend-api's cache does not reach the
+// worker: a cache that lived until restart kept writing new segments to the OLD
+// destination (found by changing it against a running worker). A few seconds
+// bounds how long a change takes to reach the worker and keeps the flush and
+// sweep paths from hitting the database on every call.
+const CONFIG_CACHE_TTL_MS = 5_000;
+
 /**
+ * A cached async value that is re-resolved after `ttlMs`, shares one in-flight
+ * resolve between concurrent callers, and never caches a failure.
+ */
+function createCachedResolver({ resolve, ttlMs = CONFIG_CACHE_TTL_MS, now = Date.now }) {
+  let cached = null;
+  let cachedAt = 0;
+  return {
+    get() {
+      if (!cached || now() - cachedAt >= ttlMs) {
+        cachedAt = now();
+        cached = Promise.resolve()
+          .then(resolve)
+          .catch((error) => {
+            // Don't cache a rejected promise — a transient DB hiccup shouldn't
+            // wedge every flush in the window onto a failure.
+            cached = null;
+            throw error;
+          });
+      }
+      return cached;
+    },
+    invalidate() {
+      cached = null;
+    },
+  };
+}
+
+const destinationResolver = createCachedResolver({ resolve: () => resolveLogStorageConfig({}) });
+
+/**
+ * Resolve the platform-wide log segment storage destination: platform
+ * settings row when one exists, the NORA_LOG_* env block otherwise. Cached for
+ * a few seconds (see CONFIG_CACHE_TTL_MS).
+ *
  * @param {Object} [deps] - injectable `{ db, decrypt }` for tests. Passing
- *   any deps bypasses the module-level cache below (tests want a fresh
- *   resolve per call, not the production memoization); the real production
- *   call site — always zero-arg — keeps using the cache exactly as before.
+ *   any deps bypasses the cache (tests want a fresh resolve per call); the
+ *   real production call site — always zero-arg — uses it.
  */
 async function logStorageConfig(deps = {}) {
   if (Object.keys(deps).length > 0) {
     return resolveLogStorageConfig(deps);
   }
-  if (!cachedConfigPromise) {
-    cachedConfigPromise = resolveLogStorageConfig(deps).catch((error) => {
-      // Don't cache a rejected promise — a transient DB hiccup shouldn't
-      // permanently wedge every future flush onto a failure.
-      cachedConfigPromise = null;
-      throw error;
-    });
-  }
-  return cachedConfigPromise;
+  return destinationResolver.get();
 }
 
 /**
- * Invalidate the cached destination. Call after any change to the resolved
- * destination — today that's only ever an env change (requires a process
- * restart to pick up anyway), but this is the explicit hook Phase 5b's
- * `PUT /admin/log-storage` will call once it exists.
+ * Drop the cached destination so the next call re-reads it. backend-api calls
+ * this after an admin change, which only affects its own process; the worker
+ * picks changes up when its short cache expires.
  */
 function invalidateLogStorageConfigCache() {
-  cachedConfigPromise = null;
+  destinationResolver.invalidate();
 }
 
 /**
@@ -345,6 +376,8 @@ module.exports = {
   readPlatformLogStorageRow,
   logStorageConfig,
   invalidateLogStorageConfigCache,
+  createCachedResolver,
+  CONFIG_CACHE_TTL_MS,
   storageConfigForSegment,
   logStorageConfigSnapshot,
   assertDriverSupportsTargets,
