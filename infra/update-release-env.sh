@@ -57,8 +57,16 @@ resolve_docker_gid() {
     return 1
   fi
 
+  # Docker Desktop on macOS exposes the socket as root:root (gid 0) inside its
+  # VM; the host symlink's gid (e.g. "daemon" = 1) is meaningless to containers.
+  # Keep in sync with resolve_docker_gid in setup.sh.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    printf '0\n'
+    return 0
+  fi
+
   socket_gid="$(
-    stat -c '%g' "$socket_path" 2>/dev/null ||
+    stat -L -c '%g' "$socket_path" 2>/dev/null ||
       stat -f '%g' "$socket_path" 2>/dev/null ||
       true
   )"
