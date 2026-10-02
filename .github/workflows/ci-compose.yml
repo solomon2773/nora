@@ -160,8 +160,14 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: workers/provisioner/package-lock.json
+          cache-dependency-path: |
+            workers/provisioner/package-lock.json
+            backend-api/package-lock.json
       - run: npm ci
+      # The worker loads backend-api modules (db, otlpDecode, ...) that resolve
+      # pg and protobufjs from backend-api/node_modules, as the worker image does.
+      - run: npm ci
+        working-directory: backend-api
       - run: npm test
 
   worker-backup-validation:
