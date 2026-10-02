@@ -8,6 +8,7 @@ const { resolveAgentBackendType } = require("./agentRuntimeFields");
 const { extractSessionTokenFromUpgrade } = require("./authCookie");
 const { findAccessibleAgentForActor } = require("./middleware/ownership");
 const { assertRemoteHostAgentUse, isRemoteHostAccessRevokedError } = require("./remoteHosts");
+const { createLogChunkStreamParser } = require("../agent-runtime/lib/logLine");
 
 const ACCESS_RECHECK_MS = Math.max(
   250,
@@ -249,48 +250,38 @@ function attachLogStream(server) {
         );
 
         // Parse log lines (handles Docker multiplexed stream + raw streams)
+        // via the shared parser in agent-runtime/lib/logLine.ts, so the live
+        // viewer and the log collector never drift apart on
+        // framing, timestamp extraction, or level inference. The wire shape
+        // sent to the browser — { type, timestamp, level, message } — is
+        // unchanged; `timestamp` prefers the parsed source timestamp and
+        // falls back to the collector's observed time, exactly as before.
+        //
+        // One stateful parser per connection: a `data` chunk lands at an
+        // arbitrary byte offset, so a multi-byte character or a Docker
+        // frame header can straddle two chunks. Parsing each chunk in
+        // isolation (the stateless `parseContainerLogChunk`) corrupted
+        // whichever byte(s) straddled the split into a stray `�`.
+        const streamParser = createLogChunkStreamParser({ stream: "runtime" });
+        const sendLine = (line) => {
+          ws.send(
+            JSON.stringify({
+              type: "log",
+              timestamp: line.ts ?? line.observed_ts,
+              level: line.level,
+              message: line.message,
+            }),
+          );
+        };
+
         logStream.on("data", (chunk) => {
           if (ws.readyState !== 1) return;
-          // Docker multiplexed stream: 8-byte header per frame
-          // Skip the 8-byte docker header if present (stream_type byte > 2 means no header)
-          let payload = chunk;
-          if (
-            chunk.length > 8 &&
-            chunk[0] <= 2 &&
-            chunk[1] === 0 &&
-            chunk[2] === 0 &&
-            chunk[3] === 0
-          ) {
-            payload = chunk.slice(8);
-          }
-          const text = payload.toString("utf8").trim();
-          if (!text) return;
-
-          for (const line of text.split("\n")) {
-            if (!line.trim()) continue;
-
-            // Docker timestamps format: 2024-01-15T12:34:56.789Z <message>
-            let timestamp = new Date().toISOString();
-            let message = line;
-            const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)\s+(.*)/);
-            if (tsMatch) {
-              timestamp = tsMatch[1];
-              message = tsMatch[2];
-            }
-
-            // Infer log level from message content
-            let level = "INFO";
-            const upper = message.toUpperCase();
-            if (upper.includes("ERROR") || upper.includes("ERR ")) level = "ERROR";
-            else if (upper.includes("WARN")) level = "WARN";
-            else if (upper.includes("DEBUG")) level = "DEBUG";
-
-            ws.send(JSON.stringify({ type: "log", timestamp, level, message }));
-          }
+          streamParser.push(chunk).forEach(sendLine);
         });
 
         logStream.on("end", () => {
           if (ws.readyState === 1) {
+            streamParser.flush().forEach(sendLine);
             ws.send(
               JSON.stringify({
                 type: "system",

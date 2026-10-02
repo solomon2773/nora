@@ -4,9 +4,12 @@ import { useEffect, useState } from "react";
 import {
   ArrowUpRight,
   Activity,
+  Database,
   FileText,
   Archive,
   Boxes,
+  History,
+  ScrollText,
   LayoutDashboard,
   LogOut,
   SlidersHorizontal,
@@ -16,11 +19,13 @@ import {
   TriangleAlert,
   Users,
   UsersRound,
+  X,
 } from "lucide-react";
 import { clsx } from "clsx";
-import { formatDateTime } from "../lib/format";
+import { formatBytes, formatDateTime } from "../lib/format";
 import LanguageSwitcher from "./LanguageSwitcher";
 import { useI18n } from "../lib/i18n";
+import { shouldShowUndecidedBanner } from "../lib/logCollection";
 
 const NAV_ITEMS = [
   { name: "Overview", icon: LayoutDashboard, href: "/" },
@@ -35,6 +40,7 @@ const NAV_ITEMS = [
   { name: "Agent Hub", icon: ShoppingBag, href: "/agent-hub" },
   { name: "Backups", icon: Archive, href: "/backups" },
   { name: "Audit", icon: FileText, href: "/audit" },
+  { name: "Log Recovery", icon: History, href: "/log-recovery" },
   { name: "Settings", icon: SlidersHorizontal, href: "/settings" },
 ];
 
@@ -62,6 +68,10 @@ export default function AdminLayout({ children }) {
   const { loginPath, t } = useI18n();
   const [release, setRelease] = useState(null);
   const [systemBanner, setSystemBanner] = useState(null);
+  const [logStorageCapacity, setLogStorageCapacity] = useState(null);
+  const [capacityBannerDismissed, setCapacityBannerDismissed] = useState(false);
+  const [logCollection, setLogCollection] = useState(null);
+  const [collectionBannerDismissed, setCollectionBannerDismissed] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -81,14 +91,102 @@ export default function AdminLayout({ children }) {
       }
     }
 
+    // Log storage capacity, same polling cadence as the release/system
+    // banners above — this is what drives the Drive-style "N% of storage
+    // used" banner below. `GET /admin/log-storage` is admin-only (this
+    // layout is only ever mounted for an authenticated admin), and its
+    // response is small even though it carries the full destination
+    // settings alongside `capacity` — a dedicated capacity-only endpoint
+    // wasn't worth adding just to shave a few masked-credential fields off
+    // a request that already happens every 60s regardless.
+    async function loadLogStorageCapacity() {
+      try {
+        const response = await fetch("/api/admin/log-storage");
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => ({}));
+        if (active) setLogStorageCapacity(payload?.capacity || null);
+      } catch {
+        // Same fallback posture as loadRelease — don't let this block the
+        // admin shell from rendering.
+      }
+    }
+
+    // Whether anyone has decided about log collection yet. After an upgrade
+    // it is off until an admin chooses, so this drives a "not decided" banner.
+    async function loadLogCollection() {
+      try {
+        const response = await fetch("/api/admin/log-collection");
+        if (!response.ok) return;
+        const payload = await response.json().catch(() => ({}));
+        if (active)
+          setLogCollection({
+            enabled: Boolean(payload?.enabled),
+            decided: Boolean(payload?.decided),
+          });
+      } catch {
+        // Same fallback posture as the loaders above.
+      }
+    }
+
     loadRelease();
-    const intervalId = setInterval(loadRelease, 60000);
+    loadLogStorageCapacity();
+    loadLogCollection();
+    const intervalId = setInterval(() => {
+      loadRelease();
+      loadLogStorageCapacity();
+      loadLogCollection();
+    }, 60000);
 
     return () => {
       active = false;
       clearInterval(intervalId);
     };
   }, []);
+
+  // Dismissal is per browser tab/session (sessionStorage), not permanent —
+  // reopening the admin dashboard in a new tab, or after the browser fully
+  // closes, shows it again if still over threshold. A permanent dismiss
+  // would let an operator dismiss it once and then never be reminded again
+  // even as usage climbs from warning toward halted.
+  useEffect(() => {
+    try {
+      setCapacityBannerDismissed(
+        sessionStorage.getItem("nora-admin-log-storage-banner-dismissed") === "1",
+      );
+    } catch {
+      // sessionStorage can throw in some private-browsing modes — just
+      // never treat the banner as dismissed in that case.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      setCollectionBannerDismissed(
+        sessionStorage.getItem("nora-admin-log-collection-banner-dismissed") === "1",
+      );
+    } catch {
+      // Same as the capacity banner: never treat it as dismissed if storage throws.
+    }
+  }, []);
+
+  function dismissCollectionBanner() {
+    setCollectionBannerDismissed(true);
+    try {
+      sessionStorage.setItem("nora-admin-log-collection-banner-dismissed", "1");
+    } catch {
+      // Best-effort — the in-memory state still hides it for this page's lifetime.
+    }
+  }
+
+  function dismissCapacityBanner() {
+    setCapacityBannerDismissed(true);
+    try {
+      sessionStorage.setItem("nora-admin-log-storage-banner-dismissed", "1");
+    } catch {
+      // Best-effort — the in-memory state above still hides it for the
+      // rest of this page's lifetime even if persistence fails.
+    }
+  }
 
   function handleLogout() {
     localStorage.removeItem("token");
@@ -107,6 +205,25 @@ export default function AdminLayout({ children }) {
     systemBanner?.active && systemBanner?.title && systemBanner?.message,
   );
   const systemBannerCritical = systemBanner?.severity === "critical";
+
+  // "warning"/"halted" only ever come back when a real limitBytes is
+  // configured (an unlimited local cap, or a remote destination with no
+  // cap concept, always resolves to "ok" server-side) — so no separate
+  // null-check is needed here for an unlimited destination.
+  const showCapacityBanner = Boolean(
+    logStorageCapacity &&
+    (logStorageCapacity.state === "warning" || logStorageCapacity.state === "halted") &&
+    !capacityBannerDismissed,
+  );
+  const showCollectionBanner = shouldShowUndecidedBanner(logCollection, collectionBannerDismissed);
+  const capacityCritical = logStorageCapacity?.state === "halted";
+  const capacityPercent =
+    logStorageCapacity?.limitBytes != null && logStorageCapacity.limitBytes > 0
+      ? Math.min(
+          100,
+          Math.round((logStorageCapacity.usedBytes / logStorageCapacity.limitBytes) * 100),
+        )
+      : null;
 
   return (
     <div className="min-h-screen bg-[#eef4fb] text-brand-ink">
@@ -180,6 +297,84 @@ export default function AdminLayout({ children }) {
 
         <main className="flex-1">
           <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            {showCollectionBanner ? (
+              <div className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 shadow-sm">
+                <ScrollText size={18} className="shrink-0 text-blue-600" />
+                <p className="min-w-0 flex-1 text-sm text-slate-800">
+                  <span className="font-black">{t("Log collection is off.")}</span>{" "}
+                  {t(
+                    "Nora does not store agent logs until you turn it on. Choose whether to collect them, how long to keep them, and how much disk they may use.",
+                  )}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link
+                    href="/settings#log-collection"
+                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-blue-700"
+                  >
+                    {t("Review log collection")}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={dismissCollectionBanner}
+                    aria-label={t("Dismiss")}
+                    className="rounded-full p-1.5 text-slate-500 hover:bg-black/5"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {showCapacityBanner ? (
+              <div
+                className={clsx(
+                  "mb-6 flex flex-wrap items-center gap-3 rounded-2xl border px-5 py-4 shadow-sm",
+                  capacityCritical ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50",
+                )}
+              >
+                <TriangleAlert
+                  size={18}
+                  className={clsx("shrink-0", capacityCritical ? "text-red-600" : "text-amber-600")}
+                />
+                <p className="min-w-0 flex-1 text-sm text-slate-800">
+                  <span className="font-black">
+                    {capacityPercent != null
+                      ? `${capacityPercent}% ${t("of log storage used")}`
+                      : t("Log storage capacity")}
+                  </span>{" "}
+                  {capacityCritical
+                    ? t(
+                        "Local log storage is full — new runtime/gateway log collection is paused until space frees up or the destination changes.",
+                      )
+                    : t(
+                        "Local log storage is nearing its configured limit. Once it's full, new log collection will pause.",
+                      )}{" "}
+                  {logStorageCapacity?.limitBytes != null
+                    ? `(${formatBytes(logStorageCapacity.usedBytes)} / ${formatBytes(logStorageCapacity.limitBytes)})`
+                    : null}
+                </p>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Link
+                    href="/settings#log-storage"
+                    className={clsx(
+                      "inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold shadow-sm transition-all hover:-translate-y-0.5",
+                      capacityCritical
+                        ? "bg-red-600 text-white hover:bg-red-700"
+                        : "bg-amber-500 text-slate-950 hover:bg-amber-400",
+                    )}
+                  >
+                    {t("Manage log storage")}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={dismissCapacityBanner}
+                    aria-label={t("Dismiss")}
+                    className="rounded-full p-1.5 text-slate-500 hover:bg-black/5"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {showSystemBanner ? (
               <section
                 className={clsx(

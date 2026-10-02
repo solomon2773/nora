@@ -97,6 +97,7 @@ const {
 } = require("../../agent-runtime/lib/hermesRuntimeBootstrap");
 const { waitForAgentReadiness } = require("./healthChecks");
 const { runDemoActivationCanary } = require("./demoActivationCanary");
+const { createSegmentWriter } = require("./logs/segmentWriter");
 const {
   acquireDedicatedSessionLock,
   finalizeProvisionedDeployment,
@@ -4328,6 +4329,17 @@ console.log(
   `Provisioner worker started [enabled backends=${enabledBackends.join(", ") || "docker"} default backend=${getDefaultBackend()} concurrency=${DEPLOYMENT_WORKER_CONCURRENCY}]`,
 );
 
+// Warn (never fail boot) when the
+// `local` log storage driver can't reach every enabled deploy target.
+{
+  const { assertDriverSupportsTargets } = require("./logs/logStorageConfig");
+  const configuredLogStorage =
+    String(process.env.NORA_LOG_STORAGE || "local")
+      .trim()
+      .toLowerCase() || "local";
+  assertDriverSupportsTargets(configuredLogStorage, enabledBackends);
+}
+
 // ── Worker ───────────────────────────────────────────────
 const worker = new Worker(
   "deployments",
@@ -5612,11 +5624,109 @@ scheduleRunWorker.on("completed", (job) => {
   );
 });
 
+// ── Span Ingest Worker ──────────────────────────────
+// Drains OTLP trace-export jobs enqueued by backend-api/routes/otlp.ts and
+// batch-inserts into agent_spans. Reuses this file's existing `db` pool
+// rather than opening a second one; drainSpanIngest lazily creates its own
+// pool only when no pool is injected (e.g. under test).
+const { drainSpanIngest } = require("./spanDrain");
+const SPAN_INGEST_CONCURRENCY = parsePositiveInteger(process.env.SPAN_INGEST_WORKER_CONCURRENCY, 5);
+
+const spanIngestWorker = new Worker(
+  "span-ingest",
+  async (job) => drainSpanIngest(job, { pool: db }),
+  { connection, concurrency: SPAN_INGEST_CONCURRENCY },
+);
+
+spanIngestWorker.on("failed", (job, err) => {
+  console.error(`[span-ingest] Job ${job?.id} failed: ${err.message}`);
+});
+
+spanIngestWorker.on("completed", (job, result) => {
+  if (result?.inserted) {
+    console.log(`[span-ingest] Job ${job.id} inserted ${result.inserted} span(s)`);
+  }
+});
+
 // ── Health Check Server ──────────────────────────────────────────
+//
+// This same server also
+// exposes GET /internal/log-buffer, an internal-only endpoint backend-api's
+// searchLogs() calls to merge the last few not-yet-flushed minutes of a
+// live agent's logs into a search result. Extending this existing server —
+// rather than starting a second HTTP listener — is deliberate: it reuses
+// worker.ts's established health-check server pattern.
+//
+// This endpoint is NOT published to the host by docker-compose (only
+// /health is probed, in-network, by the healthcheck directive) and no
+// Kubernetes Service exposes port 4001 outside the pod either — so in
+// practice it is reachable only from other containers on the same Compose
+// network today, and not at all from a Kubernetes backend-api pod until a
+// Service is added for worker-provisioner (out of scope here; searchLogs()
+// treats "unreachable" as an expected, gracefully-degraded case for exactly
+// this reason — see logSearch.ts). It still authenticates with a shared
+// secret (the same JWT_SECRET both services already require) rather than
+// relying solely on network placement, because a buffered gateway log line
+// can contain a secret value and defense in depth costs nothing here.
+//
+// Replica-count caveat (flagged explicitly, not silently
+// assumed): `infra/helm/nora/values.yaml` defaults `workerProvisioner.replicas`
+// to 1 and docker-compose runs a single container unless an operator passes
+// `--scale`. The Helm chart now fails the render when log collection is on
+// with more than one replica, but docker-compose has no such guard. This endpoint is
+// written defensively rather than assuming the pin holds: if backend-api's
+// request happens to land on a worker replica that does not hold the
+// requested agent's buffer, this simply returns `{ found: false }` — a safe,
+// silent "nothing buffered here" rather than a wrong answer — because
+// logSearch.ts's overlap rule only ever *adds* buffer lines strictly newer
+// than the newest segment actually read, never removes or overrides storage
+// results. There is no cross-replica routing here; if worker-provisioner
+// ever scales out for real, this degrades to "the recency gap is closed
+// only when the request happens to reach the right replica," not to
+// incorrect results.
 const http = require("http");
+const { timingSafeEqual } = require("crypto");
 const HEALTH_PORT = parseInt(process.env.WORKER_HEALTH_PORT || "4001");
+
+function isAuthorizedInternalRequest(req) {
+  const expected = String(process.env.JWT_SECRET || "");
+  if (!expected) return false;
+  const provided = String(req.headers["x-nora-internal-key"] || "");
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  if (expectedBuf.length !== providedBuf.length) return false;
+  return timingSafeEqual(expectedBuf, providedBuf);
+}
+
+function handleInternalLogBufferRequest(req, res) {
+  if (!isAuthorizedInternalRequest(req)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "unauthorized" }));
+    return;
+  }
+  const url = new URL(req.url, "http://internal");
+  const agentId = url.searchParams.get("agentId");
+  const stream = url.searchParams.get("stream");
+  if (!agentId || !stream) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "agentId and stream query params are required" }));
+    return;
+  }
+  let snapshot = null;
+  try {
+    snapshot = segmentWriter.peekBuffer(agentId, stream);
+  } catch (error) {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: error.message }));
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(snapshot ? { found: true, ...snapshot } : { found: false }));
+}
+
 const healthServer = http.createServer((req, res) => {
-  if (req.url === "/health") {
+  const url = req.url || "";
+  if (url === "/health") {
     const isReady =
       worker.isRunning() &&
       clawhubJobsWorker.isRunning() &&
@@ -5625,6 +5735,8 @@ const healthServer = http.createServer((req, res) => {
       scheduleRunWorker.isRunning();
     res.writeHead(isReady ? 200 : 503, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: isReady ? "ok" : "not_ready", uptime: process.uptime() }));
+  } else if (url.startsWith("/internal/log-buffer")) {
+    handleInternalLogBufferRequest(req, res);
   } else {
     res.writeHead(404);
     res.end();
@@ -5633,6 +5745,357 @@ const healthServer = http.createServer((req, res) => {
 healthServer.listen(HEALTH_PORT, () => {
   console.log(`Worker health check listening on port ${HEALTH_PORT}`);
 });
+
+// ── Graceful Shutdown Coordinator ──────────────────────────────
+//
+// Without `process.on("SIGTERM"/"SIGINT", ...)` handling, a plain
+// `docker compose restart` (not only a
+// crash) would silently discard up to 15 minutes of buffered-but-unflushed
+// log lines, because segments deliberately do NOT flush on stream end (see
+// segmentWriter.ts) — SIGTERM is one of only three flush triggers.
+//
+// The single segment writer instance for this process. Constructing it here
+// does NOT require NORA_LOG_ENCRYPTION_KEY or any NORA_LOG_* storage
+// destination to be configured — createSegmentWriter() defers loading the
+// encryption key ring and resolving storage config until the first actual
+// flush, so an installation that hasn't touched the new log-storage env
+// block yet still boots exactly as before. The log collectors call
+// `.append()` on this instance.
+//
+// NORA_LOG_FLUSH_INTERVAL_MS overrides the 15-minute default flush timer —
+// unset in normal operation, useful for exercising the segment/retention/
+// migration path on a short local dev cycle without waiting 15 minutes.
+const segmentWriter = createSegmentWriter(
+  process.env.NORA_LOG_FLUSH_INTERVAL_MS
+    ? { flushIntervalMs: Number(process.env.NORA_LOG_FLUSH_INTERVAL_MS) }
+    : {},
+);
+// Re-upload segments parked to local staging during a remote-destination
+// outage. Previously built but never scheduled, so parked
+// segments stayed stranded on disk forever after the destination recovered.
+segmentWriter?.startParkedSegmentRetry?.();
+
+// ── Log Collector ──────────────────────────────
+//
+// Maintains one live follow stream per running/warning agent with a
+// container, feeding parsed lines into `segmentWriter` above. See
+// logs/logCollector.ts's module header for the full design rationale
+// (level-triggered reconcile, cursor-advances-only-after-flush replay,
+// capacity-paused disconnect, tenant re-resolution on reconnect).
+//
+// Constructing it here does not require any NORA_LOG_* configuration to be
+// present — like `segmentWriter` above, storage/encryption config is only
+// resolved lazily, at the first actual flush. `start()` begins the 30s
+// reconcile timer immediately; `stopReconciler`/`stopCollector` are wired
+// into the shutdown coordinator below via `registerLogPipelineHooks`, in
+// the exact two-hook shape it already expects.
+//
+// Collection is opt-in and an admin can switch it while the worker runs, so
+// the collectors always start and ask this gate on every reconcile tick
+// (database setting first, then NORA_LOG_ENABLED, otherwise off — see
+// logs/logCollectionState.ts). Retention sweeps run either way.
+const { getLogCollectionGate } = require("./logs/logCollectionState");
+const logCollectionGate = getLogCollectionGate();
+const isCollectionEnabled = () => logCollectionGate.isEnabled();
+// Output older than the moment an admin turned collection on is never collected.
+const getCollectionSince = () => logCollectionGate.since();
+(async () => {
+  try {
+    const state = await logCollectionGate.state();
+    if (!state.enabled) {
+      console.log(
+        state.decided
+          ? `[worker] Log collection is off (${state.source}); retention sweeps still run.`
+          : "[worker] Log collection is off until an admin enables it (Admin -> Settings -> Log Collection, or NORA_LOG_ENABLED=true); retention sweeps still run.",
+      );
+      return;
+    }
+    // The key is otherwise only read on the first flush (~15 minutes after an
+    // agent starts), and the healthcheck stays green meanwhile — say so now.
+    const { logEncryptionKeyProblem } = require("./logs/logKeyCheck");
+    const keyProblem = logEncryptionKeyProblem();
+    if (keyProblem) {
+      console.warn(
+        `[worker] Log collection is on but logs cannot be saved: ${keyProblem}. ` +
+          "Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart worker-provisioner, " +
+          "or turn collection off.",
+      );
+    }
+  } catch (error) {
+    console.warn(`[worker] Could not read the log collection setting at startup: ${error.message}`);
+  }
+})();
+const { startLogCollector } = require("./logs/logCollector");
+const logCollector = startLogCollector({ segmentWriter, isCollectionEnabled, getCollectionSince });
+
+// "Delete all collected logs" requests recorded by backend-api are carried out
+// here, because this process owns the segment writer's buffers (they must be
+// discarded first). A request survives a restart: the job state is in the
+// database and an interrupted job resumes.
+const { startLogPurgeRunner } = require("./logs/logPurge");
+// (It reads the setting fresh itself — the cached gate can be a few seconds stale.)
+startLogPurgeRunner({ segmentWriter });
+
+// ── Gateway Log Collector ──────────────────────────────
+//
+// Sibling to `logCollector` above: polls OpenClaw's `logs.tail` gateway RPC
+// per agent (rather than following container stdout/stderr) and writes
+// `gateway`-stream segments through the SAME `segmentWriter` instance — see
+// logs/gatewayCollector.ts's module header for the full design rationale
+// (per-source-kind persisted cursors, cursor-advances-only-after-flush,
+// adaptive poll interval, retention-cutoff filtering at ingest, the second
+// pattern-based redaction pass, and the consoleLevel:warn config
+// reconciliation that keeps the runtime and gateway streams from
+// duplicating every line).
+//
+// Like `logCollector`, constructing this does not require any NORA_LOG_*
+// configuration to be present up front. `start()` begins its own 30s
+// reconcile timer immediately (the same cadence `logCollector` uses, though
+// the two reconcile independently of one another); `stopReconciler`/
+// `stopCollector` are combined with `logCollector`'s own hooks below, since
+// `registerLogPipelineHooks` only holds one slot for each — see that
+// combined registration for why calling it twice would silently drop
+// whichever collector registered first.
+const { startGatewayCollector } = require("./logs/gatewayCollector");
+const gatewayCollector = startGatewayCollector({
+  segmentWriter,
+  isCollectionEnabled,
+  getCollectionSince,
+});
+
+// An admin flipping the setting should take effect within seconds, not at the
+// collectors' next 30-second reconcile tick — after "turn off", agent output
+// must stop being saved promptly. The gate re-reads the setting every few
+// seconds; when it changes, reconcile both collectors right away.
+let lastCollectionEnabled = null;
+const collectionWatcher = setInterval(async () => {
+  try {
+    const enabled = await isCollectionEnabled();
+    if (lastCollectionEnabled !== null && enabled !== lastCollectionEnabled) {
+      console.log(`[worker] Log collection turned ${enabled ? "on" : "off"}.`);
+      await Promise.allSettled([
+        logCollector.reconcileStreams?.(),
+        gatewayCollector.reconcileStreams?.(),
+      ]);
+    }
+    lastCollectionEnabled = enabled;
+  } catch (error) {
+    console.warn(`[worker] Could not check the log collection setting: ${error.message}`);
+  }
+}, 5000);
+if (typeof collectionWatcher.unref === "function") collectionWatcher.unref();
+
+// ── Storage Migration Resume ──────────────────────────────
+//
+// Pick up any `running` or `paused` storage_migration_jobs row left over
+// from an ungraceful restart. A `paused` job is driven exactly like a
+// `running` one — resumeStorageMigration() does not distinguish — but
+// migrateSegmentBatch() re-checks the shared capacity gate before it
+// advances anything, so a job that's still over the cap at restart time
+// simply re-confirms `paused` and stops again immediately. See
+// storageMigration.ts's module header for why this is a fire-and-forget
+// call: the loop it starts is self-driving and checkpoints itself.
+const { resumeStorageMigration } = require("./logs/storageMigration");
+Promise.resolve()
+  .then(() => resumeStorageMigration())
+  .catch((error) => {
+    console.error(`[worker] resumeStorageMigration failed at boot: ${error.message}`);
+  });
+
+// ── Retention Sweeper ──────────────────────────────
+//
+// Starts the hourly retention sweep, the daily storage reconciliation, and
+// the capacity-state check that `GET /admin/log-storage`'s `capacity.state`
+// (and the admin dashboard's storage-capacity banner) reads. This was
+// built in retentionSweeper.ts but never actually called from anywhere in
+// this file — every one of those three loops was dead code in production:
+// expired logs were never swept, orphaned storage objects were never
+// reconciled, and `capacity.state` stayed frozen at its "ok" initial value
+// forever regardless of real usage, since only `checkCapacityState()` (the
+// third loop) ever updates it and nothing was invoking that either. All
+// three timers are `.unref()`'d internally (see startRetentionSweeper's
+// own doc comment), so — like the log collector above — this never blocks
+// graceful shutdown and needs no shutdown-coordinator hook.
+const { startRetentionSweeper } = require("./logs/retentionSweeper");
+startRetentionSweeper();
+
+// Stop-hook registry for the shutdown coordinator. The collector and
+// reconciler register their stop hooks via
+// `registerLogPipelineHooks({ stopCollector, stopReconciler })` immediately
+// below, so both hooks are wired from process start.
+const logPipelineHooks = { stopCollector: null, stopReconciler: null };
+function registerLogPipelineHooks(hooks = {}) {
+  if (typeof hooks.stopCollector === "function") {
+    logPipelineHooks.stopCollector = hooks.stopCollector;
+  }
+  if (typeof hooks.stopReconciler === "function") {
+    logPipelineHooks.stopReconciler = hooks.stopReconciler;
+  }
+}
+
+/**
+ * Installs SIGTERM/SIGINT handlers that: (a) stop the log collector from
+ * accepting new lines and the reconciler from starting new attaches, via
+ * whatever hooks `getLogPipelineHooks()` currently returns; (b) call the
+ * segment writer's `flushAll()`; (c) wait up to `deadlineMs` (default 10s)
+ * for those flushes to land; (d) let the process exit regardless of whether
+ * the deadline was hit, logging a warning if it was.
+ *
+ * Every dependency is passed in explicitly (no reliance on this module's
+ * own top-level state) so this function is directly unit-testable with a
+ * fake process-like object and a fake segment writer — see
+ * segmentWriter.test.js.
+ *
+ * ── Decision: in-flight BullMQ provisioning jobs are NOT waited on ──────
+ *
+ * This process also drains several BullMQ queues via `new Worker(...)`
+ * above (`deployments`, `clawhub-jobs`, `hermes-skills-jobs`,
+ * `k8s-policy-settings`, `alert-deliveries`, `agent-schedules`). Shutdown
+ * deliberately does NOT call `.close()` on any of them, and does NOT wait
+ * for their in-flight jobs to finish, for two reasons:
+ *
+ *   1. BullMQ jobs already have an independent durability mechanism —
+ *      `lockDuration`/`stalledInterval` — that reclaims and retries a job
+ *      whose worker disappears mid-processing. An interrupted provisioning
+ *      job is not lost the way an interrupted-and-never-flushed log buffer
+ *      would be; it resumes on whichever worker replica picks up the
+ *      stalled job next. Waiting for it here would duplicate a safety net
+ *      that already exists elsewhere in the stack.
+ *   2. Some of those jobs (container creation, image pulls, Kubernetes
+ *      pod scheduling) can legitimately run for minutes. Blocking shutdown
+ *      on them would make the bounded, fast-exit guarantee this coordinator
+ *      exists to provide meaningless in practice, and would make Docker
+ *      Compose / Kubernetes rolling restarts wait far longer than their own
+ *      termination grace periods, likely ending in a SIGKILL anyway.
+ *
+ * The bounded deadline in this coordinator therefore protects exactly one
+ * thing: getting buffered log lines durably written before exit. It is not
+ * a general "drain everything" shutdown.
+ */
+function registerShutdownCoordinator({
+  process: proc = process,
+  segmentWriter: writer = segmentWriter,
+  getLogPipelineHooks: getHooks = () => logPipelineHooks,
+  // Was 10000ms. Raised to 20000ms: segmentWriter.ts's own write-retry
+  // ladder (putWithRetryOrPark's backoff, [500,1000,2000,4000,8000]ms) sums
+  // to ~15.5s on its own — a single retried write during flushAll() could
+  // never finish inside a 10s deadline even under otherwise-ideal
+  // conditions. A live repro confirmed that a plain
+  // local flush, with nothing artificially slowed down, could still lose
+  // this race and drop a buffered segment outright. 20s gives one full
+  // retry-ladder cycle real headroom to complete before the deadline fires.
+  deadlineMs = 20000,
+  logger = console,
+  onShutdownComplete,
+} = {}) {
+  let shuttingDown = false;
+
+  async function runShutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.log(
+      `[shutdown] received ${signal}, starting graceful shutdown (deadline ${deadlineMs}ms)`,
+    );
+
+    const hooks = getHooks() || {};
+    try {
+      if (typeof hooks.stopReconciler === "function") await hooks.stopReconciler();
+    } catch (error) {
+      logger.error(`[shutdown] stopReconciler failed: ${error.message}`);
+    }
+    try {
+      if (typeof hooks.stopCollector === "function") await hooks.stopCollector();
+    } catch (error) {
+      logger.error(`[shutdown] stopCollector failed: ${error.message}`);
+    }
+
+    let deadlineHit = false;
+    // Prefer the writer's own shutdown(): besides flushing every buffer, it
+    // stops new appends and cuts remote-upload retry backoff short so a flush
+    // during a destination outage parks to local staging inside the deadline
+    // instead of being abandoned mid-retry. Plain flushAll() is the fallback
+    // for writers that don't expose shutdown().
+    const drain =
+      writer && typeof writer.shutdown === "function"
+        ? () => writer.shutdown()
+        : writer && typeof writer.flushAll === "function"
+          ? () => writer.flushAll()
+          : null;
+    const flushPromise = drain
+      ? drain().catch((error) => {
+          logger.error(`[shutdown] flushAll rejected: ${error.message}`);
+        })
+      : Promise.resolve();
+    const timeoutPromise = new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        deadlineHit = true;
+        resolve();
+      }, deadlineMs);
+      if (typeof timer.unref === "function") timer.unref();
+    });
+    await Promise.race([flushPromise, timeoutPromise]);
+
+    if (deadlineHit) {
+      logger.warn(
+        `[shutdown] flushAll did not complete within ${deadlineMs}ms — exiting anyway. Any lines ` +
+          `not yet durably flushed will be re-ingested on the next collector attach via the last ` +
+          `successfully flushed cursor (the cursor only advances after a successful flush).`,
+      );
+    } else {
+      logger.log("[shutdown] flush complete, exiting");
+    }
+
+    if (typeof onShutdownComplete === "function") onShutdownComplete({ deadlineHit });
+    proc.exit(0);
+  }
+
+  const onSigterm = () => {
+    runShutdown("SIGTERM").catch((error) => {
+      logger.error(`[shutdown] unexpected error: ${error.message}`);
+      proc.exit(1);
+    });
+  };
+  const onSigint = () => {
+    runShutdown("SIGINT").catch((error) => {
+      logger.error(`[shutdown] unexpected error: ${error.message}`);
+      proc.exit(1);
+    });
+  };
+  proc.on("SIGTERM", onSigterm);
+  proc.on("SIGINT", onSigint);
+
+  return { runShutdown };
+}
+
+// Combined into a single registration: `registerLogPipelineHooks`
+// holds exactly one `stopReconciler`/`stopCollector` slot each, so a second,
+// separate call for `gatewayCollector` would silently overwrite
+// `logCollector`'s hooks rather than adding to them — leaving the
+// container collector never stopped, and its buffers never given the chance
+// to stop accepting new lines before `flushAll()` runs at shutdown.
+//
+// Deliberately NOT declared `async`: an `async () => {...}` wrapper turns a
+// synchronous throw from the first call into a REJECTED PROMISE rather than
+// a synchronous exception, which forces `runShutdown`'s `await
+// hooks.stopReconciler()` to cross a real microtask boundary even when
+// nothing here is actually asynchronous. `shutdownCoordinator.test.js`
+// stubs every relative worker.ts require (including this module) down to a
+// no-op, so in that test both collectors are `undefined` and this function
+// is expected to throw synchronously (caught by runShutdown's own
+// try/catch) so the rest of shutdown — most importantly the `flushAll()`
+// call — proceeds within the same synchronous turn the test asserts on.
+// `Promise.resolve(...).then(...)` preserves that: a synchronous property
+// access on `undefined` still throws synchronously out of this plain
+// function, while a real, genuinely-async `stopReconciler`/`stopCollector`
+// still chains correctly.
+registerLogPipelineHooks({
+  stopReconciler: () =>
+    Promise.resolve(logCollector.stopReconciler()).then(() => gatewayCollector.stopReconciler()),
+  stopCollector: () =>
+    Promise.resolve(logCollector.stopCollector()).then(() => gatewayCollector.stopCollector()),
+});
+
+registerShutdownCoordinator();
 
 module.exports = {
   allocateAvailableLocalDockerGatewayPort,
@@ -5671,4 +6134,11 @@ module.exports = {
   runHermesSkillDeleteJob,
   reconcileHermesSkills,
   loadHermesSkillJobAgent,
+  segmentWriter,
+  logCollector,
+  gatewayCollector,
+  registerLogPipelineHooks,
+  registerShutdownCoordinator,
+  isAuthorizedInternalRequest,
+  handleInternalLogBufferRequest,
 };

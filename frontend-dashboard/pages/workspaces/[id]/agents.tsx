@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { Bot, FolderOpen, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import Layout from "../../../components/layout/Layout";
+import WorkspaceBackLink from "../../../components/workspaces/WorkspaceBackLink";
 import StatusBadge from "../../../components/agents/StatusBadge";
 import { useToast } from "../../../components/Toast";
 import {
@@ -106,6 +107,7 @@ export default function WorkspaceAgentsPage() {
   return (
     <Layout>
       <div className="flex flex-col gap-8">
+        <WorkspaceBackLink />
         <header className="flex flex-col gap-4 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-blue-600">

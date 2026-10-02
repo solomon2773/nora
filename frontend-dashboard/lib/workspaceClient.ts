@@ -517,3 +517,32 @@ export function roleSatisfies(actual: WorkspaceRole | null, required: WorkspaceR
   if (!actual) return false;
   return ROLE_RANK[actual] >= ROLE_RANK[required];
 }
+
+// `GET`/`PUT /workspaces/:id/log-settings` — see backend-api/routes/
+// observability.ts's `readWorkspaceLogSettingsRow`/PUT handler for the exact
+// contract. Retention is the only logging policy a workspace owns; whether
+// logs and traces are collected is platform-wide (NORA_LOG_ENABLED /
+// NORA_TRACES_ENABLED).
+export interface WorkspaceLogSettings {
+  runtimeRetentionDays: number;
+  traceRetentionDays: number;
+}
+
+export async function getWorkspaceLogSettings(workspaceId: string): Promise<WorkspaceLogSettings> {
+  const res = await fetchWithAuth(`/api/workspaces/${workspaceId}/log-settings`);
+  return jsonOrThrow<WorkspaceLogSettings>(res);
+}
+
+export async function updateWorkspaceLogSettings(
+  workspaceId: string,
+  payload: Partial<{
+    runtimeRetentionDays: number;
+    traceRetentionDays: number;
+  }>,
+): Promise<WorkspaceLogSettings> {
+  const res = await fetchWithAuth(`/api/workspaces/${workspaceId}/log-settings`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+  return jsonOrThrow<WorkspaceLogSettings>(res);
+}

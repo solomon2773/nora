@@ -154,6 +154,7 @@
           },
           "guides/channels",
           "guides/cli",
+          "guides/logging",
           "guides/mcp-server",
           "guides/monitoring",
           "guides/opentelemetry",

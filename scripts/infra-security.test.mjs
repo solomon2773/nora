@@ -1352,9 +1352,14 @@ test("release env refreshes and deduplicates the live Docker socket group", () =
      mkdir -p "$fake_bin"
      printf '%s\n' \
        '#!/bin/sh' \
+       'if [ "$1" = "-L" ]; then shift; fi' \
        'if [ "$1" = "-c" ] && [ "$2" = "%g" ]; then printf "990\\n"; exit 0; fi' \
        'exec /usr/bin/stat "$@"' > "$fake_bin/stat"
      chmod 755 "$fake_bin/stat"
+     # update-release-env.sh special-cases macOS (Docker Desktop's socket is
+     # gid 0 inside its VM), so pin the platform this test is about.
+     printf '%s\n' '#!/bin/sh' 'echo Linux' > "$fake_bin/uname"
+     chmod 755 "$fake_bin/uname"
      printf '%s\n' \
        'NORA_CURRENT_VERSION=v1.16.0' \
        'NORA_CURRENT_COMMIT=old-commit' \

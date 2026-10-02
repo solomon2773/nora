@@ -1,4 +1,4 @@
-import { Bell, Bot, ChevronDown, DollarSign, FolderOpen, Key, Loader2, Users } from "lucide-react";
+import { ChevronDown, FolderOpen, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/router";
 import { clsx } from "clsx";
@@ -120,65 +120,6 @@ export default function WorkspaceSwitcher({ className = "" }: { className?: stri
               <FolderOpen size={14} />
               {t("Manage workspaces")}
             </button>
-            {active && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    router.push(`/workspaces/${active.id}/members`);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  <Users size={14} />
-                  {t("Members & invitations")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    router.push(`/workspaces/${active.id}/agents`);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  <Bot size={14} />
-                  {t("Agents")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    router.push(`/workspaces/${active.id}/api-keys`);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  <Key size={14} />
-                  {t("API Keys")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    router.push(`/workspaces/${active.id}/alerts`);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  <Bell size={14} />
-                  {t("Alert rules")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOpen(false);
-                    router.push(`/workspaces/${active.id}/cost`);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  <DollarSign size={14} />
-                  {t("Cost dashboard")}
-                </button>
-              </>
-            )}
           </div>
         </div>
       )}
