@@ -208,6 +208,12 @@ function s3Config(config = {}) {
   if (!bucket || !accessKeyId || !secretAccessKey) {
     throw new StorageError("S3 storage is not fully configured", "STORAGE_S3_NOT_CONFIGURED");
   }
+  // The bucket is interpolated into the request host (AWS) or path (custom
+  // endpoint), so it must be a plain S3 bucket name and nothing that could
+  // redirect the request.
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(String(bucket))) {
+    throw new StorageError("S3 bucket name is invalid", "STORAGE_S3_INVALID_BUCKET");
+  }
   return { bucket, region, accessKeyId, secretAccessKey, sessionToken, endpoint };
 }
 
