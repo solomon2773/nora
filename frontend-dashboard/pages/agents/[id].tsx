@@ -379,9 +379,9 @@ export default function AgentDetail() {
   }
 
   async function handleDelete(deleteLogs) {
-    // Phase 5c item 1: the backend rejects this request with 400 if
-    // `deleteLogs` is missing — `SettingsTab`'s delete dialog (Phase 8 item
-    // 11) is the only caller and always supplies an explicit boolean, with
+    // The backend rejects this request with 400 if
+    // `deleteLogs` is missing — `SettingsTab`'s delete dialog is the only
+    // caller and always supplies an explicit boolean, with
     // no default, so this should never actually hit that 400 in practice.
     setActionLoading("delete");
     try {

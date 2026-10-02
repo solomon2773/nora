@@ -2,9 +2,9 @@ import { Loader2, Waypoints } from "lucide-react";
 import { clsx } from "clsx";
 import type { TraceSummary } from "../../lib/observabilityClient";
 
-// Trace list — left pane of the Traces lens (Phase 13). Rows show
+// Trace list — left pane of the Traces lens. Rows show
 // started-at, root span name, duration, span count, status, token totals,
-// and cost (Phase 13 spec item 2). Clicking a row selects it; loading its
+// and cost. Clicking a row selects it; loading its
 // detail (span tree + correlated logs) into the right-hand pane is the
 // parent (`TracesLens` in pages/logs/index.tsx)'s job, not this
 // component's — this stays a dumb, presentational list, matching how

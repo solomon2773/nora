@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, matrix rows 6, 8, and 7 — the capacity gate on a migration INTO
+# Matrix rows 6, 8, and 7 — the capacity gate on a migration INTO
 # local, as one real sequence:
 #
 #   row 6  usage crosses the cap mid-run: the job PAUSES at its checkpoint

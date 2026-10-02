@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 6, matrix row 2: search returns a line the agent wrote seconds ago,
+# Matrix row 2: search returns a line the agent wrote seconds ago,
 # before any flush could have persisted it.
 #
 # Segments flush every 15 minutes, so storage alone is always up to a

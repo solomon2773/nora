@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5c, test 9: manual purge from the admin recovery view
+# Test 9: manual purge from the admin recovery view
 # (`DELETE /admin/log-recovery/:id`) removes segments, spans, legacy
 # copies, and the `deleted_log_owners` row itself — against a real running
 # stack, with a real platform-admin JWT.
@@ -18,7 +18,7 @@
 # DELETE /agents/:id path as 01/02 — see 01's header for a KNOWN LOCAL
 # ENVIRONMENT LIMITATION found while writing these scripts: on this dev
 # machine that call currently 500s on a Docker-socket-permission error
-# unrelated to Phase 5c (a pre-existing, already-documented gap in
+# unrelated to log deletion (a pre-existing, already-documented gap in
 # docker-compose.override.yml's DOCKER_GID handling for backend-api on
 # Docker Desktop for Mac). The purge assertions themselves
 # (`DELETE /admin/log-recovery/:id` and its admin-only gating) were

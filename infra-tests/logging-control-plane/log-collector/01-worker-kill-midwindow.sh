@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 4, test 1: "killing the worker mid-window loses no lines."
+# Test 1: "killing the worker mid-window loses no lines."
 #
 # See ../README.md and this directory's README.md for the full rationale.
 # Short version: the plan's durability guarantee is that an ungraceful

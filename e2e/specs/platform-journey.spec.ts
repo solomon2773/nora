@@ -44,7 +44,7 @@ async function deletePlatformAgent(request, token, agentId) {
       method: "DELETE",
       token,
       failOnStatus: false,
-      // Required since the logging control plane's Phase 5c: the caller
+      // Required since the logging control plane's the caller
       // must say whether this agent's logs are deleted or kept. Deleted —
       // e2e cleanup has no reason to keep a throwaway test agent's logs
       // around.
@@ -395,8 +395,7 @@ test.describe("Complete platform journey", () => {
     await expect(page.getByText(workspaceName)).toBeVisible();
 
     // Workspace delete now requires an explicit keep/delete-logs choice
-    // before it's confirmable (logging control plane Phase 5c item 1 /
-    // Phase 8 item 11) — the dialog's own confirm button stays disabled
+    // before it's confirmable — the dialog's own confirm button stays disabled
     // until one is picked.
     await page.getByRole("button", { name: `Delete workspace ${workspaceName}` }).click();
     await page.getByRole("button", { name: "Delete logs" }).click();

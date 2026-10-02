@@ -360,7 +360,7 @@ test("an empty offsets array yields an empty range", () => {
   assert.deepEqual(computeVirtualRangeFromOffsets([0], 0, 600, 8), { startIndex: 0, endIndex: 0 });
 });
 
-// ── resolveTracesLensView (Phase 13 item 6/7) ────────────────────────────
+// ── resolveTracesLensView ────────────────────────────
 
 test("tracing disabled gets the enable-CTA state, regardless of trace count", () => {
   assert.equal(resolveTracesLensView({ tracesEnabled: false, traceCount: 0 }), "enable_cta");
@@ -418,7 +418,7 @@ test("an absent tracingCapability field (older caller) still falls back to empty
   assert.equal(resolveTracesLensView({ tracesEnabled: true, traceCount: 0 }), "empty");
 });
 
-// ── partitionCorrelatedLogs (Phase 13 item 4) ────────────────────────────
+// ── partitionCorrelatedLogs ────────────────────────────
 
 function correlatedLog(overrides: Partial<CorrelatedLogRow>): CorrelatedLogRow {
   return {
@@ -464,7 +464,7 @@ test("partitionCorrelatedLogs handles an all-traced or all-in-window list", () =
   assert.equal(partitionCorrelatedLogs(allWindowOnly).inTrace.length, 0);
 });
 
-// ── computeWaterfallLayout (Phase 13 item 3) ─────────────────────────────
+// ── computeWaterfallLayout ─────────────────────────────
 
 function span(overrides: Partial<SpanRow>): SpanRow {
   return {

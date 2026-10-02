@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 3, test 16: a failing putStorageObject retries, then parks to
+# Test 16: a failing putStorageObject retries, then parks to
 # .staging, then re-uploads once the destination recovers.
 #
 # This test originally surfaced two real bugs, both since fixed:

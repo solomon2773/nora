@@ -251,7 +251,7 @@ function attachLogStream(server) {
 
         // Parse log lines (handles Docker multiplexed stream + raw streams)
         // via the shared parser in agent-runtime/lib/logLine.ts, so the live
-        // viewer and the log collector (Phase 3+) never drift apart on
+        // viewer and the log collector never drift apart on
         // framing, timestamp extraction, or level inference. The wire shape
         // sent to the browser — { type, timestamp, level, message } — is
         // unchanged; `timestamp` prefers the parsed source timestamp and

@@ -254,7 +254,7 @@ describe("DELETE /workspaces/:id", () => {
     expect(res.status).toBe(200);
   });
 
-  describe("Phase 5c: deleteLogs contract", () => {
+  describe("deleteLogs contract", () => {
     it("rejects a request with no deleteLogs, after the workspace-role check but before any delete-related query", async () => {
       mockDb.query.mockResolvedValueOnce({
         rows: [{ id: "ws-1", user_id: "user-1", role: "owner" }],

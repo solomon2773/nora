@@ -3097,7 +3097,7 @@ class K8sBackend extends ProvisionerBackend {
   /**
    * Stream logs from a pod of the deployment.
    */
-  // Logging control plane Phase 4 item 2b: mirror the docker.ts fix — an
+  // Mirror the docker.ts fix — an
   // absent `opts.tail` must mean "all available lines" from the kubelet,
   // not silently default to 100 (`tailLines` omitted entirely rather than
   // substituted). The live WebSocket viewer now passes `tail: 100`

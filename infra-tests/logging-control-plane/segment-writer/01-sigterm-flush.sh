@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Phase 3, test 1: SIGTERM flushes all open buffers before exit.
+# Test 1: SIGTERM flushes all open buffers before exit.
 #
-# This is the single most important test in Phase 3: without the shutdown
+# This is the single most important test in without the shutdown
 # coordinator (registerShutdownCoordinator in worker.ts, added specifically
 # for this), a plain `docker compose restart worker-provisioner` — a
 # routine, GRACEFUL operation an operator does all the time — silently

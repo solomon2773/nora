@@ -34,9 +34,9 @@
 {{- fail "enabledBackends must not include docker for the Helm deployment; no Docker socket is mounted in-cluster" -}}
 {{- end -}}
 {{- /*
-Logging control plane Phase 14 item 4: a Helm install is unambiguously a
-Kubernetes install (unlike a mixed Docker/k8s backend-api install, which is
-legitimate and only gets a boot-time warning per Phase 3 item 20 /
+Log collection on Kubernetes: a Helm install is unambiguously a Kubernetes
+install (unlike a mixed Docker/k8s backend-api install, which is legitimate and
+only gets a boot-time warning from
 workers/provisioner/logs/logStorageConfig.ts's assertDriverSupportsTargets).
 There is no local disk for logs in-cluster, so when log collection is turned
 on with backendEnv.NORA_LOG_ENABLED the `local` segment storage driver — the
@@ -61,11 +61,11 @@ rejected; `ssh` remains allowed alongside k8s.
 {{- end -}}
 {{- end -}}
 {{- if and $logEnabled (eq $logStorageBackend "local") -}}
-{{- fail "backendEnv.NORA_LOG_ENABLED is true, so backendEnv.NORA_LOG_STORAGE must not be \"local\" (or unset, which defaults to \"local\") for the Helm deployment; there is no persistent local disk for log segments in-cluster and the local driver is unsupported on Kubernetes (Design Decision 2d). Set backendEnv.NORA_LOG_STORAGE to \"s3\" or \"r2\" along with the matching NORA_LOG_S3_*/NORA_LOG_R2_* credentials, or leave log collection off." -}}
+{{- fail "backendEnv.NORA_LOG_ENABLED is true, so backendEnv.NORA_LOG_STORAGE must not be \"local\" (or unset, which defaults to \"local\") for the Helm deployment; there is no persistent local disk for log segments in-cluster and the local driver is unsupported on Kubernetes. Set backendEnv.NORA_LOG_STORAGE to \"s3\" or \"r2\" along with the matching NORA_LOG_S3_*/NORA_LOG_R2_* credentials, or leave log collection off." -}}
 {{- end -}}
 {{- /*
-Phase 14 item 8: the log collector's in-memory per-agent buffer lives on
-exactly one worker-provisioner replica (Phase 3/4), and nothing routes a
+The log collector's in-memory per-agent buffer lives on
+exactly one worker-provisioner replica, and nothing routes a
 backend-api buffer read to the correct replica among several — scaling this
 service would cause silent, intermittent duplicate/missing collection with
 no error pointing at the cause. Fail the render rather than let an operator

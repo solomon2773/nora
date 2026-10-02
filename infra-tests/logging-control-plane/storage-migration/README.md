@@ -1,6 +1,4 @@
-# Phase 5b — Storage Destination Migration
-
-**Plan doc:** "Phase 5b: Storage Destination Migration" (line 909).
+# Storage Destination Migration
 
 **Objective:** turn a destination change from an instantaneous cutover into
 an asynchronous, resumable migration of every previously-written segment,

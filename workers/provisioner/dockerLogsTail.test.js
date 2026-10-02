@@ -1,9 +1,9 @@
-// Logging control plane Phase 4 item 2b regression guard: DockerBackend.logs
+// Regression guard: DockerBackend.logs
 // must treat an absent `opts.tail` as "all available lines" (dockerode/the
 // Docker Engine API interpret an omitted `tail` field that way), not the old
 // `opts.tail || 100` default that silently capped every caller at the last
-// 100 lines. This is what makes the log collector's reconnect path (Phase 4
-// item 2/2a) not re-ingest ~100 duplicate lines on every reattach.
+// 100 lines. This is what makes the log collector's reconnect path not
+// re-ingest ~100 duplicate lines on every reattach.
 //
 // DockerBackend's constructor wires up a real dockerode client and a lot of
 // other provisioning machinery this test has no need for, so the instance is

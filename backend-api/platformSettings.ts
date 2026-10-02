@@ -77,10 +77,10 @@ const DEFAULT_BACKUP_PLAN_LIMITS = Object.freeze({
   }),
 });
 
-// Logging control plane (Phase 5): per-plan RETENTION CEILINGS — the maximum
+// Logging control plane: per-plan RETENTION CEILINGS — the maximum
 // number of days a workspace's `workspace_log_settings` value may be clamped
 // to. This is a ceiling, not the per-workspace value itself (that lives in
-// `workspace_log_settings`, per the manifest's Retention Model — the knob
+// `workspace_log_settings` — the knob
 // tenants actually use). Mirrors DEFAULT_BACKUP_PLAN_LIMITS/BACKUP_PLAN_KEYS
 // exactly, including the same three plan tiers, so admins configure both
 // from one consistent mental model.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 6, matrix row 3: a flush landing between search's buffer read and its
+# Matrix row 3: a flush landing between search's buffer read and its
 # storage read yields each line exactly once — no gap, no duplicate.
 #
 # This README row was marked flaky by nature. The window sits a few

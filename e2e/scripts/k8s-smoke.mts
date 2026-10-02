@@ -42,9 +42,9 @@ const SMOKE_CELLS = (process.env.K8S_SMOKE_CELLS || "")
   .map((value) => value.trim())
   .filter(Boolean);
 const NEMOCLAW_MODEL = process.env.NEMOCLAW_DEFAULT_MODEL || "nvidia/nemotron-3-super-120b-a12b";
-// Logging control plane Phase 14 item 6: run-kind-k8s-smoke.sh sets this once
+// Run-kind-k8s-smoke.sh sets this once
 // it has deployed an in-cluster MinIO and pointed NORA_LOG_STORAGE=s3 at it —
-// see that script's "Logging control plane Phase 14 item 6" comment. Left
+// see that script's MinIO setup. Left
 // off by default so run-cloud-k8s-smoke.sh (which calls this same script and
 // does not stand up MinIO) is unaffected.
 const ASSERT_LOG_SEGMENTS = String(process.env.K8S_SMOKE_ASSERT_LOG_SEGMENTS || "") === "true";
@@ -57,8 +57,7 @@ const LOG_SEGMENT_POLL_TIMEOUT_MS = Number.parseInt(
   10,
 );
 // Real object-storage identity, matching run-kind-k8s-smoke.sh's own MinIO
-// deployment — see that script's "Logging control plane Phase 14 item 6"
-// block for where these are set.
+// deployment — see that script's MinIO setup for where these are set.
 const MINIO_NAMESPACE = process.env.MINIO_NAMESPACE || "nora-minio";
 const MINIO_BUCKET = process.env.MINIO_BUCKET || "nora-logs-smoke";
 const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY || "noraminio";
@@ -466,7 +465,7 @@ function isHttpUrl(value) {
 }
 
 /**
- * Logging control plane Phase 14 item 6: confirms a real, persisted
+ * Confirms a real, persisted
  * `log_segments` object for this agent actually exists in the in-cluster
  * MinIO bucket — not merely that `GET /logs/search` returns a line.
  *

@@ -139,7 +139,7 @@ router.get(
 
 /**
  * Resolve `workspaceId` for the session (browser, non-API-key) path of
- * `GET /monitoring/events`. Item 10: this is the Operator lens gaining
+ * `GET /monitoring/events`. This is the Operator lens gaining
  * workspace filtering from a browser session — today only an API key can
  * do this (`getApiKeyWorkspaceOrReject` above), because
  * `buildUserEventScopeClause`'s `workspaceId` branch filters purely on
@@ -153,8 +153,7 @@ router.get(
  * including for a platform admin, who gets no special bypass here: this is
  * the actor-scoped Operator lens, not the fleet-wide `/admin/audit` view,
  * so "I'm an admin" is not an argument for skipping workspace membership on
- * this endpoint any more than it is for /logs/search (see the manifest's
- * `/app/logs` workspace-scoping section, which this mirrors).
+ * this endpoint any more than it is for /logs/search (which this mirrors).
  *
  * @returns {Promise<string|null|false>} the workspaceId to scope by, `null`
  *   when none was requested, or `false` after already writing a rejection

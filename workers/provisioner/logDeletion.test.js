@@ -1,4 +1,4 @@
-// Phase 5c of the logging control plane: agent/workspace log deletion
+// Agent/workspace log deletion
 // choice, deleted_log_owners snapshot/recovery, and manual purge.
 //
 // Follows this package's established convention (segmentWriter.test.js,
@@ -244,7 +244,7 @@ function segmentFixture(overrides = {}) {
   };
 }
 
-// ── deleteAgentLogs / deleteWorkspaceLogs (item 2) ───────────────────────
+// ── deleteAgentLogs / deleteWorkspaceLogs ───────────────────────
 
 test("deleteAgentLogs removes segments, spans, legacy copies for the agent — sibling agent untouched", async () => {
   const targetSeg = segmentFixture({ id: "seg-target", agent_id: "agent-1" });
@@ -309,7 +309,7 @@ test("deleteWorkspaceLogs scopes by workspace_id, not by enumerating member agen
   assert.deepEqual(db.deletedSpanIds, ["span-ws"]);
 });
 
-// ── snapshotDeletedLogOwner (item 3) ─────────────────────────────────────
+// ── snapshotDeletedLogOwner ─────────────────────────────────────
 
 test("snapshotDeletedLogOwner resolves retention_days from workspace_log_settings for an agent's workspace", async () => {
   const db = fakeDb({
@@ -368,7 +368,7 @@ test("workspace deleteLogs:false — retention snapshot survives workspace_log_s
   assert.equal(row.retention_days, 21);
 });
 
-// ── purgeDeletedLogOwner (item 7) ────────────────────────────────────────
+// ── purgeDeletedLogOwner ────────────────────────────────────────
 
 test("purgeDeletedLogOwner removes segments, spans, legacy copies, and the deleted_log_owners row itself", async () => {
   const seg = segmentFixture({ id: "seg-kept", agent_id: "agent-3" });
@@ -417,9 +417,9 @@ test("purgeDeletedLogOwner throws a 404-shaped error for an unknown id", async (
   );
 });
 
-// ── listRecoveredLogLines / collectAllRecoveredLogLines (item 5) ────────
+// ── listRecoveredLogLines / collectAllRecoveredLogLines ────────
 //
-// Full round trip through the REAL encrypt/compress pipeline (Phase 3's
+// Full round trip through the REAL encrypt/compress pipeline (segmentWriter's
 // encryptSegment + zstdCompressSync) and the REAL decrypt/decompress path
 // this module uses — verifying actual log lines come back, not a stub.
 
@@ -520,7 +520,7 @@ test("collectAllRecoveredLogLines gathers every line across every page", async (
   );
 });
 
-// ── Retention sweeper integration (item 6) ───────────────────────────────
+// ── Retention sweeper integration ───────────────────────────────
 
 test("the retention sweeper expires a deleted_log_owners entry's segments on its snapshotted retention, scoped by agent_id not workspace_id", async () => {
   const now = new Date("2026-02-01T00:00:00.000Z").getTime();

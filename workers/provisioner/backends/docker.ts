@@ -1304,7 +1304,7 @@ class DockerBackend extends ProvisionerBackend {
     console.log(`[docker] Container ${containerId} restarted`);
   }
 
-  // Logging control plane Phase 4 item 2b: an absent `opts.tail` must mean
+  // An absent `opts.tail` must mean
   // "all available lines," not silently default to 100. dockerode/the Docker
   // Engine API treat an OMITTED `tail` field as unlimited — but a `tail`
   // key present with any value (including `undefined` on some transports)
@@ -1326,7 +1326,7 @@ class DockerBackend extends ProvisionerBackend {
     if (opts.tail !== undefined && opts.tail !== null) {
       logOptions.tail = opts.tail;
     }
-    // Phase 4 item 2a's cursor-advances-only-after-flush replay depends on
+    // The collector's cursor-advances-only-after-flush replay depends on
     // this reaching dockerode: the Docker Engine API's `since` query param
     // accepts a UNIX timestamp (seconds). The collector passes an ISO-8601
     // string (matching the line envelope's ts/observed_ts fields), so it is

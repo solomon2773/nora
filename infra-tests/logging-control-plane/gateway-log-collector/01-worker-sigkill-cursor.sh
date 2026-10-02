@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Phase 10, test 1: cursor persists across a real worker-provisioner
+# Test 1: cursor persists across a real worker-provisioner
 # SIGKILL mid-poll, with no duplicate gateway-stream lines and no gap.
 #
 # Same lineage as phase4/01-worker-kill-midwindow.sh, but for the
 # gateway-stream collector's PERSISTED cursor (agent_log_cursors) instead
-# of Phase 4's derived-from-log_segments cursor. gatewayCollector.ts's
+# of the derived-from-log_segments cursor. gatewayCollector.ts's
 # `pollAgentGatewayLogs` deliberately calls `segmentWriter.flush()`
 # immediately after every non-empty `append()` and only calls
 # `saveCursor()` once that flush has resolved (see its own "cursor-
@@ -14,7 +14,7 @@
 #
 # This test needs REAL flowing gateway-stream content, not just an idle
 # agent's heartbeat cursor movement — driven by real chat turns against
-# agent2 (a real, dedicated OpenClaw dev agent; see the task briefing).
+# agent2 (a real, dedicated OpenClaw dev agent; see this suite's README).
 #
 # Each chat turn's own real `runId` (returned by the gateway/chat POST
 # endpoint, e.g. {"runId":"...","status":"started"}) is captured and
@@ -48,11 +48,11 @@
 # in this stack's history despite the collector actively polling and
 # persisting a real, advancing cursor the whole time. See the fix in
 # `pollAgentGatewayLogs` (the `rawRecords`/`records` parsing step) for the
-# full writeup. This script (and 02/03 in this phase) only produce
+# full writeup. This script (and 02/03 in this suite) only produce
 # meaningful segments because that fix is in place.
 #
 # NOTE 2: chat turns are driven directly through gatewayRpc.ts's own
-# `createGatewayClient` (via `node_call`, same as the rest of this phase's
+# `createGatewayClient` (via `node_call`, same as the rest of this suite's
 # scripts), NOT through backend-api's `/gateway/chat` HTTP endpoint.
 # Observed empirically while building this test: under the volume of
 # rapid connect/reconnect churn this whole suite generates against these
@@ -176,7 +176,7 @@ fi
 
 # reconcileStreams() runs on a plain setInterval, which does NOT fire
 # immediately on process start — the first tick after a fresh boot is up
-# to ~30s away (confirmed empirically while building this phase's other
+# to ~30s away (confirmed empirically while building this suite's other
 # scripts), so this wait must clear that before agent2 gets reattached at
 # all.
 log_step "waiting ~35s for reconcile to reattach agent2's gateway poll, then firing post-recovery chat turns"

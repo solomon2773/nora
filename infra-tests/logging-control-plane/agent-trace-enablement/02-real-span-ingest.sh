@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 12, test 2: after the live tracing-config merge, real spans land in
+# Test 2: after the live tracing-config merge, real spans land in
 # `agent_spans` via the real OTLP ingest path, attributed to agent5's real
 # agent id.
 #
@@ -35,13 +35,13 @@
 #      this build contains no OTel exporter implementation at all — the
 #      config is a real, valid no-op in openclaw@2026.6.11.
 #
-# This means row 2 of this phase's matrix cannot be proven with a genuine
+# This means row 2 of this suite's matrix cannot be proven with a genuine
 # agent-generated span against this stack's current OpenClaw version, for
 # a reason entirely outside backend-api/agentTracing.ts's control. Per the
-# task briefing's own fallback guidance, this script instead proves the
+# documented fallback, this script instead proves the
 # REAL ingest path (real HMAC-signed POST, real auth, real enqueue, real
 # drain) works end-to-end for agent5's real agent id — the same technique
-# Phase 11's 01-worker-crash-midbatch.sh already validated generically —
+# 01-worker-crash-midbatch.sh already validated generically —
 # and separately re-confirms the live config really is reachable, so this
 # is a documented upstream blocker rather than a silently faked pass.
 
@@ -132,7 +132,7 @@ if [ "$genuine_count" != "0" ]; then
   exit 0
 fi
 
-log_warn "no genuine span landed within ${waited}s, consistent with this session's finding that the installed OpenClaw build (2026.6.11) has no OTel exporter implementation despite accepting/validating the diagnostics.otel config shape (see this script's header) — falling back to the task briefing's documented fallback: a real HMAC-signed OTLP POST via the real ingest path, attributed to agent5's real agent id"
+log_warn "no genuine span landed within ${waited}s, consistent with the finding that the installed OpenClaw build (2026.6.11) has no OTel exporter implementation despite accepting/validating the diagnostics.otel config shape (see this script's header) — falling back to the documented fallback: a real HMAC-signed OTLP POST via the real ingest path, attributed to agent5's real agent id"
 
 log_step "computing agent5's real ingest key (routes/otlp.ts's own computeIngestKey) and building a real OTLP/JSON span batch, via node_call so this exactly mirrors production code"
 _INGEST_INFO="$(node_call "

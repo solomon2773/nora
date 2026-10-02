@@ -78,7 +78,7 @@ teardown_test_agent() {
   # Best-effort object cleanup before the DB rows disappear — after the
   # DELETE below we'd have no storage_key/storage_config left to resolve
   # credentials from. A failure here is logged, not fatal: an orphaned
-  # object is exactly what Phase 5's daily reconciliation exists to catch.
+  # object is exactly what the daily reconciliation exists to catch.
   local keys
   keys="$(db_query "SELECT storage_key FROM log_segments WHERE agent_id = '${agent_id}';")"
   if [ -n "$keys" ]; then

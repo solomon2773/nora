@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, matrix row 1: a segment is readable from its old location
+# Matrix row 1: a segment is readable from its old location
 # throughout its own migration, and from its new location immediately after —
 # there is no moment when it exists in neither place.
 #

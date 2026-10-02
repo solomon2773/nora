@@ -1,4 +1,4 @@
-// Phase 5 of the logging control plane: retention sweeper, capacity gate,
+// Retention sweeper, capacity gate,
 // manual deletion, and storage reconciliation tests.
 //
 // Follows this package's established convention (segmentWriter.test.js,
@@ -215,7 +215,7 @@ async function fakeGetLogRetentionCeilingDays() {
   return 30;
 }
 
-// ── resolveLogRetention (item 2) ─────────────────────────────────────────
+// ── resolveLogRetention ─────────────────────────────────────────
 
 test("resolveLogRetention falls back to the platform ceiling when no workspace_log_settings row exists", async () => {
   const db = fakeDb({});
@@ -257,7 +257,7 @@ test("resolveLogRetention resolves the platform ceiling directly for an agent wi
   assert.equal(days, 30);
 });
 
-// ── sweepExpiredSegments (items 4/4a) ─────────────────────────────────────
+// ── sweepExpiredSegments ─────────────────────────────────────
 
 test("a segment past retention has its object deleted, then its row", async () => {
   const order = [];
@@ -402,7 +402,7 @@ test("batch delete chunks correctly at the 1000-key boundary (delegated to delet
   const objectStorage = require("../../agent-runtime/lib/objectStorage.ts");
   const chunkCalls = [];
   const realChunkingDelete = async (keys, config) => {
-    // Exercise the REAL deleteStorageObjects (Phase 0) to prove sweeper
+    // Exercise the REAL deleteStorageObjects to prove sweeper
     // integration doesn't reimplement chunking — it just hands everything
     // to the one function that owns that contract.
     const localConfig = { storageBackend: "local", localPath: require("node:os").tmpdir() };
@@ -420,7 +420,7 @@ test("batch delete chunks correctly at the 1000-key boundary (delegated to delet
   assert.equal(result.deletedSegments, 2500);
   // All 2500 keys share one storage_backend/config, so the sweeper groups
   // them into a single call of 2500 keys — chunking at 1000 is
-  // deleteStorageObjects' own responsibility (Phase 0), exercised here by
+  // deleteStorageObjects' own responsibility, exercised here by
   // confirming the full key set is handed to it in one shot rather than the
   // sweeper pre-slicing it.
   assert.equal(chunkCalls.length, 1);
@@ -437,7 +437,7 @@ test("sweepExpiredSpans deletes agent_spans older than the given cutoff", async 
   assert.ok(call);
 });
 
-// ── localStorageUsage (item 5) ────────────────────────────────────────────
+// ── localStorageUsage ────────────────────────────────────────────
 
 test("localStorageUsage matches the actual sum of live local-driver segment bytes", async () => {
   const segments = [
@@ -450,7 +450,7 @@ test("localStorageUsage matches the actual sum of live local-driver segment byte
   assert.equal(usage, 3500);
 });
 
-// ── checkCapacityState (items 5-7) ────────────────────────────────────────
+// ── checkCapacityState ────────────────────────────────────────
 
 function fakeEventLog() {
   const events = [];
@@ -530,7 +530,7 @@ test("getCapacityStatus reports usage, limit, and current state together", async
   assert.deepEqual(status, { usedBytes: 500, limitBytes: 1000, state: "warning" });
 });
 
-// ── deleteLogsByAgentAndRange (item 7b) ──────────────────────────────────
+// ── deleteLogsByAgentAndRange ──────────────────────────────────
 
 test("DELETE /logs removes the requested agent/time-range segments and any matching legacy copies", async () => {
   const segments = [
@@ -595,7 +595,7 @@ test("DELETE /logs rejects a range the actor lacks access to", async () => {
   );
 });
 
-// ── reconcileStorage (items 8/8a) ─────────────────────────────────────────
+// ── reconcileStorage ─────────────────────────────────────────
 
 test("reconciliation deletes an orphaned object and removes a dangling index row", async () => {
   const segments = [
@@ -857,7 +857,7 @@ test("reconciliation keeps rows left in a previous bucket of the same backend", 
   assert.deepEqual(db.deletedSegmentIds, []);
 });
 
-// ── startRetentionSweeper cadence (item 3) ────────────────────────────────
+// ── startRetentionSweeper cadence ────────────────────────────────
 
 test("the sweeper runs hourly and reconciles daily, not on the 5-second telemetry cadence", () => {
   const registered = [];

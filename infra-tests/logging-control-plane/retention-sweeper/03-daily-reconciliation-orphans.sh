@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Phase 5, test 8: daily reconciliation deletes a true orphan (an object
+# Test 8: daily reconciliation deletes a true orphan (an object
 # with no matching log_segments row, older than the in-flight guard).
 #
 # Scope note: this script covers ONLY the "true orphan gets deleted" half.
 # The other half — "a kept `log_segment_legacy_copies` object is NEVER
-# treated as an orphan" (item 8a) — needs a real `keepSourceCopies: true`
+# treated as an orphan" — needs a real `keepSourceCopies: true`
 # migration to set up realistically, so it's covered by
 # storage-migration's interrupted-job test instead of duplicated
 # here; see that directory's README.

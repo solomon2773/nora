@@ -21,10 +21,10 @@
 # timers), and `storageMigration.ts` exports `startStorageMigration`,
 # `migrateSegmentBatch`, `resumeStorageMigration`, `retryStorageMigration`
 # directly too — all callable this way, with ZERO need for a JWT or the
-# HTTP layer. That's most of Phase 5's and Phase 5b's core logic. It does
+# HTTP layer. That's most of the and the core logic. It does
 # NOT unlock the HTTP-validation-layer tests specifically (e.g. does `PUT
 # /admin/log-storage` itself reject a bad request) — those still need a
-# real authenticated request, tracked separately (see Phase 5's README).
+# real authenticated request, tracked separately (see README).
 
 NODE_CALL_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$NODE_CALL_LIB_DIR/docker_ctl.sh"
@@ -63,7 +63,7 @@ node_call() {
   # Export every secret the entrypoint itself would have loaded from
   # /run/secrets/* (DB_PASSWORD, ENCRYPTION_KEY, JWT_SECRET, etc.) — not
   # just DB_PASSWORD — since a test that needs to encrypt/decrypt
-  # credentials (Phase 5b) needs ENCRYPTION_KEY resolved the same real way.
+  # credentials needs ENCRYPTION_KEY resolved the same real way.
   local -a secret_env_args=()
   local secret_name secret_value
   for secret_name in $(docker exec "$cid" sh -c 'ls /run/secrets 2>/dev/null'); do

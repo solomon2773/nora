@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 6, matrix row 1: search fetches candidate segments concurrently
+# Matrix row 1: search fetches candidate segments concurrently
 # against a real object store, rather than being serialized by the
 # connection pool underneath it.
 #
@@ -250,7 +250,7 @@ if [ "$returned" != "$expected" ]; then
 elif [ "$fan_out_ok" != "true" ]; then
   test_fail "search did not fan out: peak simultaneous fetches ${peak} (runs: ${peaks}) against ${SEGMENT_COUNT} candidate segments in a single wave — the application is issuing fetches serially or near-serially"
 elif [ "$transport_ok" != "true" ]; then
-  test_fail "search fans out at the application level (peak ${peak} pending fetches) but the transport serializes them: median wall ${wall}ms vs single-fetch baseline ${baseline}ms (serial estimate ${serial}ms, threshold ${threshold}ms; runs ${walls}). This is the plan's named risk — a connection pool quietly serializing what Promise.all issues concurrently. Local MinIO is fast enough that a loaded host can add noise, so re-run before treating one result as a regression."
+  test_fail "search fans out at the application level (peak ${peak} pending fetches) but the transport serializes them: median wall ${wall}ms vs single-fetch baseline ${baseline}ms (serial estimate ${serial}ms, threshold ${threshold}ms; runs ${walls}). This is the known risk — a connection pool quietly serializing what Promise.all issues concurrently. Local MinIO is fast enough that a loaded host can add noise, so re-run before treating one result as a regression."
 else
   test_pass "search fetched ${SEGMENT_COUNT} real MinIO segments concurrently at both layers: peak ${peak} simultaneous fetches (runs ${peaks}), and median wall ${wall}ms against a ${baseline}ms single-fetch baseline — well under the ${threshold}ms threshold and the ~${serial}ms a serial fetch would take (runs ${walls}); all ${expected} lines returned"
 fi

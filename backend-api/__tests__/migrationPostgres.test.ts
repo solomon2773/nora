@@ -271,13 +271,13 @@ describeWithPostgres("PostgreSQL legacy migration gate", () => {
   });
 });
 
-// Logging control plane (Phase 1): schema foundation for log_segments,
+// Logging control plane: schema foundation for log_segments,
 // agent_spans, workspace_log_settings, agent_log_cursors,
 // log_segment_legacy_copies, deleted_log_owners, storage_migration_jobs, and
 // the new events indexes. See
 // plans/logging_control_plane/logging-control-plane-manifest.md ("Data Model
 // Inventory") for the full column rationale.
-describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => {
+describeWithPostgres("PostgreSQL logging control plane schema", () => {
   jest.setTimeout(120_000);
 
   const NEW_TABLES = [
@@ -335,8 +335,8 @@ describeWithPostgres("PostgreSQL logging control plane schema (Phase 1)", () => 
     await freshPool.query(schemaSql);
 
     // "Existing installation" path: base schema already present (as an
-    // installation that predates this phase would have), then the full
-    // migrateDB array — including the Phase 1 statements appended at the
+    // installation that predates the logging tables would have), then the full
+    // migrateDB array — including the statements appended at the
     // tail — brings it up to date. Dropping the new tables/indexes after
     // loading db_schema.sql simulates an install that has every table this
     // phase does NOT touch, but none of the ones it adds.

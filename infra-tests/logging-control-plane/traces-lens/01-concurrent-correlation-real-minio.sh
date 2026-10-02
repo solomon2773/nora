@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Phase 13, test 1: correlatedLogsForTrace's in-trace/in-window split is
+# Test 1: correlatedLogsForTrace's in-trace/in-window split is
 # correct against a real mix of traced (gateway) and untraced (runtime)
 # segments in real MinIO, and the underlying segment fetch is actually
 # concurrent — not silently serialized by a connection-pool limit.
 #
 # Why this needs real infra (see this directory's README and
 # search/README.md row 1, whose concern this inherits verbatim):
-# correlatedLogsForTrace (backend-api/traceQuery.ts) reuses Phase 6's
+# correlatedLogsForTrace (backend-api/traceQuery.ts) reuses the search path's
 # selectCandidateSegments/fetchSegmentLines unchanged. Against the `local`
 # storage driver, every "fetch" is a synchronous-fast disk read and a
 # serial implementation would pass every unit test; only a real network
@@ -15,7 +15,7 @@
 # connection pool.
 #
 # Why this builds segments directly instead of running a real agent:
-# Phase 12 (agent-side trace enablement, needs a real OpenClaw container)
+# Agent-side trace enablement (needs a real OpenClaw container)
 # is explicitly out of scope for this suite right now. What's actually
 # under test here is entirely on the read side — segment layout, pruning,
 # and the correlation split — so segments are constructed the same way
@@ -134,7 +134,7 @@ log_step "capturing the current storage destination, then pointing it at real Mi
 ORIGINAL_DEST="$(capture_storage_destination)"
 set_storage_destination_minio_with_creds
 
-log_step "provisioning a dedicated test agent (owner-only, no workspace — workspace_id stays NULL throughout, same as Phase 6/13's null-workspace coverage)"
+log_step "provisioning a dedicated test agent (owner-only, no workspace — workspace_id stays NULL throughout, same as the null-workspace coverage)"
 _AGENT_INFO="$(provision_test_agent "traces-correlation")"
 AGENT_ID="$(echo "$_AGENT_INFO" | sed -n '1p')"
 CONTAINER_NAME="$(echo "$_AGENT_INFO" | sed -n '2p')"
@@ -327,11 +327,11 @@ if [ "$other_trace_misclassified" != "false" ]; then
   correctness_ok=0
 fi
 if [ "$outside_window_leaked" != "false" ]; then
-  log_warn "a runtime line from a segment well outside the trace window leaked into correlatedLogs — selectCandidateSegments' time pruning (item 3) is broken"
+  log_warn "a runtime line from a segment well outside the trace window leaked into correlatedLogs — selectCandidateSegments' time pruning is broken"
   correctness_ok=0
 fi
 
-# Concurrency check, same timing-based technique Phase 6's own row 1
+# Concurrency check, same timing-based technique the own row 1
 # describes (see search/README.md): a genuinely concurrent fetch of
 # N segments should land close to ONE segment's latency, not N times it.
 # Against local MinIO round trips this can be a matter of single-digit
@@ -348,7 +348,7 @@ fi
 if [ "$correctness_ok" -ne 1 ]; then
   test_fail "correlation correctness failed — see warnings above (in_trace=$in_trace_count/8, window=$window_count/4, other_trace_leaked=$other_trace_leaked, outside_window_leaked=$outside_window_leaked)"
 elif [ "$concurrency_ok" -ne 1 ]; then
-  test_fail "correlation content was correct, but the segment fetch does NOT look concurrent: fetching $candidate_segments segments took ${fetch_wall_ms}ms, close to or exceeding a serial estimate of ~$((single_latency_ms * candidate_segments))ms (single-segment baseline ${single_latency_ms}ms) — this is the exact failure mode Phase 6's README warns about (a connection-pool limit silently serializing what should be Promise.all concurrency). Note local MinIO round trips are fast enough that this signal can be noisy on a lightly-loaded machine; re-run if this looks like a fluke rather than a reproducible regression."
+  test_fail "correlation content was correct, but the segment fetch does NOT look concurrent: fetching $candidate_segments segments took ${fetch_wall_ms}ms, close to or exceeding a serial estimate of ~$((single_latency_ms * candidate_segments))ms (single-segment baseline ${single_latency_ms}ms) — this is the exact failure mode README warns about (a connection-pool limit silently serializing what should be Promise.all concurrency). Note local MinIO round trips are fast enough that this signal can be noisy on a lightly-loaded machine; re-run if this looks like a fluke rather than a reproducible regression."
 else
   test_pass "correlation split correct (in_trace=$in_trace_count/8, window=$window_count/6, other-trace gateway lines correctly demoted to category:window rather than excluded, out-of-window runtime line correctly pruned) AND the $candidate_segments-segment fetch looks genuinely concurrent (${fetch_wall_ms}ms wall vs ~${single_latency_ms}ms single-segment baseline, well under the ~$((single_latency_ms * candidate_segments))ms a serial fetch would take)"
 fi

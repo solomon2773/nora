@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 6, matrix row 4: with worker-provisioner down, search still answers
+# Matrix row 4: with worker-provisioner down, search still answers
 # from storage and says recent lines are unavailable — it does not fail the
 # query.
 #

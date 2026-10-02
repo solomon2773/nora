@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, matrix row 5: PUT /admin/log-storage to `local` is rejected, with NO
+# Matrix row 5: PUT /admin/log-storage to `local` is rejected, with NO
 # side effects at all, when local usage plus the bytes waiting to migrate would
 # exceed the cap.
 #

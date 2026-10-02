@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 8, test 7: measuring the "double follow stream" cost of a
+# Test 7: measuring the "double follow stream" cost of a
 # live-tail viewer.
 #
 # See ../README.md (row 7) and this directory's README.md for the full
@@ -8,7 +8,7 @@
 # WebSocket viewer, completely independently of
 # `workers/provisioner/logs/logCollector.ts`'s own already-running follow
 # stream for the same container — there is no shared subscription or
-# buffer between the two. Plan doc Phase 15 item 2c already resolves this
+# buffer between the two. The design already accepts this
 # as a DOCUMENTED, ACCEPTED v1 tradeoff ("usage-gated ... revisited
 # post-v1 once there is usage data"), not a bug to catch before ship. This
 # script exists to MEASURE the real cost for that future decision, not to
@@ -64,8 +64,8 @@
 # client can't set an Authorization header, so `extractSessionTokenFromUpgrade`
 # — see backend-api/authCookie.ts — falls back to a `?token=` query param,
 # which is what this script uses), and the exact same log-line parser. It
-# only skips nginx's own WS proxy hop, which is not part of what Phase 8
-# item 6 / Phase 15 item 2c is about. `ws` and `jsonwebtoken` are already
+# only skips nginx's own WS proxy hop, which is not part of what this double-follow-stream
+# tradeoff is about. `ws` and `jsonwebtoken` are already
 # real dependencies of backend-api (see backend-api/package.json) — no new
 # dependency was added for this script.
 
@@ -278,6 +278,6 @@ if [ "$collector_within_tolerance" -eq 1 ]; then
 else
   verdict="$verdict Collector's flushed segment DIVERGED from total container output (segment_lines=$segment_lines, container_total=$lines_after_ws, segment_count=$segment_count) — a real, measured discrepancy possibly attributable to the concurrent second stream, though also within the range this suite's own 10s-shutdown-deadline race (see infra-tests/README.md) can independently cause."
 fi
-verdict="$verdict CPU% sampled via 'docker stats --no-stream': collector-only=$cpu_before, collector+live-tail=$cpu_during (soft signal only — a 1 line/sec test emitter is too light a load for this delta to be a reliable resource-cost measurement on its own; recorded for whatever future post-v1 usage-data decision Phase 15 item 2c anticipates)."
+verdict="$verdict CPU% sampled via 'docker stats --no-stream': collector-only=$cpu_before, collector+live-tail=$cpu_during (soft signal only — a 1 line/sec test emitter is too light a load for this delta to be a reliable resource-cost measurement on its own; recorded for whatever future post-v1 usage-data decision this tradeoff anticipates)."
 
 test_pass "$verdict"

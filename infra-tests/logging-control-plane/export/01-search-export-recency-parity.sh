@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 7, matrix row 2: a real search and a real export over the IDENTICAL
+# Matrix row 2: a real search and a real export over the IDENTICAL
 # recent time range return the same lines — including content still sitting
 # in worker-provisioner's unflushed buffer.
 #
@@ -7,10 +7,10 @@
 # (backend-api/logSearch.ts) read storage exclusively — it called
 # `selectCandidateSegments`/`fetchSegmentLines` and never
 # `fetchWorkerBufferOverHttp`, the internal worker call `searchLogs` uses to
-# close the recency gap (Phase 6 item 7). So exporting a range that reached
+# close the recency gap. So exporting a range that reached
 # the present silently omitted every line not yet flushed, while a search
 # over the byte-identical range returned them, despite both endpoints being
-# documented as taking "the same filters." Found by auditing this phase's
+# documented as taking "the same filters." Found by auditing this suite's
 # README against the actual code, then fixed alongside this script;
 # `backend-api/__tests__/logExport.test.ts`'s "streamLogExport recency gap"
 # block covers the same guarantee with injected deps.
@@ -196,7 +196,7 @@ if [ -z "$search_count" ] || [ "$search_count" = "0" ]; then
 fi
 
 if [ "$export_count" = "0" ]; then
-  test_fail "export returned 0 lines while search returned ${search_count} over the identical range — this is exactly the Phase 7 row 2 divergence: streamLogExport is reading storage only and ignoring the live buffer"
+  test_fail "export returned 0 lines while search returned ${search_count} over the identical range — this is exactly the row 2 divergence: streamLogExport is reading storage only and ignoring the live buffer"
 elif [ "$only_in_search" != "0" ]; then
   test_fail "export omitted ${only_in_search} line(s) that search returned over the identical range (search=${search_count}, export=${export_count}), e.g. ${sample_missing} — export and search disagree over the live-buffer window"
 elif [ "$only_in_export" != "0" ]; then

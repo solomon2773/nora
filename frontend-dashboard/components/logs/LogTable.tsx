@@ -16,7 +16,7 @@ import {
 } from "../../lib/observabilityClient";
 
 // Runtime lens row list. Deliberately NOT `components/LogViewer.tsx` — see
-// that file's header and the Phase 8 spec: LogViewer caps at 2,000 lines,
+// that file's header and the spec: LogViewer caps at 2,000 lines,
 // keys rows with `key={i}`, and has no virtualization or pause-on-scroll.
 // It stays untouched for the agent detail page's live tail.
 //

@@ -1,4 +1,4 @@
-// Phase 10 of the logging control plane: gateway log collector tests.
+// Gateway log collector tests.
 //
 // Follows this package's established convention (logCollector.test.js /
 // segmentWriter.test.js) — Node's built-in test runner, fakes/mocks passed

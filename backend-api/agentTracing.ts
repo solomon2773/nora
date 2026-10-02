@@ -1,10 +1,10 @@
 // @ts-nocheck
-// backend-api/agentTracing.ts — Phase 12 of the logging control plane:
+// backend-api/agentTracing.ts — part of the logging control plane:
 // agent-side trace enablement.
 //
 // Turns OpenTelemetry tracing on for a running OpenClaw agent WITHOUT
 // restarting it, and keeps it on across restarts, mirroring the same
-// self-healing pattern Phase 10 established for the gateway collector's
+// self-healing pattern the gateway collector uses for its
 // `consoleLevel: warn` (periodic reconcile re-applies managed config that a
 // real restart would otherwise silently drop, since a running-container
 // config merge has no persistence of its own across a restart).
@@ -14,7 +14,7 @@
 //     (deep-merges a delta into /root/.openclaw/openclaw.json on a running
 //     container, no restart required) and buildRuntimeEnv (source of the
 //     BACKEND_API_URL every agent is already given).
-//   - backend-api/routes/otlp.ts (Phase 11) — computeIngestKey/verifyIngestKey.
+//   - backend-api/routes/otlp.ts — computeIngestKey/verifyIngestKey.
 //     mintIngestKey below calls computeIngestKey directly rather than
 //     reimplementing the HMAC scheme, so a minted key is GUARANTEED to
 //     authenticate against verifyIngestKey — same function, not a parallel
@@ -137,7 +137,7 @@ function extractCommandOutput(result) {
 }
 
 /**
- * HMAC under NORA_OTLP_INGEST_SECRET — delegates to Phase 11's
+ * HMAC under NORA_OTLP_INGEST_SECRET — delegates to
  * `computeIngestKey` in routes/otlp.ts rather than reimplementing the
  * derivation, so a minted key is guaranteed to authenticate against
  * `verifyIngestKey` (same function, called both places).
@@ -220,8 +220,8 @@ function buildTracingConfigDelta(agent, settings) {
 }
 
 /**
- * Resolve an agent's workspace, the same way Phase 11's ingest route and
- * Phase 6's search scoping do — the single row in `workspace_agents` for this
+ * Resolve an agent's workspace, the same way the ingest route and
+ * The search scoping do — the single row in `workspace_agents` for this
  * agent (UNIQUE(agent_id) guarantees there is at most one), or null for an
  * agent that belongs to no workspace.
  *
@@ -363,7 +363,7 @@ async function applyConfigMergeCommand(agent, command, deps = {}) {
  * Resolve settings, mint/reuse the ingest key, build the delta, and merge it
  * into the agent's running openclaw.json — no restart. Skips non-OpenClaw
  * (e.g. Hermes) agents entirely, without error, since the OpenClaw
- * `diagnostics.otel` config shape has no Hermes equivalent in this phase.
+ * `diagnostics.otel` config shape has no Hermes equivalent.
  *
  * @param {Object} agent - Agent row; must carry `id` and enough
  *   runtime/container addressing fields for `authSync.runRuntimeCommand`/

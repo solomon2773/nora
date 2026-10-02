@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, matrix row 2: a migration interrupted MID-BATCH resumes from its
+# Matrix row 2: a migration interrupted MID-BATCH resumes from its
 # checkpoint without re-migrating or skipping a single segment.
 #
 # An earlier version of this script inserted an abandoned 'running' job with

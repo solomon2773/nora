@@ -21,9 +21,8 @@ export default function Workspaces() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
-  // Phase 5c item 1 / Phase 8 item 11: workspace delete had NO confirmation
-  // dialog at all before this change — the trash icon called `remove(id)`
-  // directly. The backend now also rejects a delete request missing
+  // Workspace delete used to have NO confirmation dialog — the trash icon
+  // called `remove(id)` directly. The backend now also rejects a delete request missing
   // `deleteLogs`, so this needed both a confirmation step and the explicit
   // keep-or-delete-logs choice, with no default.
   const [pendingDelete, setPendingDelete] = useState(null);

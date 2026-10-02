@@ -1,4 +1,4 @@
-// Phase 3 item 6: the graceful-shutdown coordinator added to worker.ts.
+// The graceful-shutdown coordinator added to worker.ts.
 // Follows this repo's established pattern (see backendSelection.test.js,
 // provisionerExecTermination.test.js) for loading worker.ts under Node's
 // built-in test runner: stub every heavy/real dependency via a

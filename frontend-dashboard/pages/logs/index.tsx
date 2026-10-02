@@ -810,8 +810,8 @@ function nowIso(): string {
 
 /**
  * Runtime lens. Scoped to exactly one agent via the shared header — no
- * agent column on rows (see the Phase 8 spec item 3). Wires:
- *   - `searchLogs`/`exportLogs` (Phase 6/7) for the persisted timeline,
+ * agent column on rows. Wires:
+ *   - `searchLogs`/`exportLogs` for the persisted timeline,
  *   - the existing `attachLogStream` WebSocket (same endpoint LogViewer.tsx
  *     already uses) for live tail — see the comment on `liveTail` below for
  *     why this reuses that mechanism rather than building a new one against
@@ -887,8 +887,8 @@ function RuntimeLens({
     runSearch();
   }, [runSearch]);
 
-  // Item 8a: best-effort capacity-halt window detection. Real signal (the
-  // `events` rows Phase 5 item 6 writes), fetched through the already
+  // Best-effort capacity-halt window detection. Real signal (the
+  // `events` rows the retention sweeper writes), fetched through the already
   // workspace-scoped `GET /monitoring/events` — see
   // observabilityClient.ts's `fetchCapacityHaltWindows` doc comment for the
   // honest caveats (installation-wide origin, client-side pairing).
@@ -903,7 +903,7 @@ function RuntimeLens({
   }, [workspaceId, from, to]);
 
   // Best-effort storage-backend lookup for the k8s+local capability
-  // message (item 8) — only resolves for a platform-admin actor; see
+  // message — only resolves for a platform-admin actor; see
   // `getCurrentCapacityStatus`'s doc comment. Silently stays `null`
   // otherwise, and the capability resolver treats `null` as "unknown"
   // rather than guessing.
@@ -920,18 +920,15 @@ function RuntimeLens({
     };
   }, []);
 
-  // Live tail — Option A (see Phase 8 spec item 6 / the report handed back
-  // with this change): reuse the existing `attachLogStream` WebSocket, the
-  // same one `LogViewer.tsx` already opens for the agent detail page,
-  // rather than building a new poll against worker-provisioner's internal
-  // buffer endpoint. This is the lower-risk, already-proven path, at the
-  // ALREADY-ACCEPTED cost the plan names explicitly: an agent with both the
-  // detail page and this Runtime lens open concurrently now holds two
-  // independent follow streams against the same container. This phase does
-  // not fix that pre-existing cost — Design Decision 19 already accepted it
-  // for the live viewer alone — it only avoids making it categorically
-  // worse by not adding a THIRD mechanism. Rewiring either viewer onto
-  // worker-provisioner's buffer (Option B) is unscoped follow-up work.
+  // Live tail: reuse the existing `attachLogStream` WebSocket, the same one
+  // `LogViewer.tsx` already opens for the agent detail page, rather than building
+  // a new poll against worker-provisioner's internal buffer endpoint. This is the
+  // lower-risk, already-proven path, at a known cost: an agent with both the
+  // detail page and this Runtime lens open concurrently holds two independent
+  // follow streams against the same container. That pre-existing cost is not
+  // fixed here; this only avoids making it worse by not adding a THIRD
+  // mechanism. Rewiring either viewer onto worker-provisioner's buffer is
+  // unscoped follow-up work.
   useEffect(() => {
     if (!liveTail || !agent) {
       wsRef.current?.close();
@@ -1080,16 +1077,12 @@ function RuntimeLens({
   );
 }
 
-// ── Traces lens (Phase 13) ────────────────────────────────────────────────
+// ── Traces lens ────────────────────────────────────────────────
 //
 // List on the left (TraceList), split-pane detail on the right
-// (TraceWaterfall: span waterfall above, correlated logs below). Built
-// against the ASSUMED API CONTRACT documented at the top of the Traces
-// section in observabilityClient.ts — the backend half of this phase
-// (`GET /traces`, `GET /traces/:traceId`) is being built concurrently in a
-// different worktree from the same plan section, so this component has
-// never seen that code. See this file's Phase 13 completion report for the
-// exact contract to diff against the real implementation once merged.
+// (TraceWaterfall: span waterfall above, correlated logs below). Reads the
+// API contract documented at the top of the Traces section in
+// observabilityClient.ts.
 function TracesLens({
   agent,
   workspaceId,
@@ -1119,7 +1112,7 @@ function TracesLens({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  // Item 6/7: `tracesEnabled` is read off `GET /traces`'s own response
+  // `tracesEnabled` is read off `GET /traces`'s own response
   // (resolved server-side for the requested agent), not a separate call to
   // the admin-gated `GET /workspaces/:id/log-settings` — see
   // `ListTracesResult.tracesEnabled`'s doc comment in observabilityClient.ts
@@ -1376,7 +1369,7 @@ const TIME_RANGE_OPTIONS = [
 /**
  * Shared header above both lenses: view switch (Runtime/Traces), single-
  * agent selector, time-range picker. Deliberately single-select for agent
- * (Phase 8 spec item 2 / the manifest's Non-Goals) — this page answers
+ * — this page answers
  * "what did this one agent do," never "what happened across my agents."
  * The Operator lens (its own tab, same page) and `GET /admin/audit` already
  * serve the fleet-wide question.

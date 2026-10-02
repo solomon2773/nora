@@ -137,7 +137,7 @@ const agentScheduleQueue = new Queue("agent-schedules", {
   },
 });
 
-// Trace-ingest span persistence (logging control plane, Phase 11). One job
+// Trace-ingest span persistence (logging control plane). One job
 // per accepted OTLP export request, carrying the already-decoded spans plus
 // the authenticated agent's already-resolved workspace_id (never trusted
 // from the payload — see routes/otlp.ts). Drained in worker-provisioner by

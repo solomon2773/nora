@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Phase 10, test 2: real log rotation at `logging.maxFileBytes` mid-poll
+# Test 2: real log rotation at `logging.maxFileBytes` mid-poll
 # does not drop any lines.
 #
 # Uses agent4 (dbb500ee-2689-4743-a538-d9c5ba3cde70) — explicitly
-# designated in the task briefing for this test. `logging.maxFileBytes` is
+# designated for this test. `logging.maxFileBytes` is
 # pushed down to a tiny value (2000 bytes) via the same live config-merge
 # mechanism `agentTracing.ts`'s `applyTracingConfig` and
 # `gatewayCollector.ts`'s own `applyConsoleLevelConfig` use
 # (`buildOpenClawConfigMergeCommand` + `runRuntimeCommand`, both from
 # `agent-runtime/lib/runtimeBootstrap.ts` / `worker.ts`), so a handful of
 # real chat turns is enough to cross the rotation threshold within test
-# time — the plan doc's real default (100MB) would never rotate in a
+# time — the real default (100MB) would never rotate in a
 # reasonable test window.
 #
-# "No gap across rotation" is verified the same way 10-01 (this phase)
+# "No gap across rotation" is verified the same way 10-01
 # ended up verifying it, after an initial per-turn-runId design proved too
 # fragile against real LLM response timing: rather than gating on each
 # chat turn's own `runId` appearing exactly once (OpenClaw only writes the
@@ -31,7 +31,7 @@
 # record shape (gatewayCollector.ts's own header flags this as an
 # unverified assumption).
 #
-# `logging.maxFileBytes` is restored to 104857600 (100MB, the plan doc's
+# `logging.maxFileBytes` is restored to 104857600 (100MB, the real
 # stated default) in cleanup() regardless of pass/fail, per the task
 # briefing's explicit requirement not to leave agent4's config altered.
 
@@ -180,7 +180,7 @@ while IFS= read -r k; do
 done <<< "$segment_keys"
 keys_json="${keys_json}]"
 
-# Structural invariants (same as 10-01 in this phase, and Phase 4's own
+# Structural invariants (same as 10-01 in this suite, and the own
 # scripts): zero duplicate raw lines across the whole window proves
 # nothing was double-ingested across the rotation boundary; a nonzero
 # total proves real content was actually collected to check in the first

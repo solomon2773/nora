@@ -3,19 +3,17 @@
 //
 // This module is the single place that turns raw bytes from a container's
 // stdout/stderr stream, or a structured record from OpenClaw's gateway
-// `logs.tail` RPC, into Nora's normalized line envelope (see the logging
-// control plane manifest's "Line schema" section). It is consumed today by
-// `backend-api/logStream.ts` (the live WebSocket viewer) and will be
-// consumed by the Phase 3 segment writer and the Phase 9/10 gateway
-// collector — two processes that must never parse the same bytes two
-// different ways, or persisted history and the live tail would disagree
+// `logs.tail` RPC, into Nora's normalized line envelope. It is consumed by
+// `backend-api/logStream.ts` (the live WebSocket viewer), the segment writer,
+// and the gateway collector — processes that must never parse the same bytes
+// two different ways, or persisted history and the live tail would disagree
 // about the same line.
 //
 // Deliberately DB- and HTTP-agnostic, like `objectStorage.ts` alongside it:
 // every function is a pure transform over its arguments so it behaves
 // identically inside `worker-provisioner` and `backend-api`.
 //
-// Two bug fixes live here (see the manifest's "Known deficiencies" section):
+// Two bug fixes live here:
 //
 //   1. Level inference tries `JSON.parse` first and trusts a real `level`
 //      field when present. The old substring heuristic
@@ -29,11 +27,11 @@
 //      `ts_source: "source"`. `ts` is never fabricated.
 //
 // `ord` (position-within-segment) is intentionally never assigned here.
-// See the manifest's revised `ord` section: a parse-time counter cannot
+// A parse-time counter cannot
 // reproduce the same values on crash-replay, because it depends on process
 // state (how many lines this process has parsed since it started) rather
 // than on the content of the window. `ord` is a pure function of a
-// flushed window's contents, computed once by Phase 3's segment writer at
+// flushed window's contents, computed once by the segment writer at
 // flush time. Callers must not add one upstream of that.
 
 const { StringDecoder } = require("string_decoder");
@@ -315,7 +313,7 @@ function createLogChunkStreamParser(ctx = {}) {
  *
  * Returns `null` when the record's level is `silent` — that vocabulary
  * entry means "suppressed at the sink," not a real event, so the caller
- * (the Phase 9/10 gateway collector) should drop the line rather than
+ * (the gateway collector) should drop the line rather than
  * inventing a Nora level for it.
  *
  * @param {object} record - one parsed JSONL record from `logs.tail`.

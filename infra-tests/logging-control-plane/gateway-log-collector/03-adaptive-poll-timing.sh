@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 10, test 3: adaptive poll interval's real wall-clock behavior
+# Test 3: adaptive poll interval's real wall-clock behavior
 # matches the scripted step sequence (POLL_BACKOFF_STEPS_MS) under a live
 # gateway — flow, then quiet (backs off), then flow again (snaps back).
 #
@@ -15,11 +15,11 @@
 # serves (confirmed present during this suite's development — this is a
 # side effect of the RPC call itself, not something this script has to
 # instrument). Re-reading that line's own real inter-arrival gaps via a
-# direct logs.tail probe (like the one used to build this phase's other
+# direct logs.tail probe (like the one used to build this suite's other
 # scripts) gives real wall-clock timestamps without needing access to
 # worker-provisioner's internal timer state.
 #
-# No process kill involved — cheapest test in this phase, as the README
+# No process kill involved — cheapest test in this suite, as the README
 # notes.
 
 set -uo pipefail

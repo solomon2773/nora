@@ -1,4 +1,4 @@
-// Phase 3 of the logging control plane: segment writer tests.
+// Segment writer tests.
 //
 // This repo's worker-provisioner test convention (see backendSelection.test.js,
 // provisionerExecTermination.test.js) is Node's built-in test runner
@@ -205,12 +205,9 @@ test("loadLogEncryptionKeys accepts a bare hex key as 'default'", () => {
   assert.deepEqual(keys.get("default"), Buffer.from(KEY_A, "hex"));
 });
 
-// ── checkLocalCapacity (Phase 5: delegates to the authoritative tracker) ──
+// ── checkLocalCapacity (delegates to the authoritative tracker) ──
 //
-// Phase 3 shipped this as a real-but-placeholder disk scan, explicitly
-// anticipating replacement once Phase 5's installation-wide usage tracker
-// (retentionSweeper.ts's localStorageUsage()) existed. This is that
-// replacement: checkLocalCapacity no longer walks a directory at all — it
+// checkLocalCapacity does not walk a directory — it
 // delegates to whatever `localStorageUsage`-shaped function it's given
 // (production default: retentionSweeper.ts's real one, an O(1) Postgres
 // SUM), while keeping the exact same `{ usedBytes, limitBytes, atCapacity }`
@@ -268,7 +265,7 @@ test("flush triggers independently at the uncompressed-size threshold", async ()
 
 test("resident memory per buffer is bounded by tracked uncompressed bytes, not compressed bytes emitted", async () => {
   // Regression guard: if the writer mistakenly tracked *compressed* bytes
-  // (which zstd emits far behind input rate — see item 8's rationale),
+  // (which zstd emits far behind input rate),
   // highly-compressible repeated content would never trip the threshold.
   // Using tracked *uncompressed* bytes, it must trip well before megabytes
   // of raw repeated text accumulate.
@@ -306,7 +303,7 @@ test("a stream ending does not flush; a reattach appends to the same open buffer
   assert.equal(result.lines, 2, "one segment spans the restart, not two");
 });
 
-// ── peekBuffer (Phase 6 item 7: recency-gap internal endpoint) ───────────
+// ── peekBuffer (recency-gap internal endpoint) ───────────
 
 test("peekBuffer returns null when nothing is buffered for the pair", () => {
   const writer = createSegmentWriter(baseDeps());
@@ -812,16 +809,15 @@ test("a flush at or past NORA_LOG_LOCAL_MAX_BYTES is skipped, not retried, and m
   void flushed;
 });
 
-test("capacityPaused clears via the independent poll timer even with no pending lines (Phase 5 fix for a Phase 3 deadlock)", async () => {
-  // Phase 3's original placeholder only re-checked capacity INSIDE flush(),
-  // after an early "buffer.lines.length === 0" return. Once the collector
-  // detaches a capacity-paused stream (Phase 4 item 7), its buffer never
-  // receives new lines again, so it would sit at `lines.length === 0`
-  // forever and never re-run the check that clears the flag — a permanent
-  // deadlock. Phase 5 fixes this with an independent poll timer
-  // (capacityPollIntervalMs) that refreshes every open buffer's
-  // capacityPaused flag regardless of pending lines. This test proves the
-  // fix: capacity clears with NO flush ever attempted after the pause.
+test("capacityPaused clears via the independent poll timer even with no pending lines", async () => {
+  // A capacity check that only ran INSIDE flush() (after an early
+  // "buffer.lines.length === 0" return) would never clear: once the collector
+  // detaches a capacity-paused stream, its buffer never receives new lines again,
+  // so it would sit at `lines.length === 0` forever and never re-run the check
+  // that clears the flag — a permanent deadlock. An independent poll timer
+  // (capacityPollIntervalMs) refreshes every open buffer's capacityPaused flag
+  // regardless of pending lines. This test proves it: capacity clears with NO
+  // flush ever attempted after the pause.
   mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   try {
     let atCapacity = true;

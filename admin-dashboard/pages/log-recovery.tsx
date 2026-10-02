@@ -13,14 +13,13 @@ import AdminLayout from "../components/AdminLayout";
 import { fetchWithAuth } from "../lib/api";
 import { formatCount, formatDateTime, formatShortId } from "../lib/format";
 
-// Phase 5c of the logging control plane: an agent or workspace deleted with
+// An agent or workspace deleted with
 // "keep logs" leaves a `deleted_log_owners` row behind — this page is the
 // only operator-facing way back to that data (view, export) and the only
 // way to finally reclaim its storage (purge). See
 // workers/provisioner/logs/logDeletion.ts's module header for what the
 // underlying read/export endpoints are (and are not) — a real, minimal
-// reader that a later phase's search/export machinery is expected to
-// replace.
+// reader that the general search/export machinery could replace.
 
 function extractFilename(contentDisposition, fallback) {
   if (!contentDisposition) return fallback;

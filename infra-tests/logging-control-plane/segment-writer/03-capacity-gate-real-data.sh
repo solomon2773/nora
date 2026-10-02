@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 3, test 22 (capacity gate) — with REAL flushed data, not the
+# Test 22 (capacity gate) — with REAL flushed data, not the
 # synthetic log_segments row used for manual UI testing earlier this
 # session. That row was a legitimate way to test the *reporting* path
 # (capacity.state, the admin banner); this test exercises the *write*

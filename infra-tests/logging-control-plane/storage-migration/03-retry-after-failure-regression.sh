@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, test 11 — regression guard for the real bug found this
+# Test 11 — regression guard for the real bug found this
 # session: after a migration FAILED (e.g. bad credentials), fixing the
 # credentials and re-saving the SAME destination via `PUT
 # /admin/log-storage` silently did nothing — that endpoint only starts a

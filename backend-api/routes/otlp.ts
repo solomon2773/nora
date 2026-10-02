@@ -7,9 +7,8 @@
 //
 // This is the one endpoint in Nora where an agent initiates a connection INTO
 // the control plane, so tenancy cannot be inferred from anything the agent
-// sends. Two steps, kept strictly separate (see the logging-control-plane
-// manifest's "Trace ingest is the one new trust boundary" /
-// "Authentication and attribution are separate steps" sections):
+// sends. Two steps, kept strictly separate (trace ingest is the one new trust
+// boundary, and authentication and attribution are separate steps):
 //
 //   1. Authentication — `verifyIngestKey(agentId, key)` — is this really
 //      agent X? Inputs are the agent ID (`x-nora-agent-id` header) and the
@@ -65,7 +64,7 @@ function getIngestSecret() {
 /**
  * Derive the expected ingest key for an agent: HMAC-SHA256(agentId) keyed by
  * NORA_OTLP_INGEST_SECRET, hex-encoded. Exported so agent-side enablement
- * (Phase 12) can mint keys with the identical derivation.
+ * can mint keys with the identical derivation.
  *
  * @param {string} agentId
  * @returns {string} hex-encoded HMAC digest

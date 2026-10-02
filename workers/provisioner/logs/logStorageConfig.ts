@@ -1,11 +1,10 @@
 // @ts-nocheck
 // workers/provisioner/logs/logStorageConfig.ts — resolves the platform-wide
 // log segment storage destination, mirroring backend-api/backups.ts's
-// backupStorageConfig()/backupStorageConfigForBackup() pattern (Phase 3 item
-// 19; see the logging-control-plane manifest's "Destination is
-// platform-wide, and changeable after setup" section).
+// backupStorageConfig()/backupStorageConfigForBackup() pattern. The destination is
+// platform-wide, and changeable after setup.
 //
-// Phase 5's platform_settings columns and the `GET`/`PUT /admin/log-storage`
+// The platform_settings columns and the `GET`/`PUT /admin/log-storage`
 // mutation surface (backend-api/routes/observability.ts) exist and encrypt
 // credentials under ENCRYPTION_KEY on write, matching
 // backup_s3_secret_access_key_encrypted's convention. This module decrypts
@@ -13,8 +12,8 @@
 // etc.) still win as a fallback when a column is absent/unreadable, exactly
 // mirroring backupStorageConfig()'s env-fallback behavior.
 //
-// Platform-wide only: this module takes no workspace argument anywhere, per
-// Design Decision 2b (one destination per installation).
+// Platform-wide only: this module takes no workspace argument anywhere (one
+// destination per installation).
 
 const objectStorage = require("../../../agent-runtime/lib/objectStorage.ts");
 
@@ -105,7 +104,7 @@ function safeDecrypt(encryptedValue, deps = {}) {
   }
 }
 
-// Postgres "undefined_column" — thrown when Phase 5's platform_settings
+// Postgres "undefined_column" — thrown when platform_settings
 // migration hasn't landed yet. Anything else is a real failure and should
 // propagate.
 const UNDEFINED_COLUMN = "42703";
@@ -153,8 +152,8 @@ function resolveEnvLogStorageConfig(env = process.env) {
 /**
  * Attempt to read a platform-wide log storage destination row. Returns
  * `null` when no such row/columns exist — either because the operator never
- * changed the destination (a real "unset" state Phase 5 will also produce)
- * or, today, because Phase 5's migration hasn't landed at all.
+ *  changed the destination (a real "unset" state) or because the columns don't
+ * exist yet (before migrations have run).
  */
 async function readPlatformLogStorageRow(deps = {}) {
   try {
@@ -179,12 +178,10 @@ async function readPlatformLogStorageRow(deps = {}) {
     );
     const row = result.rows[0];
     if (!row || !row.log_storage_backend) return null;
-    // Decryption of the *_encrypted columns is intentionally left to
-    // whatever Phase 5 lands, alongside the migration that creates them —
-    // see crypto.ts's decrypt() convention used by getBackupStorageConfig().
-    // We surface only what we can already resolve without guessing at that
-    // shape, and callers fall back to secrets from env when this returns
-    // fields we can't decrypt yet.
+    // The *_encrypted columns are returned as stored; resolveLogStorageConfig
+    // decrypts them (safeDecrypt) and falls back to env-sourced secrets when a
+    // column is absent or unreadable — see crypto.ts's decrypt() convention used by
+    // getBackupStorageConfig().
     return row;
   } catch (error) {
     if (error && (error.code === UNDEFINED_COLUMN || error.code === UNDEFINED_TABLE)) {
@@ -196,10 +193,10 @@ async function readPlatformLogStorageRow(deps = {}) {
 
 /**
  * Resolve the platform-wide log segment storage destination: platform
- * settings row when one exists (once Phase 5 lands it), the NORA_LOG_* env
+ * settings row when one exists, the NORA_LOG_* env
  * block otherwise. Cached across calls; invalidate with
  * `invalidateLogStorageConfigCache()` whenever the destination changes
- * (Phase 5b's mutation endpoint calls this).
+ * (the mutation endpoint calls this).
  */
 async function resolveLogStorageConfig(deps) {
   const row = await readPlatformLogStorageRow(deps);
@@ -309,10 +306,10 @@ function invalidateLogStorageConfigCache() {
  * Note (same caveat that pattern already carries for backups): this merges
  * the *old* location's non-secret snapshot (bucket/localPath/etc.) with the
  * *current* config's secrets. That's only correct if the previous driver's
- * credentials are still the ones configured — which the manifest states as
- * an explicit operator obligation during a destination migration ("the
- * previous driver's credentials must remain configured until its last
- * segment expires"). This module doesn't invent a fix beyond what the
+ * credentials are still the ones configured — an explicit operator obligation
+ * during a destination migration (the previous driver's credentials must
+ * remain configured until its last segment expires). This module doesn't
+ * invent a fix beyond what the
  * backup path already does; a real multi-destination credential store is
  * out of scope here.
  */
@@ -351,7 +348,7 @@ function logStorageConfigSnapshot(config = {}) {
 }
 
 /**
- * Boot-time validation (Phase 3 item 20): warn — never fail boot — when the
+ * Boot-time validation: warn — never fail boot — when the
  * `local` driver is selected but Kubernetes is an enabled deploy target,
  * since local storage only exists on the Docker host and Kubernetes agents'
  * logs would silently never be collected.
@@ -369,7 +366,7 @@ function assertDriverSupportsTargets(driver, enabledBackends = [], { warn = cons
     warn(
       "[logStorageConfig] NORA_LOG_STORAGE=local while ENABLED_BACKENDS includes k8s: " +
         "Kubernetes agents will not have logs collected (the local driver is unsupported on " +
-        "Kubernetes — see Design Decision 2d). Configure NORA_LOG_STORAGE=s3 or =r2, or an " +
+        "Kubernetes). Configure NORA_LOG_STORAGE=s3 or =r2, or an " +
         "admin-configured destination once available, for Kubernetes log collection to work. " +
         "Docker/Proxmox agents on this installation are unaffected.",
     );

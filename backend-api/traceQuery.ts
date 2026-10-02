@@ -1,9 +1,9 @@
 // @ts-nocheck
-// backend-api/traceQuery.ts — Logging control plane Phase 13 (Traces lens).
+// backend-api/traceQuery.ts — logging control plane Traces lens.
 //
 // Backs `GET /traces` (list) and `GET /traces/:traceId` (span tree +
 // correlated logs) in routes/observability.ts. Reads `agent_spans`
-// (populated by Phase 11's OTLP ingest) and reuses Phase 6's
+// (populated by OTLP ingest) and reuses
 // `selectCandidateSegments`/`fetchSegmentLines` from logSearch.ts to pull the
 // log lines that fall inside a trace's time window — it does NOT
 // reimplement segment fetching, decryption, or decompression.
@@ -95,7 +95,7 @@
 //         // observed_ts, per logSearch's effectiveTs/compareLines)
 //   }
 //
-// ── Correlation rule (items 3/4) ──────────────────────────────────────────
+// ── Correlation rule ──────────────────────────────────────────
 // correlatedLogs = ALL gateway- and runtime-stream lines in the same
 //                   agent_id and the trace's own [startedAt, endedAt] time
 //                   window, regardless of trace_id.
@@ -108,15 +108,15 @@
 // A gateway line whose trace_id DOES happen to equal this trace's id is
 // still marked with the stronger `inTrace: true`/`category: "trace"`
 // signal; every other gateway/runtime line in-window gets `category:
-// "window"`. Segments are only pruned by AGENT + TIME (item 3) -- there is
+// "window"`. Segments are only pruned by AGENT + TIME -- there is
 // deliberately no `trace_ids[]` column anywhere to filter segments by trace
 // directly; per-line filtering happens after segment lines are already in
 // memory.
 //
-// ── "tracing disabled" vs "enabled but empty" (item 7) ────────────────────
+// ── "tracing disabled" vs "enabled but empty" ────────────────────
 // Chosen approach: `GET /traces` resolves and returns `tracesEnabled` /
 // `traceSampleRate` itself (via agentTracing.resolveTracingSettings),
-// rather than telling the frontend to make a second call to Phase 12's
+// rather than telling the frontend to make a second call to
 // `GET /workspaces/:id/log-settings`. That endpoint requires
 // `requireWorkspaceRole("admin", "id")` -- a plain workspace viewer who can
 // legitimately see a Traces lens would get a 403 calling it directly, so
@@ -127,12 +127,12 @@
 // `tracesEnabled` is false; it shows an ordinary empty state when
 // `tracesEnabled` is true and `traces` is `[]`.
 //
-// ── Workspace scoping (item 8, the highest-severity item in this phase) ──
+// ── Workspace scoping (the highest-severity concern in this module) ──
 // Both endpoints gate on `findAccessibleAgentForActor(agentId, actor,
 // "viewer")` FIRST -- the same per-agent ownership/workspace-role check
-// Phase 6 uses -- and only THEN apply `logSearch.enforceWorkspaceScope` as
+// log search uses -- and only THEN apply `logSearch.enforceWorkspaceScope` as
 // an ADDITIONAL narrowing against an explicit `workspaceId` param, exactly
-// mirroring Phase 6 items 8/8a/8b/8c (that function is imported and reused
+// mirroring log search (that function is imported and reused
 // verbatim, not reimplemented, so the two lenses can never disagree about
 // what "this agent's workspace" means). Concretely:
 //   - A `workspaceId` param that doesn't match the agent's actual workspace
@@ -150,11 +150,11 @@
 //     deliberately, so a 404 never confirms or denies a trace/agent's mere
 //     existence to someone without access to it.
 //
-// ── History is never backfilled (item 9) ──────────────────────────────────
+// ── History is never backfilled ──────────────────────────────────
 // `agent_spans.workspace_id` is whatever it was at ingest time and is NEVER
 // rewritten when an agent later joins a workspace -- this module does not
 // read that column for scoping at all (see above: scoping always resolves
-// the agent's CURRENT workspace via `workspace_agents`, matching Phase 6).
+// the agent's CURRENT workspace via `workspace_agents`, matching log search).
 // The column is only echoed back verbatim inside `attrs`-adjacent raw span
 // data if a caller wants it; no code here backfills or migrates it.
 
@@ -312,7 +312,7 @@ function buildSpanTree(spanRows) {
   return nodes;
 }
 
-// ── correlatedLogsForTrace (item 3/4) ────────────────────────────────────
+// ── correlatedLogsForTrace ────────────────────────────────────
 
 /**
  * `correlatedLogsForTrace(spanRows, deps)` — given one trace's span rows
@@ -349,7 +349,7 @@ async function correlatedLogsForTrace(spanRows, deps = {}) {
   const windowFrom = new Date(startedAtMs).toISOString();
   const windowTo = new Date(endedAtMs).toISOString();
 
-  // Item 3: prune candidate segments by AGENT + TIME only -- never by
+  // Prune candidate segments by AGENT + TIME only -- never by
   // trace. There is deliberately no `traceId` field passed here.
   const candidateRows = await selectFn(
     { agentId, streams: ["runtime", "gateway"], from: windowFrom, to: windowTo },
@@ -382,7 +382,7 @@ async function correlatedLogsForTrace(spanRows, deps = {}) {
         }
       }
 
-      // Item 4: EVERY runtime line in the agent+time window is included,
+      // EVERY runtime line in the agent+time window is included,
       // regardless of trace_id (which runtime lines never carry in the
       // first place) -- a crash/OOM/segfault during the trace is often the
       // real root cause and must not be hidden by a strict trace_id filter.
@@ -401,14 +401,14 @@ async function correlatedLogsForTrace(spanRows, deps = {}) {
   return correlated;
 }
 
-// ── listTraces (item 1) ───────────────────────────────────────────────────
+// ── listTraces ───────────────────────────────────────────────────
 
 const SPAN_COLUMNS = `trace_id, span_id, parent_span_id, workspace_id, agent_id, name, kind,
        started_at, duration_ms, status, model, provider, tokens_in, tokens_out, cost_usd, attrs`;
 
 /**
  * `listTraces(params, actor, deps)` — see the module header for the exact
- * response shape. `params.agentId` is required, mirroring Phase 6's
+ * response shape. `params.agentId` is required, mirroring log search's
  * `searchLogs`: this endpoint lists one agent's traces, never a merged
  * cross-agent view (Assumption 5: one agent maps to one trace root).
  *
@@ -477,7 +477,7 @@ async function listTraces(params, actor, deps = {}) {
   };
 }
 
-// ── getTraceDetail (item 2) ───────────────────────────────────────────────
+// ── getTraceDetail ───────────────────────────────────────────────
 
 /**
  * `getTraceDetail(traceId, actor, params, deps)` — see the module header
@@ -486,7 +486,7 @@ async function listTraces(params, actor, deps = {}) {
  * @param {string} traceId
  * @param {Object} actor - authenticated actor (`req.user`-shaped).
  * @param {Object} [params] - `{ workspaceId? }`, an optional additional
- *   narrowing (item 8), same semantics as `listTraces`'s `workspaceId`.
+ *   narrowing, same semantics as `listTraces`'s `workspaceId`.
  * @param {Object} [deps] - dependency injection for tests.
  */
 async function getTraceDetail(traceId, actor, params = {}, deps = {}) {

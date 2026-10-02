@@ -1,4 +1,4 @@
-// Logging control plane Phase 4 item 2b regression guard: K8sBackend.logs
+// Regression guard: K8sBackend.logs
 // must treat an absent `opts.tail` as "all available lines" from the
 // kubelet (by omitting `tailLines` from the request entirely), not the old
 // `opts.tail || 100` default. Mirrors dockerLogsTail.test.js's approach and

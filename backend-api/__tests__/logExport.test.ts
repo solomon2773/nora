@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * __tests__/logExport.test.ts — Phase 7 of the logging control plane
+ * __tests__/logExport.test.ts — part of the logging control plane
  * (GET /logs/export): same filters as search, no pagination, streamed
  * incrementally as NDJSON or CSV.
  *
@@ -98,7 +98,7 @@ function makeDeps({ rows = [], linesByKey = {}, workspaceByAgent = {}, fetchWork
   };
 }
 
-describe("streamLogExport (Phase 7)", () => {
+describe("streamLogExport", () => {
   it("NDJSON export output matches the equivalent search result set exactly", async () => {
     const rows = [
       row({ id: "a", ts_from: "2026-01-01T00:00:00.000Z", ts_to: "2026-01-01T00:15:00.000Z" }),
@@ -247,13 +247,13 @@ describe("streamLogExport (Phase 7)", () => {
 });
 
 /**
- * Phase 7 row 2: export and search must agree over the live-buffer window.
+ * Export and search must agree over the live-buffer window.
  * Every test here uses a range reaching the present on purpose —
  * `readBufferSnapshots` skips the worker call outright for a range whose
  * `to` predates the oldest possible open buffer, which is exactly why the
  * rest of this file's fixed Jan-2026 fixtures never exercised this path.
  */
-describe("streamLogExport recency gap (Phase 7 row 2)", () => {
+describe("streamLogExport recency gap", () => {
   const NOW = Date.now();
   const iso = (offsetMs) => new Date(NOW + offsetMs).toISOString();
   const RANGE = { from: iso(-60 * 60 * 1000), to: iso(60 * 1000) };

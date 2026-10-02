@@ -110,7 +110,7 @@ const HELM_CI_VALUES = [
   "secrets.agentHubApiKeyHashSecret=ci-validate-dummy-agent-hub-hash-secret-0000",
   "--set",
   "secrets.dbPassword=ci-validate-dummy-db-password",
-  // Logging control plane Phase 14 item 4: the chart now fails the render
+  // The chart now fails the render
   // when NORA_LOG_STORAGE resolves to "local" (its default when unset) since
   // there is no local disk for log segments in-cluster. Set a supported
   // driver here so CI validates the templates that would otherwise render,

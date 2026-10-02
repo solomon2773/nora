@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
- * __tests__/traceQuery.test.ts — Phase 13 of the logging control plane
+ * __tests__/traceQuery.test.ts — part of the logging control plane
  * (GET /traces, GET /traces/:traceId): aggregate `agent_spans` into a trace
  * list, reconstruct a single trace's span tree, and correlate its window
- * against Phase 6's segment-fetching machinery.
+ * against the segment-fetching machinery.
  *
  * Dependency-injected unit tests of the real `backend-api/traceQuery.ts`
  * module — same convention as `logSearch.test.ts`: a fake `db.query` that
@@ -85,7 +85,7 @@ function agentAdminBypass(agentId = "agent-1") {
   return async (id, actor) => (id === agentId && actor.role === "admin" ? { id: agentId } : null);
 }
 
-describe("listTraces (item 1)", () => {
+describe("listTraces", () => {
   // Tracing is a platform-wide switch (NORA_TRACES_ENABLED), injected here
   // through listTraces' `resolveTracingSettings` seam.
   function makeDeps({
@@ -192,7 +192,7 @@ describe("listTraces (item 1)", () => {
     expect(result.traceSampleRate).toBe(1);
   });
 
-  describe("distinguishing 'tracing disabled' from 'enabled but empty' (item 7)", () => {
+  describe("distinguishing 'tracing disabled' from 'enabled but empty'", () => {
     it("tracesEnabled is false and traces is empty when tracing is off for the installation", async () => {
       const deps = makeDeps({
         spans: [],
@@ -225,7 +225,7 @@ describe("listTraces (item 1)", () => {
     });
   });
 
-  describe("workspace scoping (item 8)", () => {
+  describe("workspace scoping", () => {
     it("workspace-A actor receives zero workspace-B rows", async () => {
       const deps = makeDeps({
         spans: [spanRow()],
@@ -329,7 +329,7 @@ describe("buildSpanTree (parent/child nesting)", () => {
   });
 });
 
-describe("correlatedLogsForTrace (items 3/4)", () => {
+describe("correlatedLogsForTrace", () => {
   function logLine(overrides = {}) {
     return {
       ts: "2026-01-01T00:00:00.500Z",
@@ -516,7 +516,7 @@ describe("correlatedLogsForTrace (items 3/4)", () => {
   });
 });
 
-describe("getTraceDetail (item 2)", () => {
+describe("getTraceDetail", () => {
   function makeDeps({ spans = [], workspaceByAgent = {}, findAgent, correlatedLogs = [] } = {}) {
     return {
       db: fakeDb({ spans, workspaceByAgent }),
@@ -564,7 +564,7 @@ describe("getTraceDetail (item 2)", () => {
     });
   });
 
-  describe("workspace scoping (item 8)", () => {
+  describe("workspace scoping", () => {
     it("workspace-A actor cannot fetch a trace belonging to workspace-B's agent", async () => {
       const spans = [spanRow({ trace_id: "trace-1", agent_id: "agent-1" })];
       const deps = makeDeps({ spans, workspaceByAgent: { "agent-1": "ws-A" } });

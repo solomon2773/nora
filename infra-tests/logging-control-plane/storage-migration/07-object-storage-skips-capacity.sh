@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, matrix row 9: migrating to an object-storage destination never
+# Matrix row 9: migrating to an object-storage destination never
 # consults the local capacity gate and never pauses.
 #
 # The capacity cap is local disk budget. Object storage has no such budget, so

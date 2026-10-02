@@ -9,14 +9,13 @@ import {
   type TraceDetail,
 } from "../../lib/observabilityClient";
 
-// Split-pane detail view — right pane of the Traces lens (Phase 13):
+// Split-pane detail view — right pane of the Traces lens:
 // a span waterfall above, correlated log lines below, for whichever trace
 // is selected in TraceList. The layout math (offset/width/depth) lives in
 // `computeWaterfallLayout` (observabilityClient.ts) so it's unit-testable
 // without a DOM — this component only renders what that function computes.
 //
-// This is deliberately NOT a pixel-perfect Gantt chart (Phase 13 spec item
-// 3 says as much): a legible hierarchy of what ran when and for how long is
+// This is deliberately NOT a pixel-perfect Gantt chart: a legible hierarchy of what ran when and for how long is
 // the bar, not a full tracing-UI clone.
 
 const STATUS_BAR_STYLES: Record<string, string> = {

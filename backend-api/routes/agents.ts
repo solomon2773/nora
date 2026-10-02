@@ -2701,7 +2701,7 @@ router.post("/:id/stop", async (req, res, next) => {
 });
 
 /**
- * Phase 5c item 1: no default — a request that omits `deleteLogs` is
+ * No default — a request that omits `deleteLogs` is
  * rejected outright, for both an interactive (dashboard-confirmed) and a
  * programmatic (CLI/MCP/direct API) caller alike. Checked before any other
  * validation or side effect.
@@ -2768,7 +2768,7 @@ async function destroyAgent(agentId, req, res) {
       }
     }
 
-    // Phase 5c item 3: when logs are kept, snapshot the deleted_log_owners
+    // When logs are kept, snapshot the deleted_log_owners
     // row BEFORE the agent row (and therefore this lookup's context) is
     // gone. Best-effort single workspace lookup — an agent can belong to
     // more than one workspace via workspace_agents, so this picks whichever
@@ -2812,7 +2812,7 @@ async function destroyAgent(agentId, req, res) {
       }),
     );
 
-    // Phase 5c item 2: deleteLogs:true trails the (already-synchronous)
+    // DeleteLogs:true trails the (already-synchronous)
     // agent-row deletion with an async cleanup job — never awaited, so a
     // slow or failing log purge cannot hold up the delete response the
     // caller is waiting on.

@@ -184,7 +184,7 @@ router.delete("/:id/agents/:agentId", requireWorkspaceRole("admin"), async (req,
   }
 });
 
-// Phase 5c item 1: no default — a request omitting `deleteLogs` is rejected
+// No default — a request omitting `deleteLogs` is rejected
 // with 400, for both interactive (dashboard-confirmed) and programmatic
 // (CLI/MCP/direct API) callers alike. Checked before any other validation
 // or side effect, same contract as the agent delete route.
@@ -198,7 +198,7 @@ router.delete("/:id", requireWorkspaceRole("owner"), async (req, res, next) => {
       });
     }
 
-    // Phase 5c item 3: snapshot BEFORE the workspace row (and its
+    // Snapshot BEFORE the workspace row (and its
     // workspace_log_settings row, which cascades on delete) is gone — the
     // retention lookup inside snapshotDeletedLogOwner needs that row to
     // still exist to read from it.
@@ -220,7 +220,7 @@ router.delete("/:id", requireWorkspaceRole("owner"), async (req, res, next) => {
       name: req.workspace?.name,
     });
 
-    // Phase 5c item 2: deleteLogs:true trails the (already-synchronous)
+    // DeleteLogs:true trails the (already-synchronous)
     // workspace-row deletion with an async cleanup job — never awaited.
     if (deleteLogs) {
       logDeletion.deleteWorkspaceLogs(req.params.id).catch((error) => {

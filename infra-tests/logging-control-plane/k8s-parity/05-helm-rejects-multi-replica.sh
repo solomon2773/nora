@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 14, test 5: `helm template infra/helm/nora` refuses to render with
+# Test 5: `helm template infra/helm/nora` refuses to render with
 # `workerProvisioner.replicas` above 1, citing the single-buffer-owner
 # constraint.
 #

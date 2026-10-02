@@ -1,6 +1,4 @@
-# Phase 9 — Gateway RPC Client
-
-**Plan doc:** "Phase 9: Gateway RPC Client" (line 1354).
+# Gateway RPC Client
 
 **Objective:** provide a gateway WebSocket RPC client usable from
 `worker-provisioner`, since the existing machinery lived only in
@@ -14,7 +12,7 @@ dialling a raw agent-supplied address.
 **Code:** `agent-runtime/lib/gatewayRpc.ts`.
 
 **Unit tests:** `agent-runtime/__tests__/gatewayRpc.test.ts` exists and is
-thorough — it already covers every item on the plan doc's own Tests list,
+thorough — it already covers every item on the intended test list,
 against a `FakeSocket` double (addEventListener/send/close/readyState)
 that never touches a real socket or DNS:
 
@@ -34,7 +32,7 @@ that never touches a real socket or DNS:
 - `resolveSafeGatewayTarget` rejects a link-local/metadata-style address
   and an unspecified (`0.0.0.0`) address
 
-Given that, every item the plan doc lists is already unit-tested
+Given that, every intended scenario is already unit-tested
 convincingly — including the reconnect-backoff and mid-flight-event
 scenarios this suite would otherwise exist to cover, because
 `vi.useFakeTimers()` and a scripted `FakeSocket` reproduce the *logic*

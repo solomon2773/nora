@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 4, test 6: a `null` from containerManager.logs() is handled
+# Test 6: a `null` from containerManager.logs() is handled
 # quietly, not as a retry storm.
 #
 # ⚠️ Adapted scope, found while reviewing this script a second time:
@@ -21,7 +21,7 @@
 # `attachAgentStream`'s own try/catch treats a caught error identically to
 # a `null` return (log a warning, return null, the next reconcile tick
 # tries again) — so this exercises the same graceful-degradation code path
-# the plan's item 3 is actually protecting, just reached via the
+# the null-logs guard is actually protecting, just reached via the
 # throw-then-catch branch rather than a literal `null`, which is the only
 # branch a Docker-backed agent can reach.
 

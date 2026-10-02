@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Phase 12, test 1: applying tracing config to a real running OpenClaw
+# Test 1: applying tracing config to a real running OpenClaw
 # container issues no restart, and the config actually lands on disk.
 #
-# Uses agent5 (re-resolved by name, not a hardcoded id — see this phase's
-# README/task briefing: "names/IDs can drift").
+# Uses agent5 (re-resolved by name, not a hardcoded id — see this suite's
+# README: "names/IDs can drift").
 #
 # Tracing is a platform-wide switch (NORA_TRACES_ENABLED), not a workspace
 # setting. `backend-api/agentTracing.ts`'s own applyTracingConfig is called
@@ -28,7 +28,7 @@ source "$SCRIPT_DIR/../lib/node_call.sh"
 require_confirmation
 test_start "agent-trace-enablement" "01-live-merge-no-restart"
 
-# Re-resolve agent5 by name — names/ids can drift, per the task briefing.
+# Re-resolve agent5 by name — names/ids can drift.
 AGENT_ROW="$(db_query "SELECT id, container_name, status FROM agents WHERE name='agent5';")"
 if [ -z "$AGENT_ROW" ]; then
   test_fail "no agents row named 'agent5' found — re-resolve before rerunning"

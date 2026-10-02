@@ -1,29 +1,21 @@
 // @ts-nocheck
 // backend-api/routes/observability.ts — logging control plane HTTP surface.
 //
-// This file is deliberately small and structured by concern rather than a
-// flat dump, because it is NOT complete after Phase 5 — later phases (5b's
-// storage-migration progress endpoints, 6, 7, 12, 13, per the implementation
-// plan) extend this same file rather than creating parallel ones. Known
-// inconsistency, resolved per the Phase 5 task brief: the plan's Phase 5
-// "Files" list only mentions retentionSweeper.ts/platformSettings.ts, but
-// its "Changes"/"Functions" sections require GET/PUT /admin/log-storage and
-// item 7b's DELETE /logs, and Phase 5b's spec already refers to
-// "routes/observability.ts (PUT /admin/log-storage extended)" as if it
-// exists by then — so this file is created now, in Phase 5, as the home for
-// all of it.
+// This file is deliberately structured by concern rather than a flat dump: it
+// is the home for the logging control plane's HTTP surface (log deletion, the
+// storage destination, search, export, workspace log settings, and traces).
 //
 // Mounted at "/" in server.ts (after the global `authenticateToken`
 // middleware), so `req.user` is always populated below.
 //
 // ── Section map ───────────────────────────────────────────────────────────
-//   1. Manual log deletion         — DELETE /logs                  (item 7b)
-//   2. Platform storage settings   — GET/PUT /admin/log-storage    (item 7a-ii)
+//   1. Manual log deletion         — DELETE /logs
+//   2. Platform storage settings   — GET/PUT /admin/log-storage
 //   3. Storage migration progress  — GET /admin/log-storage/migration
-//   4. Search                      — GET /logs/search              (Phase 6)
-//   5. Export                      — GET /logs/export              (Phase 7)
-//   6. Workspace log settings      — GET/PUT /workspaces/:id/log-settings (Phase 12)
-//   7. Traces                      — GET /traces, GET /traces/:traceId (Phase 13)
+//   4. Search                      — GET /logs/search
+//   5. Export                      — GET /logs/export
+//   6. Workspace log settings      — GET/PUT /workspaces/:id/log-settings
+//   7. Traces                      — GET /traces, GET /traces/:traceId
 
 const { queryArrayParam } = require("../lib/queryParams");
 const express = require("express");
@@ -51,7 +43,7 @@ const db = require("../db");
 
 const router = express.Router();
 
-// Phase 6 item 9: logs:read gates both search and export for API-key
+// Logs:read gates both search and export for API-key
 // callers. Session callers (browser dashboards) pass through unchanged —
 // scopeByMethod only enforces scopes when `req.apiKey` is present.
 router.use(
@@ -65,7 +57,7 @@ router.use(
 router.use("/admin/log-storage", requireAdmin);
 router.use("/admin/log-collection", requireAdmin);
 
-// ─── 1. Manual log deletion (item 7b) ──────────────────────────────────────
+// ─── 1. Manual log deletion ──────────────────────────────────────
 
 /**
  * DELETE /logs
@@ -76,10 +68,9 @@ router.use("/admin/log-collection", requireAdmin);
  * editor-or-above role in — `findAccessibleAgentForActor` (already used
  * throughout the codebase for exactly this workspace-role check, e.g.
  * `middleware/ownership.ts`'s `requireAccessibleAgent`) is reused here
- * rather than reinventing workspace-role checking, per the task brief. This
- * is the only way an operator reclaims local disk space short of raising
- * the cap — there is no automatic eviction, by design (see the manifest's
- * "no-automatic-eviction" decision).
+ * rather than reinventing workspace-role checking. This is the only way an
+ * operator reclaims local disk space short of raising the cap — there is no
+ * automatic eviction, by design.
  */
 router.delete(
   "/logs",
@@ -99,7 +90,7 @@ router.delete(
   }),
 );
 
-// ─── 2. Platform storage destination setting (item 7a-ii) ──────────────────
+// ─── 2. Platform storage destination setting ──────────────────
 
 const LOG_STORAGE_BACKENDS = new Set(["local", "s3", "r2", "ssh"]);
 
@@ -218,19 +209,19 @@ router.get(
  *   sshHost?, sshPort?, sshUsername?, sshRemotePath?, sshPrivateKey?, sshPassword?,
  *   clearSshPrivateKey?, clearSshPassword? }
  *
- * Two hard rules (item 7a-ii):
+ * Two hard rules:
  *   - Selecting `local` while `k8s` is an enabled deploy target
  *     (ENABLED_BACKENDS) is REJECTED here with a validation error — not
  *     merely warned about, since this is now a runtime-changeable setting
  *     and there is no boot-time restart left at which a warning would ever
- *     be seen (Design Decision 2d).
+ *     be seen.
  *   - Every change writes an `events` row via `monitoring.logEvent` — it's
  *     an operator action that changes what other people can see.
  *
- * Changing the destination moves no data in this phase: new segments go to
- * the new destination; existing ones stay readable via their recorded
- * `storage_backend`/`storage_config` (Phase 1/3). The background migration
- * of existing segments is Phase 5b, not built here.
+ * Changing the destination does not move data inline: new segments go to the
+ * new destination, existing ones stay readable via their recorded
+ * `storage_backend`/`storage_config`, and a background job migrates them (see
+ * the migration kickoff below).
  */
 router.put(
   "/admin/log-storage",
@@ -254,7 +245,7 @@ router.put(
       }
     }
 
-    // Phase 5b item 7: the previous destination's credentials must stay
+    // The previous destination's credentials must stay
     // configured for the life of any migration job that still references it,
     // and — when kept — until every legacy copy referencing it has expired.
     // Reject a request to CLEAR those specific credential fields outright,
@@ -290,7 +281,7 @@ router.put(
     const keepSourceCopies = Boolean(body.keepSourceCopies);
     const backendIsChanging = storageBackend !== previous.storageBackend;
 
-    // Phase 5b items 1/8: a destination change kicks off an async migration
+    // A destination change kicks off an async migration
     // of every previously-written segment. Reject the whole request, with NO
     // side effects at all, up front when either an overlapping migration is
     // already in flight or (when the new destination is local) there isn't
@@ -476,14 +467,14 @@ router.put(
       ],
     );
 
-    // Invalidate the segment writer's cached destination (Phase 3's
-    // logStorageConfig() caches across calls) so the very next flush picks
+    // Invalidate the segment writer's cached destination (logStorageConfig()
+    // caches across calls) so the very next flush picks
     // up the new destination rather than the process's stale cache.
     logStorageConfigModule.invalidateLogStorageConfigCache();
 
     const nextSettings = resolveLogStoragePayload(result.rows[0] || {});
 
-    // Every change writes an events row (item 7a-ii) — this is an operator
+    // Every change writes an events row — this is an operator
     // action that changes what other people can see.
     await monitoring.logEvent(
       "admin_log_storage_settings_updated",
@@ -494,7 +485,7 @@ router.put(
       },
     );
 
-    // Phase 5b item 1: the resolved config has already flipped above (the
+    // The resolved config has already flipped above (the
     // cache invalidation call), so new writes go to the new destination
     // immediately. Now kick off the async migration of every
     // previously-written segment, if the destination actually changed.
@@ -525,7 +516,7 @@ router.put(
   }),
 );
 
-// ─── 3. Storage migration progress (Phase 5b item 6) ───────────────────────
+// ─── 3. Storage migration progress ───────────────────────
 
 /**
  * GET /admin/log-storage/migration
@@ -711,7 +702,7 @@ router.put(
   }),
 );
 
-// ─── 4. Search (Phase 6) ────────────────────────────────────────────────
+// ─── 4. Search ────────────────────────────────────────────────
 
 function sendLogError(res, error) {
   const status = error.statusCode || 500;
@@ -723,13 +714,12 @@ function sendLogError(res, error) {
  * Query: workspaceId, agentId (required), streams[], levels[], from, to, q,
  * traceId, cursor, limit, order.
  *
- * `agentId` is singular and required (item 2) — this endpoint serves one
- * agent's timeline, never a merged cross-agent view (see the manifest's
- * Non-Goals).
+ * `agentId` is singular and required — this endpoint serves one agent's
+ * timeline, never a merged cross-agent view.
  *
  * Workspace/agent scoping for a session caller runs through
- * `findAccessibleAgentForActor` plus `logSearch.enforceWorkspaceScope`
- * (items 8/8a/8b/8c). An API-key caller is scoped BEFORE any of that, by
+ * `findAccessibleAgentForActor` plus `logSearch.enforceWorkspaceScope`.
+ * An API-key caller is scoped BEFORE any of that, by
  * `enforceApiKeyAgentScope` below — the same guard `requireAccessibleAgent`
  * uses elsewhere — and its bound workspace is threaded straight through
  * rather than trusting an arbitrary `workspaceId` query value.
@@ -792,7 +782,7 @@ router.get(
   }),
 );
 
-// ─── 5. Export (Phase 7) ────────────────────────────────────────────────
+// ─── 5. Export ────────────────────────────────────────────────
 
 /**
  * GET /logs/export
@@ -800,7 +790,7 @@ router.get(
  * (default) or CSV — pick with `?format=csv` or an `Accept: text/csv`
  * header; anything else (including no preference at all) streams NDJSON.
  * Requires `from`/`to` and rejects a range wider than the configured cap
- * (item 4) with an actionable `export_range_too_large` error.
+ * with an actionable `export_range_too_large` error.
  */
 router.get(
   "/logs/export",
@@ -844,7 +834,7 @@ router.get(
   }),
 );
 
-// ─── 6. Workspace log settings (Phase 12 item 6) ───────────────────────────
+// ─── 6. Workspace log settings ───────────────────────────
 
 const WORKSPACE_LOG_SETTINGS_COLUMNS = `
   runtime_retention_days, trace_retention_days
@@ -956,7 +946,7 @@ router.put(
   }),
 );
 
-// ─── 7. Traces (Phase 13) ───────────────────────────────────────────────
+// ─── 7. Traces ───────────────────────────────────────────────
 
 /**
  * GET /traces
@@ -966,7 +956,7 @@ router.put(
  * `traceQuery.ts`'s module header for the full response shape (`agentId`,
  * `workspaceId`, `tracesEnabled`, `traceSampleRate`, `traces[]`).
  *
- * Scoping (item 8): `traceQuery.listTraces` gates on
+ * Scoping: `traceQuery.listTraces` gates on
  * `findAccessibleAgentForActor` first, then applies `workspaceId` as an
  * additional narrowing via `logSearch.enforceWorkspaceScope` — the exact
  * same two-step gate `logSearch.searchLogs` uses, reused rather than

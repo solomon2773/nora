@@ -2857,7 +2857,7 @@ describe("admin routes", () => {
   });
 });
 
-describe("Phase 5c: /admin/log-recovery", () => {
+describe("/admin/log-recovery", () => {
   it("GET /admin/log-recovery requires platform-admin", async () => {
     const res = await withToken(request(app).get("/admin/log-recovery"), userToken);
     expect(res.status).toBe(403);

@@ -1,19 +1,19 @@
 // @ts-nocheck
-// workers/provisioner/logs/storageMigration.ts — Phase 5b of the logging
+// workers/provisioner/logs/storageMigration.ts — part of the logging
 // control plane: turns a storage-destination change from an instantaneous
 // cutover into an asynchronous, resumable migration of every
 // previously-written segment, with an operator-visible keep-or-delete choice
 // for the old-destination copy.
 //
 // Depends on:
-//   - agent-runtime/lib/objectStorage.ts (Phase 0)        — getStorageObject,
+//   - agent-runtime/lib/objectStorage.ts        — getStorageObject,
 //     putStorageObject, deleteStorageObject
 //   - backend-api/db_schema.sql `storage_migration_jobs` /
-//     `log_segment_legacy_copies`                          (Phase 1)
-//   - workers/provisioner/logs/logStorageConfig.ts (Phase 3) —
+//     `log_segment_legacy_copies`
+//   - workers/provisioner/logs/logStorageConfig.ts —
 //     logStorageConfig, storageConfigForSegment, logStorageConfigSnapshot
-//   - workers/provisioner/logs/segmentWriter.ts (Phase 3)  — checkLocalCapacity,
-//     DEFAULT_CAPACITY_POLL_INTERVAL_MS (the SAME gate and cadence Phase 3
+//   - workers/provisioner/logs/segmentWriter.ts  — checkLocalCapacity,
+//     DEFAULT_CAPACITY_POLL_INTERVAL_MS (the SAME gate and cadence the writer
 //     applies to every live flush — this module does not reimplement it)
 //   - backend-api/monitoring.ts                            — logEvent
 //
@@ -25,16 +25,16 @@
 // deletes against a segment's recorded (possibly stale) destination. The NEW
 // (to) config is simply the CURRENT `logStorageConfig()` — correct because
 // `PUT /admin/log-storage` flips the resolved config *before* creating the
-// migration job (item 1), so for the entire life of a job (absent another
+// migration job, so for the entire life of a job (absent another
 // destination change, which `startStorageMigration` refuses to allow to
 // overlap) "current config" and "this job's target" are the same thing.
 //
-// This deliberately reuses the EXACT pattern already established by Phase 5,
+// This deliberately reuses the EXACT pattern retentionSweeper.ts already uses,
 // rather than inventing a second one: `storageConfigForSegment`'s own
 // documented caveat applies unchanged here — it merges the OLD location's
 // non-secret snapshot with whatever secrets are CURRENTLY configured for
 // that backend shape, which is only correct as long as the previous driver's
-// credentials remain configured (item 7's entire reason for existing). A
+// credentials remain configured (see the credential-retention guard below). A
 // real multi-destination credential store remains out of scope, exactly as
 // `logStorageConfig.ts` already states for the backup-derived pattern this
 // mirrors.
@@ -70,14 +70,14 @@ function normalizeConfigInput(config) {
   return typeof config === "string" ? { storageBackend: config } : config;
 }
 
-// ── Per-segment migration (Phase 5b items 2-3) ──────────────────────────
+// ── Per-segment migration ──────────────────────────
 
 /**
  * Migrate exactly one `log_segments` row: read from its recorded (old)
  * location, write to the current (new) destination, and only THEN repoint
  * the index row — never the reverse. If the write to the new destination
  * fails, the row is left completely untouched, so the old location — still
- * fully readable — is what any concurrent reader sees (item 3).
+ * fully readable — is what any concurrent reader sees.
  *
  * `keepSourceCopies`:
  *   - false: the old-destination object is deleted once the new copy and the
@@ -85,8 +85,8 @@ function normalizeConfigInput(config) {
  *   - true: a `log_segment_legacy_copies` row is inserted carrying the OLD
  *     backend/config and the segment's `ts_to`, and the old object is left
  *     in place — untouched by this migration, tracked for its own
- *     independent expiry (Phase 5's retention sweeper) and excluded from
- *     orphan reconciliation (Phase 5 item 8a already checks this table).
+ *     independent expiry (the retention sweeper) and excluded from
+ *     orphan reconciliation (which already checks this table).
  */
 async function migrateOneSegment(row, { toConfig, keepSourceCopies, jobId }, deps = {}) {
   const db = lazyDb(deps);
@@ -101,12 +101,12 @@ async function migrateOneSegment(row, { toConfig, keepSourceCopies, jobId }, dep
   const fromConfig = await resolveFromConfig(row);
 
   // Read old, write new — in that order, and BEFORE anything about this
-  // segment's row changes (item 3: the index row must never be repointed
+  // segment's row changes (the index row must never be repointed
   // ahead of a confirmed new-destination write).
   const bytes = await getObj(row.storage_key, fromConfig);
   await putObj(row.storage_key, bytes, toConfig);
 
-  // Item 3/14 (extended from Phase 3): the object is confirmed in the new
+  // The object is confirmed in the new
   // location before the index row is touched at all.
   //
   // Repointing the row and crediting the job happen in ONE statement, so a
@@ -152,7 +152,7 @@ async function migrateOneSegment(row, { toConfig, keepSourceCopies, jobId }, dep
 
 /**
  * Retry a single segment's migration a bounded number of times before
- * treating it as an unrecoverable batch failure (item 5: a transient error
+ * treating it as an unrecoverable batch failure (a transient error
  * retries within the batch rather than failing the whole job).
  */
 async function migrateOneSegmentWithRetry(row, ctx, deps = {}) {
@@ -172,19 +172,18 @@ async function migrateOneSegmentWithRetry(row, ctx, deps = {}) {
   throw lastError;
 }
 
-// ── startStorageMigration (item 1, 8 / function list) ───────────────────
+// ── startStorageMigration ───────────────────
 
 /**
  * Reject outright, with NO side effects, if `toConfig` is `local` and there
- * isn't real capacity for the exact byte total about to be migrated (item
- * 8). Object-storage destinations skip this entirely (Phase 5 item 5's same
- * rule).
+ * isn't real capacity for the exact byte total about to be migrated.
+ * Object-storage destinations skip this entirely, as live writes do.
  *
  * Otherwise creates the `storage_migration_jobs` row and begins processing.
  * Only one migration may be in flight at a time — a second call while a job
  * is `running`/`paused` is rejected, so overlapping jobs never contend for
  * the same segments or the same "previous destination's credentials must
- * stay configured" obligation (item 7).
+ * stay configured" obligation.
  *
  * `fromConfig`/`toConfig` need only carry `.storageBackend` — the actual
  * object I/O during processing always re-resolves credentials per segment
@@ -263,13 +262,13 @@ async function startStorageMigration(fromConfig, toConfig, keepSourceCopies, dep
   return { jobId, segmentsTotal, bytesToMigrate };
 }
 
-// ── migrateSegmentBatch (item 2-4, 9 / function list) ───────────────────
+// ── migrateSegmentBatch ───────────────────
 
 /**
  * Process exactly one checkpointed batch for `jobId`. Consults the exact
  * same capacity gate `segmentWriter.ts` applies to every live flush
  * (`checkLocalCapacity()`) before touching anything, when the destination is
- * `local` — never a second implementation of that idea (item 9). On a
+ * `local` — never a second implementation of that idea. On a
  * capacity breach the job is `paused` at its current checkpoint, not
  * `failed` — a capacity pause is expected to self-resolve.
  *
@@ -322,8 +321,8 @@ async function migrateSegmentBatch(jobId, deps = {}) {
   }
 
   // Capacity is fine (or the destination isn't local, where this gate never
-  // applies at all — item 9's last line). If the job had been paused, clear
-  // that state so it resumes from exactly where it left off (item 10).
+  // applies at all). If the job had been paused, clear
+  // that state so it resumes from exactly where it left off.
   if (job.status === "paused") {
     await db.query(`UPDATE storage_migration_jobs SET status = 'running' WHERE id = $1`, [jobId]);
     job.status = "running";
@@ -373,8 +372,8 @@ async function migrateSegmentBatch(jobId, deps = {}) {
       // Unrecoverable (retries already exhausted): mark failed. Segments in
       // THIS batch that succeeded before the failing one were already
       // credited as each moved (see migrateOneSegment), so only the
-      // checkpoint advances here — item 5's "only changes storage_backend
-      // for segments that already succeeded" guarantee.
+      // checkpoint advances here, which preserves the guarantee that only segments
+      // that already succeeded have their storage_backend changed.
       const partialCheckpoint = migratedInBatch > 0 ? rows[migratedInBatch - 1].id : job.checkpoint;
       await db.query(
         `UPDATE storage_migration_jobs
@@ -411,13 +410,13 @@ async function migrateSegmentBatch(jobId, deps = {}) {
 // Why not a BullMQ job (the pattern the rest of `worker.ts` uses for
 // provisioning work): this loop's unit of durable progress is already the
 // `storage_migration_jobs.checkpoint` column, updated after every batch —
-// that IS the durability mechanism (item 4), so a BullMQ job would only add
+// that IS the durability mechanism, so a BullMQ job would only add
 // a second, redundant bookkeeping layer (job attempts/backoff) around state
 // that's already correctly persisted and already resumable by construction.
 // A plain in-process loop that simply stops driving on `paused`/`done` and
 // is picked back up by `resumeStorageMigration()` on the next boot, or by
 // the capacity-resume timer below once usage clears, is simpler and matches
-// how Phase 5's retention sweeper (`startRetentionSweeper`) already drives
+// how the retention sweeper (`startRetentionSweeper`) already drives
 // its own recurring, resumable work with a plain interval rather than a
 // queue.
 function driveMigrationJob(jobId, deps = {}) {
@@ -432,22 +431,20 @@ function driveMigrationJob(jobId, deps = {}) {
   })();
 }
 
-// ── Capacity-resume timer (item 10) ──────────────────────────────────────
+// ── Capacity-resume timer ──────────────────────────────────────
 //
 // `driveMigrationJob` stops looping the instant a batch reports `paused` —
 // nothing will call `migrateSegmentBatch` again for that job on its own.
-// Phase 5's live-collection resume works because `segmentWriter.ts` runs its
+// The live-collection resume works because `segmentWriter.ts` runs its
 // OWN independent poll of the identical `checkLocalCapacity()` gate, every
 // `DEFAULT_CAPACITY_POLL_INTERVAL_MS` (10s) — see that module's `pollCapacity`
 // — and the 30s collector reconcile tick then re-attaches once the flag
 // clears. There is no publish/subscribe hook on that timer to attach to
-// without modifying `segmentWriter.ts` itself, which is out of this phase's
-// touched-file set (see the task brief). This timer is therefore a SECOND,
-// independent poll — not literally "the same tick" — but it checks the
+// without modifying `segmentWriter.ts` itself. This timer is therefore a
+// SECOND, independent poll — not literally "the same tick" — but it checks the
 // IDENTICAL gate function at the IDENTICAL cadence constant, so the two
-// mechanisms clear in lockstep in practice. This is flagged in the
-// completion report as the one place true shared-tick wiring would require
-// touching a file outside this phase's scope.
+// mechanisms clear in lockstep in practice. True shared-tick wiring would
+// require changing `segmentWriter.ts`.
 let _resumeTimer = null;
 
 function ensureCapacityResumeTimer(deps = {}) {
@@ -478,11 +475,11 @@ async function tryResumePausedJobs(deps = {}) {
   }
 }
 
-// ── resumeStorageMigration (item 10 / function list) ────────────────────
+// ── resumeStorageMigration ────────────────────
 
 /**
  * Called on worker startup to pick up any `running` OR `paused` job left
- * over from an ungraceful restart (item 10). A `paused` job is driven
+ * over from an ungraceful restart. A `paused` job is driven
  * exactly like a `running` one — `driveMigrationJob` -> `migrateSegmentBatch`
  * — but `migrateSegmentBatch` re-checks capacity BEFORE doing anything, so a
  * job that is still over the cap at restart time simply re-confirms `paused`
@@ -511,14 +508,14 @@ async function resumeStorageMigration(deps = {}) {
 // only ever looks at `running`/`paused` jobs, and `PUT /admin/log-storage`
 // only starts a NEW migration when `storageBackend` actually changes from
 // what's already in `platform_settings` — but that column is written
-// BEFORE the migration is attempted (item 1's ordering), so it already
+// BEFORE the migration is attempted so it already
 // reads as the failed migration's target destination. Fixing the bad
 // credentials and re-saving the SAME destination looks, from that check's
 // perspective, like "nothing changed" — no new job gets created, and the
 // stale `failed` job keeps being what `GET /admin/log-storage/migration`
 // reports forever. This is the operator's actual recovery path: retry the
 // existing failed job from its own checkpoint (which already reflects
-// whatever segments succeeded before the failure — see item 5's per-batch
+// whatever segments succeeded before the failure — see the per-batch
 // partial-credit guarantee) rather than requiring a real backend flip
 // (e.g. bounce through `local`) just to get `startStorageMigration` to
 // notice.
@@ -576,7 +573,7 @@ async function retryStorageMigration(deps = {}) {
 
 /**
  * The current or most-recent job's progress, for `GET
- * /admin/log-storage/migration` to poll (item 6). Returns `{ status: "none" }`
+ * /admin/log-storage/migration` to poll. Returns `{ status: "none" }`
  * when no migration has ever run.
  */
 async function getMigrationStatus(deps = {}) {
@@ -604,13 +601,13 @@ async function getMigrationStatus(deps = {}) {
   };
 }
 
-// ── Credential-retention guard (item 7) ──────────────────────────────────
+// ── Credential-retention guard ──────────────────────────────────
 
 /**
  * Backends whose credentials must stay configured right now: referenced as
  * `from_backend`/`to_backend` by a `running`/`paused` migration job, or
  * referenced by any `log_segment_legacy_copies` row that hasn't expired yet
- * (item 7). `PUT /admin/log-storage` consults this before honoring a
+ *. `PUT /admin/log-storage` consults this before honoring a
  * request to clear a destination's credentials.
  */
 async function backendsRequiringRetainedCredentials(deps = {}) {

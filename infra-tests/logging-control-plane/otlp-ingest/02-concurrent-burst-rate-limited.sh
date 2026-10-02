@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 11, test 2: a real burst of concurrent OTLP POSTs is actually
+# Test 2: a real burst of concurrent OTLP POSTs is actually
 # rate-limited, not just wired in per a mocked-middleware unit assertion.
 #
 # routes/otlp.ts's otlpIngestLimiter is keyed by the CLAIMED agent ID

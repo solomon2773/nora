@@ -1,5 +1,5 @@
 // @ts-nocheck
-// workers/provisioner/logs/redaction.ts — Phase 10 of the logging control
+// workers/provisioner/logs/redaction.ts — part of the logging control
 // plane: a second, pattern-based redaction pass applied to every gateway log
 // line at ingest time, independent of whatever redaction OpenClaw itself
 // already applied upstream.
@@ -16,9 +16,8 @@
 // whether OpenClaw's own pass already caught them.
 //
 // This is deliberately NOT exhaustive semantic secret detection (that would
-// require a much heavier entropy/classifier pass this phase does not attempt
-// to build). It covers the common, well-known shapes named in the Phase 10
-// spec: provider API key prefixes, bearer tokens, JWTs, and a generic
+// require a much heavier entropy/classifier pass than this file attempts). It
+// covers the common, well-known shapes: provider API key prefixes, bearer tokens, JWTs, and a generic
 // "suspicious key name assigned a high-entropy-looking value" pattern for
 // config-dump-style leaks (the `config.get` gap above). Patterns are
 // documented individually below so a future pass can extend this file
@@ -122,7 +121,7 @@ function redactText(text) {
  * secret-shaped substrings inside the message body, not to touch structured
  * context fields the search/trace surfaces depend on.
  *
- * @param {object} line - a normalized line envelope (Phase 2 shape).
+ * @param {object} line - a normalized line envelope.
  * @returns {object}
  */
 function redactLine(line) {

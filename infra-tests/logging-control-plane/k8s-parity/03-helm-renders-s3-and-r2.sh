@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Phase 14, test 3: `helm template infra/helm/nora` renders cleanly with
+# Test 3: `helm template infra/helm/nora` renders cleanly with
 # both an s3 and an r2 log-storage configuration.
 #
-# Cheapest test in this phase per the README — no cluster, no auth, no
+# Cheapest test in this suite per the README — no cluster, no auth, no
 # docker compose at all, just a client-side `helm template` invocation
 # twice. Doesn't touch the running dev stack, so unlike phase5c's scripts
 # this one is safe to run repeatedly without any cross-worktree collision

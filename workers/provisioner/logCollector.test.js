@@ -1,4 +1,4 @@
-// Phase 4 of the logging control plane: log collector tests.
+// Log collector tests.
 //
 // Follows this package's established convention (segmentWriter.test.js) —
 // Node's built-in test runner, fakes/mocks passed in via `deps` rather than
@@ -261,7 +261,7 @@ test("reattach passes since derived from the last FLUSHED cursor, not merely the
   assert.equal(containerManager.calls.length, 1);
   assert.equal(containerManager.calls[0].opts.since, "2026-01-01T00:15:00.000Z");
   // No `tail` — omitting it is what makes the adapters return the full
-  // available log on reconnect (Phase 4 item 2b), rather than the last 100
+  // available log on reconnect, rather than the last 100
   // lines.
   assert.equal(Object.prototype.hasOwnProperty.call(containerManager.calls[0].opts, "tail"), false);
 });
@@ -486,7 +486,7 @@ test("killing the worker mid-window loses no lines: restart replays from the las
   );
 });
 
-// ── null return handling (item 3) ────────────────────────────────────────
+// ── null return handling ────────────────────────────────────────
 
 test("a null return from containerManager.logs() is handled without throwing or retry-storming", async () => {
   const db = fakeDb({ agents: [agentRow()] });
@@ -513,7 +513,7 @@ test("an attach that throws is swallowed, not a retry-storm crash", async () => 
   assert.equal(collector.heldStreamCount(), 0);
 });
 
-// ── tenant resolution (item 5 / 8 / 9) ────────────────────────────────────
+// ── tenant resolution ────────────────────────────────────
 
 test("the tenant is resolved exactly once per stream attach, not once per line", async () => {
   const db = fakeDb({
@@ -597,7 +597,7 @@ test("re-resolves the tenant on every reconnect, picking up a mid-life workspace
   assert.equal(afterCall.agentCtx.workspaceId, "ws-new");
 });
 
-// ── storage_unsupported_for_target (item 3a) ──────────────────────────────
+// ── storage_unsupported_for_target ──────────────────────────────
 
 test("skips a k8s agent when the storage driver is local, silently after the first tick", async () => {
   const db = fakeDb({
@@ -643,7 +643,7 @@ test("does not skip a k8s agent once the storage driver is not local", async () 
   assert.equal(collector.heldStreamCount(), 1);
 });
 
-// ── capacity-paused disconnect / resume (item 7) ─────────────────────────
+// ── capacity-paused disconnect / resume ─────────────────────────
 
 test("a capacity-paused stream is disconnected cleanly, not held open buffering", async () => {
   const stream = new FakeLogStream();
@@ -693,7 +693,7 @@ test("capacity clearing lets the reconciler re-attach the stream on the next tic
   assert.equal(attachCount, 1, "the FIRST attach happens only once capacity clears");
 });
 
-// ── shutdown wiring (item 6 / 10) ─────────────────────────────────────────
+// ── shutdown wiring ─────────────────────────────────────────
 
 test("stopReconciler stops new attaches; stopCollector disconnects everything currently held", async () => {
   const stream = new FakeLogStream();

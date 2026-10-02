@@ -1,4 +1,4 @@
-// Phase 5's log storage destination resolver — regression guard for a real
+// The log storage destination resolver — regression guard for a real
 // bug: `logStorageConfig()` built its S3/SSH secret fields ONLY from the
 // NORA_LOG_* env block, never from the `platform_settings` row's own
 // `*_encrypted` columns, even though `PUT /admin/log-storage` correctly

@@ -1,25 +1,24 @@
 // @ts-nocheck
-// workers/provisioner/logs/retentionSweeper.ts — Phase 5 of the logging
+// workers/provisioner/logs/retentionSweeper.ts — part of the logging
 // control plane: enforces per-workspace retention under a platform ceiling,
 // tracks the authoritative installation-wide local-storage capacity gate
-// Phase 3's segmentWriter.ts now delegates to, and reconciles storage
+// segmentWriter.ts now delegates to, and reconciles storage
 // against the `log_segments` index so orphaned objects get reclaimed.
 //
 // Depends on:
-//   - agent-runtime/lib/objectStorage.ts (Phase 0)      — listStorageObjects,
+//   - agent-runtime/lib/objectStorage.ts      — listStorageObjects,
 //     deleteStorageObjects
 //   - backend-api/db_schema.sql `log_segments` /
 //     `log_segment_legacy_copies` / `agent_spans` /
-//     `workspace_log_settings`                          (Phase 1)
-//   - workers/provisioner/logs/logStorageConfig.ts (Phase 3) —
+//     `workspace_log_settings`
+//   - workers/provisioner/logs/logStorageConfig.ts —
 //     storageConfigForSegment, logStorageConfig
-//   - backend-api/platformSettings.ts (this phase)        — getLogRetentionCeilingDays
+//   - backend-api/platformSettings.ts        — getLogRetentionCeilingDays
 //   - backend-api/monitoring.ts                           — logEvent
 //   - backend-api/middleware/ownership.ts                 — findAccessibleAgentForActor
 //
-// Read the manifest's "Deletion Model" and "Storage Model" sections, and the
-// implementation plan's Phase 5 "Changes required", before changing the
-// sweep-order or capacity-transition logic below — several choices here
+// Be careful changing the sweep-order or capacity-transition logic below —
+// several choices here
 // (objects-before-rows, content-time expiry, per-backend batching, the
 // three-state loud/reversible halt) are load-bearing guarantees other parts
 // of the system depend on.
@@ -35,11 +34,11 @@ const DEFAULT_DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 // warning/halt/resume transition is caught promptly rather than only once an
 // hour. Comfortably faster than the collector's 30s reconcile tick.
 const DEFAULT_CAPACITY_CHECK_INTERVAL_MS = 15 * 1000;
-// Default warning threshold: 80% of NORA_LOG_LOCAL_MAX_BYTES (Phase 5 item 5).
+// Default warning threshold: 80% of NORA_LOG_LOCAL_MAX_BYTES.
 const DEFAULT_WARNING_RATIO = 0.8;
-// In-flight guard for orphan reconciliation (item 8): an object younger than
+// In-flight guard for orphan reconciliation: an object younger than
 // one flush interval could be a write still in progress whose index row
-// hasn't landed yet — see Phase 3 item 14's "object before index" ordering.
+// hasn't landed yet — see the "object before index" ordering in segmentWriter.ts.
 const DEFAULT_FLUSH_INTERVAL_MS = 15 * 60 * 1000;
 
 function lazyDb(deps) {
@@ -61,16 +60,16 @@ function lazyPlatformSettings(deps) {
   return deps.platformSettings || require("../../../backend-api/platformSettings.ts");
 }
 
-// ── resolveLogRetention (Phase 5 item 2 / function list) ────────────────
+// ── resolveLogRetention ────────────────────────────────────────
 
 /**
  * Resolve the effective retention (in days) for `column` ("runtime_retention_days"
  * or "trace_retention_days") on `workspaceId`, through the fallback chain
- * required by item 2: the workspace's `workspace_log_settings` row when one
+ * below: the workspace's `workspace_log_settings` row when one
  * exists, the platform ceiling otherwise — and in both cases clamped to
  * never exceed the platform ceiling. An agent with no workspace
- * (`workspaceId == null`) has no `workspace_log_settings` row by design (see
- * the manifest), so it always resolves to the platform ceiling directly.
+ * (`workspaceId == null`) has no `workspace_log_settings` row by design, so it
+ * always resolves to the platform ceiling directly.
  *
  * @param {string|null} workspaceId
  * @param {string} column - "runtime_retention_days" | "trace_retention_days"
@@ -120,7 +119,7 @@ async function resolveRetentionDaysForColumn(workspaceId, column, deps = {}) {
     workspaceValue = result.rows[0]?.value ?? null;
   }
 
-  // Fallback chain (item 2): workspace row when it exists, platform ceiling
+  // Fallback chain: workspace row when it exists, platform ceiling
   // otherwise. Either way, never exceed the ceiling.
   const effective = workspaceValue != null ? Number(workspaceValue) : ceilingDays;
   return Math.min(effective, ceilingDays);
@@ -128,15 +127,15 @@ async function resolveRetentionDaysForColumn(workspaceId, column, deps = {}) {
 
 /**
  * Per-workspace runtime/gateway log retention, clamped to the platform
- * ceiling (Phase 5 item 2 / Functions list).
+ * ceiling.
  *
- * Phase 5c item 6 / Functions list: accepts an optional THIRD argument,
+ * Accepts an optional THIRD argument,
  * `snapshottedRetentionDays` — when non-null, this is a `deleted_log_owners`
  * row's snapshotted retention value (captured at agent/workspace deletion
  * time, before the source row — and possibly its `workspace_log_settings`
  * row — stopped existing). In that case `workspaceId`'s normal
  * `workspace_log_settings` lookup is skipped entirely (there is nothing left
- * for it to resolve, by design — see the manifest's Deletion Model) and the
+ * for it to resolve, by design) and the
  * snapshotted value is used directly, still clamped to the CURRENT platform
  * ceiling exactly like the live path (an operator lowering the ceiling after
  * the snapshot was taken must still bind kept logs). The ceiling is resolved
@@ -167,9 +166,8 @@ async function resolveLogRetention(workspaceId, deps = {}, snapshottedRetentionD
 
 /**
  * Per-workspace trace/span retention, clamped to the same platform ceiling.
- * Not in the plan's named Functions list, but required to implement item 4's
- * "delete expired agent_spans" step against the correct per-workspace
- * cutoff rather than an arbitrary constant.
+ * Used by the sweep's "delete expired agent_spans" step so it runs against the
+ * correct per-workspace cutoff rather than an arbitrary constant.
  */
 async function resolveTraceRetention(workspaceId, deps = {}) {
   return resolveRetentionDaysForColumn(workspaceId, "trace_retention_days", deps);
@@ -179,11 +177,11 @@ function daysAgoIso(days, now = Date.now()) {
   return new Date(now - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-// ── sweepExpiredSegments (Phase 5 item 4/4a) ─────────────────────────────
+// ── sweepExpiredSegments ────────────────────────────────────────
 
 /**
  * Group storage keys by their resolved (rehydrated) config, so a batch
- * delete never mixes credentials across a destination change (item 4a).
+ * delete never mixes credentials across a destination change.
  * Two rows land in the same group only when their rehydrated config is
  * deep-equal (JSON-stringified for comparison, which is stable here since
  * `storageConfigForSegment` always returns a plain, non-nested object).
@@ -200,10 +198,10 @@ async function groupKeysByConfig(rows, resolveConfig) {
 }
 
 /**
- * Delete every legacy copy (Phase 1's `log_segment_legacy_copies`, populated
- * once Phase 5b ships) for the given `log_segments` ids, deleting each
- * copy's OLD-destination object first (item 4's "objects before rows"
- * invariant extends to legacy copies too) and then the tracking row.
+ * Delete every legacy copy (`log_segment_legacy_copies`, populated by storage
+ * migration) for the given `log_segments` ids, deleting each copy's
+ * OLD-destination object first (the "objects before rows" invariant extends
+ * to legacy copies too) and then the tracking row.
  *
  * A legacy copy has no `storage_key` of its own — a migration writes the
  * copy under the SAME key as the (now repointed) `log_segments` row, just
@@ -251,10 +249,10 @@ async function deleteLegacyCopiesForSegments(segmentIds, deps = {}) {
 /**
  * Sweep every `log_segments` row for `workspaceId` (or, when `workspaceId`
  * is `null`, every row belonging to no workspace) whose content-time
- * (`ts_to`) is older than `cutoff` (Phase 5 item 4a: expiry is on content
- * time, not write time, matching the search path). Sweep order (item 4):
+ * (`ts_to`) is older than `cutoff` (expiry is on content
+ * time, not write time, matching the search path). Sweep order:
  * any legacy copy's object first, then this segment's own object, batched
- * per rehydrated config (item 4a), THEN the `log_segments` row — an index
+ * per rehydrated config, THEN the `log_segments` row — an index
  * row must never outlive its object.
  *
  * @param {string|null} workspaceId
@@ -264,7 +262,7 @@ async function deleteLegacyCopiesForSegments(segmentIds, deps = {}) {
  */
 /**
  * Shared guts of `sweepExpiredSegments`/`sweepExpiredSegmentsForDeletedOwner`
- * (Phase 5c item 6): everything about content-time expiry and
+ * Everything about content-time expiry and
  * objects-before-rows ordering is identical between "sweep a live
  * workspace's segments" and "sweep a deleted owner's segments" — only the
  * SQL scoping predicate (and its one bind param) differs, so that's the only
@@ -309,7 +307,7 @@ async function sweepExpiredSegmentsByScope(whereSql, param, cutoff, deps = {}) {
   });
 
   // This segment's own (current) object, batched per rehydrated config —
-  // item 4a: a segment written before a destination change lives elsewhere
+  // a segment written before a destination change lives elsewhere
   // and needs its own config, not the current destination's.
   const groups = await groupKeysByConfig(rows, resolveConfig);
   let deletedObjects = legacyOutcome.deletedObjects;
@@ -318,7 +316,7 @@ async function sweepExpiredSegmentsByScope(whereSql, param, cutoff, deps = {}) {
     deletedObjects += outcome?.deleted?.length ?? keys.length;
   }
 
-  // Item 14 (Phase 3) extended to deletion: objects are gone before the
+  // Same ordering on deletion: objects are gone before the
   // index row is removed.
   await db.query(`DELETE FROM log_segments WHERE id = ANY($1::uuid[])`, [segmentIds]);
 
@@ -332,10 +330,10 @@ async function sweepExpiredSegmentsByScope(whereSql, param, cutoff, deps = {}) {
 /**
  * Sweep every `log_segments` row for `workspaceId` (or, when `workspaceId`
  * is `null`, every row belonging to no workspace) whose content-time
- * (`ts_to`) is older than `cutoff` (Phase 5 item 4a: expiry is on content
- * time, not write time, matching the search path). Sweep order (item 4):
+ * (`ts_to`) is older than `cutoff` (expiry is on content
+ * time, not write time, matching the search path). Sweep order:
  * any legacy copy's object first, then this segment's own object, batched
- * per rehydrated config (item 4a), THEN the `log_segments` row — an index
+ * per rehydrated config, THEN the `log_segments` row — an index
  * row must never outlive its object.
  *
  * @param {string|null} workspaceId
@@ -349,7 +347,7 @@ async function sweepExpiredSegments(workspaceId, cutoff, deps = {}) {
 }
 
 /**
- * Phase 5c item 6: the same sweep, scoped instead to a `deleted_log_owners`
+ * The same sweep, scoped instead to a `deleted_log_owners`
  * row's `source_id` — by `agent_id` for a deleted agent's kept logs, or by
  * `workspace_id` for a deleted workspace's. This is NOT the same as
  * `sweepExpiredSegments(sourceId, ...)`, which would (wrongly, for the
@@ -381,21 +379,21 @@ async function sweepExpiredSpans(workspaceId, cutoff, deps = {}) {
   return sweepExpiredSpansByScope(whereSql, workspaceId, cutoff, deps);
 }
 
-/** Phase 5c item 6: `sweepExpiredSpans`'s deleted-owner counterpart. */
+/** `sweepExpiredSpans`'s deleted-owner counterpart. */
 async function sweepExpiredSpansForDeletedOwner(kind, sourceId, cutoff, deps = {}) {
   const column = kind === "workspace" ? "workspace_id" : "agent_id";
   return sweepExpiredSpansByScope(`${column} = $2`, sourceId, cutoff, deps);
 }
 
 /**
- * Phase 5c item 6: sweep every `deleted_log_owners` row's kept logs against
+ * Sweep every `deleted_log_owners` row's kept logs against
  * ITS OWN snapshotted `retention_days` (via `resolveLogRetention`'s
  * snapshotted-value path), never through a `workspace_log_settings` lookup —
  * the source agent/workspace row is gone, so that lookup would either
  * resolve to an unrelated still-live workspace's policy (wrong) or nothing
  * at all. Sweeping here only ever removes expired `log_segments`/
  * `agent_spans` rows — the `deleted_log_owners` row itself is left alone
- * until an operator explicitly purges it (Phase 5c item 7), since the
+ * until an operator explicitly purges it, since the
  * recovery view should keep listing the entry (now with nothing left under
  * it) rather than having it silently disappear.
  *
@@ -430,13 +428,13 @@ async function sweepDeletedLogOwners(deps = {}) {
   return summaries;
 }
 
-// ── localStorageUsage / checkCapacityState (Phase 5 items 5-7) ──────────
+// ── localStorageUsage / checkCapacityState ────────────────────────────────────────
 
 /**
  * Sum of `bytes` over every live `log_segments` row currently resident on
- * the `local` driver, installation-wide (Phase 5 item 5 / function list).
- * This is the authoritative replacement for Phase 3's `checkLocalCapacity`
- * disk-scan placeholder: an O(1) indexed SUM rather than an O(files) walk,
+ * the `local` driver, installation-wide. This is the authoritative usage figure
+ * `checkLocalCapacity` delegates to: an O(1) indexed SUM rather than an
+ * O(files) walk,
  * and it reflects what's actually accounted for in the index rather than
  * whatever happens to be sitting in `NORA_LOG_DIR` (which could include
  * bytes from segments that already failed to index, or exclude bytes from a
@@ -444,7 +442,7 @@ async function sweepDeletedLogOwners(deps = {}) {
  *
  * Filtered to `storage_backend = 'local'` rather than every driver, because
  * this specifically answers "how much of the local disk budget is used" —
- * segments already migrated to s3/r2 (Phase 5b) must not count against it.
+ * segments already migrated to s3/r2 must not count against it.
  *
  * @param {Object} [deps]
  * @returns {Promise<number>} Total bytes.
@@ -458,7 +456,7 @@ async function localStorageUsage(deps = {}) {
 }
 
 // Module-level singleton: one worker process is one installation, and the
-// capacity halt is explicitly installation-wide (item 5), not per-workspace,
+// capacity halt is explicitly installation-wide, not per-workspace,
 // so a single shared state is the correct model — not a simplification.
 // Tests inject their own state container via deps.stateStore for isolation.
 let _capacityState = "ok";
@@ -471,10 +469,9 @@ const defaultStateStore = {
 
 /**
  * Compare current local usage against `NORA_LOG_LOCAL_MAX_BYTES` and the
- * warning threshold, returning `"ok" | "warning" | "halted"` (Phase 5 item
- * 5-6 / function list). Writes a distinct `events` row via
- * `monitoring.logEvent` on each of the three meaningful transitions (item
- * 6): crossing into warning, crossing into halted, and dropping back out of
+ * warning threshold, returning `"ok" | "warning" | "halted"`. Writes a distinct `events` row
+ * via `monitoring.logEvent` on each of the three meaningful transitions:
+ * crossing into warning, crossing into halted, and dropping back out of
  * halted (the "resumed" event) — a warning-to-ok transition is intentionally
  * silent since it isn't one of the three states operators need to
  * distinguish.
@@ -525,7 +522,7 @@ async function checkCapacityState(deps = {}) {
 
 /**
  * Current local usage against the cap, and the current halt/warning state
- * (Phase 5 item 7a-i) — the data function an admin settings UI and the
+ * — the data function an admin settings UI and the
  * Runtime lens can call. Retention itself is unaffected by capacity; this
  * only reports whether collection is currently gapped.
  *
@@ -539,7 +536,7 @@ async function getCapacityStatus(deps = {}) {
   return { usedBytes, limitBytes, state: stateStore.get() };
 }
 
-// ── deleteLogsByAgentAndRange (Phase 5 item 7b) ──────────────────────────
+// ── deleteLogsByAgentAndRange ──────────────────────────
 
 /**
  * Manually delete `log_segments` (and their objects, plus any
@@ -633,18 +630,18 @@ async function deleteLogsByAgentAndRange(agentId, from, to, actor, deps = {}) {
   };
 }
 
-// ── reconcileStorage (Phase 5 item 8/8a) ─────────────────────────────────
+// ── reconcileStorage ────────────────────────────────────────
 
 /**
- * Daily LIST-vs-index diff (item 8): an object with no matching
+ * Daily LIST-vs-index diff: an object with no matching
  * `log_segments` row, older than one flush interval (so an in-flight write
- * isn't mistaken for an orphan — Phase 3 item 14's "object before index"
+ * isn't mistaken for an orphan — the "object before index"
  * ordering means a very recent orphan-looking object may just be mid-flush),
  * gets deleted; a `log_segments` row with no matching object is logged and
  * removed.
  *
- * Item 8a: before treating an unmatched object as an orphan, check whether
- * it's a KEPT legacy copy (Phase 5b's `log_segment_legacy_copies`, tracked
+ * Before treating an unmatched object as an orphan, check whether
+ * it's a KEPT legacy copy (`log_segment_legacy_copies`, tracked
  * by `log_segments.storage_key` since a legacy copy shares its parent
  * segment's key). A kept copy deliberately has no `log_segments` row
  * recording its OLD backend — the row was repointed to the new destination —
@@ -690,7 +687,7 @@ async function reconcileStorage(prefix = logStorageConfigModule.LOG_KEY_PREFIX, 
   // row says the segment lives.
   const indexedKeys = new Set(segmentRows.map((r) => r.storage_key));
 
-  // Item 8a: legacy copies share their parent segment's storage_key, so a
+  // Legacy copies share their parent segment's storage_key, so a
   // key present here is a deliberately-kept old-destination copy, not an
   // orphan — even though, by construction, it has no log_segments row of
   // its own recording the OLD backend.
@@ -755,14 +752,14 @@ async function hasLegacySegments(db) {
   return rows.length > 0;
 }
 
-// ── startRetentionSweeper (Phase 5 item 3 / function list) ───────────────
+// ── startRetentionSweeper ────────────────────────────────────────
 
 /**
  * Start the hourly retention sweep, the daily storage reconciliation, and
  * the frequent capacity-state check — all `.unref()`'d so none keep the
  * process alive. Explicitly NOT the `container_stats` every-5-seconds
  * pattern (`backgroundTasks.ts:53`) — that cadence is wrong for this
- * workload (item 3).
+ * workload.
  *
  * @param {Object} [deps]
  * @returns {{ stop: Function, runHourlySweepNow: Function,
@@ -795,7 +792,7 @@ function startRetentionSweeper(deps = {}) {
       }
     }
 
-    // Phase 5c item 6: kept logs behind deleted_log_owners are on their own
+    // Kept logs behind deleted_log_owners are on their own
     // snapshotted retention, not a workspace_log_settings lookup — swept
     // separately from the workspace loop above, never folded into it.
     try {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, matrix row 3: the operator's keep-or-delete choice for the old copy
+# Matrix row 3: the operator's keep-or-delete choice for the old copy
 # is honored, per segment.
 #
 #   keepSourceCopies = true   the old object stays where it was, and a

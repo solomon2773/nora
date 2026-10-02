@@ -1,9 +1,9 @@
 // @ts-nocheck
 /**
- * __tests__/observabilityAdmin.test.ts — Phase 5 of the logging control
- * plane: the backend-api HTTP surface in routes/observability.ts.
- *   - DELETE /logs                  (manual deletion, item 7b)
- *   - GET/PUT /admin/log-storage    (platform storage destination, item 7a-ii)
+ * __tests__/observabilityAdmin.test.ts — the logging control plane's
+ * backend-api HTTP surface in routes/observability.ts.
+ *   - DELETE /logs                  (manual deletion)
+ *   - GET/PUT /admin/log-storage    (platform storage destination)
  *
  * Mocks db, monitoring, and the worker's retentionSweeper module (the
  * business logic itself is covered directly by
@@ -115,7 +115,7 @@ beforeEach(() => {
   delete process.env.NORA_LOG_LOCAL_MAX_BYTES;
 });
 
-describe("DELETE /logs (manual deletion, item 7b)", () => {
+describe("DELETE /logs (manual deletion)", () => {
   it("requires agentId, from, and to", async () => {
     const res = await asUser(request(app).delete("/logs").send({}));
     expect(res.status).toBe(400);
@@ -161,7 +161,7 @@ describe("DELETE /logs (manual deletion, item 7b)", () => {
   });
 });
 
-describe("GET /admin/log-storage (item 7a-ii)", () => {
+describe("GET /admin/log-storage", () => {
   it("rejects non-admin", async () => {
     const res = await asUser(request(app).get("/admin/log-storage"));
     expect(res.status).toBe(403);
@@ -176,7 +176,7 @@ describe("GET /admin/log-storage (item 7a-ii)", () => {
   });
 });
 
-describe("PUT /admin/log-storage (item 7a-ii)", () => {
+describe("PUT /admin/log-storage", () => {
   it("rejects non-admin", async () => {
     const res = await asUser(request(app).put("/admin/log-storage").send({ storageBackend: "s3" }));
     expect(res.status).toBe(403);
@@ -223,7 +223,7 @@ describe("PUT /admin/log-storage (item 7a-ii)", () => {
     expect(res.status).toBe(200);
     expect(mockLogEvent).toHaveBeenCalledTimes(1);
     expect(mockLogEvent.mock.calls[0][0]).toBe("admin_log_storage_settings_updated");
-    // Destination actually changed (local -> s3), so Phase 5b's migration
+    // Destination actually changed (local -> s3), so the migration
     // kicks off automatically.
     expect(mockStartStorageMigration).toHaveBeenCalledWith(
       { storageBackend: "local" },
@@ -246,7 +246,7 @@ describe("PUT /admin/log-storage (item 7a-ii)", () => {
   });
 });
 
-describe("PUT /admin/log-storage — Phase 5b storage migration integration", () => {
+describe("PUT /admin/log-storage — storage migration integration", () => {
   it("rejects an overlapping migration with no side effects", async () => {
     process.env.ENABLED_BACKENDS = "docker";
     mockDb.query
@@ -455,7 +455,7 @@ describe("PUT /admin/log-storage — pre-flight destination probe", () => {
   });
 });
 
-describe("GET /admin/log-storage/migration (item 6)", () => {
+describe("GET /admin/log-storage/migration", () => {
   it("rejects non-admin", async () => {
     const res = await asUser(request(app).get("/admin/log-storage/migration"));
     expect(res.status).toBe(403);
@@ -480,7 +480,7 @@ describe("GET /admin/log-storage/migration (item 6)", () => {
   });
 });
 
-describe("GET/PUT /workspaces/:id/log-settings (Phase 12 item 6)", () => {
+describe("GET/PUT /workspaces/:id/log-settings", () => {
   const WORKSPACE_ID = "33333333-3333-3333-3333-333333333333";
   const adminMembershipRow = {
     rows: [{ id: WORKSPACE_ID, user_id: "someone-else", role: "admin" }],

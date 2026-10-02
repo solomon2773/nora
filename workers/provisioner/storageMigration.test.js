@@ -1,4 +1,4 @@
-// Phase 5b of the logging control plane: storage destination migration
+// Storage destination migration
 // tests.
 //
 // Follows this package's established convention (segmentWriter.test.js,
@@ -391,7 +391,7 @@ test.afterEach(() => {
   stopCapacityResumeTimer();
 });
 
-// ── Basic per-segment migration semantics (items 2-3) ────────────────────
+// ── Basic per-segment migration semantics ────────────────────
 
 test("a segment is readable from its old location throughout its own migration, and from its new location immediately after", async () => {
   const segment = makeSegment({ id: "seg-01", backend: "local" });
@@ -479,7 +479,7 @@ test("an interrupted job (simulated worker restart between batches) resumes from
   );
 });
 
-// ── keepSourceCopies (item 2) ─────────────────────────────────────────────
+// ── keepSourceCopies ─────────────────────────────────────────────
 
 test("keepSourceCopies: false deletes the old-destination object once the new copy is confirmed", async () => {
   const segment = makeSegment({ id: "seg-01", backend: "local" });
@@ -553,7 +553,7 @@ test("a kept legacy copy's ts_to is snapshotted at migration time, independent o
 
 // ── Orphan reconciliation must not delete a tracked legacy copy ──────────
 
-test("orphan reconciliation (Phase 5's reconcileStorage) does not delete a legacy copy this phase created", async () => {
+test("orphan reconciliation (reconcileStorage) does not delete a legacy copy the migration created", async () => {
   const segment = makeSegment({ id: "seg-01", backend: "local", tsTo: "2026-02-15T00:00:00.000Z" });
   const db = fakeDb({ segments: [segment] });
   const store = fakeObjectStore({ [`local:${segment.storage_key}`]: Buffer.from("x") });
@@ -599,7 +599,7 @@ test("orphan reconciliation (Phase 5's reconcileStorage) does not delete a legac
   assert.equal(deleteStorageObjectsCalls.length, 0);
 });
 
-// ── Credential-retention guard (item 7) ───────────────────────────────────
+// ── Credential-retention guard ───────────────────────────────────
 
 test("backendsRequiringRetainedCredentials reports a backend referenced by a running/paused job", async () => {
   const db = fakeDb({
@@ -645,7 +645,7 @@ test("backendsRequiringRetainedCredentials does not report a backend whose only 
   assert.equal(backends.has("ssh"), false);
 });
 
-// ── Migration progress is queryable mid-run (item 6) ─────────────────────
+// ── Migration progress is queryable mid-run ─────────────────────
 
 test("migration progress is queryable mid-run via getMigrationStatus and reflects real segment counts", async () => {
   const segments = [makeSegment({ id: "seg-01" }), makeSegment({ id: "seg-02" })];
@@ -686,7 +686,7 @@ test("getMigrationStatus returns status: none when no migration has ever run", a
   assert.deepEqual(status, { status: "none" });
 });
 
-// ── Capacity gate: pre-flight rejection (item 8) ─────────────────────────
+// ── Capacity gate: pre-flight rejection ─────────────────────────
 
 test("startStorageMigration rejects switching to local with no side effects when capacity would be exceeded", async () => {
   const segments = [makeSegment({ id: "seg-01", backend: "s3", bytes: 800 })];
@@ -736,7 +736,7 @@ test("startStorageMigration never runs the local capacity check for an object-st
   assert.equal(localUsageCalled, false, "s3/r2 destinations must never trigger the capacity check");
 });
 
-// ── Capacity gate: mid-run pause/resume (items 9-10) ─────────────────────
+// ── Capacity gate: mid-run pause/resume ─────────────────────
 
 test("a running migration to local pauses (not failed) when usage crosses the cap mid-run", async () => {
   const segment = makeSegment({ id: "seg-01", backend: "s3" });
@@ -842,7 +842,7 @@ test("a paused migration resumes automatically from its checkpoint once usage dr
   assert.equal(db.jobs[0].checkpoint, "seg-01");
 });
 
-// ── resumeStorageMigration on worker restart (item 10) ───────────────────
+// ── resumeStorageMigration on worker restart ───────────────────
 
 test("resumeStorageMigration picks up a running job left over from an ungraceful restart", async () => {
   const segment = makeSegment({ id: "seg-01", backend: "local" });
@@ -976,7 +976,7 @@ test("startStorageMigration rejects starting a second migration while one is alr
 //
 // Regression coverage for the real bug this closes: after a failed
 // migration, `PUT /admin/log-storage` already wrote the new destination to
-// `platform_settings` BEFORE the migration ran (item 1's ordering), so
+// `platform_settings` BEFORE the migration ran, so
 // simply fixing bad credentials and re-saving the same destination never
 // re-triggers `startStorageMigration` (it only fires on an actual backend
 // change) — the job just sits `failed` forever with no way back in. These

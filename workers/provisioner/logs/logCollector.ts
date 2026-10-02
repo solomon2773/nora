@@ -1,20 +1,19 @@
 // @ts-nocheck
-// workers/provisioner/logs/logCollector.ts — Phase 4 of the logging control
+// workers/provisioner/logs/logCollector.ts — part of the logging control
 // plane: maintains one live follow stream per running agent, feeds it
-// through Phase 2's shared line parser into Phase 3's segment writer, and
+// through the shared line parser into the segment writer, and
 // survives restarts, reconnects, and workspace reassignment.
 //
 // Depends on:
-//   - agent-runtime/lib/logLine.ts (Phase 2)          — parseContainerLogChunk
-//   - workers/provisioner/logs/segmentWriter.ts (Phase 3) — append/isCapacityPaused
+//   - agent-runtime/lib/logLine.ts          — parseContainerLogChunk
+//   - workers/provisioner/logs/segmentWriter.ts — append/isCapacityPaused
 //   - backend-api/containerManager.ts's logs()         — backend-agnostic follow stream
 //
-// Read the implementation plan's Phase 4 "Changes required" and "Rationale &
-// tradeoffs" before changing the reconcile/attach/reattach timing below —
+// Be careful changing the reconcile/attach/reattach timing below —
 // several choices here look arbitrary in isolation but are load-bearing for
 // the crash-replay and capacity-halt guarantees this module promises.
 //
-// ── Design note: level-triggered, not event-driven (item 1) ─────────────
+// ── Design note: level-triggered, not event-driven ─────────────
 //
 // `reconcileStreams()` re-derives the desired stream set from scratch every
 // tick by querying `agents` directly, then diffs it against whatever streams
@@ -25,27 +24,27 @@
 // correctly to never leak or starve a stream. A reconciler that just diffs
 // against reality converges regardless of what it missed.
 //
-// ── Design note: cursor-advances-only-after-flush (item 2a) ──────────────
+// ── Design note: cursor-advances-only-after-flush ──────────────
 //
 // `attachAgentStream` reads `since` from `log_segments` — specifically
 // `MAX(ts_to)` for `(agent_id, stream)` — never from "the last line this
 // collector happened to see." A `log_segments` row only exists after a
-// successful flush (Phase 3 item 14: object written, then the index row),
-// so this is exactly "the last durably-flushed point," matching Phase 3's
-// `6a` design decision. This is what turns an ungraceful worker death into
+// successful flush (object written, then the index row),
+// so this is exactly "the last durably-flushed point," matching the writer's
+// flush-boundary cursor design. This is what turns an ungraceful worker death into
 // bounded replay instead of data loss: on restart, a fresh collector
 // resolves the same cursor from Postgres and the source (Docker's
 // `json-file` driver, or the kubelet) replays the intervening lines, which
 // `buildStorageKey`'s window-derived key upserts idempotently rather than
 // duplicating.
 //
-// One accepted consequence of this design, stated plainly because Phase 4's
-// own test list calls it out explicitly: a *live* reconnect (the stream
+// One accepted consequence of this design, stated plainly:
+// a *live* reconnect (the stream
 // merely ends and reattaches, with the in-memory buffer still open and
 // un-flushed — not a worker crash) will re-replay whatever lines are still
 // sitting in that open buffer, because `since` only ever advances at a
 // flush boundary, never per line. This is intentional, not an oversight —
-// see Phase 3 item 2a and Phase 4 item 2a: tracking "last line seen"
+// the cursor only advances at flush boundaries: tracking "last line seen"
 // in-memory instead would reintroduce exactly the un-flushed-loss failure
 // mode this design exists to avoid, in exchange for occasionally duplicating
 // a handful of lines across a transient reconnect.
@@ -60,7 +59,7 @@ const DEFAULT_RECONCILE_INTERVAL_MS = 30000;
  * Resolve the tenant (workspace or owning user) for an agent via a single
  * `workspace_agents` lookup, falling back to `agents.user_id` when the
  * agent belongs to no workspace (`agents.user_id` is always populated —
- * Phase 3's `buildStorageKey` depends on that). Called once per attach —
+ * `buildStorageKey` depends on that). Called once per attach —
  * see the module-level note on why this must never run per line.
  *
  * @param {string} agentId
@@ -84,8 +83,8 @@ async function resolveTenantForAgent(agentId, { db } = {}) {
 
 /**
  * The last durably-flushed cursor for `(agentId, stream)` — `MAX(ts_to)`
- * over `log_segments`, since a row only exists there after Phase 3's writer
- * successfully flushed (item 2a's contract). Returns `null` when no segment
+ * over `log_segments`, since a row only exists there after the writer
+ * successfully flushed (the writer's contract). Returns `null` when no segment
  * has ever been flushed for this agent/stream, in which case the caller
  * omits `since` entirely (source-default behavior, i.e. whatever the
  * backend returns for a brand-new attach).
@@ -110,13 +109,13 @@ function laterIso(a, b) {
  * @param {Object} [deps]
  * @param {Object} [deps.db] - pg-like `{ query(sql, params) }`.
  * @param {Object} [deps.containerManager] - exposes `logs(agent, opts)`.
- * @param {Object} [deps.segmentWriter] - Phase 3's writer: `append`,
+ * @param {Object} [deps.segmentWriter] - the writer: `append`,
  *   `isCapacityPaused`.
  * @param {Function} [deps.logStorageConfig] - resolves `{ storageBackend }`;
  *   defaults to logStorageConfig.ts's `logStorageConfig()`.
  * @param {Function} [deps.resolveAgentBackendType] - defaults to the shared
  *   agent-runtime helper; overridable for tests.
- * @param {Function} [deps.createLogChunkStreamParser] - defaults to Phase 2's
+ * @param {Function} [deps.createLogChunkStreamParser] - defaults to the
  *   shared stateful stream parser; overridable for tests.
  * @param {number} [deps.reconcileIntervalMs]
  * @param {Function} [deps.setIntervalFn] / {Function} [deps.clearIntervalFn]
@@ -155,7 +154,7 @@ function createLogCollector(deps = {}) {
 
   /** @type {Map<string, {stream: Object, dead: boolean, tenant: Object}>} */
   const streams = new Map();
-  // Item 3a: track which agents have already been warned about, so the
+  // Track which agents have already been warned about, so the
   // storage_unsupported_for_target skip is silent after the first tick per
   // agent rather than logging every 30s forever. This is a deliberate,
   // documented deviation from a persisted capability-reason column: no
@@ -186,7 +185,7 @@ function createLogCollector(deps = {}) {
    * Attach a live follow stream for `agent`. Resolves the tenant and the
    * last-flushed cursor once, then pipes parsed chunks into the segment
    * writer for the life of this attach. Returns the held-stream record, or
-   * `null` when there is nothing to hold this tick (item 3: `null` from
+   * `null` when there is nothing to hold this tick (`null` from
    * `containerManager.logs()` — no Running pod, no container — is a normal,
    * expected outcome here, not an error to throw or retry-storm on).
    */
@@ -194,7 +193,7 @@ function createLogCollector(deps = {}) {
     if (stopped) return null;
     const agentId = agent.id;
 
-    // Item 5: resolved once per attach, cached on `held.tenant` for the
+    // Resolved once per attach, cached on `held.tenant` for the
     // life of this attach, and re-resolved on every subsequent reconnect —
     // never per line.
     const tenant = await resolveTenantForAgent(agentId, { db });
@@ -205,8 +204,8 @@ function createLogCollector(deps = {}) {
 
     const logOpts = { follow: true };
     if (since) logOpts.since = since;
-    // Deliberately no `tail` key here — see docker.ts/k8s.ts's Phase 4 item
-    // 2b fix: an absent `tail` now means "all available lines" from both
+    // Deliberately no `tail` key here — see docker.ts/k8s.ts: an absent `tail`
+    // now means "all available lines" from both
     // adapters, which is what makes a reattach replay the source's full
     // retained backlog from `since` forward instead of re-ingesting only
     // the last 100 lines on every reconnect.
@@ -219,7 +218,7 @@ function createLogCollector(deps = {}) {
       return null;
     }
     if (!rawStream) {
-      // Item 3: normal for the base adapter and for Kubernetes when no pod
+      // Normal for the base adapter and for Kubernetes when no pod
       // is currently Running. No stream held this tick; the next reconcile
       // tick tries again.
       return null;
@@ -278,9 +277,9 @@ function createLogCollector(deps = {}) {
       appendLines(lines);
     });
 
-    // Item 4: end/error mark the stream dead so the NEXT reconcile tick
+    // End/error mark the stream dead so the NEXT reconcile tick
     // reattaches it — this is what turns a one-shot stream lifecycle into
-    // real reconnect behavior. Deliberately does NOT flush Phase 3's
+    // real reconnect behavior. Deliberately does NOT flush the
     // segment buffer here: it stays open across a stream end, and a
     // subsequent reattach resumes appending to the same buffer (bufferKey
     // is (agentId, stream), independent of any particular attach). This IS
@@ -308,10 +307,10 @@ function createLogCollector(deps = {}) {
   }
 
   /**
-   * The 30s level-triggered diff (item 1). Re-derives the desired stream
+   * The 30s level-triggered diff. Re-derives the desired stream
    * set from `agents` on every call, excludes agents this installation
-   * cannot or should not collect from right now (item 3a's storage/target
-   * mismatch, item 7's capacity-paused streams), then attaches whatever is
+   * cannot or should not collect from right now (a storage/target
+   * mismatch, capacity-paused streams), then attaches whatever is
    * desired-but-not-held (including anything marked `dead` by a prior
    * end/error) and detaches whatever is held-but-no-longer-desired.
    */
@@ -354,8 +353,8 @@ function createLogCollector(deps = {}) {
     for (const agent of rows) {
       const backendType = resolveBackendType(agent);
 
-      // Item 3a: local storage + Kubernetes agents is an unsupported
-      // combination (Design Decision 2d). Exclude from the desired set
+      // Local storage + Kubernetes agents is an unsupported
+      // combination. Exclude from the desired set
       // rather than attach-then-fail-every-write; warn once per agent, not
       // once per tick.
       if (isLocalDriver && backendType === "k8s") {
@@ -370,7 +369,7 @@ function createLogCollector(deps = {}) {
       }
       skippedForStorageTarget.delete(agent.id);
 
-      // Item 7: a capacity-paused stream is excluded from the desired set,
+      // A capacity-paused stream is excluded from the desired set,
       // so the diff below detaches it if currently held rather than
       // continuing to buffer against a source the writer has stopped
       // accepting flushes for. When capacity clears, this same check
@@ -410,7 +409,7 @@ function createLogCollector(deps = {}) {
   }
 
   /**
-   * Shutdown-coordinator hook (item 6): stop the reconcile timer and stop
+   * Shutdown-coordinator hook: stop the reconcile timer and stop
    * accepting new attaches. Does NOT touch already-held streams — that is
    * `stopCollector`'s job — matching the shutdown coordinator's two-phase
    * call order (`stopReconciler()` then `stopCollector()`; see worker.ts's
@@ -425,11 +424,11 @@ function createLogCollector(deps = {}) {
   }
 
   /**
-   * Shutdown-coordinator hook (item 6): disconnect every currently-held
+   * Shutdown-coordinator hook: disconnect every currently-held
    * follow stream. Deliberately does not touch the segment writer's
    * buffers or call `flush`/`flushAll` — that remains the shutdown
    * coordinator's own direct responsibility against the writer instance,
-   * per Phase 3 item 6's `flushAll()` step. This only stops pulling new
+   * via its `flushAll()` step. This only stops pulling new
    * bytes from sources so `flushAll()` can run against a stable buffer set.
    */
   function stopCollector() {

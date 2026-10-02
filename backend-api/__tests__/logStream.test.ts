@@ -204,7 +204,7 @@ describe("log stream websocket auth", () => {
     ws.close();
   });
 
-  // Logging control plane Phase 4 item 2b regression guard: docker.ts/k8s.ts
+  // Regression guard: docker.ts/k8s.ts
   // no longer default an absent `tail` to 100 (they now treat "no tail
   // passed" as unlimited, for the new collector's reconnect path). The live
   // WebSocket viewer must keep its historical "last 100 lines on connect"
@@ -685,7 +685,7 @@ describe("log stream websocket auth", () => {
   );
 
   // ── Shared parser wire-format regression guard ───────────────────────────
-  // Phase 2 rewired attachLogStream to consume agent-runtime/lib/logLine.ts's
+  // attachLogStream consumes agent-runtime/lib/logLine.ts's
   // parseContainerLogChunk instead of an inline parsing block. The browser
   // contract — { type: "log", timestamp, level, message } — must not change
   // shape, even though the parser now fixes the level-inference and

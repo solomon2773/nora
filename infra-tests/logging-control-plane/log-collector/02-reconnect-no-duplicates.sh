@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Phase 4, test 2: a graceful reconnect doesn't re-ingest duplicate lines.
+# Test 2: a graceful reconnect doesn't re-ingest duplicate lines.
 #
-# Regression guard for the bug the plan doc names explicitly: both
+# Regression guard for a known bug: both
 # `DockerBackend.logs`/`K8sBackend.logs` used to default an absent `tail`
 # to 100, so a collector that simply omitted the option (intending "give
 # me everything") actually got "give me the last 100 lines" on every

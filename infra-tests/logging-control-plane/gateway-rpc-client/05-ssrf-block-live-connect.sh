@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 9, test 5: SSRF-safe target resolution actually blocks a live
+# Test 5: SSRF-safe target resolution actually blocks a live
 # connection attempt in the real worker.ts wiring, not just the resolver
 # function in isolation.
 #

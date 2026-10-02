@@ -1,6 +1,6 @@
 // @ts-nocheck
 // agent-runtime/lib/gatewayRpc.ts — gateway WebSocket RPC client for
-// worker-provisioner (Logging Control Plane Phase 9).
+// worker-provisioner.
 //
 // backend-api already has a full gateway WS-RPC client (gatewayProxy.ts) used
 // by the operator-facing chat/exec/restart surface. That module is not
@@ -14,7 +14,7 @@
 // `agentEndpoints.ts` for URL construction and auth-header shaping so both
 // clients agree on how a token becomes a bearer credential.
 //
-// Frame protocol (per the logging control plane plan, Phase 9):
+// Frame protocol:
 //   request:  { type: "req",   id, method, params }
 //   response: { type: "res",   id, ok, payload } | { type: "res", id, ok: false, error }
 //   event:    { type: "event", event, payload }
@@ -200,7 +200,7 @@ function computeReconnectDelay(attempt) {
 // ─── Scope-failure classification ───────────────────────────────
 //
 // The gateway's exact error vocabulary for a scope refusal isn't nailed down
-// here (Phase 10 owns the real wire contract). Recognize the shapes a
+// here. Recognize the shapes a
 // scope-checking RPC layer conventionally uses so a real gateway's response
 // is very likely already covered, while still being overridable by callers
 // that discover the actual code later.
@@ -372,7 +372,7 @@ function createGatewayClient(agent, opts = {}) {
           // the protocol level — no schema error — but is silently capped
           // at a reduced scope set that excludes operator.read, confirmed
           // empirically against a real gateway. This mirrors
-          // gatewayProxy.ts's own "Phase 1: Challenge" handler, reusing
+          // gatewayProxy.ts's own "Challenge" handler, reusing
           // its exact device-identity derivation and signing recipe via
           // integrationTools.ts (deriveGatewayDeviceIdentity /
           // buildGatewayConnectDevice) rather than reimplementing it.
@@ -689,7 +689,7 @@ function createGatewayClient(agent, opts = {}) {
 }
 
 // Thin typed wrapper over `call()` for the `logs.tail` method (`operator.read`
-// scope family). Kept separate from the generic client so Phase 10's gateway
+// scope family). Kept separate from the generic client so the gateway
 // log collector has one obvious, documented entry point rather than needing
 // to know the gateway's raw method name and payload shape.
 async function callLogsTail(client, { cursor, limit, maxBytes } = {}) {

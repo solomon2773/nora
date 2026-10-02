@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 9, test 2: reconnect backoff against a REAL dropped gateway
+# Test 2: reconnect backoff against a REAL dropped gateway
 # connection.
 #
 # HONEST RESULT UP FRONT (mirrors phase3/04-retry-and-park.sh's style for

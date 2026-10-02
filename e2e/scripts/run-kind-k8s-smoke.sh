@@ -91,9 +91,9 @@ if [[ -z "${NORA_K8S_RUNTIME_HOST:-}" ]]; then
   )"
 fi
 
-# Logging control plane Phase 14 item 6: the Kubernetes deploy path requires
+# The Kubernetes deploy path requires
 # s3/r2 (the `local` driver has no shared disk across kind nodes and is
-# rejected outright per Design Decision 2d / the Helm chart guard in
+# rejected outright by the Helm chart guard in
 # configmap-env.yaml). An in-cluster MinIO gives this smoke test a real S3
 # target so a Kind-deployed agent's log collection can be asserted against
 # actual segment writes, not just mocked in unit tests.

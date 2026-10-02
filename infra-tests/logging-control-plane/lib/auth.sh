@@ -13,7 +13,7 @@
 #
 # A note on the "platform_admin" role name: this file's public interface
 # (the `mint_jwt platform_admin` call) uses that name because it's the name
-# used throughout the plan doc and the deletion-recovery/k8s-parity READMEs. The ACTUAL
+# used throughout the deletion-recovery and k8s-parity READMEs. The ACTUAL
 # column value in this codebase's `users.role` is the plain string
 # "admin" — confirmed by reading backend-api/middleware/auth.ts's
 # `requireAdmin` ("req.user.role !== 'admin'") and routes/admin.ts's

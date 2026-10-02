@@ -715,7 +715,7 @@ if (billing.BILLING_ENABLED) {
   });
 }
 
-// OTLP trace ingest (logging control plane, Phase 11) needs the raw request
+// OTLP trace ingest (logging control plane) needs the raw request
 // body — real OTLP/HTTP exporters push `application/x-protobuf` — so it is
 // mounted here, before the global express.json() body parser, exactly like
 // the Stripe webhook above. It authenticates itself per-request via
@@ -1315,10 +1315,9 @@ app.use("/agents", require("./routes/nemoclaw"));
 app.use("/agent-migrations", require("./routes/agentMigrations"));
 app.use("/", require("./routes/integrations")); // handles /agents/:id/integrations + /integrations/catalog
 app.use("/", require("./routes/monitoring")); // handles /monitoring/* + /agents/:id/metrics
-// Logging control plane (Phase 5+): DELETE /logs (manual deletion, editor+
-// workspace role) and GET/PUT /admin/log-storage (platform-admin destination
-// setting). This file grows in later phases (5b, 6, 7, 12, 13) — see its own
-// header comment.
+// Logging control plane: DELETE /logs (manual deletion, editor+ workspace
+// role) and GET/PUT /admin/log-storage (platform-admin destination setting);
+// see the route file's own header comment.
 app.use("/", require("./routes/observability"));
 app.use("/llm-providers", require("./routes/llmProviders"));
 app.use("/clawhub", require("./routes/clawhub"));
@@ -2499,7 +2498,7 @@ async function migrateDB(database = db, env = process.env) {
     `ALTER TABLE platform_settings ALTER COLUMN agent_hub_url SET DEFAULT 'https://norafleet.ai'`,
     `UPDATE platform_settings SET agent_hub_url = 'https://norafleet.ai', updated_at = NOW()
        WHERE agent_hub_url = 'https://nora.solomontsao.com'`,
-    // Logging control plane (Phase 1): schema foundation for durable, searchable
+    // Logging control plane: schema foundation for durable, searchable
     // runtime/gateway logs and OpenClaw traces. See
     // plans/logging_control_plane/logging-control-plane-manifest.md for the
     // full data-model rationale. events has zero indexes today and is already
@@ -2653,12 +2652,12 @@ async function migrateDB(database = db, env = process.env) {
      )`,
     `CREATE INDEX IF NOT EXISTS idx_storage_migration_jobs_status
        ON storage_migration_jobs(status)`,
-    // Phase 5: per-plan log retention ceilings, mirroring backup_plan_limits.
+    // Per-plan log retention ceilings, mirroring backup_plan_limits.
     `ALTER TABLE platform_settings
        ADD COLUMN IF NOT EXISTS log_retention_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb`,
-    // Phase 5: platform-wide log segment storage destination, changeable
-    // after setup exactly like the backup_* columns — see logStorageConfig.ts
-    // and Design Decision 2b. Columns are nullable (unlike the backup_*
+    // Platform-wide log segment storage destination, changeable
+    // after setup exactly like the backup_* columns — see logStorageConfig.ts.
+    // Columns are nullable (unlike the backup_*
     // columns' NOT NULL DEFAULTs) so "no row has ever been written" is
     // distinguishable from "explicitly set to local" — logStorageConfig.ts's
     // readPlatformLogStorageRow() falls back to the NORA_LOG_* env block

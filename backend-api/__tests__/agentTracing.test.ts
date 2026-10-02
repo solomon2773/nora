@@ -82,7 +82,7 @@ describe("agentTracing", () => {
       expect(delta.diagnostics.otel.traces).toBe(false);
     });
 
-    test("the ingest key baked into the delta actually verifies against Phase 11's verifyIngestKey", () => {
+    test("the ingest key baked into the delta actually verifies against verifyIngestKey", () => {
       const delta = agentTracing.buildTracingConfigDelta(agent, enabledSettings);
       const mintedKey = delta.diagnostics.otel.headers["x-nora-ingest-key"];
       expect(otlpRoutes.verifyIngestKey(AGENT_ID, mintedKey)).toBe(true);
@@ -104,7 +104,7 @@ describe("agentTracing", () => {
   });
 
   describe("mintIngestKey", () => {
-    test("matches Phase 11's computeIngestKey exactly", () => {
+    test("matches computeIngestKey exactly", () => {
       expect(agentTracing.mintIngestKey(AGENT_ID)).toBe(otlpRoutes.computeIngestKey(AGENT_ID));
     });
   });

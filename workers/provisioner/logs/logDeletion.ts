@@ -1,23 +1,23 @@
 // @ts-nocheck
-// workers/provisioner/logs/logDeletion.ts — Phase 5c of the logging control
+// workers/provisioner/logs/logDeletion.ts — part of the logging control
 // plane: what happens to an agent's or workspace's logs at deletion time,
 // and the admin-only path back to logs an operator chose to keep.
 //
 // Depends on:
-//   - agent-runtime/lib/objectStorage.ts (Phase 0)      — getStorageObject,
+//   - agent-runtime/lib/objectStorage.ts      — getStorageObject,
 //     deleteStorageObjects
 //   - backend-api/db_schema.sql `log_segments` / `agent_spans` /
-//     `log_segment_legacy_copies` / `deleted_log_owners`  (Phase 1)
-//   - workers/provisioner/logs/logStorageConfig.ts (Phase 3) —
+//     `log_segment_legacy_copies` / `deleted_log_owners`
+//   - workers/provisioner/logs/logStorageConfig.ts —
 //     storageConfigForSegment
-//   - workers/provisioner/logs/segmentWriter.ts (Phase 3)  — decryptSegment,
+//   - workers/provisioner/logs/segmentWriter.ts  — decryptSegment,
 //     loadLogEncryptionKeys (the exact primitives a live segment read
 //     already uses — reused here unchanged, not reimplemented)
-//   - workers/provisioner/logs/retentionSweeper.ts (Phase 5) —
+//   - workers/provisioner/logs/retentionSweeper.ts —
 //     deleteLegacyCopiesForSegments, groupKeysByConfig, resolveLogRetention
 //   - backend-api/monitoring.ts                            — logEvent
 //
-// ── Why this file exists (Phase 5c objective) ───────────────────────────
+// ── Why this file exists ──────────────────────────────
 //
 // `backend-api/routes/agents.ts`'s and `routes/workspaces.ts`'s delete
 // handlers now require an explicit `deleteLogs` boolean. `true` calls
@@ -28,27 +28,22 @@
 // workspace's `workspace_log_settings` row may not survive the delete), then
 // leaves `log_segments`/`agent_spans` completely untouched.
 //
-// ── GET /admin/log-recovery/:id/logs and export — forward-reference note ──
+// ── GET /admin/log-recovery/:id/logs and export — minimal reader ──
 //
-// Per the Phase 5c task brief, this is a REAL, WORKING, MINIMAL
-// implementation, not a stub: `listRecoveredLogLines` decrypts and
-// decompresses actual segments via Phase 3's `decryptSegment` primitive and
-// returns real log lines. It reads every candidate segment in `ts_from`
-// order and walks forward with a simple `"<segmentIndex>:<lineOffset>"`
-// cursor — there is no SQL-side pruning beyond the owning agent/workspace,
-// no k-way merge across streams, no early-termination heuristics, and no
-// prefiltering before parse. Phase 6's `searchLogs`/`selectCandidateSegments`
-// (once built) is a strict superset of what an operator needs here and
-// should replace this — scoped by `deleted_log_owners.source_id` exactly as
-// this module already scopes it, never by `findAccessibleAgentForActor`
-// (there is no agent/workspace row left to check access against). Export
-// (`collectAllRecoveredLogLines`) is the same simplification applied to the
-// whole range at once, capped at `MAX_EXPORT_LINES` rather than streamed —
-// Phase 7's `streamLogExport` should replace it the same way.
-//
-// This mirrors Phase 3's placeholder `checkLocalCapacity` disk-scan, which
-// Phase 5 later replaced outright once the real mechanism existed — a
-// working placeholder now beats blocking this phase on unbuilt future work.
+// This is a real, working, minimal implementation: `listRecoveredLogLines`
+// decrypts and decompresses actual segments via `decryptSegment` and returns
+// real log lines. It reads every candidate segment in `ts_from` order and walks
+// forward with a simple `"<segmentIndex>:<lineOffset>"` cursor — there is no
+// SQL-side pruning beyond the owning agent/workspace, no k-way merge across
+// streams, no early-termination heuristics, and no prefiltering before parse.
+// `searchLogs`/`selectCandidateSegments` is a strict superset of what an
+// operator needs here and could replace it — scoped by
+// `deleted_log_owners.source_id` exactly as this module already scopes it,
+// never by `findAccessibleAgentForActor` (there is no agent/workspace row left
+// to check access against). Export (`collectAllRecoveredLogLines`) is the same
+// simplification applied to the whole range at once, capped at
+// `MAX_EXPORT_LINES` rather than streamed — `streamLogExport` could replace it
+// the same way.
 
 const zlib = require("zlib");
 
@@ -59,7 +54,7 @@ const retentionSweeperModule = require("./retentionSweeper.ts");
 
 const DEFAULT_RECOVERY_PAGE_LIMIT = 200;
 // Export is a bounded, in-memory "gather everything" implementation (see
-// module header) — this is the safety valve until Phase 7's streamed export
+// module header) — this is the safety valve until the streamed export
 // replaces it.
 const MAX_EXPORT_LINES = 200000;
 
@@ -79,7 +74,7 @@ function lazyLogEvent(deps) {
  * `log_segment_legacy_copies`, and every `agent_spans` row matching
  * `<column> = <value>` — no `ts_to`/`cutoff` filter, unlike the retention
  * sweeper's expiry sweeps, since this is a full purge, not an expiry pass.
- * Deletes objects before index rows, in the exact order Phase 5's
+ * Deletes objects before index rows, in the exact order the
  * retention sweeper already established (never a second, divergent
  * ordering).
  *
@@ -136,7 +131,7 @@ async function purgeAllLogsByColumn(column, value, deps = {}) {
   };
 }
 
-// ── deleteAgentLogs / deleteWorkspaceLogs (item 2 / Functions list) ──────
+// ── deleteAgentLogs / deleteWorkspaceLogs ──────────────────────────────
 
 /**
  * `deleteLogs: true` async cleanup for a deleted agent. Called by
@@ -151,7 +146,7 @@ async function deleteAgentLogs(agentId, deps = {}) {
 /**
  * `deleteLogs: true` async cleanup for a deleted workspace. `log_segments`/
  * `agent_spans` carry their own `workspace_id` snapshot from write time
- * (Phase 3) — member agents are NOT deleted by a workspace delete (they
+ * — member agents are NOT deleted by a workspace delete (they
  * stay with their owner; see db_schema.sql's `workspace_agents` comment),
  * so scoping by `workspace_id` directly is correct and does not require
  * enumerating member agents.
@@ -160,7 +155,7 @@ async function deleteWorkspaceLogs(workspaceId, deps = {}) {
   return purgeAllLogsByColumn("workspace_id", workspaceId, deps);
 }
 
-// ── snapshotDeletedLogOwner (item 3 / Functions list) ────────────────────
+// ── snapshotDeletedLogOwner ──────────────────────────────
 
 /**
  * Build and insert the `deleted_log_owners` row BEFORE the source
@@ -212,7 +207,7 @@ async function snapshotDeletedLogOwner(kind, sourceId, actor, meta = {}, deps = 
   return result.rows[0];
 }
 
-// ── Admin recovery: purge (item 7 / Functions list) ──────────────────────
+// ── Admin recovery: purge ──────────────────────────────
 
 /**
  * `DELETE /admin/log-recovery/:id` — the operator's only way to reclaim
@@ -259,10 +254,10 @@ async function purgeDeletedLogOwner(deletedLogOwnerId, actor, deps = {}) {
   return { purged: true, ...outcome };
 }
 
-// ── Admin recovery: read path (item 5 / Functions list) ──────────────────
+// ── Admin recovery: read path ──────────────────────────────
 //
 // See the module header's forward-reference note: real, minimal, and
-// explicitly documented as an interim implementation Phase 6 should replace.
+// explicitly documented as an interim implementation.
 
 async function loadDeletedLogOwnerOrThrow(deletedLogOwnerId, deps) {
   const db = lazyDb(deps);
@@ -318,8 +313,7 @@ async function readSegmentLines(segment, deps) {
  *
  * Cursor shape: `"<segmentIndex>:<lineOffset>"` into the ts_from-ordered
  * segment list — an internal implementation detail of this minimal reader,
- * not a stable public contract (Phase 6's `encodeCursor`/`decodeCursor`
- * should replace it).
+ * not a stable public contract (the search API's `encodeCursor`/`decodeCursor` are).
  *
  * @param {string} deletedLogOwnerId
  * @param {{limit?: number, cursor?: string|null}} [options]
@@ -354,7 +348,7 @@ async function listRecoveredLogLines(deletedLogOwnerId, options = {}, deps = {})
 
 /**
  * Gather every recovered log line for export (CSV/NDJSON), bounded by
- * `MAX_EXPORT_LINES` (see module header — Phase 7's streamed export should
+ * `MAX_EXPORT_LINES` (see module header — the streamed export should
  * replace this bound entirely rather than raising it).
  *
  * @param {string} deletedLogOwnerId

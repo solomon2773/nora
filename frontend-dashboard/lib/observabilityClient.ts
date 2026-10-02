@@ -2,9 +2,9 @@
 //
 // Typed helpers over `fetchWithAuth`, mirroring `workspaceClient.ts`'s
 // `jsonOrThrow` error-handling shape. Wraps `GET /logs/search` and
-// `GET /logs/export` (Phase 6/7, `backend-api/routes/observability.ts` +
+// `GET /logs/export` (`backend-api/routes/observability.ts` +
 // `backend-api/logSearch.ts`) plus a couple of best-effort helpers used to
-// surface the capacity-halt state described in the Phase 8 spec (item 8a).
+// surface the capacity-halt state.
 //
 // Also home to a handful of small, deliberately pure functions (windowing
 // math, capability-state resolution, capacity-window pairing, filename
@@ -13,8 +13,7 @@
 // (`tsx --test lib/*.test.ts` — see package.json). This package has no
 // component-testing harness (no Jest/RTL/jsdom), so anything that needs a
 // DOM or React rendering to verify is exercised manually instead; see
-// observabilityClient.test.ts and the Phase 8 completion report for exactly
-// which behaviors that applies to.
+// observabilityClient.test.ts for exactly which behaviors that applies to.
 
 import { fetchWithAuth } from "./api";
 
@@ -86,8 +85,7 @@ function buildLogQuery(params: SearchLogsParams | LogExportParams): URLSearchPar
 
 /**
  * `GET /logs/search` — one agent's merged runtime/gateway timeline.
- * `agentId` is required; see the manifest's Non-Goals for why this is
- * intentionally single-agent, not fleet-wide.
+ * `agentId` is required: this is intentionally single-agent, not fleet-wide.
  */
 export async function searchLogs(params: SearchLogsParams): Promise<SearchLogsResult> {
   const query = buildLogQuery(params);
@@ -154,12 +152,12 @@ export async function exportLogs(params: LogExportParams): Promise<{ filename: s
   return { filename };
 }
 
-// ── Capacity status (best-effort; see Phase 8 item 8a) ─────────────────────
+// ── Capacity status (best-effort) ──────────────────────────────
 //
-// `GET /admin/log-storage` (Phase 5 item 7a-ii) is platform-admin-only
+// `GET /admin/log-storage` is platform-admin-only
 // (`requireAdmin`) and reports the CURRENT installation-wide capacity state
 // only — not a historical per-range signal. This frontend deliberately does
-// not add a new backend endpoint (Phase 8's file list is frontend-only), so
+// not add a new backend endpoint (the file list is frontend-only), so
 // this call is attempted and silently degrades to `null` for any non-admin
 // actor (403) or transport failure, rather than being treated as available.
 export interface CapacityStatus {
@@ -232,10 +230,10 @@ export async function getCurrentCapacityStatus(): Promise<CapacityStatus | null>
 
 /**
  * Historical capacity-halt windows, built from the real `events` rows
- * Phase 5 item 6 writes (`log_storage_capacity_halted` /
+ * the retention sweeper writes (`log_storage_capacity_halted` /
  * `log_storage_capacity_resumed`) via the already-workspace-scoped
- * `GET /monitoring/events` (Phase 6 item 10 added `workspaceId` filtering
- * there for exactly this kind of session-side query). This is a REAL signal
+ * `GET /monitoring/events` (which supports `workspaceId` filtering for exactly
+ * this kind of session-side query). This is a REAL signal
  * — not a guess — but it is installation-wide in origin (the capacity gate
  * has no per-workspace dimension) and paired chronologically on the client
  * rather than joined by any shared key, since the events themselves carry
@@ -308,7 +306,7 @@ export async function fetchCapacityHaltWindows(
   return windows.filter((window) => windowOverlapsRange(window, from, to));
 }
 
-// ── Row timestamp approximation marker (item 7) ─────────────────────────
+// ── Row timestamp approximation marker ─────────────────────────
 
 /** Pure: true when a line's ordering is approximate (collector clock). */
 export function isApproximateTimestamp(line: Pick<LogLine, "ts_source">): boolean {
@@ -370,7 +368,7 @@ export function stripRedundantTimestamp(
   return message.slice(match[0].length);
 }
 
-// ── Capability-state resolution (item 8) ─────────────────────────────────
+// ── Capability-state resolution ─────────────────────────────────
 
 export type RuntimeLensCapability = "ok" | "no_gateway_stream" | "k8s_local_unsupported" | "empty";
 
@@ -412,13 +410,12 @@ export function resolveRuntimeLensCapability(
   return "empty";
 }
 
-// ── Virtualization math (item 4 / 50,000-line proxy test) ───────────────
+// ── Virtualization math ──────────────────────────────
 //
-// This package has no `react-window`/`@tanstack/react-virtual` dependency
-// today (checked package.json and existing component usage before adding
-// one) — see the Phase 8 report for the decision to hand-roll a small
-// fixed-row-height virtualizer here rather than pull in a new dependency
-// for one table. The windowing math itself is pure and unit-tested; the
+// This package has no `react-window`/`@tanstack/react-virtual` dependency, so
+// a small fixed-row-height virtualizer is hand-rolled here rather than adding a
+// new dependency for one table. The windowing math itself is pure and
+// unit-tested; the DOM-mounting side of it lives in `components/logs/LogTable.tsx`.
 // DOM-mounting side of it lives in `components/logs/LogTable.tsx`.
 
 export interface VirtualRange {
@@ -532,22 +529,15 @@ function findRowIndexForOffset(offsets: number[], target: number, totalCount: nu
   return lo;
 }
 
-// ── Traces lens (Phase 13) — ASSUMED API CONTRACT ───────────────────────
+// ── Traces lens — API contract ──────────────────────────────
 //
-// IMPORTANT: this section is written against the CONTRACT documented in the
-// Phase 13 frontend implementation brief, not against real backend code —
-// the backend half of this phase (`GET /traces`, `GET /traces/:traceId`,
-// `backend-api/traceQuery.ts`) is being built concurrently in a different
-// git worktree from the same plan section
-// (`plans/logging_control_plane/logging-control-plane-implementation-plan-v2.md`,
-// "Phase 13: Traces Lens And Cross-Lens Correlation"). This file never saw
-// that code. When both halves land on the same branch, diff the shapes
-// below against what actually shipped — this comment block plus
-// `normalizeTraceSummary` / `normalizeTraceDetail` / `normalizeSpanRow` /
-// `normalizeCorrelatedLog` are the ONLY places a field-name mismatch should
-// need touching; every component reads through those.
+// Response shapes for `GET /traces` and `GET /traces/:traceId`
+// (`backend-api/traceQuery.ts`). `normalizeTraceSummary` /
+// `normalizeTraceDetail` / `normalizeSpanRow` / `normalizeCorrelatedLog` are the
+// ONLY places a field-name mismatch should need touching; every component reads
+// through those.
 //
-// Assumed shapes:
+// Shapes:
 //
 //   GET /traces?workspaceId=&agentId=&from=&to=&cursor=&limit=
 //     -> TraceSummary[] (defensively also accepts `{ traces: [...],
@@ -566,18 +556,16 @@ function findRowIndexForOffset(offsets: number[], target: number, totalCount: nu
 //     CorrelatedLogRow: { ts, observedTs, tsSource, stream, level, message,
 //       traceId, spanId, inTrace } — `inTrace: false` marks an untraced
 //       runtime line included because it's in the same agent+time window,
-//       NOT because it belongs to the trace (see Phase 13 spec item 4/9).
+//       NOT because it belongs to the trace.
 //
-// The normalizers below accept both the assumed camelCase field names and
-// their snake_case equivalents (`trace_id`, `started_at`, `span_id`,
-// `parent_span_id`, `tokens_in`, `tokens_out`, `cost_usd`,
-// `observed_ts`/`ts_source`, `in_trace`), since this codebase's other
-// endpoints (`/logs/search`) use snake_case for exactly these concepts —
-// there is a real chance the traces endpoints land snake_case too despite
-// the plan spec's camelCase. Whichever it actually is, this file keeps
-// working without a component-level change.
+// The normalizers below accept both camelCase field names and their snake_case
+// equivalents (`trace_id`, `started_at`, `span_id`, `parent_span_id`,
+// `tokens_in`, `tokens_out`, `cost_usd`, `observed_ts`/`ts_source`,
+// `in_trace`), since this codebase's other endpoints (`/logs/search`) use
+// snake_case for exactly these concepts. Whichever an endpoint returns, this
+// file keeps working without a component-level change.
 
-/** `GET /workspaces/:id/log-settings` — Phase 12, assumed already built. */
+/** `GET /workspaces/:id/log-settings` — workspace log settings (workspace-admin only). */
 export interface WorkspaceLogSettings {
   tracesEnabled: boolean;
 }
@@ -727,12 +715,12 @@ export interface ListTracesParams {
 export interface ListTracesResult {
   traces: TraceSummary[];
   nextCursor: string | null;
-  // Reconciled against the real Phase 13 backend: `GET /traces` embeds the
+  // `GET /traces` embeds the
   // requesting agent's resolved `tracesEnabled`/`traceSampleRate` directly in
   // its response (via `agentTracing.resolveTracingSettings`), rather
   // than requiring a separate call to `GET /workspaces/:id/log-settings`.
   // That settings endpoint is guarded by `requireWorkspaceRole("admin", "id")`
-  // (Phase 12), so a plain workspace viewer/editor legitimately using the
+  //, so a plain workspace viewer/editor legitimately using the
   // Traces lens would get a 403 from it and `getWorkspaceTracesEnabled`
   // would incorrectly resolve to `null` ("unknown" -> CTA shown) even when
   // tracing is genuinely on. Reading it off this response instead only
@@ -792,7 +780,7 @@ export async function listTraces(params: ListTracesParams): Promise<ListTracesRe
 /**
  * `GET /traces/:traceId` — span tree plus correlated log lines for one
  * trace. Mirrors `searchLogs`'s error-handling shape exactly. See the
- * ASSUMED API CONTRACT block above for the field-name caveat.
+ * API contract block above for the field-name caveat.
  */
 export async function getTraceDetail(
   traceId: string,
@@ -809,12 +797,11 @@ export async function getTraceDetail(
 }
 
 /**
- * `GET /workspaces/:id/log-settings` (Phase 12, assumed already built and
- * merged into the spine this worktree is based on) — used ONLY to read
+ * `GET /workspaces/:id/log-settings` — used ONLY to read
  * `tracesEnabled` so the Traces lens can show an "enable tracing" CTA
- * instead of a misleadingly empty list (Phase 13 spec item 7/6). Best-effort
+ * instead of a misleadingly empty list. Best-effort
  * like `getCurrentCapacityStatus` above: returns `null` (== "unknown") on
- * any transport failure, 404 (endpoint not yet present), or non-boolean
+ * any transport failure, 404, or non-boolean
  * field, rather than guessing. `resolveTracesLensView` below treats `null`
  * the same as `false` — the "false/unset" language in the spec — so an
  * unreachable settings endpoint conservatively shows the CTA rather than
@@ -844,7 +831,7 @@ export async function getWorkspaceTracesEnabled(
   }
 }
 
-// ── Traces lens view resolution (item 6/7) ──────────────────────────────
+// ── Traces lens view resolution ──────────────────────────────
 
 export type TracesLensView = "enable_cta" | "unsupported" | "unverified" | "empty" | "list";
 
@@ -861,7 +848,7 @@ export interface TracesLensViewInput {
  * agent that's already selected (the "no agent selected yet" state is
  * handled separately, one layer up, the same way the Runtime lens does it).
  * `tracesEnabled !== true` (i.e. `false` OR `null`/unknown) always wins —
- * that is the literal "false/unset" language in the Phase 13 spec — so a
+ * that is the literal "false/unset" language in the spec — so a
  * workspace this frontend can't confirm has tracing on gets the CTA rather
  * than an empty list that looks like a bug. Only once the workspace-level
  * policy is confirmed on does the per-agent capability get a say: an agent
@@ -889,7 +876,7 @@ export function resolveTracesLensView(input: TracesLensViewInput): TracesLensVie
   return "empty";
 }
 
-// ── Correlated log partitioning (item 4) ────────────────────────────────
+// ── Correlated log partitioning ────────────────────────────────
 
 export interface PartitionedCorrelatedLogs {
   inTrace: CorrelatedLogRow[];
@@ -899,8 +886,8 @@ export interface PartitionedCorrelatedLogs {
 /**
  * Pure: splits a trace detail's correlated log lines into the ones that
  * actually belong to the trace vs. the untraced-but-same-window runtime
- * lines included for context (`inTrace: false` — see the ASSUMED API
- * CONTRACT block). Order within each group is preserved.
+ * lines included for context (`inTrace: false` — see the API
+ * contract block). Order within each group is preserved.
  */
 export function partitionCorrelatedLogs(logs: CorrelatedLogRow[]): PartitionedCorrelatedLogs {
   const inTrace: CorrelatedLogRow[] = [];
@@ -911,7 +898,7 @@ export function partitionCorrelatedLogs(logs: CorrelatedLogRow[]): PartitionedCo
   return { inTrace, inWindowOnly };
 }
 
-// ── Span waterfall layout math (item 3) ─────────────────────────────────
+// ── Span waterfall layout math ─────────────────────────────────
 
 const WATERFALL_MIN_WIDTH_PCT = 0.75;
 

@@ -129,9 +129,9 @@ async function reconcileBackgroundAgentStatuses({
     // Reconciliation is best-effort only.
   }
 
-  // Phase 12 item 5c: self-heal agent-side tracing config on the same 30s
-  // tick this function already runs on, the same way Phase 10 keeps the
-  // gateway collector's `consoleLevel: warn` correctly applied. A running
+  // Self-heal agent-side tracing config on the same 30s
+  // tick this function already runs on, the same way the gateway collector keeps its
+  // `consoleLevel: warn` correctly applied. A running
   // container's config-merge has no persistence of its own across a real
   // restart, so an agent that restarted since the last tick would otherwise
   // silently drop its `diagnostics.otel` config until something else pokes

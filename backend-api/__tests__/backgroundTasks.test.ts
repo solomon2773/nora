@@ -12,7 +12,7 @@ jest.mock("../agentTelemetry", () => ({
 // Mocked so backgroundTasks doesn't pull in the real gatewayProxy chain; the
 // external reconcile tests inject their own healthProbe anyway.
 jest.mock("../externalHealth", () => ({ probeExternalAgentHealth: jest.fn() }));
-// Phase 12: reconcileBackgroundAgentStatuses also drives agentTracing's own
+// ReconcileBackgroundAgentStatuses also drives agentTracing's own
 // reconcile sweep (see the dedicated describe block below). Mocked here so
 // every pre-existing test in this file — which asserts exact mockDb.query
 // call counts for the STATUS reconcile path — is unaffected by it; the real
@@ -299,7 +299,7 @@ describe("background tasks", () => {
     });
   });
 
-  describe("Phase 12: agent-side tracing self-heal hook", () => {
+  describe("agent-side tracing self-heal hook", () => {
     it("reconciles tracing config on every status-reconcile tick", async () => {
       mockDb.query.mockResolvedValueOnce({ rows: [] });
 

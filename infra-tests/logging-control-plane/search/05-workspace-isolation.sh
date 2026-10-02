@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 6, matrix row 5: the plan's workspace-isolation assertions, run
+# Matrix row 5: the plan's workspace-isolation assertions, run
 # against real rows, real credentials, and the real HTTP route.
 #
 # The plan bolds these as "the core isolation assertion." This README row

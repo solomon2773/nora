@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 12, test 3: reconciliation re-applies tracing config to an agent
+# Test 3: reconciliation re-applies tracing config to an agent
 # whose config drifted while it was already running.
 #
 # This used to strip diagnostics.otel and then `docker restart` the

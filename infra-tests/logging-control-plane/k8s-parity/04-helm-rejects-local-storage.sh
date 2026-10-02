@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 14, test 4: `helm template infra/helm/nora` refuses to render with
+# Test 4: `helm template infra/helm/nora` refuses to render with
 # `NORA_LOG_STORAGE=local` (or unset, which defaults to `local`) once log
 # collection is enabled (`backendEnv.NORA_LOG_ENABLED=true`; collection is
 # opt-in, so an install that never enables it needs no log storage), and the
@@ -61,9 +61,9 @@ local_status=$?
 log_info "explicit-local render exit=$local_status"
 
 if [ "$unset_status" -eq 0 ]; then
-  test_fail "render with NORA_LOG_STORAGE unset succeeded (exit 0) — expected it to fail per Design Decision 2d"
+  test_fail "render with NORA_LOG_STORAGE unset succeeded (exit 0) — expected it to fail"
 elif [ "$local_status" -eq 0 ]; then
-  test_fail "render with NORA_LOG_STORAGE=local succeeded (exit 0) — expected it to fail per Design Decision 2d"
+  test_fail "render with NORA_LOG_STORAGE=local succeeded (exit 0) — expected it to fail"
 elif ! grep -qF "$EXPECTED_SUBSTRING" <<<"$unset_output"; then
   test_fail "unset render failed as expected, but the error text doesn't name the unsupported combination as expected. Got: $(echo "$unset_output" | tail -5)"
 elif ! grep -qF "$EXPECTED_SUBSTRING" <<<"$local_output"; then

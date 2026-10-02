@@ -1,6 +1,4 @@
-# Phase 10 — Gateway Log Collector
-
-**Plan doc:** "Phase 10: Gateway Log Collector" (line 1396).
+# Gateway Log Collector
 
 **Objective:** poll `logs.tail` per running OpenClaw agent with
 `gateway_logs_enabled` and write `gateway`-stream segments carrying trace
@@ -18,10 +16,10 @@ runtime and gateway streams don't duplicate every line forever.
 `workers/provisioner/logs/redaction.ts`.
 
 **Unit tests:** `workers/provisioner/gatewayCollector.test.js` exists and,
-like the Phase 9 suite, is already thorough — Node's built-in test
+like the suite, is already thorough — Node's built-in test
 runner, fakes for `db`/`segmentWriter`/`gatewayClient` passed in via a
 `deps` object, no real timers (`pollAgentGatewayLogs`/`reconcileStreams`
-called directly). It covers every item on the plan doc's own Tests list
+called directly). It covers every item on the intended test list
 with a fake DB and fake gateway client:
 
 - cursor persists across a simulated worker restart (a brand-new
@@ -61,13 +59,13 @@ wall-clock timing, and a real filesystem/gateway can exercise honestly.
 | 1 | Cursor persists across a real `worker-provisioner` process restart (SIGKILL, not a simulated `cursorState` swap) | Run the collector against a real agent with lines flowing, `docker compose kill worker-provisioner` mid-poll, bring it back up, and confirm the resumed poll picks up from the persisted `agent_log_cursors` row with no duplicate lines and no gap in the resulting segment. | **[x] implemented** — `01-worker-sigkill-cursor.sh` | Ran against agent2 with real chat-generated content. Found and fixed a real product bug in the process: `pollAgentGatewayLogs` treated `response.lines` as pre-parsed objects, but a real gateway returns each line as a raw JSON string — every real record was silently dropped, so no `gateway`-stream segment had ever been written in this stack's history despite the collector actively polling. Fixed in `gatewayCollector.ts`; all 12 existing unit tests still pass. Confirms cursor monotonicity and zero duplicate lines across a real SIGKILL. |
 | 2 | Real log rotation at `logging.maxFileBytes` (100MB) mid-poll does not drop lines | Drive a real OpenClaw agent's log file past the configured rotation threshold while the collector is actively polling, and confirm the resulting gateway-stream segment has no gap across the rotation boundary. | **[x] implemented** — `02-log-rotation-no-drop.sh` | Ran against agent4 with `logging.maxFileBytes` shrunk to 2000 bytes via the same live config-merge mechanism `agentTracing.ts` uses. Asserts on the same structural invariants as #1 (zero duplicate lines, nonzero content) rather than per-turn markers — see the script's header for why an initial per-`runId` design was dropped (OpenClaw's own gateway log lines never carry chat content, and the `chat.send` completion line can land well after this script's fixed windows). Config restored to 104857600 in cleanup regardless of pass/fail. |
 | 3 | Adaptive poll interval's real wall-clock behavior matches the scripted step sequence under a live gateway | Watch real `logs.tail` request timestamps against a live OpenClaw gateway across a flow → quiet → flow cycle, and confirm the observed intervals back off and recover per `POLL_BACKOFF_STEPS_MS`, not just that `computeNextPollStep` returns the right numbers in isolation. | **[x] implemented** — `03-adaptive-poll-timing.sh` | Ran against agent2. The precise backoff-step cadence is hard to pin down cleanly in practice: OpenClaw's gateway writes a "res ✓ logs.tail" line for every poll (including this test's own probe calls), which self-referentially keeps content flowing and makes a truly idle window hard to guarantee — logged as a data point, not hard-gated. What IS hard-gated and passed: a fresh gateway-stream segment lands within 20s of resuming activity after the quiet phase. |
-| 4 | A worker restart mid-batch, immediately followed by rapid duplicate-cursor writes from two collector instances, does not corrupt the persisted cursor | Simulate an unclean handoff (old process not fully dead, new process already polling) and confirm `agent_log_cursors` doesn't end up with a cursor that regresses or duplicates lines from a race between the two writers. | [ ] planned | Not attempted — #1's harness did not make this cheap in practice (see this phase's real-agent gateway-auth flakiness noted below), and time in this session went to getting #1-#3 to a real, verified pass instead. Still worth a look if the harness gets more robust. |
-| 5 | Redaction pattern-matching on real, messy transcript content (not hand-picked fixture strings) | Feed the second-pass redactor real OpenClaw transcript JSONL samples (if any sanitized samples exist) instead of the unit test's hand-picked `apiKey="sk-..."` fixture, to sanity-check the pattern list against real-world noise/false-positive rate. | Probably belongs in unit tests instead | This is a fixture-quality question, not an infra-timing one — better served by adding more cases to `gatewayCollector.test.js` than by anything this suite's chaos/process-kill machinery provides. Listed here only so it isn't silently dropped from the plan doc's Tests list. |
+| 4 | A worker restart mid-batch, immediately followed by rapid duplicate-cursor writes from two collector instances, does not corrupt the persisted cursor | Simulate an unclean handoff (old process not fully dead, new process already polling) and confirm `agent_log_cursors` doesn't end up with a cursor that regresses or duplicates lines from a race between the two writers. | [ ] planned | Not attempted — #1's harness did not make this cheap in practice (see this suite's real-agent gateway-auth flakiness noted below), and time went to getting #1-#3 to a real, verified pass instead. Still worth a look if the harness gets more robust. |
+| 5 | Redaction pattern-matching on real, messy transcript content (not hand-picked fixture strings) | Feed the second-pass redactor real OpenClaw transcript JSONL samples (if any sanitized samples exist) instead of the unit test's hand-picked `apiKey="sk-..."` fixture, to sanity-check the pattern list against real-world noise/false-positive rate. | Probably belongs in unit tests instead | This is a fixture-quality question, not an infra-timing one — better served by adding more cases to `gatewayCollector.test.js` than by anything this suite's chaos/process-kill machinery provides. Listed here only so it isn't silently dropped from the intended test list. |
 | 6 | A Hermes agent is skipped entirely under `reconcileStreams()`'s real 30s loop, across many mixed agents, without error | Run the real 30s reconcile loop against a mixed fleet (OpenClaw + Hermes agents) for several cycles and confirm no gateway client is ever opened for a Hermes agent and no error/warning is logged. | Covered by unit tests | The unit test already asserts this for a single `reconcileStreams()` call with a fake client that throws if invoked for the Hermes agent; a real 30s loop against a mixed fleet doesn't change the skip logic, only repeats it. Not worth a standing chaos entry. |
 
 ## Blocked on
 
-~~Same restart/kill harness gap as Phase 9 (#2 there): needs a way to run
+~~Same restart/kill harness gap as needs a way to run
 a real `worker-provisioner` process (or the whole dev stack) that this
 suite can kill and restart deliberately, plus a real or scriptable
 OpenClaw gateway to drive log rotation and adaptive-polling timing
@@ -92,7 +90,7 @@ for agent2/agent3/agent5 within seconds of the fix landing.
 
 ## A second real finding: OpenClaw gateway auth can wedge under heavy reconnect churn
 
-While building and running this phase's scripts (and Phase 9's), all four
+While building and running this suite's scripts (and the RPC client suite's), all four
 real agents at various points started rejecting every new gateway
 connection — including from a brand-new client — with the gateway's own
 `unauthorized: gateway token missing (provide gateway auth token)`

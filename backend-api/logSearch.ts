@@ -1,17 +1,15 @@
 // @ts-nocheck
-// backend-api/logSearch.ts — Logging control plane Phase 6 (search) and
-// Phase 7 (export). Orchestrates: prune candidate segments in SQL → fetch
+// backend-api/logSearch.ts — logging control plane search and export.
+// Orchestrates: prune candidate segments in SQL → fetch
 // their objects in parallel → decrypt/decompress/prefilter/parse → merge
 // into one chronological timeline for a single agent, optionally closing the
 // last-few-minutes recency gap with worker-provisioner's live buffer.
 //
-// Deliberately does NOT reuse Phase 5c's logDeletion.ts / admin-recovery
-// path (item 8c): search and export require a LIVE, currently-resolvable
+// Deliberately does NOT reuse logDeletion.ts / admin-recovery
+// path: search and export require a LIVE, currently-resolvable
 // agent (`findAccessibleAgentForActor`), never a deleted agent's kept logs.
 //
-// Read the implementation plan's Phase 6/Phase 7 sections and the
-// manifest's "Multitenancy And Access Model" / "Search Performance Model"
-// sections before changing the ordering/termination logic below — several
+// Be careful changing the ordering/termination logic below — several
 // of the choices here (buffer-then-storage read order, wave-based early
 // termination, prefilter-before-parse) are load-bearing for correctness or
 // performance guarantees this module promises, not arbitrary structure.
@@ -25,7 +23,7 @@ const { findAccessibleAgentForActor } = require("./middleware/ownership");
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 
-// Item 4: fetch candidates in parallel at a configurable concurrency,
+// Fetch candidates in parallel at a configurable concurrency,
 // default 64 — a local disk read is ~1ms, a remote object fetch is
 // ~50-150ms, so a serial implementation passes tests against `local` and is
 // then unusably slow against `s3`/`r2` in production.
@@ -34,22 +32,21 @@ const DEFAULT_SEARCH_LIMIT = 200;
 const MAX_SEARCH_LIMIT = 1000;
 const DECODED_SEGMENT_CACHE_MAX = Number(process.env.NORA_LOG_SEARCH_CACHE_SEGMENTS) || 256;
 
-// Segments flush at most every 15 minutes (Design Decision 6). A query whose
+// Segments flush at most every 15 minutes. A query whose
 // `to` predates "now minus this" cannot possibly overlap anything still
 // sitting in an open, not-yet-flushed buffer, so the worker call is skipped
-// entirely (item 7's "skip the worker call" rule). This is an approximation
+// entirely. This is an approximation
 // — the actual oldest-open-buffer timestamp lives in worker-provisioner, and
 // asking it defeats the point of skipping the call — but it is a safe
 // *conservative* one: it can only cause an extra (harmless, gracefully
 // degraded) worker call, never a missed recency-gap merge.
 const FLUSH_INTERVAL_MS = segmentWriterModule.DEFAULT_FLUSH_INTERVAL_MS;
 
-// Export range cap (Phase 7 item 4): default 30 days, matching the
-// manifest's "5,760 candidate segments over 30 days" worked example as the
+// Export range cap: default 30 days (about 5,760 candidate segments), the
 // documented upper bound of what this path is sized for.
 const DEFAULT_EXPORT_MAX_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-// ── undici dispatcher sizing (item 4 continued) ─────────────────────────
+// ── undici dispatcher sizing ──────────────────────────────
 //
 // Verified against the undici version actually resolved in this workspace
 // (7.29.1, bundled transitively via Node's own fetch stack): `Agent`'s
@@ -88,7 +85,7 @@ function effectiveTs(line) {
 }
 
 /**
- * Comparator implementing the manifest's merge order:
+ * Comparator implementing the merge order:
  * `(COALESCE(ts, observed_ts), stream, ord)`. `order` flips the timestamp
  * direction only — `stream`/`ord` tie-breaks are always ascending, since
  * they exist purely to make same-timestamp ordering deterministic, not to
@@ -106,7 +103,7 @@ function compareLines(a, b, order = "desc") {
   return oa - ob;
 }
 
-// ── Cursor encode/decode (item 6 / function list) ───────────────────────
+// ── Cursor encode/decode ───────────────────────
 //
 // Encodes `(ts, stream, ord)` — never an offset. An offset over a merged
 // multi-source stream is unstable because a late-arriving segment shifts
@@ -151,7 +148,7 @@ function isAfterCursor(line, cursor, order) {
 }
 
 /**
- * Min-heap k-way merge (item 5 / function list). Implemented as a sort over
+ * Min-heap k-way merge. Implemented as a sort over
  * an already-bounded accumulator rather than a literal binary heap: at this
  * scale (a wave's worth of segments, capped by the fetch concurrency and
  * early-termination logic in `searchLogs`/`streamLogExport`) the two are
@@ -172,7 +169,7 @@ function mergeSegments(lines, limit, cursor = null, order = "desc") {
   return { lines: page, nextCursor };
 }
 
-// ── Segment fetch + decode (item 4a / item 5 / function list) ──────────
+// ── Segment fetch + decode ──────────────────────────────
 //
 // Cache holds the DECOMPRESSED, DECRYPTED plaintext NDJSON bytes for a
 // storage_key — never the parsed lines and never the raw encrypted object.
@@ -200,23 +197,23 @@ function lruSet(map, key, value, max) {
 }
 
 /**
- * `fetchSegmentLines(row, opts)` — item 5 / function list. Fetches (or
+ * `fetchSegmentLines(row, opts)` — fetches (or
  * reuses a cached decode of) one segment's object, decrypts, decompresses,
  * prefilters on `q` before ever parsing, then parses and applies `levels`.
  *
  * @param {Object} row - a `log_segments` row (from `selectCandidateSegments`).
  * @param {Object} [opts]
  * @param {string} [opts.q] - text filter; matched with Buffer.indexOf over
- *   the raw decompressed bytes before parsing (item 5a "prefilter"), then
+ * the raw decompressed bytes before parsing (the "prefilter"), then
  *   re-checked per-line so only matching lines are returned.
  * @param {string[]} [opts.levels] - level filter, applied post-parse.
  * @param {Object} [opts.keyRing] - decryption key ring; defaults to parsing
  *   NORA_LOG_ENCRYPTION_KEY once per call site (callers should pass one in
  *   to avoid re-parsing per segment).
  * @param {Object} [opts.dispatcher] - undici Agent/Pool for the underlying
- *   fetch (item 4).
+ *   fetch.
  * @param {Function} [opts.getStorageObjectFn]
- * @param {Function} [opts.storageConfigForSegmentFn] - item 4a: resolves
+ * @param {Function} [opts.storageConfigForSegmentFn] - resolves
  *   THIS row's own recorded storage_backend/storage_config, not the
  *   platform's current destination, so a segment written under a previous
  *   destination is still fetched and decrypted correctly.
@@ -247,7 +244,7 @@ async function fetchSegmentLines(row, opts = {}) {
     lruSet(cache, row.storage_key, uncompressed, cacheMax);
   }
 
-  // Item 5a "prefilter before parse": a whole-segment miss on `q` skips
+  // Prefilter before parse: a whole-segment miss on `q` skips
   // JSON-parsing entirely — this is the expensive part (~1.8ms/segment)
   // this guard exists to avoid paying on every miss.
   if (q) {
@@ -274,7 +271,7 @@ async function fetchSegmentLines(row, opts = {}) {
   return lines;
 }
 
-// ── Candidate segment selection (item 3 / function list) ───────────────
+// ── Candidate segment selection ───────────────
 
 function normalizeStreams(streams) {
   const list = Array.isArray(streams) ? streams : streams ? [streams] : [];
@@ -288,7 +285,7 @@ function normalizeLevels(levels) {
 }
 
 /**
- * `selectCandidateSegments(params)` — item 3 / function list. The single
+ * `selectCandidateSegments(params)` — the single
  * indexed SQL query: prunes on CONTENT time (`ts_from`/`ts_to`), never
  * write/`created_at` time — gateway segments can arrive late, and a
  * write-time filter would silently drop them. Uses
@@ -320,7 +317,7 @@ async function selectCandidateSegments({ agentId, streams, from, to }, deps = {}
   return result.rows;
 }
 
-// ── Workspace scoping (items 8/8a/8b/8c) ────────────────────────────────
+// ── Workspace scoping ────────────────────────────────
 
 /**
  * A platform admin signed in with a browser session. Deliberately not "any
@@ -333,7 +330,7 @@ function isAdminSession(actor) {
 }
 
 /**
- * Item 8a: every non-admin request for an agent that belongs to a workspace
+ * Every non-admin request for an agent that belongs to a workspace
  * must name that workspace. `findAccessibleAgentForActor` resolves per-agent
  * access (ownership or membership); this check is what stops an owner, via
  * the ownership fast path, from reading an agent out of a workspace context
@@ -350,7 +347,7 @@ function isAdminSession(actor) {
  * every actor including admins. That is input validation, not an access
  * decision: it hides nothing from an admin, who can omit the filter.
  *
- * Item 8b: a null-workspace agent (owned directly by a user, with no
+ * A null-workspace agent (owned directly by a user, with no
  * workspace row in `workspace_agents`) is reached through the
  * accessible-agent check above, NOT through a workspace filter that would
  * otherwise exclude it for having no workspace — so a request with no
@@ -386,7 +383,7 @@ async function enforceWorkspaceScope({ agentId, workspaceId, actor = null }, dep
   }
 }
 
-// ── Recency gap (item 7) ─────────────────────────────────────────────────
+// ── Recency gap ─────────────────────────────────────────────────
 
 const WORKER_INTERNAL_URL =
   process.env.NORA_WORKER_INTERNAL_URL || "http://worker-provisioner:4001";
@@ -394,7 +391,7 @@ const WORKER_INTERNAL_TIMEOUT_MS = Number(process.env.NORA_WORKER_INTERNAL_TIMEO
 const RECENT_LINES_UNAVAILABLE = "recent_lines_unavailable";
 
 /**
- * Item 7: internal backend-api → worker-provisioner call to
+ * Internal backend-api → worker-provisioner call to
  * `GET /internal/log-buffer`, authenticated with the shared JWT_SECRET (see
  * worker.ts's health server extension). Returns `null` when nothing is
  * buffered; throws on any transport/auth failure so the caller can degrade
@@ -429,7 +426,7 @@ async function fetchWorkerBufferOverHttp(agentId, stream) {
 }
 
 /**
- * Step 1 of the two-step recency-gap dance (item 7): read the live buffer
+ * Step 1 of the two-step recency-gap dance: read the live buffer
  * for each requested stream BEFORE storage is pruned/fetched. This must run
  * FIRST, not after — the two orderings fail differently and only one is
  * detectable:
@@ -526,7 +523,7 @@ function admitRecencyGapLines(snapshots, newestTsToByStream, agentId, filters = 
   return admitted;
 }
 
-// ── searchLogs orchestration (item 1-8 / function list) ─────────────────
+// ── searchLogs orchestration ─────────────────
 
 function clampLimit(rawLimit) {
   const parsed = Number.parseInt(rawLimit, 10);
@@ -574,12 +571,12 @@ async function fetchSegmentLinesOrSkip(fetchFn, row, opts, state, logger) {
 }
 
 /**
- * `searchLogs(params, actor)` — item 1/orchestrator. Prune → fetch (waves,
+ * `searchLogs(params, actor)` — orchestrator. Prune → fetch (waves,
  * concurrency-bounded, early termination) → merge → recency-gap merge.
  *
  * @param {Object} params - `{ workspaceId, agentId, streams, levels, from,
  *   to, q, traceId, cursor, limit, order }`. `agentId` is singular and
- *   required (item 2) — this endpoint serves one agent's timeline, never a
+ *   required — this endpoint serves one agent's timeline, never a
  *   merged cross-agent view.
  * @param {Object} actor - authenticated actor (`req.user`-shaped).
  * @param {Object} [deps] - dependency injection for tests.
@@ -592,10 +589,10 @@ async function searchLogs(params, actor, deps = {}) {
   const agent = await findAgentFn(agentId, actor, "viewer");
   if (!agent) throw notFoundAgentError();
 
-  // Item 8c: this path requires a LIVE, currently-resolvable agent —
+  // This path requires a LIVE, currently-resolvable agent —
   // `findAccessibleAgentForActor` above already enforces that (it queries
   // `agents` directly), so there is nothing further to do for that item
-  // beyond NOT reusing Phase 5c's deleted-agent recovery path, which this
+  // beyond NOT reusing the deleted-agent recovery path, which this
   // function never calls.
   await enforceWorkspaceScope(
     {
@@ -617,7 +614,7 @@ async function searchLogs(params, actor, deps = {}) {
   const dispatcher = deps.dispatcher || sharedDispatcher(concurrency);
   const keyRing = deps.keyRing || segmentWriterModule.loadLogEncryptionKeys();
 
-  // Item 7, step 1: read the live buffer BEFORE pruning/fetching storage —
+  // Step 1: read the live buffer BEFORE pruning/fetching storage —
   // see `readBufferSnapshots`'s comment for why this ordering (not the
   // reverse) is what makes the flush-in-the-middle race a detectable
   // duplicate instead of a silent gap. Only meaningful for the "give me the
@@ -633,7 +630,7 @@ async function searchLogs(params, actor, deps = {}) {
 
   const selectFn = deps.selectCandidateSegments || selectCandidateSegments;
   const rowsDesc = await selectFn({ agentId, streams, from, to }, { db });
-  // item 5a: rows already come back ts_to DESC (the newest-first default
+  // Rows already come back ts_to DESC (the newest-first default
   // ordering this early-termination scheme optimizes for). An ascending
   // query reverses the (cheap — index rows only) array rather than
   // re-querying, and is the documented slow path with no early termination
@@ -650,7 +647,7 @@ async function searchLogs(params, actor, deps = {}) {
     const wave = orderedRows.slice(index, index + concurrency);
     index += wave.length;
 
-    // Item 4a: resolve each row's OWN storage config (fetchFn does this
+    // Resolve each row's OWN storage config (fetchFn does this
     // internally via storageConfigForSegmentFn) and group the concurrent
     // fetch by storage_backend so connection pools stay coherent per
     // destination — done here by simply issuing the whole wave's fetches
@@ -691,7 +688,7 @@ async function searchLogs(params, actor, deps = {}) {
     }
   }
 
-  // Item 7, step 2: now that `newestTsToByStream` reflects the segments
+  // Step 2: now that `newestTsToByStream` reflects the segments
   // ACTUALLY READ, admit only buffer lines strictly newer than that
   // boundary — storage wins on overlap, resolving step 1's buffer-first
   // duplicate risk deterministically.
@@ -720,7 +717,7 @@ async function searchLogs(params, actor, deps = {}) {
   };
 }
 
-// ── streamLogExport orchestration (Phase 7) ──────────────────────────────
+// ── streamLogExport orchestration ──────────────────────────────
 
 const EXPORT_MAX_RANGE_MS =
   Number(process.env.NORA_LOG_EXPORT_MAX_RANGE_MS) || DEFAULT_EXPORT_MAX_RANGE_MS;
@@ -788,7 +785,7 @@ function csvRow(line) {
 }
 
 /**
- * Item 3: mirrors the admin audit export's `nora-audit-<iso>.csv` naming
+ * Mirrors the admin audit export's `nora-audit-<iso>.csv` naming
  * convention (see `admin-dashboard/pages/audit.tsx`'s `extractFilename` /
  * `handleExport`) — an ISO-timestamped filename, extension matching format.
  */
@@ -805,8 +802,8 @@ function resolveExportFormat(params = {}) {
 }
 
 /**
- * `streamLogExport(params, actor, res, deps)` — Phase 7 item 2/function
- * list. Reuses `selectCandidateSegments`/`fetchSegmentLines` but writes to
+ * `streamLogExport(params, actor, res, deps)` — reuses
+ * `selectCandidateSegments`/`fetchSegmentLines` but writes to
  * `res` incrementally as results become available, never buffering the
  * whole export.
  *
@@ -820,14 +817,9 @@ function resolveExportFormat(params = {}) {
  * to cut a fetch short — it is what keeps memory bounded to "segments
  * currently in flight" rather than "the whole export."
  *
- * Recency gap (Phase 6 item 7, applied here in Phase 7): this closes the
- * same last-few-minutes window `searchLogs` does, via the same
- * buffer-first/storage-wins dance. It did not always — export used to read
- * storage exclusively, so exporting a range that included the present
- * silently omitted every line still sitting in worker-provisioner's
- * unflushed buffer, while a search over the byte-identical range returned
- * them. Both endpoints document "the same filters"; that divergence made it
- * untrue for any range touching the last ~15 minutes.
+ * Recency gap: this closes the same last-few-minutes window `searchLogs` does,
+ * via the same buffer-first/storage-wins approach, so export and search return
+ * the same lines for any range touching the last ~15 minutes.
  */
 async function streamLogExport(params, actor, res, deps = {}) {
   const db = deps.db || require("./db");

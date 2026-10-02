@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5, tests 5-7: capacity halt is loud, reversible, and resumes
+# Tests 5-7: capacity halt is loud, reversible, and resumes
 # automatically — not a one-time event.
 #
 # A real constraint this script works around, worth stating plainly:

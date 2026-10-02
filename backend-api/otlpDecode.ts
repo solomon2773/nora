@@ -4,7 +4,7 @@
 // span onto an `agent_spans` row.
 //
 // Decoding uses `protobufjs` against the vendored `proto/trace_service.proto`
-// schema rather than an OTLP SDK (see the Phase 11 plan: no new OTLP SDK
+// schema rather than an OTLP SDK (see the plan: no new OTLP SDK
 // dependency). `protobufjs` renders message fields in camelCase by default
 // (matching the proto3 canonical JSON mapping), and `bytes` fields as
 // base64-encoded strings — which is also how real OTLP JSON exporters encode
@@ -15,8 +15,8 @@
 // IMPORTANT: nothing in this file ever reads a workspace id out of a span or
 // resource attribute. `workspace_id` is not a concept this module knows about
 // at all — it is supplied by the caller (routes/otlp.ts) as the authenticated
-// agent's resolved workspace, after decoding has already happened. See the
-// manifest's "Trace ingest is the one new trust boundary" section.
+// agent's resolved workspace, after decoding has already happened. Trace ingest is
+// the one new trust boundary; see routes/otlp.ts.
 
 const path = require("path");
 const protobuf = require("protobufjs");

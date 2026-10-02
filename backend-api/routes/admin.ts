@@ -2434,7 +2434,7 @@ router.post(
   }),
 );
 
-// ── Phase 5c: log recovery (kept logs for a deleted agent/workspace) ───────
+// ── log recovery (kept logs for a deleted agent/workspace) ───────
 //
 // Platform-admin only (this whole router is behind `router.use(requireAdmin)`
 // above), and scoped by `deleted_log_owners.source_id` — never by
@@ -2442,8 +2442,8 @@ router.post(
 // agent/workspace this data belonged to no longer exists to check access
 // against. See workers/provisioner/logs/logDeletion.ts's module header for
 // what `GET /log-recovery/:id/logs` and the export endpoint below are (and
-// are not) — a real, minimal reader Phase 6/7 are expected to replace with
-// the general search/export machinery once those phases are built.
+// are not) — a real, minimal reader that the general search/export machinery
+// could replace.
 
 router.get(
   "/log-recovery",

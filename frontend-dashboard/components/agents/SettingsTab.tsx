@@ -25,7 +25,7 @@ export default function SettingsTab({
   const [envVars, setEnvVars] = useState("");
   const [agentName, setAgentName] = useState(agent.name || "");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  // Phase 5c item 1 / Phase 8 item 11: the backend rejects a delete request
+  // The backend rejects a delete request
   // that omits `deleteLogs` outright, with no default. `null` here means
   // "no explicit choice yet" — deliberately distinct from `false`, so the
   // confirm button stays disabled until the operator actually clicks one of

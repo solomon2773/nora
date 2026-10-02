@@ -1,30 +1,30 @@
 // @ts-nocheck
-// workers/provisioner/logs/gatewayCollector.ts — Phase 10 of the logging
+// workers/provisioner/logs/gatewayCollector.ts — part of the logging
 // control plane: polls OpenClaw's `logs.tail` gateway RPC per agent and
-// writes `gateway`-stream segments (as opposed to Phase 4's `runtime`-stream
+// writes `gateway`-stream segments (as opposed to the container collector's `runtime`-stream
 // segments, sourced from container stdout/stderr) through the exact same
-// segment-writer infrastructure Phase 3/4 already built.
+// segment-writer infrastructure the container collector uses.
 //
 // Depends on:
-//   - agent-runtime/lib/gatewayRpc.ts (Phase 9)      — createGatewayClient, callLogsTail
-//   - agent-runtime/lib/logLine.ts (Phase 2)          — normalizeGatewayLogLine
+//   - agent-runtime/lib/gatewayRpc.ts      — createGatewayClient, callLogsTail
+//   - agent-runtime/lib/logLine.ts          — normalizeGatewayLogLine
 //   - agent-runtime/lib/agentRuntimeFields.ts          — resolveAgentRuntimeFamily
 //   - agent-runtime/lib/runtimeBootstrap.ts            — buildOpenClawConfigMergeCommand
-//   - workers/provisioner/logs/segmentWriter.ts (Phase 3) — append
-//   - workers/provisioner/logs/retentionSweeper.ts (Phase 5) — resolveLogRetention
-//   - workers/provisioner/logs/logCollector.ts (Phase 4) — resolveTenantForAgent (shared)
-//   - workers/provisioner/logs/redaction.ts (this phase) — redactLine
-//   - backend-api/db_schema.sql `agent_log_cursors` / `workspace_log_settings` (Phase 1)
+//   - workers/provisioner/logs/segmentWriter.ts — append
+//   - workers/provisioner/logs/retentionSweeper.ts — resolveLogRetention
+//   - workers/provisioner/logs/logCollector.ts — resolveTenantForAgent (shared)
+//   - workers/provisioner/logs/redaction.ts — redactLine
+//   - backend-api/db_schema.sql `agent_log_cursors` / `workspace_log_settings`
 //
-// ── Design note: why a real persisted cursor table, unlike Phase 4 ───────
+// ── Design note: why a real persisted cursor table, unlike the container collector ───────
 //
-// Phase 4's container collector never explicitly saves a cursor — it derives
+// The container collector never explicitly saves a cursor — it derives
 // one on every (re)attach from `MAX(ts_to)` over `log_segments`, because a
 // container log source is queried `since <timestamp>`. OpenClaw's
 // `logs.tail` RPC instead hands back an opaque `cursor` token with each
 // response (see gatewayRpc.ts's `callLogsTail`); there is no timestamp to
 // derive it from after the fact, so it must be persisted directly —
-// `agent_log_cursors` (Phase 1) exists for exactly this. See the module's
+// `agent_log_cursors` exists for exactly this. See the module's
 // `saveCursor`/`loadCursor` and the "cursor-advances-only-after-flush" note
 // on `pollAgentGatewayLogs` below for how this stays crash-safe.
 //
@@ -33,7 +33,7 @@
 // `agent_log_cursors` is keyed on `(agent_id, source_kind)`, not just
 // `agent_id`, because OpenClaw's log source is not one globally monotonic
 // stream: it emits `{"type":"meta"}` JSONL records on source transitions
-// (Phase 1's schema constrains `source_kind` to `'file' | 'journal'`), and
+// (the schema constrains `source_kind` to `'file' | 'journal'`), and
 // log rotation at `logging.maxFileBytes` is one such transition. A single
 // shared cursor value would be meaningless across a transition — resuming
 // against the wrong source's token. See `pollAgentGatewayLogs`'s handling of
@@ -57,9 +57,9 @@ const { resolveAgentRuntimeFamily } = require("../../../agent-runtime/lib/agentR
 const { redactLine } = require("./redaction.ts");
 
 const GATEWAY_STREAM = "gateway";
-const DEFAULT_RECONCILE_INTERVAL_MS = 30000; // matches Phase 4's cadence deliberately
+const DEFAULT_RECONCILE_INTERVAL_MS = 30000; // matches the cadence deliberately
 
-// Adaptive poll interval (item 4): fast while lines are flowing, backing off
+// Adaptive poll interval: fast while lines are flowing, backing off
 // toward the slow end when idle, snapping straight back to the fast end the
 // instant a poll returns anything.
 const POLL_BACKOFF_STEPS_MS = [1000, 1500, 2500, 4000, 6000, 8000, 10000];
@@ -71,9 +71,9 @@ const KNOWN_SOURCE_KINDS = ["file", "journal"];
 const DEFAULT_SOURCE_KIND = "file";
 
 /**
- * Pure adaptive-backoff step function (item 4 / test list: "the poll
- * interval backs off when idle ... and recovers immediately on the next
- * non-empty response").
+ * Pure adaptive-backoff step function: the poll
+ * interval backs off when idle and recovers immediately on the next
+ * non-empty response.
  *
  * @param {number} stepIndex - current index into POLL_BACKOFF_STEPS_MS.
  * @param {boolean} gotLines - whether the just-completed poll returned any
@@ -88,7 +88,7 @@ function computeNextPollStep(stepIndex, gotLines) {
   return { stepIndex: nextIndex, delayMs: POLL_BACKOFF_STEPS_MS[nextIndex] };
 }
 
-// ── Cursor persistence (function list: loadCursor / saveCursor) ─────────
+// ── Cursor persistence (loadCursor / saveCursor) ─────────
 
 /**
  * Load the persisted `logs.tail` cursor for `(agentId, sourceKind)`, or
@@ -112,7 +112,7 @@ async function loadCursor(agentId, sourceKind, { db } = {}) {
 /**
  * Persist the `logs.tail` cursor for `(agentId, sourceKind)`. Upserts on the
  * composite primary key. Called ONLY after the corresponding batch of lines
- * has been durably flushed by the segment writer (item 5b) — never merely
+ * has been durably flushed by the segment writer — never merely
  * after it was received/parsed — so an ungraceful worker death loses
  * nothing durably flushed and, at worst, replays a bounded window on
  * restart rather than silently skipping a gap.
@@ -134,15 +134,15 @@ async function saveCursor(agentId, sourceKind, cursor, { db } = {}) {
   );
 }
 
-// ── consoleLevel:warn config sync (item 7) ────────────────────────────
+// ── consoleLevel:warn config sync ────────────────────────────
 
 /**
  * Push `{ logging: { consoleLevel: "warn" } }` into a running OpenClaw
  * agent's `/root/.openclaw/openclaw.json` via `buildOpenClawConfigMergeCommand`
  * (agent-runtime/lib/runtimeBootstrap.ts) — a deep-merge that takes effect
  * without a restart. This is what stops OpenClaw's own INFO+ console output
- * from being collected TWICE: once by Phase 4's container stdout/stderr
- * collector (the `runtime` stream) and once by this phase's `logs.tail` poll
+ * from being collected TWICE: once by the container stdout/stderr
+ * collector (the `runtime` stream) and once by this collector's `logs.tail` poll
  * (the `gateway` stream). Setting the gateway's own console sink down to
  * `warn` leaves this collector's structured `logs.tail` read as the sole
  * source of INFO-and-below detail.
@@ -185,8 +185,8 @@ async function applyConsoleLevelConfig(agent, deps = {}) {
  * Split one `logs.tail` response's raw records into contiguous runs by
  * `{"type":"meta"}` transition markers, so a source-kind transition (a meta
  * record, or the rotation it signals) occurring MID-BATCH doesn't drop
- * whatever lines arrived on either side of it (item 3 / test list: "log
- * rotation occurring mid-poll does not drop any lines").
+ * whatever lines arrived on either side of it (log
+ * rotation occurring mid-poll does not drop any lines).
  *
  * A meta record itself carries no message content and is never written as a
  * log line — it is consumed here purely as a boundary marker. A meta record
@@ -237,7 +237,7 @@ function splitRunsOnMetaRecords(records, currentSourceKind, responseSourceKind) 
   return runs;
 }
 
-// ── pollAgentGatewayLogs (function list) ──────────────────────────────
+// ── pollAgentGatewayLogs ──────────────────────────────
 
 /**
  * Poll `logs.tail` once for `agent` and drain the result into the segment
@@ -252,16 +252,16 @@ function splitRunsOnMetaRecords(records, currentSourceKind, responseSourceKind) 
  * lifetime). It exists so a long-idle agent doesn't re-query Postgres for
  * its cursor on every single poll when nothing has changed.
  *
- * ── cursor-advances-only-after-flush (item 5b) ────────────────────────
+ * ── cursor-advances-only-after-flush ────────────────────────
  *
- * Mirrors Phase 4 item 2a's rationale exactly, adapted to a persisted
+ * Mirrors the container collector's rationale exactly, adapted to a persisted
  * (rather than derived) cursor: `segmentWriter.append()` only buffers lines
- * in memory — Phase 3's writer flushes on its own 15-minute timer or size
+ * in memory — the writer flushes on its own 15-minute timer or size
  * threshold, not synchronously on every append. If this function saved the
  * RPC's new cursor right after `append()` returned, a worker crash before
  * the NEXT scheduled flush would durably record "already consumed up to
  * cursor X" for lines that were never actually written anywhere — permanent,
- * silent data loss with no path to recover it (unlike Phase 4, where the
+ * silent data loss with no path to recover it (unlike the container collector, where the
  * cursor is re-derived from `log_segments` on restart and therefore can
  * never get ahead of what was actually flushed).
  *
@@ -270,19 +270,19 @@ function splitRunsOnMetaRecords(records, currentSourceKind, responseSourceKind) 
  * `segmentWriter.flush()` directly for the `(agentId, "gateway")` buffer
  * immediately after a non-empty append, and only calls `saveCursor()` once
  * that flush has resolved. This is a deliberate, documented divergence from
- * Phase 3's normal "batch for up to 15 minutes" cadence: the gateway stream
+ * The normal "batch for up to 15 minutes" cadence: the gateway stream
  * flushes roughly once per non-empty poll (which, thanks to the adaptive
  * interval, is itself throttled under sustained idle), trading some of
- * Phase 3's segment-size batching efficiency for a durable, gap-free cursor
+ * The segment-size batching efficiency for a durable, gap-free cursor
  * without needing to read back already-written segment content to recover
  * it. See the module header for the full rationale.
  *
- * ── retention-cutoff filtering (item 5a) ──────────────────────────────
+ * ── retention-cutoff filtering ──────────────────────────────
  *
  * Lines whose resolved timestamp (`ts` when parsed, `observed_ts` as
  * `normalizeGatewayLogLine`'s own fallback otherwise) is already older than
  * the workspace's resolved retention cutoff are dropped before ever being
- * handed to the segment writer — see `resolveLogRetention` (Phase 5). This
+ * handed to the segment writer — see `resolveLogRetention`. This
  * only matters after a long outage leaves a stale cursor; ordinary polling
  * never encounters lines this old. Dropped lines still count toward
  * advancing the cursor (they were successfully "handled", just intentionally
@@ -400,10 +400,10 @@ async function pollAgentGatewayLogs(agent, cursorState, deps = {}) {
       allLines,
     );
     appended = allLines.length;
-    // Item 5b: force the flush now and gate the cursor save on it landing —
+    // Force the flush now and gate the cursor save on it landing —
     // see this function's module-level comment for why the gateway stream
-    // cannot wait for Phase 3's normal 15-minute/size-threshold flush the
-    // way Phase 4's derived-from-log_segments cursor can.
+    // cannot wait for the normal 15-minute/size-threshold flush the
+    // way the derived-from-log_segments cursor can.
     await segmentWriter.flush(`${agent.id}:${GATEWAY_STREAM}`);
   }
 
@@ -436,14 +436,14 @@ async function pollAgentGatewayLogs(agent, cursorState, deps = {}) {
 /**
  * @param {Object} [deps]
  * @param {Object} [deps.db] - pg-like `{ query(sql, params) }`.
- * @param {Object} [deps.segmentWriter] - Phase 3's writer: `append`, `flush`.
- * @param {Function} [deps.createGatewayClient] - defaults to Phase 9's client factory.
- * @param {Function} [deps.callLogsTail] - defaults to Phase 9's typed wrapper.
+ * @param {Object} [deps.segmentWriter] - the writer: `append`, `flush`.
+ * @param {Function} [deps.createGatewayClient] - defaults to the client factory.
+ * @param {Function} [deps.callLogsTail] - defaults to the typed wrapper.
  * @param {Function} [deps.resolveAgentRuntimeFamily] - defaults to the shared helper.
- * @param {Function} [deps.resolveTenantForAgent] - defaults to Phase 4's
+ * @param {Function} [deps.resolveTenantForAgent] - defaults to the
  *   `logCollector.ts` export (shared tenant-resolution logic — never
  *   reimplemented here).
- * @param {Function} [deps.resolveLogRetention] - defaults to Phase 5's resolver.
+ * @param {Function} [deps.resolveLogRetention] - defaults to the resolver.
  * @param {Function} [deps.applyConsoleLevelConfig] - defaults to this module's own.
  * @param {Function} [deps.decryptGatewayToken] - decrypts `agent.gateway_token`
  *   before handing it to `createGatewayClient`; defaults to backend-api's `crypto.ts`.
@@ -546,7 +546,7 @@ function createGatewayCollector(deps = {}) {
   /**
    * Attach a poll loop for `agent`. Opens a gateway client, resolves the
    * tenant once (cached on `held.tenant` for the life of this attach, like
-   * Phase 4's `attachAgentStream`), and starts the adaptive-interval poll
+   * the container collector's `attachAgentStream`), and starts the adaptive-interval poll
    * loop immediately.
    */
   function attachAgent(agent, tenant) {
@@ -566,7 +566,7 @@ function createGatewayCollector(deps = {}) {
   }
 
   /**
-   * The 30s level-triggered reconcile (matching Phase 4's cadence, see
+   * The 30s level-triggered reconcile (matching the cadence, see
    * module header). Re-derives the desired agent set from `agents` on every
    * call: every running/warning OpenClaw agent. Whether gateway logs are
    * collected at all is a platform-wide decision (`NORA_LOG_ENABLED`, which
@@ -574,10 +574,10 @@ function createGatewayCollector(deps = {}) {
    * switch, and `workspace_log_settings.gateway_logs_enabled` is no longer
    * read. Hermes agents (or any non-OpenClaw runtime
    * family) are silently excluded — never attached, never logged as an
-   * error (item 1 / test list: "a Hermes agent is skipped entirely, without
-   * throwing or logging an error").
+   * error (a Hermes agent is skipped entirely, without
+   * throwing or logging an error).
    *
-   * ── Item 7's second half: consoleLevel:warn reconciliation ────────────
+   * ── consoleLevel:warn reconciliation ────────────
    *
    * For every eligible OpenClaw agent found this tick — whether newly
    * attached this tick or already held from a previous one —
@@ -620,7 +620,7 @@ function createGatewayCollector(deps = {}) {
 
     const desired = new Map();
     for (const agent of rows) {
-      // Item 1: a Hermes (or any non-OpenClaw) agent is skipped entirely,
+      // A Hermes (or any non-OpenClaw) agent is skipped entirely,
       // silently — no warning, no error. This is the normal, expected case
       // for every Hermes-family agent in an installation, not an anomaly.
       if (resolveRuntimeFamily(agent) !== "openclaw") continue;
@@ -635,7 +635,7 @@ function createGatewayCollector(deps = {}) {
         continue;
       }
 
-      // Item 7: reconcile consoleLevel for every eligible OpenClaw agent —
+      // Reconcile consoleLevel for every eligible OpenClaw agent —
       // the config sync is what prevents the runtime and gateway streams
       // from duplicating the same console output.
       try {

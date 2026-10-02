@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 3, test 3: an agent restarting mid-window yields ONE segment
+# Test 3: an agent restarting mid-window yields ONE segment
 # spanning the restart, not two, and loses nothing — duplicating some
 # already-buffered content is expected, not a bug.
 #

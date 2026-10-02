@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 11, test 1 (folds in test 3 — see this directory's README): a
+# Test 1 (folds in test 3 — see this directory's README): a
 # worker-provisioner crash/restart near a span-ingest drain loses no spans
 # and double-inserts none, and along the way exercises the full real round
 # trip (real POST -> real HMAC auth -> real enqueue -> real Redis -> real

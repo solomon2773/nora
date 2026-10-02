@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, matrix row 4: PUT /admin/log-storage refuses to clear a
+# Matrix row 4: PUT /admin/log-storage refuses to clear a
 # destination's credentials while anything still needs them to read.
 #
 # Two things need old-destination credentials after a destination change: a

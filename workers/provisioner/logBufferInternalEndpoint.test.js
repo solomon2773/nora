@@ -1,4 +1,4 @@
-// Phase 6 item 7 (logging control plane): the internal
+// The internal
 // GET /internal/log-buffer endpoint added to worker.ts's existing
 // health-check HTTP server, which backend-api's searchLogs() calls to close
 // the recency gap. Follows this repo's established pattern (see

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5, test 3-4: the (hourly, in production) sweep actually deletes
+# Test 3-4: the (hourly, in production) sweep actually deletes
 # expired segments — object before row.
 #
 # Calls `sweepExpiredSegments` directly via node_call rather than waiting

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5c, test 3: `deleteLogs: true` on a real `DELETE /agents/:id`
+# Test 3: `deleteLogs: true` on a real `DELETE /agents/:id`
 # removes segments/spans/legacy copies for the deleted agent, and leaves a
 # sibling agent's logs untouched.
 #
@@ -30,7 +30,7 @@
 # the sibling-isolation assertion below is exactly as strong either way.
 #
 # KNOWN LOCAL ENVIRONMENT LIMITATION, found while writing this script —
-# not a Phase 5c bug: on THIS dev machine (Docker Desktop for Mac),
+# not a bug: on THIS dev machine (Docker Desktop for Mac),
 # `DELETE /agents/:id` currently 500s with "Container cleanup error:
 # connect EACCES /var/run/docker.sock" — backend-api's containerManager
 # can't reach the Docker socket, because its container runs as uid 1000
@@ -45,7 +45,7 @@
 # backend-api (which is what actually calls containerManager.destroy())
 # was not. This blocks getting a live pass out of THIS script on an
 # unpatched macOS dev machine; it's a local Docker socket permission gap,
-# not a Phase 5c deletion-logic defect — every assertion below was
+# not a deletion-logic defect — every assertion below was
 # validated by careful reading of the real destroyAgent()/logDeletion.ts
 # source and by confirming mint_jwt/authed_curl reach the real, correctly-
 # auth-gated routes (e.g. a live GET /admin/log-recovery 200'd with a real

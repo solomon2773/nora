@@ -307,16 +307,10 @@ async function s3Request(
     method,
     headers,
     signal,
-    // Phase 6 (logging control plane): search/export fetch candidate
-    // segments at high configured concurrency (default 64). Node's fetch is
-    // undici under the hood, and undici's default global Agent applies a
-    // per-origin connection cap that can silently serialize requests back
-    // down to a much smaller effective concurrency than the caller asked
-    // for — passing an explicit `dispatcher` (an `undici.Agent`/`Pool` sized
-    // to the caller's concurrency) is how a caller guarantees the requested
-    // fan-out actually happens over the wire. `undefined` here is a no-op —
-    // every other caller of this function (backups, segment writes/deletes)
-    // is unaffected and keeps using the default global dispatcher.
+    // Search and export fetch many segments concurrently (default 64). Node's
+    // fetch (undici) caps connections per origin, which can silently serialize
+    // requests, so those callers pass a `dispatcher` sized to their concurrency.
+    // `undefined` is a no-op: backups and segment writes keep the default.
     ...(dispatcher !== undefined ? { dispatcher } : {}),
     ...(method === "PUT" || method === "POST" ? { body: payload } : {}),
   });

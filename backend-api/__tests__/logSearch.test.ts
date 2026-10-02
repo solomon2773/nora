@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * __tests__/logSearch.test.ts — Phase 6 of the logging control plane
+ * __tests__/logSearch.test.ts — part of the logging control plane
  * (GET /logs/search): prune → fetch (concurrent, wave-based, early
  * termination, prefiltered) → merge → recency-gap.
  *
@@ -76,11 +76,11 @@ function agentOwner(userId, agentId = "agent-1") {
 function agentAdminBypass(agentId = "agent-1") {
   // Mirrors findAccessibleAgentForActor's real admin bypass: returns the
   // agent for ANY admin actor, regardless of workspace — the exact bypass
-  // items 8/8a exist to not be mistaken for workspace scoping.
+  // the workspace-scope check exists to not be mistaken for workspace scoping.
   return async (id, actor) => (id === agentId && actor.role === "admin" ? { id: agentId } : null);
 }
 
-describe("mergeSegments / compareLines (item 5/6)", () => {
+describe("mergeSegments / compareLines", () => {
   it("produces correct chronological order across two streams", () => {
     const lines = [
       line({ ts: "2026-01-01T00:00:03.000Z", stream: "runtime", ord: 0 }),
@@ -145,7 +145,7 @@ describe("mergeSegments / compareLines (item 5/6)", () => {
   });
 });
 
-describe("fetchSegmentLines (items 4a/5/5a)", () => {
+describe("fetchSegmentLines", () => {
   function buildEncodedSegment(lines) {
     const ndjson = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
     return zlib.zstdCompressSync(Buffer.from(ndjson, "utf8"));
@@ -226,7 +226,7 @@ describe("fetchSegmentLines (items 4a/5/5a)", () => {
   });
 });
 
-describe("searchLogs orchestration (items 1-7)", () => {
+describe("searchLogs orchestration", () => {
   function makeDeps({
     rows = [],
     linesByKey = {},
@@ -302,7 +302,7 @@ describe("searchLogs orchestration (items 1-7)", () => {
     expect(result.lines).toHaveLength(2);
   });
 
-  describe("workspace isolation (items 8/8a/8b/8c)", () => {
+  describe("workspace isolation", () => {
     it("workspace-A actor receives zero workspace-B rows", async () => {
       const deps = makeDeps({
         rows: [row()],
@@ -428,7 +428,7 @@ describe("searchLogs orchestration (items 1-7)", () => {
     });
   });
 
-  describe("recency gap (item 7)", () => {
+  describe("recency gap", () => {
     it("closes the recency gap: a line written ~30 seconds ago (buffer only) is returned", async () => {
       const recentLine = line({
         ts: new Date(Date.now() - 30000).toISOString(),
@@ -489,7 +489,7 @@ describe("searchLogs orchestration (items 1-7)", () => {
   });
 });
 
-describe("enforceWorkspaceScope (items 8a/8b) — direct unit coverage", () => {
+describe("enforceWorkspaceScope — direct unit coverage", () => {
   it("rejects a workspaceId that does not match the agent's real workspace", async () => {
     const db = fakeDb({ "agent-1": "ws-A" });
     await expect(
@@ -633,7 +633,7 @@ describe("listLoggingAgents", () => {
   });
 });
 
-describe("HTTP layer: API-key workspace binding (item 9)", () => {
+describe("HTTP layer: API-key workspace binding", () => {
   it("rejects an API key scoped to workspace A when used against an agent in workspace B", async () => {
     jest.resetModules();
     jest.doMock("../db", () => ({

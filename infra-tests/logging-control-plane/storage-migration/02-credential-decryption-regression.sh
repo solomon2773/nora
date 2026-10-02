@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5b, test 10 — regression guard for the real bug found this
+# Test 10 — regression guard for the real bug found this
 # session: `logStorageConfig()` never decrypted the DB-stored S3
 # credentials `PUT /admin/log-storage` correctly encrypted and saved — it
 # only ever read secrets from `NORA_LOG_S3_*` env vars, which aren't set

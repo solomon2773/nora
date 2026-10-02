@@ -7821,7 +7821,7 @@ describe("agent deletion routes", () => {
     expect(mockAcquireAgentProvisionLock).not.toHaveBeenCalled();
   });
 
-  describe("Phase 5c: deleteLogs contract", () => {
+  describe("deleteLogs contract", () => {
     it.each([
       ["POST /agents/:id/delete", "post"],
       ["DELETE /agents/:id", "delete"],

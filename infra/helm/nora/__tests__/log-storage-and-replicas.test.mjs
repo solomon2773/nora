@@ -1,11 +1,11 @@
-// Logging control plane Phase 14 items 4 and 8: render-time guards in
+// Render-time guards in
 // infra/helm/nora/templates/configmap-env.yaml that must FAIL the chart
 // render (not merely warn) for two unsupported configurations:
 //
 //   1. `local` log storage selected (or left at its application default,
 //      which is also `local`) while installing via Helm — there is no
 //      shared/local disk for log segments in-cluster, so this is
-//      unconditionally unsupported on Kubernetes (Design Decision 2d). This
+//      unconditionally unsupported on Kubernetes. This
 //      mirrors the exact rule PUT /admin/log-storage enforces at runtime
 //      (routes/observability.ts, code: "local_unsupported_with_k8s") —
 //      `local` is rejected, `ssh` remains allowed.

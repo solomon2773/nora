@@ -4,7 +4,7 @@ import { AlertTriangle, X } from "lucide-react";
  * Generic confirm dialog, used across the app for a variety of destructive
  * (and non-destructive) confirmations.
  *
- * `children` and `confirmDisabled` exist for Phase 5c/8 item 11: the agent
+ * `children` and `confirmDisabled` exist for the agent
  * and workspace delete flows must not let an operator confirm without an
  * explicit keep-or-delete-logs choice — the backend rejects a delete
  * request missing that boolean outright, with no default. Callers that

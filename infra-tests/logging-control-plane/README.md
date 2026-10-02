@@ -106,11 +106,11 @@ Phases 0, 1, 2, and 15 have no directory here by design — pure
 schema/parser/docs work with no infra-chaos surface (see each merged
 branch's own phase README audit for the reasoning).
 
-Each test directory's `README.md` documents that phase's full test matrix (every
-scenario from the plan doc's own "### Tests" list, translated into a
+Each test directory's `README.md` documents that area's full test matrix (every
+scenario from the intended test list, translated into a
 concrete infra-level scenario), marked `[x]` implemented or `[ ]` planned
 — so the matrix is complete even before every script is written, and
-nobody has to cross-reference the plan doc to see what's covered.
+nobody has to guess what's covered.
 
 ## Running
 
@@ -234,7 +234,7 @@ there when something needs to be diffed against a previous run.
   restoring the original value afterward. Documents a real gotcha:
   changing it requires recreating (not just restarting) `worker-provisioner`
   /`backend-api`, which also resets `retentionSweeper.ts`'s in-memory
-  capacity-state singleton — see the file's header and Phase 5's README for
+  capacity-state singleton — see the file's header and README for
   why that matters for test design.
 - **`node_call.sh`** — runs a JS snippet inside the real, running
   worker-provisioner container with real DB/encryption-key access, calling
@@ -243,7 +243,7 @@ there when something needs to be diffed against a previous run.
   re-running the container's entrypoint (which is what normally resolves
   `DB_PASSWORD`/`ENCRYPTION_KEY`/etc. from their Docker secret files) by
   replicating that one resolution step itself. This is what makes most of
-  Phase 5's and Phase 5b's core-logic tests possible without an auth helper.
+  the and the core-logic tests possible without an auth helper.
 - **`storage_dest.sh`** — temporarily points the platform-wide log storage
   destination at the local MinIO test instance (with or without real
   working credentials, depending on what a test needs), capturing and
@@ -266,7 +266,7 @@ there when something needs to be diffed against a previous run.
 ## Adding a new phase's tests
 
 Follow the existing directories as a template: a `README.md` with the
-phase's objective (copy from the plan doc), why it needs infra-level
+area's objective, why it needs infra-level
 testing specifically (not just "more unit tests" — what does a mock hide
 here?), and a full test matrix; then numbered scripts (`01-`, `02-`, ...)
 each sourcing `lib/common.sh` + whatever else it needs, calling

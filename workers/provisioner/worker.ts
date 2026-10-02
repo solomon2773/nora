@@ -4329,7 +4329,7 @@ console.log(
   `Provisioner worker started [enabled backends=${enabledBackends.join(", ") || "docker"} default backend=${getDefaultBackend()} concurrency=${DEPLOYMENT_WORKER_CONCURRENCY}]`,
 );
 
-// Logging control plane Phase 3 item 20: warn (never fail boot) when the
+// Warn (never fail boot) when the
 // `local` log storage driver can't reach every enabled deploy target.
 {
   const { assertDriverSupportsTargets } = require("./logs/logStorageConfig");
@@ -5624,7 +5624,7 @@ scheduleRunWorker.on("completed", (job) => {
   );
 });
 
-// ── Span Ingest Worker (logging control plane, Phase 11) ──────────
+// ── Span Ingest Worker ──────────────────────────────
 // Drains OTLP trace-export jobs enqueued by backend-api/routes/otlp.ts and
 // batch-inserts into agent_spans. Reuses this file's existing `db` pool
 // rather than opening a second one; drainSpanIngest lazily creates its own
@@ -5650,13 +5650,12 @@ spanIngestWorker.on("completed", (job, result) => {
 
 // ── Health Check Server ──────────────────────────────────────────
 //
-// Logging control plane Phase 6 item 7 (recency gap): this same server also
+// This same server also
 // exposes GET /internal/log-buffer, an internal-only endpoint backend-api's
 // searchLogs() calls to merge the last few not-yet-flushed minutes of a
 // live agent's logs into a search result. Extending this existing server —
-// rather than starting a second HTTP listener — is deliberate, per the
-// implementation plan's explicit instruction to reuse worker.ts's
-// established health-check server pattern.
+// rather than starting a second HTTP listener — is deliberate: it reuses
+// worker.ts's established health-check server pattern.
 //
 // This endpoint is NOT published to the host by docker-compose (only
 // /health is probed, in-network, by the healthcheck directive) and no
@@ -5668,15 +5667,13 @@ spanIngestWorker.on("completed", (job, result) => {
 // this reason — see logSearch.ts). It still authenticates with a shared
 // secret (the same JWT_SECRET both services already require) rather than
 // relying solely on network placement, because a buffered gateway log line
-// can contain a secret value (see the manifest's "Encryption at rest"
-// section) and defense in depth costs nothing here.
+// can contain a secret value and defense in depth costs nothing here.
 //
-// Replica-count caveat (flagged explicitly per the task brief, not silently
+// Replica-count caveat (flagged explicitly, not silently
 // assumed): `infra/helm/nora/values.yaml` defaults `workerProvisioner.replicas`
 // to 1 and docker-compose runs a single container unless an operator passes
-// `--scale`, but neither is enforced by a hard validation anywhere in this
-// repo today (Design Decision 18 / Phase 14 item 8, the Helm validation that
-// would pin this, is not yet built as of this phase). This endpoint is
+// `--scale`. The Helm chart now fails the render when log collection is on
+// with more than one replica, but docker-compose has no such guard. This endpoint is
 // written defensively rather than assuming the pin holds: if backend-api's
 // request happens to land on a worker replica that does not hold the
 // requested agent's buffer, this simply returns `{ found: false }` — a safe,
@@ -5749,11 +5746,10 @@ healthServer.listen(HEALTH_PORT, () => {
   console.log(`Worker health check listening on port ${HEALTH_PORT}`);
 });
 
-// ── Graceful Shutdown Coordinator (Logging Control Plane Phase 3 item 6) ──
+// ── Graceful Shutdown Coordinator ──────────────────────────────
 //
-// No `process.on("SIGTERM"/"SIGINT", ...)` handling existed anywhere in this
-// file before this — see Design Decision 17 / Phase 3's "Rationale &
-// tradeoffs". Without it, a plain `docker compose restart` (not only a
+// Without `process.on("SIGTERM"/"SIGINT", ...)` handling, a plain
+// `docker compose restart` (not only a
 // crash) would silently discard up to 15 minutes of buffered-but-unflushed
 // log lines, because segments deliberately do NOT flush on stream end (see
 // segmentWriter.ts) — SIGTERM is one of only three flush triggers.
@@ -5763,9 +5759,8 @@ healthServer.listen(HEALTH_PORT, () => {
 // destination to be configured — createSegmentWriter() defers loading the
 // encryption key ring and resolving storage config until the first actual
 // flush, so an installation that hasn't touched the new log-storage env
-// block yet still boots exactly as before. Phase 4 (not yet built) is what
-// will call `.append()` on this instance from a real container log
-// collector; until then `flushAll()` below is a no-op over zero buffers.
+// block yet still boots exactly as before. The log collectors call
+// `.append()` on this instance.
 //
 // NORA_LOG_FLUSH_INTERVAL_MS overrides the 15-minute default flush timer —
 // unset in normal operation, useful for exercising the segment/retention/
@@ -5776,11 +5771,11 @@ const segmentWriter = createSegmentWriter(
     : {},
 );
 // Re-upload segments parked to local staging during a remote-destination
-// outage (Phase 3 item 16). Previously built but never scheduled, so parked
+// outage. Previously built but never scheduled, so parked
 // segments stayed stranded on disk forever after the destination recovered.
 segmentWriter?.startParkedSegmentRetry?.();
 
-// ── Log Collector (Logging Control Plane Phase 4) ─────────────────────
+// ── Log Collector ──────────────────────────────
 //
 // Maintains one live follow stream per running/warning agent with a
 // container, feeding parsed lines into `segmentWriter` above. See
@@ -5841,7 +5836,7 @@ const { startLogPurgeRunner } = require("./logs/logPurge");
 // (It reads the setting fresh itself — the cached gate can be a few seconds stale.)
 startLogPurgeRunner({ segmentWriter });
 
-// ── Gateway Log Collector (Logging Control Plane Phase 10) ────────────
+// ── Gateway Log Collector ──────────────────────────────
 //
 // Sibling to `logCollector` above: polls OpenClaw's `logs.tail` gateway RPC
 // per agent (rather than following container stdout/stderr) and writes
@@ -5890,7 +5885,7 @@ const collectionWatcher = setInterval(async () => {
 }, 5000);
 if (typeof collectionWatcher.unref === "function") collectionWatcher.unref();
 
-// ── Storage Migration Resume (Logging Control Plane Phase 5b item 10) ────
+// ── Storage Migration Resume ──────────────────────────────
 //
 // Pick up any `running` or `paused` storage_migration_jobs row left over
 // from an ungraceful restart. A `paused` job is driven exactly like a
@@ -5907,7 +5902,7 @@ Promise.resolve()
     console.error(`[worker] resumeStorageMigration failed at boot: ${error.message}`);
   });
 
-// ── Retention Sweeper (Logging Control Plane Phase 5 item 3) ─────────────
+// ── Retention Sweeper ──────────────────────────────
 //
 // Starts the hourly retention sweep, the daily storage reconciliation, and
 // the capacity-state check that `GET /admin/log-storage`'s `capacity.state`
@@ -5924,12 +5919,10 @@ Promise.resolve()
 const { startRetentionSweeper } = require("./logs/retentionSweeper");
 startRetentionSweeper();
 
-// This is the stop-hook registry item 6(a) asks for: "there may be no
-// collector/reconciler wired up yet since Phase 4 builds the collector —
-// just expose the stop-hook the coordinator will call, and call it if
-// present." Phase 4 (this file, now) calls
+// Stop-hook registry for the shutdown coordinator. The collector and
+// reconciler register their stop hooks via
 // `registerLogPipelineHooks({ stopCollector, stopReconciler })` immediately
-// below so both hooks are wired from process start.
+// below, so both hooks are wired from process start.
 const logPipelineHooks = { stopCollector: null, stopReconciler: null };
 function registerLogPipelineHooks(hooks = {}) {
   if (typeof hooks.stopCollector === "function") {
@@ -6046,7 +6039,7 @@ function registerShutdownCoordinator({
       logger.warn(
         `[shutdown] flushAll did not complete within ${deadlineMs}ms — exiting anyway. Any lines ` +
           `not yet durably flushed will be re-ingested on the next collector attach via the last ` +
-          `successfully flushed cursor (see Phase 4 item 2a's cursor-advances-only-after-flush rule).`,
+          `successfully flushed cursor (the cursor only advances after a successful flush).`,
       );
     } else {
       logger.log("[shutdown] flush complete, exiting");
@@ -6074,10 +6067,10 @@ function registerShutdownCoordinator({
   return { runShutdown };
 }
 
-// Combined into a single registration (Phase 10): `registerLogPipelineHooks`
+// Combined into a single registration: `registerLogPipelineHooks`
 // holds exactly one `stopReconciler`/`stopCollector` slot each, so a second,
 // separate call for `gatewayCollector` would silently overwrite
-// `logCollector`'s hooks rather than adding to them — leaving Phase 4's
+// `logCollector`'s hooks rather than adding to them — leaving the
 // container collector never stopped, and its buffers never given the chance
 // to stop accepting new lines before `flushAll()` runs at shutdown.
 //

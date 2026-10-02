@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * __tests__/logDeletion.test.ts — Phase 5c of the logging control plane.
+ * __tests__/logDeletion.test.ts — part of the logging control plane.
  *
  * This is a Jest-style, dependency-injected unit test of
  * workers/provisioner/logs/logDeletion.ts's exported functions themselves
@@ -10,7 +10,7 @@
  *     for workers/provisioner code), which also covers the retention-sweeper
  *     integration and a full encrypt/decrypt round trip for the recovery
  *     read path.
- *   - the "Phase 5c: deleteLogs contract" describe blocks added to
+ *   - the "deleteLogs contract" describe blocks added to
  *     agents.test.ts and workspaces.test.ts, which cover the HTTP-level
  *     delete-route contract (400 rejection, snapshot-before-delete
  *     ordering, async-cleanup wiring) with logDeletion.ts mocked out.
@@ -117,7 +117,7 @@ async function fakeGetLogRetentionCeilingDays() {
   return 30;
 }
 
-describe("logDeletion.ts (Phase 5c)", () => {
+describe("logDeletion.ts", () => {
   it("deleteAgentLogs removes only the target agent's segments and spans", async () => {
     const db = fakeDb({
       segments: [

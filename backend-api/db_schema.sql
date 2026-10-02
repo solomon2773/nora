@@ -361,7 +361,7 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   -- normalizeBackupPlanLimits on read. Keep the schema default empty so the
   -- two stay in sync from a single source of truth.
   backup_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb,
-  -- Logging control plane (Phase 5): per-plan retention CEILINGS. Per-key
+  -- Logging control plane: per-plan retention CEILINGS. Per-key
   -- defaults live in backend-api/platformSettings.ts
   -- (DEFAULT_LOG_RETENTION_PLAN_LIMITS), mirroring backup_plan_limits above.
   log_retention_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -375,11 +375,11 @@ CREATE TABLE IF NOT EXISTS platform_settings (
   -- { id, status: pending|running|completed|failed, requestedAt, ... }.
   -- NULL when none has been requested.
   log_purge_job JSONB,
-  -- Logging control plane (Phase 5): platform-wide log segment storage
+  -- Logging control plane: platform-wide log segment storage
   -- destination, changeable after setup exactly like the backup_* columns
   -- above. NORA_LOG_STORAGE and the NORA_LOG_* env block seed the initial
   -- value; once a row's log_storage_backend is set, the database is
-  -- authoritative (see logStorageConfig.ts / Design Decision 2b).
+  -- authoritative (see logStorageConfig.ts).
   log_storage_backend TEXT,
   log_storage_local_path TEXT,
   log_storage_s3_bucket TEXT,
@@ -939,7 +939,7 @@ CREATE TABLE IF NOT EXISTS events (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Logging control plane (Phase 1): events is already a full-scan hotspot with
+-- Logging control plane: events is already a full-scan hotspot with
 -- zero indexes, and the unified /app/logs Operator lens increases read load
 -- against it, so these land alongside the new tables below rather than later.
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);

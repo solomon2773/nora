@@ -1,17 +1,15 @@
 // @ts-nocheck
-// workers/provisioner/logs/segmentWriter.ts — Phase 3 of the logging control
+// workers/provisioner/logs/segmentWriter.ts — part of the logging control
 // plane: buffers normalized log lines per (agent_id, stream) and flushes
 // them as compressed, encrypted, immutable segments with a matching
 // `log_segments` index row.
 //
 // Depends on:
-//   - agent-runtime/lib/objectStorage.ts (Phase 0)   — putStorageObject
-//   - backend-api/db_schema.sql `log_segments`       (Phase 1)
-//   - agent-runtime/lib/logLine.ts line envelope      (Phase 2, no `ord`)
+//   - agent-runtime/lib/objectStorage.ts   — putStorageObject
+//   - backend-api/db_schema.sql `log_segments`
+//   - agent-runtime/lib/logLine.ts line envelope      (no `ord`)
 //
-// Read the manifest's "Buffered lines survive a crash" and "Segments are
-// immutable" sections, and the implementation plan's Phase 3 "Rationale &
-// tradeoffs", before changing any of the timing/ordering decisions below —
+// Be careful changing any of the timing/ordering decisions below —
 // several of them look arbitrary in isolation but are load-bearing for the
 // crash-replay and tenancy guarantees this module promises.
 
@@ -26,12 +24,12 @@ const logStorageConfigModule = require("./logStorageConfig.ts");
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 //
-// Flush timer: 15 minutes (Design Decision 6 / Phase 3 item 2).
+// Flush timer: 15 minutes.
 const DEFAULT_FLUSH_INTERVAL_MS = 15 * 60 * 1000;
 
-// Per-buffer uncompressed-size flush threshold (Phase 3 items 8-9). This is
-// an ESTIMATE, not an exact trigger: the Search Performance Model measures a
-// typical segment at ~155 KB raw / ~19 KB compressed (~8:1). The 8 MB
+// Per-buffer uncompressed-size flush threshold. This is an ESTIMATE, not an
+// exact trigger: a typical segment measures ~155 KB raw / ~19 KB compressed
+// (~8:1). The 8 MB
 // compressed target this threshold aims for is a safety valve for a
 // crash-looping or unusually chatty agent, not the normal flush path — the
 // 15-minute timer is what fires under typical volume. Node's zstd stream
@@ -42,8 +40,7 @@ const DEFAULT_FLUSH_INTERVAL_MS = 15 * 60 * 1000;
 // nor fire anywhere near the target size.
 const DEFAULT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
-// Global resident bound across every open buffer combined (Phase 3 item
-// 15). 50 agents x 2 streams x a per-buffer bound alone would admit
+// Global resident bound across every open buffer combined. 50 agents x 2 streams x a per-buffer bound alone would admit
 // hundreds of MB into a process that also drains the provisioning queue, so
 // this is a separate, smaller, installation-wide ceiling. Tuned generously
 // above one full per-buffer threshold so a single busy agent doesn't
@@ -52,8 +49,7 @@ const DEFAULT_GLOBAL_MAX_BYTES = 256 * 1024 * 1024;
 
 const DEFAULT_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
 
-// Bounded local staging directory cap (Phase 3 item 16's "bounded"
-// requirement). This is a coarse, best-effort cap on parked bytes.
+// Bounded local staging directory cap. This is a coarse, best-effort cap on parked bytes.
 const DEFAULT_STAGING_MAX_BYTES = 512 * 1024 * 1024;
 
 // How often parked segments are re-attempted once `startParkedSegmentRetry()`
@@ -61,13 +57,12 @@ const DEFAULT_STAGING_MAX_BYTES = 512 * 1024 * 1024;
 // a minute; each tick is a cheap readdir when nothing is parked.
 const DEFAULT_PARKED_RETRY_INTERVAL_MS = 30 * 1000;
 
-// Phase 5: how often the capacity gate is re-checked independent of any
+// How often the capacity gate is re-checked independent of any
 // flush attempt. This is what makes a capacity-paused stream resume
-// automatically (Phase 5 item 7 / Phase 4 item 7) rather than staying
-// wedged: a paused buffer that receives no new lines (because the collector
+// automatically rather than staying wedged: a paused buffer that receives no new lines (because the collector
 // already detached it) would otherwise never re-enter the per-flush capacity
 // check inside flush(), since a buffer with zero pending lines returns early
-// before that check ever ran in the original Phase 3 placeholder. Polling
+// before that check ever ran. Polling
 // independently of flush activity, at a cadence comfortably faster than the
 // collector's 30s reconcile tick, is what lets `isCapacityPaused` actually
 // clear once usage drops back under the cap.
@@ -75,7 +70,7 @@ const DEFAULT_CAPACITY_POLL_INTERVAL_MS = 10 * 1000;
 
 const LOG_ENCRYPTION_MAGIC = "NORA_LOG_SEGMENT_V1";
 
-// ── Encryption (Phase 3 item 10 / function list) ────────────────────────
+// ── Encryption ───────────────────────────────────────────────────────────
 //
 // Mirrors backend-api/backups.ts's encryptBackupBuffer/decryptBackupBuffer
 // (magic string + IV + GCM auth tag), with one deliberate divergence: a key
@@ -174,7 +169,7 @@ function decryptSegment(buffer, keyRing) {
   return Buffer.concat([decipher.update(buffer.slice(secondNewline + 1)), decipher.final()]);
 }
 
-// ── ord assignment (Phase 3 items 12-13 / function list) ────────────────
+// ── ord assignment ───────────────────────────────────────────────────────
 
 /**
  * Sort a flush window's lines by `(COALESCE(ts, observed_ts), arrival order
@@ -185,7 +180,7 @@ function decryptSegment(buffer, keyRing) {
  * shared counter — because a parse-time counter's value depends on process
  * state that a crash-and-replay cannot reproduce, which would break the
  * "replay upserts the same storage_key with byte-identical content"
- * guarantee (item 14, and Phase 4 item 2a). `lines`' array order IS arrival
+ * guarantee. `lines`' array order IS arrival
  * order within this flush by construction (the buffer only ever appends),
  * so replaying the identical set of lines in the identical order — true for
  * the runtime stream because Docker's json-file driver is an ordered,
@@ -198,7 +193,7 @@ function decryptSegment(buffer, keyRing) {
  * return in the same relative order across two independent poll sessions is
  * an assumption about OpenClaw's server-side ordering that has NOT been
  * verified against the actual `logs.tail` contract — that verification is
- * explicitly left to Phase 10 (see manifest "Line schema" section). Do not
+ * still outstanding. Do not
  * read this function's use on the gateway stream as proof that question is
  * settled.
  */
@@ -214,7 +209,7 @@ function assignOrd(lines) {
   return withArrival.map(({ line }, ord) => ({ ...line, ord }));
 }
 
-// ── Storage key layout (function list) ───────────────────────────────────
+// ── Storage key layout ───────────────────────────────────────────────────
 
 function twoDigit(n) {
   return String(n).padStart(2, "0");
@@ -258,15 +253,13 @@ function buildStorageKey(tenant, agentId, stream, tsFrom, tsTo) {
   );
 }
 
-// ── checkLocalCapacity (Phase 3 item 22 / function list) ────────────────
+// ── checkLocalCapacity ───────────────────────────────────────────────────
 //
-// Phase 5 owns the authoritative, installation-wide usage-tracking mechanism
-// this gate delegates to: `localStorageUsage()` in retentionSweeper.ts, an
+// This gate delegates to the installation-wide usage tracker,
+// `localStorageUsage()` in retentionSweeper.ts, an
 // O(1) `SELECT COALESCE(SUM(bytes),0) FROM log_segments WHERE
-// storage_backend = 'local'` rather than a per-call disk walk. The
-// `{ usedBytes, limitBytes, atCapacity }` contract this function returns is
-// unchanged from Phase 3's original placeholder, so every call site written
-// against that placeholder keeps working unmodified — only the body changed.
+// storage_backend = 'local'` rather than a per-call disk walk, and returns
+// `{ usedBytes, limitBytes, atCapacity }`.
 //
 // Lazy-required (not `require`d at module load time) to avoid a load-order
 // dependency between the two sibling modules — retentionSweeper.ts does not
@@ -282,12 +275,10 @@ async function checkLocalCapacity({
   return { usedBytes, limitBytes, atCapacity: usedBytes >= limitBytes };
 }
 
-// Bounded local **staging** directory size (Phase 3 item 16's "bounded"
-// requirement for parked/failed remote uploads) — unrelated to the capacity
-// gate above, which now tracks live `log_segments` usage in Postgres, not
-// files on disk. Kept as a plain recursive disk walk since the staging
-// directory holds a handful of not-yet-uploaded files at most, never the
-// full retained history checkLocalCapacity used to scan.
+// Bounded local **staging** directory size for parked/failed remote uploads —
+// unrelated to the capacity gate above, which tracks live `log_segments` usage
+// in Postgres, not files on disk. A plain recursive disk walk is fine here: the
+// staging directory holds a handful of not-yet-uploaded files at most.
 function sumDirectorySizeSync(dir) {
   let total = 0;
   let entries;
@@ -408,7 +399,7 @@ function createSegmentWriter(deps = {}) {
    * pending lines to flush right now. See DEFAULT_CAPACITY_POLL_INTERVAL_MS's
    * comment for why this exists as its own timer rather than piggybacking
    * solely on flush() — a paused stream the collector has already detached
-   * (Phase 4 item 7) would otherwise never re-run the capacity check that
+   * would otherwise never re-run the capacity check that
    * clears the flag, because flush() only reaches that check when the
    * buffer actually has lines to write.
    */
@@ -417,8 +408,7 @@ function createSegmentWriter(deps = {}) {
     try {
       const config = await resolveStorageConfig();
       if (config.storageBackend !== "local") {
-        // Capacity halts are local-driver-only (Design Decision 2c/manifest
-        // "Object-storage drivers skip this step entirely") — clear any
+        // Capacity halts are local-driver-only — clear any
         // stale flag left over from a prior local-driver period.
         for (const buffer of buffers.values()) buffer.capacityPaused = false;
         return;
@@ -460,7 +450,7 @@ function createSegmentWriter(deps = {}) {
       timer: null,
       flushing: null, // in-flight flush promise, so concurrent flush() calls join it
     };
-    // Item 4: the flush timer runs from buffer creation and is NEVER reset
+    // The flush timer runs from buffer creation and is NEVER reset
     // on reattach — this is what bounds a crash-looping agent at one
     // segment per interval instead of one per restart. Using a repeating
     // setInterval (rather than a one-shot re-armed after each flush) means
@@ -479,9 +469,8 @@ function createSegmentWriter(deps = {}) {
     const key = bufferKey(agentCtx.agentId, agentCtx.stream);
     const existing = buffers.get(key);
     if (existing) {
-      // Reattach (Phase 3 item 3): keep using the same buffer/timer. A
-      // mid-life workspace reassignment is picked up on reattach per Phase
-      // 4 item 5 — earlier buffered lines keep whatever tenant they were
+      // Reattach: keep using the same buffer/timer. A mid-life workspace
+      // reassignment is picked up on reattach — earlier buffered lines keep whatever tenant they were
       // appended under, which only matters for the still-open window since
       // sealed segments already have their tenant baked into their key.
       existing.workspaceId = agentCtx.workspaceId ?? existing.workspaceId;
@@ -501,10 +490,10 @@ function createSegmentWriter(deps = {}) {
   }
 
   /**
-   * Buffer a batch of already-normalized lines (Phase 2 envelope, no `ord`)
+   * Buffer a batch of already-normalized lines (no `ord`)
    * for `(agentCtx.agentId, agentCtx.stream)`.
    *
-   * Global overflow handling (Phase 3 item 15): if admitting `lines` would
+   * Global overflow handling: if admitting `lines` would
    * exceed the aggregate uncompressed-byte bound across every open buffer,
    * this first tries to free room by flushing the largest OTHER buffer
    * (preferring a flush to a drop). Only if that genuinely doesn't free
@@ -543,7 +532,7 @@ function createSegmentWriter(deps = {}) {
     }
 
     if (buffer.bytes >= maxBufferBytes) {
-      // Item 2: the uncompressed-size threshold flush trigger, independent
+      // The uncompressed-size threshold flush trigger, independent
       // of the 15-minute timer.
       await flush(buffer.key);
     }
@@ -574,7 +563,7 @@ function createSegmentWriter(deps = {}) {
   }
 
   function restoreSnapshot(buffer, snapshot) {
-    // Local-driver failure path (item 21): put the un-flushed window back
+    // Local-driver failure path: put the un-flushed window back
     // ahead of whatever accumulated in the buffer since we extracted it, so
     // arrival order — and therefore assignOrd's tie-break — is preserved.
     const size = snapshot.lines.reduce((sum, line) => sum + lineByteSize(line), 0);
@@ -622,12 +611,9 @@ function createSegmentWriter(deps = {}) {
   }
 
   /**
-   * Re-attempt uploading every segment parked to the staging directory
-   * (Phase 3 item 16's "later re-upload"). Not itself scheduled by this
-   * module — a later phase (or an operator-triggered admin action) is
-   * expected to call this periodically; it is exposed on the writer so
-   * tests and callers have a concrete entry point rather than an implicit
-   * mechanism.
+   * Re-attempt uploading every segment parked to the staging directory.
+   * `startParkedSegmentRetry()` schedules this periodically; it is also
+   * exposed directly so tests and callers have a concrete entry point.
    */
   async function retryParkedSegments() {
     let entries;
@@ -732,11 +718,11 @@ function createSegmentWriter(deps = {}) {
       const config = await resolveStorageConfig();
       const isLocal = config.storageBackend === "local";
 
-      // Item 22: consult the capacity gate BEFORE admitting a flush on the
+      // Consult the capacity gate BEFORE admitting a flush on the
       // local driver, and BEFORE the empty-buffer early return below. This
-      // ordering matters (Phase 5's fix to a Phase 3 deadlock): a
-      // capacity-paused stream is detached by the collector (Phase 4 item
-      // 7), so its buffer stops receiving new lines and would otherwise sit
+      // ordering matters (the fix to a deadlock): a
+      // capacity-paused stream is detached by the collector, so its buffer stops
+      // receiving new lines and would otherwise sit
       // at `lines.length === 0` forever, never reaching this check again to
       // clear `capacityPaused` once usage drops. Checking capacity first —
       // on every timer-triggered flush, even an empty one — means the
@@ -745,7 +731,7 @@ function createSegmentWriter(deps = {}) {
       // exists to clear it much sooner than that, at a cadence the
       // collector's 30s reconcile tick can actually observe.
       //
-      // This is a different, non-retryable path from item 16's
+      // This is a different, non-retryable path from
       // retry-and-park, which is for transient remote failures — a capacity
       // halt is a standing condition, not a blip, so we skip rather than
       // retry, and leave the buffer untouched so no data is lost while
@@ -758,7 +744,7 @@ function createSegmentWriter(deps = {}) {
             logger.warn(
               `[segmentWriter] local storage at capacity (${capacity.usedBytes}/${capacity.limitBytes} ` +
                 `bytes) — skipping flush for ${key} and marking it capacity-paused. Collection for ` +
-                `this stream should disconnect (Phase 4 item 7) until usage drops back under the cap.`,
+                `this stream should disconnect until usage drops back under the cap.`,
             );
           }
           return { skipped: true, reason: "capacity" };
@@ -801,7 +787,7 @@ function createSegmentWriter(deps = {}) {
       };
 
       if (isLocal) {
-        // Item 21: local write failures surface immediately — no retry,
+        // Local write failures surface immediately — no retry,
         // no park. A local disk failure is not the transient condition
         // retry-and-park exists for.
         try {
@@ -826,7 +812,7 @@ function createSegmentWriter(deps = {}) {
         if (result.parked) {
           // Parked: the object is on local disk for later re-upload, not
           // yet in remote storage, so we deliberately do NOT write the
-          // index row now (item 14 — object before index — extends to
+          // index row now (object before index extends to
           // "no object yet reachable" meaning "no index row yet either").
           // retryParkedSegments() writes the index row once the re-upload
           // actually lands in remote storage.
@@ -834,9 +820,9 @@ function createSegmentWriter(deps = {}) {
         }
       }
 
-      // Item 14: write the object first, the index row second. An
+      // Write the object first, the index row second. An
       // orphaned object (write succeeded, process died before the index
-      // insert) is reclaimable by Phase 5's reconciliation; an index row
+      // insert) is reclaimable by the reconciliation; an index row
       // pointing at a missing object would make search throw on a result
       // the user can already see.
       await upsertIndexRow({
@@ -874,7 +860,7 @@ function createSegmentWriter(deps = {}) {
   }
 
   /**
-   * Flush and permanently release the buffer(s) for an agent — item 5: the
+   * Flush and permanently release the buffer(s) for an agent — the
    * only lifecycle event, other than shutdown, that forces a flush. Unlike
    * a normal flush (which keeps the buffer open for reattach), this stops
    * and clears the timer too, since no timer or reconnect will ever claim
@@ -936,7 +922,7 @@ function createSegmentWriter(deps = {}) {
   }
 
   /**
-   * Phase 6 item 7 (recency gap): a non-destructive read of the current
+   * A non-destructive read of the current
    * in-memory buffer for `(agentId, stream)`, exposed to backend-api over
    * worker.ts's internal HTTP endpoint so `searchLogs` can merge the last
    * few not-yet-flushed minutes into a search result. Deliberately does NOT
@@ -947,8 +933,8 @@ function createSegmentWriter(deps = {}) {
    *
    * Returns `null` when no buffer is open for this (agentId, stream) pair
    * (nothing buffered right now — not an error). Otherwise returns a plain
-   * snapshot: the lines as buffered so far (Phase 2 envelope, no `ord` yet
-   * — Phase 6's merge sorts on `(COALESCE(ts, observed_ts), stream)`
+   * snapshot: the lines as buffered so far (no `ord` yet
+   * — the merge sorts on `(COALESCE(ts, observed_ts), stream)`
    * exactly like it does for `ord`-bearing sealed-segment lines, so an
    * unassigned `ord` on the buffer's tail is fine, see logSearch.ts) plus
    * `tsFrom`/`tsTo` bookkeeping so the caller can apply the "storage wins
@@ -967,7 +953,7 @@ function createSegmentWriter(deps = {}) {
   }
 
   /**
-   * Shutdown coordinator hook (Phase 3 item 6 / registerShutdownCoordinator
+   * Shutdown coordinator hook (registerShutdownCoordinator
    * in worker.ts): stop accepting new lines and flush every open buffer.
    * The bounded deadline is enforced by the CALLER (registerShutdownCoordinator),
    * not here — this returns a plain flushAll() promise so the caller can
@@ -992,8 +978,8 @@ function createSegmentWriter(deps = {}) {
   }
 
   /**
-   * Schedule `retryParkedSegments()` on a fixed interval (Phase 3 item 16's
-   * "later re-upload"). Without this, a segment parked during a remote
+   * Schedule `retryParkedSegments()` on a fixed interval. Without this, a
+   * segment parked during a remote
    * outage stays in the staging directory forever — never indexed, never
    * searchable — even after the destination recovers. Overlapping runs are
    * skipped rather than queued, and the timer is `.unref()`'d so it never
@@ -1041,8 +1027,8 @@ function createSegmentWriter(deps = {}) {
 
 /**
  * Upload with exponential backoff; on exhaustion, park to local staging for
- * later re-upload (Phase 3 item 16). Only ever called for remote drivers —
- * see item 21 for why `local` skips this entirely.
+ * later re-upload. Only ever called for remote drivers —
+ * `local` skips this entirely because a local disk failure is not transient.
  */
 async function putWithRetryOrPark({
   storageKey,

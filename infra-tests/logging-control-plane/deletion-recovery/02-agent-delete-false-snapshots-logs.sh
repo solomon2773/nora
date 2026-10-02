@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 5c, test 5: `deleteLogs: false` on a real `DELETE /agents/:id`
+# Test 5: `deleteLogs: false` on a real `DELETE /agents/:id`
 # leaves segments/spans intact and records a `deleted_log_owners` snapshot
 # row with the correct retention_days.
 #
@@ -16,7 +16,7 @@
 # See 01-agent-delete-true-removes-logs.sh's header for a KNOWN LOCAL
 # ENVIRONMENT LIMITATION found while writing these scripts: on this dev
 # machine, DELETE /agents/:id 500s with a Docker-socket-permission error
-# unrelated to Phase 5c (a pre-existing, already-documented gap in
+# unrelated to log deletion (a pre-existing, already-documented gap in
 # docker-compose.override.yml's DOCKER_GID handling for backend-api on
 # Docker Desktop for Mac). Not reproduced here a second time verbatim —
 # see that script for the full explanation.
