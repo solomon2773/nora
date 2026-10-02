@@ -315,9 +315,7 @@ describe("createGatewayClient — reconnect backoff", () => {
 describe("createGatewayClient — silent-partition liveness (consecutive call timeouts)", () => {
   it("tears down and reconnects after CONSECUTIVE_TIMEOUT_THRESHOLD consecutive call timeouts, without the dead socket ever emitting close or error", async () => {
     // Regression test for a real gap confirmed against a live dropped
-    // connection by
-    // infra-tests/phase9-gateway-rpc-client/02-reconnect-backoff-real-kill.sh:
-    // on a genuine silent network partition, a WebSocket's readyState can
+    // connection: on a genuine silent network partition, a WebSocket's readyState can
     // stay OPEN forever — no close/error event ever fires — so
     // onClose/onError (the only two call sites into runAttemptLoop()) are
     // never reached and the client loops on per-call timeouts forever.

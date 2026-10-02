@@ -5980,7 +5980,7 @@ function registerShutdownCoordinator({
   // ladder (putWithRetryOrPark's backoff, [500,1000,2000,4000,8000]ms) sums
   // to ~15.5s on its own — a single retried write during flushAll() could
   // never finish inside a 10s deadline even under otherwise-ideal
-  // conditions. Confirmed via a live repro (infra-tests/) that a plain
+  // conditions. A live repro confirmed that a plain
   // local flush, with nothing artificially slowed down, could still lose
   // this race and drop a buffered segment outright. 20s gives one full
   // retry-ladder cycle real headroom to complete before the deadline fires.

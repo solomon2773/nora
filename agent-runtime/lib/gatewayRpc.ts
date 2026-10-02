@@ -275,9 +275,8 @@ function createGatewayClient(agent, opts = {}) {
   // connect. This is the liveness signal for the one failure mode
   // onClose/onError structurally can't see: a silent network partition
   // where packets are just dropped. The WebSocket's readyState never
-  // leaves OPEN in that case (confirmed empirically —
-  // infra-tests/phase9-gateway-rpc-client/02-reconnect-backoff-real-kill.sh
-  // reproduces it against a real dropped connection), so neither handler
+  // leaves OPEN in that case (confirmed empirically against a real dropped
+  // connection), so neither handler
   // ever fires and runAttemptLoop() is otherwise never reached — the
   // client just loops on 30s call timeouts forever. See
   // CONSECUTIVE_TIMEOUT_THRESHOLD below for why this waits for more than
