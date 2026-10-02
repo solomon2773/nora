@@ -74,8 +74,14 @@ class FakeSocket {
   }
 
   // Convenience: open the socket and complete a successful connect handshake.
+  // With a token the client signs the gateway's `connect.challenge`, so the
+  // connect frame is only sent once that event arrives; without one it is
+  // sent as soon as the socket opens.
   _openAndAuthenticate() {
     this._open();
+    if (this.sent.length === 0) {
+      this._receive({ type: "event", event: "connect.challenge", payload: { nonce: "nonce-1" } });
+    }
     const connectFrame = JSON.parse(this.sent.at(-1) ?? "null");
     expect(connectFrame?.id).toBe("__connect__");
     this._receive({ type: "res", id: "__connect__", ok: true });
@@ -414,13 +420,32 @@ describe("callLogsTail", () => {
     const client = {
       call: vi.fn().mockResolvedValue({ lines: ["a", "b"], cursor: "c2", sourceKind: "stdout" }),
     };
-    const result = await callLogsTail(client, { cursor: "c1", limit: 100, maxBytes: 4096 });
+    const result = await callLogsTail(client, { cursor: 1, limit: 100, maxBytes: 4096 });
     expect(client.call).toHaveBeenCalledWith("logs.tail", {
-      cursor: "c1",
+      cursor: 1,
       limit: 100,
       maxBytes: 4096,
     });
     expect(result).toEqual({ lines: ["a", "b"], cursor: "c2", sourceKind: "stdout" });
+  });
+
+  it("coerces a persisted numeric-string cursor to a number at the RPC boundary", async () => {
+    const client = { call: vi.fn().mockResolvedValue({}) };
+    await callLogsTail(client, { cursor: "42", limit: 100, maxBytes: 4096 });
+    expect(client.call).toHaveBeenCalledWith("logs.tail", {
+      cursor: 42,
+      limit: 100,
+      maxBytes: 4096,
+    });
+  });
+
+  it("omits the cursor when there is none, and rejects a non-numeric one", async () => {
+    const client = { call: vi.fn().mockResolvedValue({}) };
+    await callLogsTail(client, { cursor: null, limit: 100, maxBytes: 4096 });
+    expect(client.call).toHaveBeenCalledWith("logs.tail", { limit: 100, maxBytes: 4096 });
+    await expect(callLogsTail(client, { cursor: "c1" })).rejects.toMatchObject({
+      code: "GATEWAY_INVALID_CURSOR",
+    });
   });
 
   it("defaults missing payload fields rather than throwing", async () => {
