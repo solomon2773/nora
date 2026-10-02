@@ -187,6 +187,14 @@ function hashHex(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+// Linear-time stand-in for `.replace(/\/+$/, "")`, which backtracks quadratically
+// on a long run of slashes in a user-supplied endpoint or remote path.
+function trimTrailingSlashes(value) {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1;
+  return value.slice(0, end);
+}
+
 function s3Config(config = {}) {
   const bucket = config.bucket;
   const region =
@@ -196,7 +204,7 @@ function s3Config(config = {}) {
   const accessKeyId = config.accessKeyId;
   const secretAccessKey = config.secretAccessKey;
   const sessionToken = config.sessionToken;
-  const endpoint = String(config.endpoint || "").replace(/\/+$/, "");
+  const endpoint = trimTrailingSlashes(String(config.endpoint || ""));
   if (!bucket || !accessKeyId || !secretAccessKey) {
     throw new StorageError("S3 storage is not fully configured", "STORAGE_S3_NOT_CONFIGURED");
   }
@@ -244,6 +252,9 @@ async function s3Request(
   const pathStyle = Boolean(config.endpoint);
   const baseUrl = config.endpoint || `https://${config.bucket}.s3.${config.region}.amazonaws.com`;
   const parsedBase = new URL(baseUrl);
+  if (parsedBase.protocol !== "https:" && parsedBase.protocol !== "http:") {
+    throw new StorageError("S3 endpoint must be an http(s) URL", "STORAGE_S3_INVALID_ENDPOINT");
+  }
   const canonicalUri = pathStyle
     ? `/${config.bucket}${encodedKey ? `/${encodedKey}` : "/"}`
     : `/${encodedKey}`;
@@ -465,7 +476,7 @@ async function deleteS3Objects(keys, config, { signal } = {}) {
 
 function sshRemoteObjectPath(config = {}, storageKey = "") {
   const base = path.posix.normalize(
-    String(config.sshRemotePath || "/backups/nora").replace(/\/+$/, ""),
+    trimTrailingSlashes(String(config.sshRemotePath || "/backups/nora")),
   );
   const normalizedKey = String(storageKey).replace(/^\/+/, "");
   const resolved = path.posix.normalize(path.posix.join(base, normalizedKey));
@@ -647,7 +658,7 @@ async function deleteSshObject(storageKey, config = {}, { signal } = {}) {
  */
 async function listSshObjects(prefix, config = {}, { signal } = {}) {
   const base = path.posix.normalize(
-    String(config.sshRemotePath || "/backups/nora").replace(/\/+$/, ""),
+    trimTrailingSlashes(String(config.sshRemotePath || "/backups/nora")),
   );
   const results = [];
 
