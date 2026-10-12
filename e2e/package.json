@@ -26,9 +26,9 @@
     "smoke:integrations": "tsx ./integrations/run-all.mts"
   },
   "devDependencies": {
-    "@playwright/test": "^1.63.0",
-    "@types/node": "^26.5.1",
-    "tsx": "^4.23.13",
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   }
 }
