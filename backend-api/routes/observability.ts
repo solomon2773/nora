@@ -1,0 +1,1037 @@
+// @ts-nocheck
+// backend-api/routes/observability.ts — logging control plane HTTP surface.
+//
+// This file is deliberately structured by concern rather than a flat dump: it
+// is the home for the logging control plane's HTTP surface (log deletion, the
+// storage destination, search, export, workspace log settings, and traces).
+//
+// Mounted at "/" in server.ts (after the global `authenticateToken`
+// middleware), so `req.user` is always populated below.
+//
+// ── Section map ───────────────────────────────────────────────────────────
+//   1. Manual log deletion         — DELETE /logs
+//   2. Platform storage settings   — GET/PUT /admin/log-storage
+//   3. Storage migration progress  — GET /admin/log-storage/migration
+//   4. Search                      — GET /logs/search
+//   5. Export                      — GET /logs/export
+//   6. Workspace log settings      — GET/PUT /workspaces/:id/log-settings
+//   7. Traces                      — GET /traces, GET /traces/:traceId
+
+const { queryArrayParam } = require("../lib/queryParams");
+const express = require("express");
+const { decrypt, encrypt, ensureEncryptionConfigured } = require("../crypto");
+const monitoring = require("../monitoring");
+const { requireAdmin, scopeByMethod } = require("../middleware/auth");
+const {
+  findAccessibleAgentForActor,
+  apiKeyWorkspaceId,
+  enforceApiKeyAgentScope,
+  requireWorkspaceRole,
+} = require("../middleware/ownership");
+const { asyncHandler } = require("../middleware/errorHandler");
+const objectStorage = require("../../agent-runtime/lib/objectStorage.ts");
+const { getEnabledBackends } = require("../../agent-runtime/lib/backendCatalog.ts");
+const retentionSweeper = require("../../workers/provisioner/logs/retentionSweeper.ts");
+const logStorageConfigModule = require("../../workers/provisioner/logs/logStorageConfig.ts");
+const storageMigration = require("../../workers/provisioner/logs/storageMigration.ts");
+const logCollectionState = require("../../workers/provisioner/logs/logCollectionState.ts");
+const logPurge = require("../../workers/provisioner/logs/logPurge.ts");
+const { logEncryptionKeyProblem } = require("../../workers/provisioner/logs/logKeyCheck.ts");
+const logSearch = require("../logSearch.ts");
+const traceQuery = require("../traceQuery.ts");
+const db = require("../db");
+
+const router = express.Router();
+
+// Logs:read gates both search and export for API-key
+// callers. Session callers (browser dashboards) pass through unchanged —
+// scopeByMethod only enforces scopes when `req.apiKey` is present.
+router.use(
+  ["/logs/search", "/logs/export", "/logs/agents", "/logs/collection-status"],
+  scopeByMethod("logs:read", null),
+);
+
+// Scope guards to this router's actual prefixes, matching adminMembers.ts's
+// convention, so an unrelated /admin/* request continues past this router to
+// routes/admin.ts rather than being intercepted by a mount-wide guard.
+router.use("/admin/log-storage", requireAdmin);
+router.use("/admin/log-collection", requireAdmin);
+
+// ─── 1. Manual log deletion ──────────────────────────────────────
+
+/**
+ * DELETE /logs
+ * Body: { agentId, from, to }
+ *
+ * Removes matching `log_segments` (and their objects) plus any
+ * `log_segment_legacy_copies` in range, scoped to a workspace the actor has
+ * editor-or-above role in — `findAccessibleAgentForActor` (already used
+ * throughout the codebase for exactly this workspace-role check, e.g.
+ * `middleware/ownership.ts`'s `requireAccessibleAgent`) is reused here
+ * rather than reinventing workspace-role checking. This is the only way an
+ * operator reclaims local disk space short of raising the cap — there is no
+ * automatic eviction, by design.
+ */
+router.delete(
+  "/logs",
+  asyncHandler(async (req, res) => {
+    const { agentId, from, to } = req.body || {};
+    if (!agentId || !from || !to) {
+      return res.status(400).json({ error: "agentId, from, and to are required" });
+    }
+
+    try {
+      const result = await retentionSweeper.deleteLogsByAgentAndRange(agentId, from, to, req.user);
+      res.json(result);
+    } catch (error) {
+      const status = error.statusCode || 500;
+      res.status(status).json({ error: error.message });
+    }
+  }),
+);
+
+// ─── 2. Platform storage destination setting ──────────────────
+
+const LOG_STORAGE_BACKENDS = new Set(["local", "s3", "r2", "ssh"]);
+
+// Plain-language messages for the S3/R2 error codes an operator is actually
+// likely to hit while setting up a destination (bad/mismatched keys, wrong
+// bucket, wrong region) — AWS's own `Message` text for these is accurate
+// but written for developers debugging a signing implementation, not for
+// someone who just needs to know "your secret key is wrong." Anything not
+// in this map still gets a real, specific message (objectStorage.ts's
+// parsed `Code (Message)` form) — this only shortens the handful of common
+// cases, never hides an error behind a generic one.
+const FRIENDLY_S3_ERROR_MESSAGES = {
+  SignatureDoesNotMatch: "Invalid access key ID or secret access key.",
+  InvalidAccessKeyId: "Invalid access key ID.",
+  AccessDenied: "Access denied — check the credentials' permissions on this bucket.",
+  NoSuchBucket: "Bucket not found.",
+};
+
+function normalizeText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function maskSecret(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return "";
+  if (normalized.length <= 12) return `${normalized.slice(0, 4)}...`;
+  return `${normalized.slice(0, 10)}...${normalized.slice(-4)}`;
+}
+
+async function readLogStorageRow() {
+  const result = await db.query(
+    `SELECT log_storage_backend,
+            log_storage_local_path,
+            log_storage_s3_bucket,
+            log_storage_s3_region,
+            log_storage_s3_endpoint,
+            log_storage_s3_access_key_id_encrypted,
+            log_storage_s3_secret_access_key_encrypted,
+            log_storage_ssh_host,
+            log_storage_ssh_port,
+            log_storage_ssh_username,
+            log_storage_ssh_remote_path,
+            log_storage_ssh_private_key_encrypted,
+            log_storage_ssh_password_encrypted
+       FROM platform_settings
+      WHERE singleton = TRUE
+      LIMIT 1`,
+  );
+  return result.rows[0] || {};
+}
+
+/**
+ * Admin-safe log storage settings payload — masked credential status, never
+ * decrypted secrets, mirroring `resolveBackupSettingsPayload`'s shape.
+ */
+function resolveLogStoragePayload(row) {
+  const envBackend = normalizeText(process.env.NORA_LOG_STORAGE);
+  const storageBackend = row.log_storage_backend || envBackend || "local";
+  let storedS3KeyMasked = "";
+  let storedS3SecretMasked = "";
+  let storedSshPrivateKeyMasked = "";
+  let storedSshPasswordMasked = "";
+  try {
+    if (row.log_storage_s3_access_key_id_encrypted)
+      storedS3KeyMasked = maskSecret(decrypt(row.log_storage_s3_access_key_id_encrypted));
+    if (row.log_storage_s3_secret_access_key_encrypted)
+      storedS3SecretMasked = maskSecret(decrypt(row.log_storage_s3_secret_access_key_encrypted));
+    if (row.log_storage_ssh_private_key_encrypted) storedSshPrivateKeyMasked = "Configured";
+    if (row.log_storage_ssh_password_encrypted)
+      storedSshPasswordMasked = maskSecret(decrypt(row.log_storage_ssh_password_encrypted));
+  } catch {
+    storedS3KeyMasked = storedS3KeyMasked || "unreadable";
+  }
+
+  return {
+    storageBackend,
+    storageBackendSource: row.log_storage_backend ? "database" : envBackend ? "env" : "default",
+    localPath: row.log_storage_local_path || process.env.NORA_LOG_DIR || "/var/lib/nora-logs",
+    s3Bucket: row.log_storage_s3_bucket || process.env.NORA_LOG_S3_BUCKET || "",
+    s3Region: row.log_storage_s3_region || process.env.NORA_LOG_S3_REGION || "",
+    s3Endpoint: row.log_storage_s3_endpoint || process.env.NORA_LOG_S3_ENDPOINT || "",
+    s3AccessKeyConfigured: Boolean(row.log_storage_s3_access_key_id_encrypted),
+    s3AccessKeyMasked: storedS3KeyMasked,
+    s3SecretConfigured: Boolean(row.log_storage_s3_secret_access_key_encrypted),
+    s3SecretMasked: storedS3SecretMasked,
+    sshHost: row.log_storage_ssh_host || "",
+    sshPort: row.log_storage_ssh_port || 22,
+    sshUsername: row.log_storage_ssh_username || "",
+    sshRemotePath: row.log_storage_ssh_remote_path || "",
+    sshPrivateKeyConfigured: Boolean(row.log_storage_ssh_private_key_encrypted),
+    sshPrivateKeyMasked: storedSshPrivateKeyMasked,
+    sshPasswordConfigured: Boolean(row.log_storage_ssh_password_encrypted),
+    sshPasswordMasked: storedSshPasswordMasked,
+  };
+}
+
+/**
+ * GET /admin/log-storage
+ * Current platform-wide log segment storage destination (masked
+ * credentials), plus the current capacity status so the admin UI can show
+ * both together.
+ */
+router.get(
+  "/admin/log-storage",
+  asyncHandler(async (_req, res) => {
+    const row = await readLogStorageRow();
+    const capacity = await retentionSweeper.getCapacityStatus();
+    res.json({ ...resolveLogStoragePayload(row), capacity });
+  }),
+);
+
+/**
+ * PUT /admin/log-storage
+ * Body: { storageBackend, localPath?, s3Bucket?, s3Region?, s3Endpoint?,
+ *   s3AccessKeyId?, s3SecretAccessKey?, clearS3AccessKey?, clearS3SecretAccessKey?,
+ *   sshHost?, sshPort?, sshUsername?, sshRemotePath?, sshPrivateKey?, sshPassword?,
+ *   clearSshPrivateKey?, clearSshPassword? }
+ *
+ * Two hard rules:
+ *   - Selecting `local` while `k8s` is an enabled deploy target
+ *     (ENABLED_BACKENDS) is REJECTED here with a validation error — not
+ *     merely warned about, since this is now a runtime-changeable setting
+ *     and there is no boot-time restart left at which a warning would ever
+ *     be seen.
+ *   - Every change writes an `events` row via `monitoring.logEvent` — it's
+ *     an operator action that changes what other people can see.
+ *
+ * Changing the destination does not move data inline: new segments go to the
+ * new destination, existing ones stay readable via their recorded
+ * `storage_backend`/`storage_config`, and a background job migrates them (see
+ * the migration kickoff below).
+ */
+router.put(
+  "/admin/log-storage",
+  asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const storageBackend = normalizeText(body.storageBackend).toLowerCase();
+    if (!LOG_STORAGE_BACKENDS.has(storageBackend)) {
+      return res.status(400).json({ error: "storageBackend must be local, s3, r2, or ssh" });
+    }
+
+    if (storageBackend === "local") {
+      const enabledBackends = getEnabledBackends(process.env);
+      if (enabledBackends.includes("k8s")) {
+        return res.status(400).json({
+          error:
+            "storageBackend cannot be local while k8s is an enabled deploy target " +
+            "(ENABLED_BACKENDS includes k8s) — the local driver is unsupported on Kubernetes. " +
+            "Choose s3 or r2 instead.",
+          code: "local_unsupported_with_k8s",
+        });
+      }
+    }
+
+    // The previous destination's credentials must stay
+    // configured for the life of any migration job that still references it,
+    // and — when kept — until every legacy copy referencing it has expired.
+    // Reject a request to CLEAR those specific credential fields outright,
+    // before any other validation or side effect, while either condition
+    // holds. S3 and R2 share the same credential columns (R2 is
+    // S3-compatible), so clearing either protects both backend names.
+    const clearingS3Credentials = Boolean(body.clearS3AccessKey || body.clearS3SecretAccessKey);
+    const clearingSshCredentials = Boolean(body.clearSshPrivateKey || body.clearSshPassword);
+    if (clearingS3Credentials || clearingSshCredentials) {
+      const protectedBackends = await storageMigration.backendsRequiringRetainedCredentials({ db });
+      if (clearingS3Credentials && (protectedBackends.has("s3") || protectedBackends.has("r2"))) {
+        return res.status(409).json({
+          error:
+            "Cannot clear S3/R2 credentials while a storage migration or a kept legacy copy still " +
+            "references that destination — its objects must remain readable until the migration " +
+            "completes or the legacy copy expires.",
+          code: "log_storage_credentials_in_use",
+        });
+      }
+      if (clearingSshCredentials && protectedBackends.has("ssh")) {
+        return res.status(409).json({
+          error:
+            "Cannot clear SSH credentials while a storage migration or a kept legacy copy still " +
+            "references that destination — its objects must remain readable until the migration " +
+            "completes or the legacy copy expires.",
+          code: "log_storage_credentials_in_use",
+        });
+      }
+    }
+
+    const current = await readLogStorageRow();
+    const previous = resolveLogStoragePayload(current);
+    const keepSourceCopies = Boolean(body.keepSourceCopies);
+    const backendIsChanging = storageBackend !== previous.storageBackend;
+
+    // A destination change kicks off an async migration
+    // of every previously-written segment. Reject the whole request, with NO
+    // side effects at all, up front when either an overlapping migration is
+    // already in flight or (when the new destination is local) there isn't
+    // real capacity for the exact bytes about to be migrated — this must
+    // happen BEFORE the settings row is written below.
+    if (backendIsChanging) {
+      const activeJob = await db.query(
+        `SELECT id FROM storage_migration_jobs WHERE status IN ('running','paused') LIMIT 1`,
+      );
+      if (activeJob.rows[0]) {
+        return res.status(409).json({
+          error:
+            "A storage migration is already in progress; wait for it to complete before changing " +
+            "the destination again",
+          code: "log_storage_migration_in_progress",
+        });
+      }
+
+      if (storageBackend === "local") {
+        const usedBytes = await retentionSweeper.localStorageUsage();
+        const bytesResult = await db.query(
+          `SELECT COALESCE(SUM(bytes), 0)::bigint AS bytes FROM log_segments WHERE storage_backend = $1`,
+          [previous.storageBackend],
+        );
+        const bytesToMigrate = Number(bytesResult.rows[0]?.bytes || 0);
+        const limitBytes = Number(process.env.NORA_LOG_LOCAL_MAX_BYTES) || Infinity;
+        if (Number.isFinite(limitBytes) && usedBytes + bytesToMigrate > limitBytes) {
+          return res.status(400).json({
+            error:
+              `Migrating ${bytesToMigrate} byte(s) currently on "${previous.storageBackend}" to local ` +
+              `storage would exceed the configured cap (${usedBytes} already used + ${bytesToMigrate} ` +
+              `to migrate > ${limitBytes} byte limit). Raise NORA_LOG_LOCAL_MAX_BYTES or free space first.`,
+            code: "log_storage_capacity_exceeded",
+          });
+        }
+      }
+    }
+
+    let s3AccessKeyIdEncrypted = current.log_storage_s3_access_key_id_encrypted || null;
+    let s3SecretAccessKeyEncrypted = current.log_storage_s3_secret_access_key_encrypted || null;
+    let sshPrivateKeyEncrypted = current.log_storage_ssh_private_key_encrypted || null;
+    let sshPasswordEncrypted = current.log_storage_ssh_password_encrypted || null;
+
+    if (body.clearS3AccessKey) {
+      s3AccessKeyIdEncrypted = null;
+    } else if (body.s3AccessKeyId !== undefined && body.s3AccessKeyId !== null) {
+      const value = normalizeText(body.s3AccessKeyId);
+      if (value) {
+        ensureEncryptionConfigured("Log storage credential storage");
+        s3AccessKeyIdEncrypted = encrypt(value);
+      }
+    }
+    if (body.clearS3SecretAccessKey) {
+      s3SecretAccessKeyEncrypted = null;
+    } else if (body.s3SecretAccessKey !== undefined && body.s3SecretAccessKey !== null) {
+      const value = normalizeText(body.s3SecretAccessKey);
+      if (value) {
+        ensureEncryptionConfigured("Log storage credential storage");
+        s3SecretAccessKeyEncrypted = encrypt(value);
+      }
+    }
+    if (body.clearSshPrivateKey) {
+      sshPrivateKeyEncrypted = null;
+    } else if (body.sshPrivateKey !== undefined && body.sshPrivateKey !== null) {
+      const value = String(body.sshPrivateKey).trim();
+      if (value) {
+        ensureEncryptionConfigured("Log storage credential storage");
+        sshPrivateKeyEncrypted = encrypt(value);
+      }
+    }
+    if (body.clearSshPassword) {
+      sshPasswordEncrypted = null;
+    } else if (body.sshPassword !== undefined && body.sshPassword !== null) {
+      const value = String(body.sshPassword);
+      if (value) {
+        ensureEncryptionConfigured("Log storage credential storage");
+        sshPasswordEncrypted = encrypt(value);
+      }
+    }
+
+    const localPath =
+      normalizeText(body.localPath) || current.log_storage_local_path || "/var/lib/nora-logs";
+    const s3Bucket = normalizeText(body.s3Bucket) || current.log_storage_s3_bucket || "";
+    const s3Region = normalizeText(body.s3Region) || current.log_storage_s3_region || "";
+    const s3Endpoint = normalizeText(body.s3Endpoint) || current.log_storage_s3_endpoint || "";
+    const sshHost = normalizeText(body.sshHost) || current.log_storage_ssh_host || "";
+    const sshPort = Number.isFinite(Number(body.sshPort))
+      ? Number(body.sshPort)
+      : current.log_storage_ssh_port || 22;
+    const sshUsername = normalizeText(body.sshUsername) || current.log_storage_ssh_username || "";
+    const sshRemotePath =
+      normalizeText(body.sshRemotePath) || current.log_storage_ssh_remote_path || "";
+
+    // Verify the destination actually works BEFORE committing to it — never
+    // persist untested credentials as the active destination. Without this,
+    // a typo'd secret key would get written to platform_settings and the
+    // resolved-config cache flipped immediately (see the cache-invalidation
+    // call below), meaning every live log flush from that moment on
+    // silently starts failing against a destination nobody ever confirmed
+    // works — not just the historical migration, which is the only thing
+    // that visibly failed before this check existed.
+    if (storageBackend !== "local") {
+      const candidateConfig = {
+        storageBackend,
+        bucket: s3Bucket,
+        region: s3Region,
+        endpoint: s3Endpoint,
+        accessKeyId: s3AccessKeyIdEncrypted ? decrypt(s3AccessKeyIdEncrypted) : "",
+        secretAccessKey: s3SecretAccessKeyEncrypted ? decrypt(s3SecretAccessKeyEncrypted) : "",
+        sshHost,
+        sshPort,
+        sshUsername,
+        sshRemotePath,
+        sshPrivateKey: sshPrivateKeyEncrypted ? decrypt(sshPrivateKeyEncrypted) : "",
+        sshPassword: sshPasswordEncrypted ? decrypt(sshPasswordEncrypted) : "",
+      };
+      try {
+        await objectStorage.probeStorageDestination(candidateConfig);
+      } catch (error) {
+        const message = FRIENDLY_S3_ERROR_MESSAGES[error.remoteCode] || error.message;
+        return res.status(400).json({
+          error: `Destination check failed: ${message}`,
+          code: "log_storage_probe_failed",
+        });
+      }
+    }
+
+    const result = await db.query(
+      `INSERT INTO platform_settings(
+         singleton,
+         log_storage_backend,
+         log_storage_local_path,
+         log_storage_s3_bucket,
+         log_storage_s3_region,
+         log_storage_s3_endpoint,
+         log_storage_s3_access_key_id_encrypted,
+         log_storage_s3_secret_access_key_encrypted,
+         log_storage_ssh_host,
+         log_storage_ssh_port,
+         log_storage_ssh_username,
+         log_storage_ssh_remote_path,
+         log_storage_ssh_private_key_encrypted,
+         log_storage_ssh_password_encrypted,
+         updated_at
+       )
+       VALUES(TRUE, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+       ON CONFLICT (singleton) DO UPDATE SET
+         log_storage_backend = EXCLUDED.log_storage_backend,
+         log_storage_local_path = EXCLUDED.log_storage_local_path,
+         log_storage_s3_bucket = EXCLUDED.log_storage_s3_bucket,
+         log_storage_s3_region = EXCLUDED.log_storage_s3_region,
+         log_storage_s3_endpoint = EXCLUDED.log_storage_s3_endpoint,
+         log_storage_s3_access_key_id_encrypted = EXCLUDED.log_storage_s3_access_key_id_encrypted,
+         log_storage_s3_secret_access_key_encrypted = EXCLUDED.log_storage_s3_secret_access_key_encrypted,
+         log_storage_ssh_host = EXCLUDED.log_storage_ssh_host,
+         log_storage_ssh_port = EXCLUDED.log_storage_ssh_port,
+         log_storage_ssh_username = EXCLUDED.log_storage_ssh_username,
+         log_storage_ssh_remote_path = EXCLUDED.log_storage_ssh_remote_path,
+         log_storage_ssh_private_key_encrypted = EXCLUDED.log_storage_ssh_private_key_encrypted,
+         log_storage_ssh_password_encrypted = EXCLUDED.log_storage_ssh_password_encrypted,
+         updated_at = NOW()
+       RETURNING
+         log_storage_backend, log_storage_local_path, log_storage_s3_bucket,
+         log_storage_s3_region, log_storage_s3_endpoint,
+         log_storage_s3_access_key_id_encrypted, log_storage_s3_secret_access_key_encrypted,
+         log_storage_ssh_host, log_storage_ssh_port, log_storage_ssh_username,
+         log_storage_ssh_remote_path, log_storage_ssh_private_key_encrypted,
+         log_storage_ssh_password_encrypted`,
+      [
+        storageBackend,
+        localPath,
+        s3Bucket,
+        s3Region,
+        s3Endpoint,
+        s3AccessKeyIdEncrypted,
+        s3SecretAccessKeyEncrypted,
+        sshHost,
+        sshPort,
+        sshUsername,
+        sshRemotePath,
+        sshPrivateKeyEncrypted,
+        sshPasswordEncrypted,
+      ],
+    );
+
+    // Invalidate the segment writer's cached destination (logStorageConfig()
+    // caches across calls) so the very next flush picks
+    // up the new destination rather than the process's stale cache.
+    logStorageConfigModule.invalidateLogStorageConfigCache();
+
+    const nextSettings = resolveLogStoragePayload(result.rows[0] || {});
+
+    // Every change writes an events row — this is an operator
+    // action that changes what other people can see.
+    await monitoring.logEvent(
+      "admin_log_storage_settings_updated",
+      `Admin updated log storage destination to ${nextSettings.storageBackend}`,
+      {
+        actorId: req.user?.id,
+        settings: { kind: "log_storage", previous, next: nextSettings },
+      },
+    );
+
+    // The resolved config has already flipped above (the
+    // cache invalidation call), so new writes go to the new destination
+    // immediately. Now kick off the async migration of every
+    // previously-written segment, if the destination actually changed.
+    let migration = null;
+    if (backendIsChanging) {
+      try {
+        const started = await storageMigration.startStorageMigration(
+          { storageBackend: previous.storageBackend },
+          { storageBackend: nextSettings.storageBackend },
+          keepSourceCopies,
+        );
+        migration = {
+          jobId: started.jobId,
+          segmentsTotal: started.segmentsTotal,
+          status: "running",
+        };
+      } catch (error) {
+        // The pre-flight checks above should make this unreachable in
+        // practice, but never let a race here silently drop the migration —
+        // surface it as part of the response rather than throwing after the
+        // settings row (and the operator-visible destination) already
+        // changed.
+        migration = { error: error.message, code: error.code };
+      }
+    }
+
+    res.json({ ...nextSettings, migration });
+  }),
+);
+
+// ─── 3. Storage migration progress ───────────────────────
+
+/**
+ * GET /admin/log-storage/migration
+ * The current or most-recent migration job's progress:
+ * `segments_migrated`/`segments_total` and `status` (`running` | `paused` |
+ * `completed` | `failed`), for the admin settings UI to poll.
+ */
+router.get(
+  "/admin/log-storage/migration",
+  asyncHandler(async (_req, res) => {
+    const status = await storageMigration.getMigrationStatus({ db });
+    res.json(status);
+  }),
+);
+
+/**
+ * POST /admin/log-storage/migration/retry
+ *
+ * Re-drives the most recent `failed` migration job from its checkpoint.
+ * Exists because `PUT /admin/log-storage` only starts a new migration when
+ * `storageBackend` actually changes — but that column is written before the
+ * migration is attempted, so after a failure it already reads as the failed
+ * migration's target. Simply fixing credentials and re-saving the same
+ * destination looks like a no-op to that check, so it silently never
+ * retries. This is the actual recovery path.
+ */
+router.post(
+  "/admin/log-storage/migration/retry",
+  asyncHandler(async (req, res) => {
+    try {
+      const result = await storageMigration.retryStorageMigration({ db });
+      await monitoring.logEvent(
+        "admin_log_storage_migration_retried",
+        `Admin retried failed storage migration job ${result.jobId}`,
+        { actorId: req.user?.id, jobId: result.jobId },
+      );
+      res.json({ status: "running", jobId: result.jobId });
+    } catch (error) {
+      const status = error.statusCode || 500;
+      res.status(status).json({ error: error.message, code: error.code });
+    }
+  }),
+);
+
+// ─── 3b. Log collection on/off (platform-wide) ─────────────────────────────
+
+/**
+ * Collection stores agent output on disk, so it is opt-in. The state is the
+ * database value once an admin has chosen, else NORA_LOG_ENABLED, else "not
+ * decided yet" (off) — see logs/logCollectionState.ts. worker-provisioner
+ * polls the same state, so a change here takes effect within seconds with no
+ * restart.
+ */
+
+/**
+ * GET /logs/collection-status
+ * Any signed-in caller: the Logs page uses it to say "collection is off"
+ * instead of showing an empty table.
+ */
+router.get(
+  "/logs/collection-status",
+  asyncHandler(async (_req, res) => {
+    const state = await logCollectionState.resolveLogCollectionState();
+    res.json({ enabled: state.enabled, decided: state.decided });
+  }),
+);
+
+/**
+ * GET /admin/log-collection
+ * The state, what a delete would remove, the last delete request, and
+ * whether enabling would currently work.
+ */
+router.get(
+  "/admin/log-collection",
+  asyncHandler(async (_req, res) => {
+    const [state, stats, purge] = await Promise.all([
+      logCollectionState.resolveLogCollectionState(),
+      logPurge.getLogStats(),
+      logPurge.readPurgeJob(),
+    ]);
+    res.json({
+      ...state,
+      envValue: logCollectionState.parseEnvDecision(process.env) ?? null,
+      stats,
+      purge,
+      encryptionKeyProblem: logEncryptionKeyProblem(),
+    });
+  }),
+);
+
+/**
+ * PUT /admin/log-collection
+ * Body: { enabled: boolean, deleteExisting?: boolean }
+ *
+ * Turning collection OFF while logs exist requires an explicit
+ * `deleteExisting` — there is no default, the same rule agent and workspace
+ * deletion follow, so a script cannot silently pick. `true` records a
+ * delete-everything request that worker-provisioner carries out; `false`
+ * keeps what is stored (it still expires on the normal retention schedule).
+ * Turning it ON is refused when it could not work: an unusable encryption
+ * key, local storage with Kubernetes enabled, or a delete still running.
+ */
+router.put(
+  "/admin/log-collection",
+  asyncHandler(async (req, res) => {
+    const { enabled, deleteExisting } = req.body || {};
+    if (typeof enabled !== "boolean") {
+      return res
+        .status(400)
+        .json({ error: "enabled must be true or false", code: "invalid_enabled" });
+    }
+    if (deleteExisting !== undefined && typeof deleteExisting !== "boolean") {
+      return res
+        .status(400)
+        .json({ error: "deleteExisting must be true or false", code: "invalid_delete_existing" });
+    }
+
+    const previous = await logCollectionState.resolveLogCollectionState();
+    const purgeJob = await logPurge.readPurgeJob();
+    let stats = null;
+
+    if (enabled) {
+      if (purgeJob && logPurge.IN_PROGRESS.includes(purgeJob.status)) {
+        return res.status(409).json({
+          error:
+            "Logs are still being deleted. Wait for that to finish before turning collection back on.",
+          code: "purge_in_progress",
+          purge: purgeJob,
+        });
+      }
+      const keyProblem = logEncryptionKeyProblem();
+      if (keyProblem) {
+        return res.status(409).json({
+          error: `Logs cannot be saved: ${keyProblem}. Set a 64-char hex NORA_LOG_ENCRYPTION_KEY in .env and restart.`,
+          code: "log_encryption_key_unusable",
+        });
+      }
+      const storage = await logStorageConfigModule.logStorageConfig();
+      if (storage.storageBackend === "local" && getEnabledBackends(process.env).includes("k8s")) {
+        return res.status(409).json({
+          error:
+            "Local log storage cannot be used while Kubernetes is an enabled deploy target. " +
+            "Choose S3, R2 or SSH storage first.",
+          code: "local_unsupported_with_k8s",
+        });
+      }
+    } else {
+      stats = await logPurge.getLogStats();
+      const hasLogs = stats.segments > 0 || stats.spans > 0;
+      if (hasLogs && deleteExisting === undefined) {
+        return res.status(400).json({
+          error:
+            "Logs have already been collected. Say whether to keep them or delete them (deleteExisting).",
+          code: "delete_existing_required",
+          stats,
+        });
+      }
+    }
+
+    await logCollectionState.setLogCollectionEnabled(enabled);
+
+    let purge = purgeJob;
+    const wantsDelete = !enabled && deleteExisting === true;
+    if (wantsDelete) {
+      purge = (await logPurge.requestLogPurge({ requestedBy: req.user?.id || null })).job;
+    }
+
+    await monitoring.logEvent(
+      "admin_log_collection_updated",
+      `Admin turned log collection ${enabled ? "on" : "off"}${wantsDelete ? " and requested deletion of all collected logs" : ""}`,
+      {
+        actorId: req.user?.id,
+        previous: { enabled: previous.enabled, decided: previous.decided, source: previous.source },
+        next: { enabled },
+        deleteExisting: enabled ? null : (deleteExisting ?? false),
+        statsAtDecision: stats,
+        purgeJobId: wantsDelete ? purge?.id : null,
+      },
+    );
+
+    const next = await logCollectionState.resolveLogCollectionState();
+    res.json({ ...next, purge, stats });
+  }),
+);
+
+// ─── 4. Search ────────────────────────────────────────────────
+
+function sendLogError(res, error) {
+  const status = error.statusCode || 500;
+  res.status(status).json({ error: error.message, ...(error.code ? { code: error.code } : {}) });
+}
+
+/**
+ * GET /logs/search
+ * Query: workspaceId, agentId (required), streams[], levels[], from, to, q,
+ * traceId, cursor, limit, order.
+ *
+ * `agentId` is singular and required — this endpoint serves one agent's
+ * timeline, never a merged cross-agent view.
+ *
+ * Workspace/agent scoping for a session caller runs through
+ * `findAccessibleAgentForActor` plus `logSearch.enforceWorkspaceScope`.
+ * An API-key caller is scoped BEFORE any of that, by
+ * `enforceApiKeyAgentScope` below — the same guard `requireAccessibleAgent`
+ * uses elsewhere — and its bound workspace is threaded straight through
+ * rather than trusting an arbitrary `workspaceId` query value.
+ */
+router.get(
+  "/logs/search",
+  asyncHandler(async (req, res) => {
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId.trim() : "";
+    if (!(await enforceApiKeyAgentScope(req, res, agentId))) return;
+
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      const result = await logSearch.searchLogs(
+        {
+          workspaceId,
+          agentId,
+          streams: queryArrayParam(req.query, "streams"),
+          levels: queryArrayParam(req.query, "levels"),
+          from: req.query.from,
+          to: req.query.to,
+          q: typeof req.query.q === "string" ? req.query.q : undefined,
+          traceId: req.query.traceId,
+          cursor: typeof req.query.cursor === "string" ? req.query.cursor : undefined,
+          limit: req.query.limit,
+          order: req.query.order,
+        },
+        req.user,
+      );
+      res.json(result);
+    } catch (error) {
+      sendLogError(res, error);
+    }
+  }),
+);
+
+/**
+ * GET /logs/agents
+ * The agents the Logging page may offer the caller — see
+ * `logSearch.listLoggingAgents` for the per-actor rules. An API key is
+ * limited to its bound workspace, never the issuer's wider access.
+ */
+router.get(
+  "/logs/agents",
+  asyncHandler(async (req, res) => {
+    let workspaceId = null;
+    if (req.apiKey) {
+      workspaceId = apiKeyWorkspaceId(req);
+      if (!workspaceId) {
+        return res
+          .status(403)
+          .json({ error: "API key has no workspace binding", code: "wrong_workspace" });
+      }
+    }
+    res.json(await logSearch.listLoggingAgents(req.user, { workspaceId }));
+  }),
+);
+
+// ─── 5. Export ────────────────────────────────────────────────
+
+/**
+ * GET /logs/export
+ * Same filters as /logs/search, without pagination. Streams NDJSON
+ * (default) or CSV — pick with `?format=csv` or an `Accept: text/csv`
+ * header; anything else (including no preference at all) streams NDJSON.
+ * Requires `from`/`to` and rejects a range wider than the configured cap
+ * with an actionable `export_range_too_large` error.
+ */
+router.get(
+  "/logs/export",
+  asyncHandler(async (req, res) => {
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId.trim() : "";
+    if (!(await enforceApiKeyAgentScope(req, res, agentId))) return;
+
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      await logSearch.streamLogExport(
+        {
+          workspaceId,
+          agentId,
+          streams: queryArrayParam(req.query, "streams"),
+          levels: queryArrayParam(req.query, "levels"),
+          from: req.query.from,
+          to: req.query.to,
+          q: typeof req.query.q === "string" ? req.query.q : undefined,
+          format: typeof req.query.format === "string" ? req.query.format : undefined,
+          accept: req.headers.accept,
+        },
+        req.user,
+        res,
+      );
+    } catch (error) {
+      if (res.headersSent) {
+        // Streaming had already started (headers/rows written) — there is
+        // no clean way to downgrade to a JSON error mid-stream, so just end
+        // the response after logging server-side.
+        console.error(`[observability] /logs/export failed mid-stream: ${error.message}`);
+        res.end();
+        return;
+      }
+      sendLogError(res, error);
+    }
+  }),
+);
+
+// ─── 6. Workspace log settings ───────────────────────────
+
+const WORKSPACE_LOG_SETTINGS_COLUMNS = `
+  runtime_retention_days, trace_retention_days
+`;
+
+/**
+ * Current workspace retention settings, or the defaults when no row exists
+ * yet (a workspace's row is created lazily, on first PUT).
+ *
+ * Retention is the only logging policy a workspace owns. Whether logs and
+ * traces are collected at all is platform-wide (NORA_LOG_ENABLED /
+ * NORA_TRACES_ENABLED), so the table's gateway_logs_enabled, traces_enabled,
+ * and trace_sample_rate columns are no longer read or written here.
+ */
+async function readWorkspaceLogSettingsRow(workspaceId) {
+  const result = await db.query(
+    `SELECT ${WORKSPACE_LOG_SETTINGS_COLUMNS} FROM workspace_log_settings WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+  const row = result.rows[0];
+  if (row) {
+    return {
+      runtimeRetentionDays: row.runtime_retention_days,
+      traceRetentionDays: row.trace_retention_days,
+    };
+  }
+  return {
+    runtimeRetentionDays: 30,
+    traceRetentionDays: 30,
+  };
+}
+
+/**
+ * GET /workspaces/:id/log-settings
+ * The workspace's log and trace retention periods.
+ */
+router.get(
+  "/workspaces/:id/log-settings",
+  requireWorkspaceRole("admin", "id"),
+  asyncHandler(async (req, res) => {
+    res.json(await readWorkspaceLogSettingsRow(req.params.id));
+  }),
+);
+
+/**
+ * PUT /workspaces/:id/log-settings
+ * Body: { runtimeRetentionDays?, traceRetentionDays? } — either or both;
+ * an omitted field keeps its current (or default) value. Any other field in
+ * the body (for example the retired `tracesEnabled` / `gatewayLogsEnabled`)
+ * is ignored.
+ */
+router.put(
+  "/workspaces/:id/log-settings",
+  requireWorkspaceRole("admin", "id"),
+  asyncHandler(async (req, res) => {
+    const workspaceId = req.params.id;
+    const body = req.body || {};
+    const current = await readWorkspaceLogSettingsRow(workspaceId);
+
+    function parseRetentionDays(value, fallback) {
+      if (value === undefined) return fallback;
+      const parsed = Number(value);
+      if (!Number.isInteger(parsed) || parsed < 1) return null;
+      return parsed;
+    }
+
+    const runtimeRetentionDays = parseRetentionDays(
+      body.runtimeRetentionDays,
+      current.runtimeRetentionDays,
+    );
+    const traceRetentionDays = parseRetentionDays(
+      body.traceRetentionDays,
+      current.traceRetentionDays,
+    );
+    if (runtimeRetentionDays === null || traceRetentionDays === null) {
+      return res
+        .status(400)
+        .json({ error: "runtimeRetentionDays and traceRetentionDays must be integers >= 1" });
+    }
+
+    const result = await db.query(
+      `INSERT INTO workspace_log_settings(
+         workspace_id, runtime_retention_days, trace_retention_days, updated_at
+       )
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (workspace_id) DO UPDATE SET
+         runtime_retention_days = EXCLUDED.runtime_retention_days,
+         trace_retention_days = EXCLUDED.trace_retention_days,
+         updated_at = NOW()
+       RETURNING ${WORKSPACE_LOG_SETTINGS_COLUMNS}`,
+      [workspaceId, runtimeRetentionDays, traceRetentionDays],
+    );
+    const row = result.rows[0];
+
+    await monitoring.logEvent(
+      "workspace_log_settings_updated",
+      `Workspace ${workspaceId} log settings updated`,
+      {
+        actorId: req.user?.id,
+        workspace: { id: workspaceId },
+        settings: { kind: "workspace_log_settings", previous: current, next: row },
+      },
+    );
+
+    res.json({
+      runtimeRetentionDays: row.runtime_retention_days,
+      traceRetentionDays: row.trace_retention_days,
+    });
+  }),
+);
+
+// ─── 7. Traces ───────────────────────────────────────────────
+
+/**
+ * GET /traces
+ * Query: agentId (required), workspaceId?, from?, to?, limit?.
+ *
+ * Lists one agent's traces, aggregated from `agent_spans` — see
+ * `traceQuery.ts`'s module header for the full response shape (`agentId`,
+ * `workspaceId`, `tracesEnabled`, `traceSampleRate`, `traces[]`).
+ *
+ * Scoping: `traceQuery.listTraces` gates on
+ * `findAccessibleAgentForActor` first, then applies `workspaceId` as an
+ * additional narrowing via `logSearch.enforceWorkspaceScope` — the exact
+ * same two-step gate `logSearch.searchLogs` uses, reused rather than
+ * reimplemented so the Traces and Runtime lenses can never disagree about
+ * what "this agent's workspace" means.
+ */
+router.get(
+  "/traces",
+  asyncHandler(async (req, res) => {
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId.trim() : "";
+    if (!(await enforceApiKeyAgentScope(req, res, agentId))) return;
+
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      const result = await traceQuery.listTraces(
+        {
+          agentId,
+          workspaceId,
+          from: req.query.from,
+          to: req.query.to,
+          limit: req.query.limit,
+        },
+        req.user,
+      );
+      res.json(result);
+    } catch (error) {
+      sendLogError(res, error);
+    }
+  }),
+);
+
+/**
+ * GET /traces/:traceId
+ * Query: workspaceId? — same additional-narrowing semantics as GET /traces.
+ *
+ * Returns the span tree plus correlated logs for one trace — see
+ * `traceQuery.ts`'s module header for the full response shape (`trace`,
+ * `spans[]`, `correlatedLogs[]`).
+ *
+ * There is no `agentId` query param here — the trace's agent is resolved
+ * from its own `agent_spans` rows inside `traceQuery.getTraceDetail`, which
+ * is exactly why that function gates access AFTER reading those rows
+ * (using their `agent_id`) rather than requiring the caller to already
+ * know it.
+ *
+ * API-key callers cannot go through `enforceApiKeyAgentScope` here (unlike
+ * `/logs/search` and `/logs/export`) because that check needs an `agentId`
+ * up front, and this route only learns the agent after the trace lookup.
+ * Equivalent isolation still holds: `apiKeyWorkspaceId(req)` is passed as
+ * `workspaceId` below, so `getTraceDetail`'s `enforceWorkspaceScope` call
+ * rejects the request with the same `wrong_workspace` 403 the moment the
+ * resolved agent's actual workspace doesn't match the key's bound one.
+ */
+router.get(
+  "/traces/:traceId",
+  asyncHandler(async (req, res) => {
+    const traceId = typeof req.params.traceId === "string" ? req.params.traceId.trim() : "";
+    const workspaceId = req.apiKey
+      ? apiKeyWorkspaceId(req)
+      : typeof req.query.workspaceId === "string"
+        ? req.query.workspaceId.trim()
+        : null;
+
+    try {
+      const result = await traceQuery.getTraceDetail(traceId, req.user, { workspaceId });
+      res.json(result);
+    } catch (error) {
+      sendLogError(res, error);
+    }
+  }),
+);
+
+module.exports = router;

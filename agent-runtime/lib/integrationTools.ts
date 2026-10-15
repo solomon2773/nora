@@ -841,7 +841,7 @@ function getEmailConfig(integration = {}) {
   };
 }
 
-export function assertEmailTransportSecurity(email = {}) {
+function assertEmailTransportSecurity(email = {}) {
   if (email?.imap?.secure !== true) {
     throw new Error("Email IMAP TLS is required; enable TLS and use a TLS-capable endpoint");
   }
@@ -3142,6 +3142,8 @@ module.exports = {
   buildSafeIntegrationSummary,
   buildIntegrationSkillMarkdown,
   buildIntegrationToolExecutionMetadata,
+  deriveGatewayDeviceIdentity,
+  buildGatewayConnectDevice,
   assertEmailTransportSecurity,
   executeIntegrationToolInvocation,
   getExecutableIntegrationTools,

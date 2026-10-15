@@ -161,7 +161,7 @@ export default function LogViewer({
       >
         {logs.length === 0 && <p className="text-slate-600 italic">Waiting for logs...</p>}
         {logs.map((log, i) => (
-          <div key={i} className="flex gap-2 hover:bg-white/[0.02] px-1 -mx-1 rounded">
+          <div key={i} className="flex items-start gap-2 hover:bg-white/[0.02] px-1 -mx-1 rounded">
             {log.timestamp && (
               <span className="text-slate-600 shrink-0">
                 {new Date(log.timestamp).toLocaleTimeString()}
@@ -175,13 +175,13 @@ export default function LogViewer({
               </span>
             )}
             <span
-              className={
+              className={`min-w-0 flex-1 whitespace-pre-wrap break-words ${
                 log.type === "system"
                   ? "text-cyan-400"
                   : log.type === "error"
                     ? "text-red-400"
                     : "text-slate-300"
-              }
+              }`}
             >
               {log.message}
             </span>

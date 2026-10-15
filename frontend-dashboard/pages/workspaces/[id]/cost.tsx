@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import CostBreakdown from "../../../components/CostBreakdown";
 import Layout from "../../../components/layout/Layout";
+import WorkspaceBackLink from "../../../components/workspaces/WorkspaceBackLink";
 import { useToast } from "../../../components/Toast";
 import { useI18n } from "../../../lib/i18n";
 import {
@@ -135,6 +136,10 @@ export default function WorkspaceCostPage() {
   return (
     <Layout>
       <div className="flex flex-col gap-10">
+        <WorkspaceBackLink
+          href={workspaceId ? `/workspaces/${workspaceId}/settings` : "/workspaces"}
+          label="Back to workspace settings"
+        />
         <header className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 sm:gap-6 p-5 sm:p-8 md:p-10 rounded-2xl sm:rounded-[2rem] md:rounded-[3rem] bg-white border border-slate-200 shadow-2xl shadow-slate-200/50">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center justify-center text-emerald-600 shadow-sm">

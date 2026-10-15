@@ -8,7 +8,8 @@ const { promisify } = require("util");
 const { gzip, createGzip } = require("zlib");
 
 const tar = require("tar-stream");
-const { Client: SshClient } = require("ssh2");
+
+const objectStorage = require("../agent-runtime/lib/objectStorage");
 
 const db = require("./db");
 const billing = require("./billing");
@@ -253,327 +254,69 @@ function sha256Hex(buffer) {
   return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
-function assertLocalStoragePath(storageKey, config = {}) {
-  const root = path.resolve(config.localPath || "/var/lib/nora-backups");
-  const resolved = path.resolve(root, storageKey);
-  if (!resolved.startsWith(`${root}${path.sep}`)) {
-    throw createHttpError("Invalid backup storage key", 500);
-  }
-  return resolved;
-}
-
 function throwIfAborted(signal, where = "operation") {
-  if (signal?.aborted) {
-    const reason = signal.reason instanceof Error ? signal.reason : new Error(`${where} aborted`);
-    if (!reason.statusCode) reason.statusCode = 499;
-    throw reason;
+  objectStorage.throwIfAborted(signal, where);
+}
+
+/**
+ * Translate a backend-neutral StorageError from `objectStorage` into the
+ * HTTP-shaped errors backups.ts callers (and routes/backups.ts's error
+ * handler, which reads `statusCode`/`code`/`expose`) have always expected.
+ * Every code/message/statusCode pairing here matches exactly what the
+ * pre-extraction inline storage functions used to throw, so this refactor
+ * changes where the logic lives, not what a caller observes.
+ */
+function translateStorageError(error) {
+  if (!(error instanceof objectStorage.StorageError)) return error;
+  switch (error.code) {
+    case "STORAGE_INVALID_KEY":
+      return createHttpError("Invalid backup storage key", 500);
+    case "STORAGE_S3_NOT_CONFIGURED":
+      return createHttpError(
+        "S3 backup storage is not fully configured",
+        503,
+        "BACKUP_S3_NOT_CONFIGURED",
+        { expose: true },
+      );
+    case "STORAGE_SSH_NOT_CONFIGURED":
+      return createHttpError(
+        error.detail === "credential"
+          ? "SSH backup storage requires a private key or password"
+          : "SSH backup storage requires a host and username",
+        503,
+        "BACKUP_SSH_NOT_CONFIGURED",
+        { expose: true },
+      );
+    case "STORAGE_REQUEST_FAILED":
+      return createHttpError(error.message, 502);
+    default:
+      return error;
   }
-}
-
-async function putLocalObject(storageKey, buffer, config = {}, { signal } = {}) {
-  throwIfAborted(signal, "backup write");
-  const target = assertLocalStoragePath(storageKey, config);
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, buffer, { mode: 0o600, signal });
-}
-
-async function getLocalObject(storageKey, config = {}, { signal } = {}) {
-  throwIfAborted(signal, "backup read");
-  return fs.readFile(assertLocalStoragePath(storageKey, config), { signal });
-}
-
-async function deleteLocalObject(storageKey, config = {}, { signal } = {}) {
-  throwIfAborted(signal, "backup delete");
-  try {
-    await fs.unlink(assertLocalStoragePath(storageKey, config));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-}
-
-// S3-compatible storage
-
-function hmac(key, value, encoding = null) {
-  const digest = crypto.createHmac("sha256", key).update(value, "utf8");
-  return encoding ? digest.digest(encoding) : digest.digest();
-}
-
-function hashHex(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-function s3Config(config = {}) {
-  const bucket = config.s3Bucket;
-  const region =
-    config.storageBackend === "r2" && (!config.s3Region || config.s3Region === "us-east-1")
-      ? "auto"
-      : config.s3Region || "us-east-1";
-  const accessKeyId = config.s3AccessKeyId;
-  const secretAccessKey = config.s3SecretAccessKey;
-  const sessionToken = config.s3SessionToken;
-  const endpoint = String(config.s3Endpoint || "").replace(/\/+$/, "");
-  if (!bucket || !accessKeyId || !secretAccessKey) {
-    throw createHttpError(
-      "S3 backup storage is not fully configured",
-      503,
-      "BACKUP_S3_NOT_CONFIGURED",
-      {
-        expose: true,
-      },
-    );
-  }
-  return { bucket, region, accessKeyId, secretAccessKey, sessionToken, endpoint };
-}
-
-function encodeS3Key(key) {
-  return String(key)
-    .split("/")
-    .map((part) => encodeURIComponent(part))
-    .join("/");
-}
-
-async function s3Request(method, storageKey, body = null, rawConfig = {}, { signal } = {}) {
-  throwIfAborted(signal, "S3 request");
-  const config = s3Config(rawConfig);
-  const payload = body || Buffer.alloc(0);
-  const encodedKey = encodeS3Key(storageKey);
-  const pathStyle = Boolean(config.endpoint);
-  const baseUrl = config.endpoint || `https://${config.bucket}.s3.${config.region}.amazonaws.com`;
-  const parsedBase = new URL(baseUrl);
-  const canonicalUri = pathStyle ? `/${config.bucket}/${encodedKey}` : `/${encodedKey}`;
-  const url = new URL(canonicalUri, baseUrl);
-  const now = new Date();
-  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
-  const dateStamp = amzDate.slice(0, 8);
-  const payloadHash = sha256Hex(payload);
-  const headers = {
-    host: parsedBase.host,
-    "x-amz-content-sha256": payloadHash,
-    "x-amz-date": amzDate,
-  };
-  if (config.sessionToken) headers["x-amz-security-token"] = config.sessionToken;
-  if (method === "PUT") headers["content-type"] = "application/octet-stream";
-
-  const sortedHeaderNames = Object.keys(headers).sort();
-  const canonicalHeaders = sortedHeaderNames
-    .map((name) => `${name}:${String(headers[name]).trim()}\n`)
-    .join("");
-  const signedHeaders = sortedHeaderNames.join(";");
-  const canonicalRequest = [
-    method,
-    canonicalUri,
-    "",
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
-  ].join("\n");
-  const scope = `${dateStamp}/${config.region}/s3/aws4_request`;
-  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, hashHex(canonicalRequest)].join("\n");
-  const signingKey = hmac(
-    hmac(hmac(hmac(`AWS4${config.secretAccessKey}`, dateStamp), config.region), "s3"),
-    "aws4_request",
-  );
-  const signature = crypto.createHmac("sha256", signingKey).update(stringToSign).digest("hex");
-  headers.authorization = `AWS4-HMAC-SHA256 Credential=${config.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-
-  const response = await fetch(url, {
-    method,
-    headers,
-    signal,
-    ...(method === "PUT" ? { body: payload } : {}),
-  });
-  if (!response.ok && !(method === "DELETE" && response.status === 404)) {
-    const message = await response.text().catch(() => "");
-    throw createHttpError(
-      message || `S3 backup storage request failed with ${response.status}`,
-      502,
-    );
-  }
-  if (method === "GET") return Buffer.from(await response.arrayBuffer());
-  return null;
-}
-
-// SSH/SFTP storage
-
-function sshRemoteObjectPath(config = {}, storageKey = "") {
-  const base = path.posix.normalize(
-    String(config.sshRemotePath || "/backups/nora").replace(/\/+$/, ""),
-  );
-  const normalizedKey = String(storageKey).replace(/^\/+/, "");
-  const resolved = path.posix.normalize(path.posix.join(base, normalizedKey));
-  if (base !== "/" && !resolved.startsWith(`${base}/`)) {
-    throw createHttpError("Invalid backup storage key", 500);
-  }
-  return resolved;
-}
-
-function connectSsh(config = {}, { signal } = {}) {
-  if (!config.sshHost || !config.sshUsername) {
-    throw createHttpError(
-      "SSH backup storage requires a host and username",
-      503,
-      "BACKUP_SSH_NOT_CONFIGURED",
-      {
-        expose: true,
-      },
-    );
-  }
-  if (!config.sshPrivateKey && !config.sshPassword) {
-    throw createHttpError(
-      "SSH backup storage requires a private key or password",
-      503,
-      "BACKUP_SSH_NOT_CONFIGURED",
-      { expose: true },
-    );
-  }
-  throwIfAborted(signal, "SSH connect");
-
-  return new Promise((resolve, reject) => {
-    const client = new SshClient();
-    let onAbort;
-    if (signal) {
-      onAbort = () => {
-        try {
-          client.end();
-        } catch {
-          /* best effort */
-        }
-        const reason = signal.reason instanceof Error ? signal.reason : new Error("SSH aborted");
-        if (!reason.statusCode) reason.statusCode = 499;
-        reject(reason);
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-    }
-    const settle = (fn) => (arg) => {
-      if (onAbort) signal.removeEventListener("abort", onAbort);
-      fn(arg);
-    };
-    client
-      .once("ready", () => settle(resolve)(client))
-      .once("error", settle(reject))
-      .connect({
-        host: config.sshHost,
-        port: config.sshPort || 22,
-        username: config.sshUsername,
-        ...(config.sshPrivateKey ? { privateKey: config.sshPrivateKey } : {}),
-        ...(config.sshPassword ? { password: config.sshPassword } : {}),
-        readyTimeout: 30000,
-      });
-  });
-}
-
-function openSftp(client) {
-  return new Promise((resolve, reject) => {
-    client.sftp((error, sftp) => {
-      if (error) return reject(error);
-      resolve(sftp);
-    });
-  });
-}
-
-function sftpMkdir(sftp, directory) {
-  return new Promise((resolve, reject) => {
-    sftp.mkdir(directory, { mode: 0o700 }, (error) => {
-      if (error && error.code !== 4) return reject(error);
-      resolve();
-    });
-  });
-}
-
-async function ensureSftpDirectory(sftp, directory) {
-  const normalized = path.posix.normalize(directory);
-  const parts = normalized.split("/").filter(Boolean);
-  let current = normalized.startsWith("/") ? "/" : "";
-  for (const part of parts) {
-    current = current === "/" ? `/${part}` : current ? `${current}/${part}` : part;
-    await sftpMkdir(sftp, current).catch(() => {});
-  }
-}
-
-function sftpWriteFile(sftp, remotePath, buffer) {
-  return new Promise((resolve, reject) => {
-    sftp.writeFile(remotePath, buffer, { mode: 0o600 }, (error) => {
-      if (error) return reject(error);
-      resolve();
-    });
-  });
-}
-
-function sftpReadFile(sftp, remotePath) {
-  return new Promise((resolve, reject) => {
-    sftp.readFile(remotePath, (error, data) => {
-      if (error) return reject(error);
-      resolve(Buffer.from(data));
-    });
-  });
-}
-
-function sftpUnlink(sftp, remotePath) {
-  return new Promise((resolve, reject) => {
-    sftp.unlink(remotePath, (error) => {
-      if (error && error.code !== 2) return reject(error);
-      resolve();
-    });
-  });
-}
-
-async function withSftp(config, callback, { signal } = {}) {
-  const client = await connectSsh(config, { signal });
-  let onAbort;
-  if (signal) {
-    onAbort = () => {
-      try {
-        client.end();
-      } catch {
-        /* best effort */
-      }
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  }
-  try {
-    const sftp = await openSftp(client);
-    return await callback(sftp);
-  } finally {
-    if (onAbort) signal.removeEventListener("abort", onAbort);
-    client.end();
-  }
-}
-
-async function putSshObject(storageKey, buffer, config = {}, { signal } = {}) {
-  const remotePath = sshRemoteObjectPath(config, storageKey);
-  await withSftp(
-    config,
-    async (sftp) => {
-      await ensureSftpDirectory(sftp, path.posix.dirname(remotePath));
-      await sftpWriteFile(sftp, remotePath, buffer);
-    },
-    { signal },
-  );
-}
-
-async function getSshObject(storageKey, config = {}, { signal } = {}) {
-  const remotePath = sshRemoteObjectPath(config, storageKey);
-  return withSftp(config, (sftp) => sftpReadFile(sftp, remotePath), { signal });
-}
-
-async function deleteSshObject(storageKey, config = {}, { signal } = {}) {
-  const remotePath = sshRemoteObjectPath(config, storageKey);
-  return withSftp(config, (sftp) => sftpUnlink(sftp, remotePath), { signal });
 }
 
 // Storage backend selection
+//
+// The storage primitives themselves (local/S3/R2/SSH put, get, delete, list,
+// and batch delete) now live in ../agent-runtime/lib/objectStorage — shared
+// with worker-provisioner — so backups.ts only owns: reading the DB-backed
+// settings (backupStorageConfig/backupStorageConfigForBackup, the sole
+// callers of platformSettings.getBackupStorageConfig and therefore the sole
+// place that indirectly triggers a decrypt() for backup storage secrets),
+// snapshotting that config onto a backup row for later reads, and mapping
+// objectStorage's plain StorageError into the HTTP-shaped errors this
+// module's callers expect.
 
 async function backupStorageConfig() {
-  return getBackupStorageConfig();
+  return objectStorage.normalizeStorageConfig(await getBackupStorageConfig());
 }
 
 function backupStorageConfigSnapshot(config = {}) {
   return {
     storageBackend: config.storageBackend || "local",
     localPath: config.localPath || "",
-    s3Bucket: config.s3Bucket || "",
-    s3Region: config.s3Region || "",
-    s3Endpoint: config.s3Endpoint || "",
+    bucket: config.bucket || "",
+    region: config.region || "",
+    endpoint: config.endpoint || "",
     sshHost: config.sshHost || "",
     sshPort: config.sshPort || 22,
     sshUsername: config.sshUsername || "",
@@ -589,46 +332,45 @@ function backupStorageConfigSnapshot(config = {}) {
  */
 async function backupStorageConfigForBackup(backup = {}) {
   const config = await backupStorageConfig();
-  const snapshot = normalizeJson(backup.storage_config, {});
+  // storage_config may be a legacy row snapshotted with the old
+  // s3Bucket/s3Region/... field names, or a new row using the canonical
+  // bucket/region/... shape — normalizeStorageConfig accepts either.
+  const snapshot = objectStorage.normalizeStorageConfig(normalizeJson(backup.storage_config, {}));
   return {
     ...config,
     ...snapshot,
     storageBackend: backup.storage_backend || snapshot.storageBackend || config.storageBackend,
-    s3AccessKeyId: config.s3AccessKeyId,
-    s3SecretAccessKey: config.s3SecretAccessKey,
-    s3SessionToken: config.s3SessionToken,
+    accessKeyId: config.accessKeyId,
+    secretAccessKey: config.secretAccessKey,
+    sessionToken: config.sessionToken,
     sshPrivateKey: config.sshPrivateKey,
     sshPassword: config.sshPassword,
   };
 }
 
-async function putStorageObject(storageKey, buffer, config = null, { signal } = {}) {
-  const resolved = config || (await backupStorageConfig());
-  if (resolved.storageBackend === "s3" || resolved.storageBackend === "r2") {
-    return s3Request("PUT", storageKey, buffer, resolved, { signal });
+async function putStorageObject(storageKey, buffer, config, { signal } = {}) {
+  try {
+    return await objectStorage.putStorageObject(storageKey, buffer, config, { signal });
+  } catch (error) {
+    throw translateStorageError(error);
   }
-  if (resolved.storageBackend === "ssh")
-    return putSshObject(storageKey, buffer, resolved, { signal });
-  return putLocalObject(storageKey, buffer, resolved, { signal });
 }
 
-async function getStorageObject(storageKey, config = null, { signal } = {}) {
-  const resolved = config || (await backupStorageConfig());
-  if (resolved.storageBackend === "s3" || resolved.storageBackend === "r2") {
-    return s3Request("GET", storageKey, null, resolved, { signal });
+async function getStorageObject(storageKey, config, { signal } = {}) {
+  try {
+    return await objectStorage.getStorageObject(storageKey, config, { signal });
+  } catch (error) {
+    throw translateStorageError(error);
   }
-  if (resolved.storageBackend === "ssh") return getSshObject(storageKey, resolved, { signal });
-  return getLocalObject(storageKey, resolved, { signal });
 }
 
-async function deleteStorageObject(storageKey, config = null, { signal } = {}) {
+async function deleteStorageObject(storageKey, config, { signal } = {}) {
   if (!storageKey) return;
-  const resolved = config || (await backupStorageConfig());
-  if (resolved.storageBackend === "s3" || resolved.storageBackend === "r2") {
-    return s3Request("DELETE", storageKey, null, resolved, { signal });
+  try {
+    return await objectStorage.deleteStorageObject(storageKey, config, { signal });
+  } catch (error) {
+    throw translateStorageError(error);
   }
-  if (resolved.storageBackend === "ssh") return deleteSshObject(storageKey, resolved, { signal });
-  return deleteLocalObject(storageKey, resolved, { signal });
 }
 
 // Backup records and schedules

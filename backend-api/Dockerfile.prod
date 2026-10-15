@@ -13,6 +13,20 @@ COPY tsconfig.base.json /tsconfig.base.json
 COPY backend-api/ ./
 COPY agent-runtime /agent-runtime
 COPY workers/provisioner/backends /app/backends
+# Logging control plane: routes/agents.ts, routes/workspaces.ts,
+# routes/admin.ts, routes/observability.ts, and logSearch.ts require
+# workers/provisioner/logs/*.ts modules (segment read/delete/migration
+# logic), which in turn require backend-api's own db.ts/monitoring.ts/
+# platformSettings.ts/middleware via `../../../backend-api/*.ts` — mirroring
+# how workers/provisioner/Dockerfile.prod already copies backend-api to
+# /backend-api for the reverse direction. Without both COPY lines below,
+# those requires resolve against nothing and the process crash-loops at
+# boot. NODE_PATH=/app/node_modules (set via docker-compose.yml, inherited
+# by the override/public-prod/public-tls overlays since none of them reset
+# `environment`) lets modules loaded from /backend-api still resolve npm
+# packages like `pg` via this image's own installed node_modules.
+COPY workers/provisioner/logs /workers/provisioner/logs
+COPY backend-api /backend-api
 COPY --chown=root:root infra/container-entrypoint.sh /usr/local/bin/nora-container-entrypoint
 RUN mkdir -p /var/lib/nora-upgrade /var/lib/nora-backups /tmp/nora-home /tmp/npm-cache \
   && chmod 0755 /usr/local/bin/nora-container-entrypoint \

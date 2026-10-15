@@ -715,6 +715,14 @@ if (billing.BILLING_ENABLED) {
   });
 }
 
+// OTLP trace ingest (logging control plane) needs the raw request
+// body — real OTLP/HTTP exporters push `application/x-protobuf` — so it is
+// mounted here, before the global express.json() body parser, exactly like
+// the Stripe webhook above. It authenticates itself per-request via
+// x-nora-ingest-key rather than JWT/session auth, so it does not need
+// authenticateToken or the workspace-membership middleware other routes use.
+app.use("/otlp", require("./routes/otlp"));
+
 app.use(express.json({ limit: "1mb" }));
 app.use(correlationId);
 app.use(require("./middleware/requestMetrics"));
@@ -1307,6 +1315,10 @@ app.use("/agents", require("./routes/nemoclaw"));
 app.use("/agent-migrations", require("./routes/agentMigrations"));
 app.use("/", require("./routes/integrations")); // handles /agents/:id/integrations + /integrations/catalog
 app.use("/", require("./routes/monitoring")); // handles /monitoring/* + /agents/:id/metrics
+// Logging control plane: DELETE /logs (manual deletion, editor+ workspace
+// role) and GET/PUT /admin/log-storage (platform-admin destination setting);
+// see the route file's own header comment.
+app.use("/", require("./routes/observability"));
 app.use("/llm-providers", require("./routes/llmProviders"));
 app.use("/clawhub", require("./routes/clawhub"));
 app.use("/hermes-skills", require("./routes/hermesSkills"));
@@ -1457,6 +1469,46 @@ const LEGACY_COMPATIBILITY_REPAIRS = [
             FROM ranked
            WHERE provider.id = ranked.id
              AND provider.is_default IS DISTINCT FROM (ranked.provider_position = 1);
+        END IF;
+      END
+    $nora$`,
+  },
+  {
+    // An agent now belongs to at most one workspace (UNIQUE(agent_id), added by
+    // a later versioned migration whose own DELETE keeps an arbitrary row).
+    // Run first so the surviving link is deterministic — the oldest by
+    // created_at — and each removed link is recorded in `events`, since the
+    // removal is otherwise silent and irreversible. A no-op once the unique
+    // index exists, because duplicates can no longer be created.
+    name: "dedupe-workspace-agents-oldest-wins",
+    sql: `DO $nora$
+      BEGIN
+        IF to_regclass('workspace_agents') IS NOT NULL AND to_regclass('events') IS NOT NULL THEN
+          WITH ranked AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY agent_id
+                     ORDER BY created_at ASC NULLS LAST, id ASC
+                   ) AS link_position
+              FROM workspace_agents
+          ),
+          removed AS (
+            DELETE FROM workspace_agents AS link
+             USING ranked
+             WHERE link.id = ranked.id
+               AND ranked.link_position > 1
+            RETURNING link.workspace_id, link.agent_id, link.role, link.created_at
+          )
+          INSERT INTO events(type, message, metadata)
+          SELECT 'workspace_agent_link_removed',
+                 'Agent was linked to more than one workspace; kept the oldest link',
+                 jsonb_build_object(
+                   'agentId', removed.agent_id,
+                   'workspaceId', removed.workspace_id,
+                   'role', removed.role,
+                   'linkCreatedAt', removed.created_at
+                 )
+            FROM removed;
         END IF;
       END
     $nora$`,
@@ -2446,6 +2498,238 @@ async function migrateDB(database = db, env = process.env) {
     `ALTER TABLE platform_settings ALTER COLUMN agent_hub_url SET DEFAULT 'https://norafleet.ai'`,
     `UPDATE platform_settings SET agent_hub_url = 'https://norafleet.ai', updated_at = NOW()
        WHERE agent_hub_url = 'https://nora.solomontsao.com'`,
+    // Logging control plane: schema foundation for durable, searchable
+    // runtime/gateway logs and OpenClaw traces. See
+    // plans/logging_control_plane/logging-control-plane-manifest.md for the
+    // full data-model rationale. events has zero indexes today and is already
+    // a full-scan hotspot; the new /app/logs Operator lens increases read load
+    // against it.
+    `CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_events_type ON events(type)`,
+    `CREATE INDEX IF NOT EXISTS idx_events_metadata_gin ON events USING GIN (metadata)`,
+    // log_segments: segment index. storage_backend/storage_config make the
+    // installation's storage destination changeable after setup (reads
+    // resolve per-row against the driver that wrote them), and
+    // encryption_key_id makes NORA_LOG_ENCRYPTION_KEY rotatable — all three
+    // are unreconstructable once segments exist. storage_key is UNIQUE
+    // because a replayed flush after an ungraceful worker death re-derives
+    // the same window-based key; every insert against this table is an
+    // upsert on storage_key, never a bare insert. agent_id deliberately
+    // carries no foreign key: the operator's keep/delete choice at
+    // agent-deletion time must not be pre-empted by a DB-level cascade, and a
+    // plain restricting FK would instead block deleting the agent row while
+    // kept logs still reference it. workspace_id uses ON DELETE SET NULL
+    // (not CASCADE) for the same reason.
+    `CREATE TABLE IF NOT EXISTS log_segments (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL,
+       agent_id UUID NOT NULL,
+       stream TEXT NOT NULL CHECK (stream IN ('runtime', 'gateway')),
+       ts_from TIMESTAMPTZ NOT NULL,
+       ts_to TIMESTAMPTZ NOT NULL,
+       storage_key TEXT NOT NULL UNIQUE,
+       storage_backend TEXT NOT NULL DEFAULT 'local',
+       storage_config JSONB NOT NULL DEFAULT '{}',
+       encryption_key_id TEXT NOT NULL,
+       bytes BIGINT NOT NULL DEFAULT 0,
+       lines INTEGER NOT NULL DEFAULT 0,
+       dropped_lines INTEGER NOT NULL DEFAULT 0,
+       level_counts JSONB NOT NULL DEFAULT '{}',
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_log_segments_workspace_ts
+       ON log_segments(workspace_id, ts_from DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_log_segments_agent_stream_ts
+       ON log_segments(agent_id, stream, ts_from DESC)`,
+    // agent_spans: span storage. Aggregation is the entire point, so spans
+    // live in Postgres rather than segment storage. agent_id carries no
+    // foreign key for the same keep/delete reason as log_segments.agent_id.
+    `CREATE TABLE IF NOT EXISTS agent_spans (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       trace_id TEXT NOT NULL,
+       span_id TEXT NOT NULL,
+       parent_span_id TEXT,
+       workspace_id UUID REFERENCES workspaces(id) ON DELETE SET NULL,
+       agent_id UUID NOT NULL,
+       name TEXT NOT NULL,
+       kind TEXT,
+       started_at TIMESTAMPTZ NOT NULL,
+       duration_ms NUMERIC,
+       status TEXT,
+       model TEXT,
+       provider TEXT,
+       tokens_in INTEGER,
+       tokens_out INTEGER,
+       cost_usd NUMERIC,
+       attrs JSONB NOT NULL DEFAULT '{}',
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_spans_workspace_started
+       ON agent_spans(workspace_id, started_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_spans_trace
+       ON agent_spans(trace_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_agent_spans_agent_name_started
+       ON agent_spans(agent_id, name, started_at DESC)`,
+    // workspace_log_settings: per-workspace logging policy. Every column
+    // resolves through a fallback chain at read time (workspace row when it
+    // exists, platform defaults otherwise) — an agent with no workspace has
+    // no row here by design.
+    `CREATE TABLE IF NOT EXISTS workspace_log_settings (
+       workspace_id UUID PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
+       runtime_retention_days INTEGER NOT NULL DEFAULT 30,
+       trace_retention_days INTEGER NOT NULL DEFAULT 30,
+       gateway_logs_enabled BOOLEAN NOT NULL DEFAULT true,
+       traces_enabled BOOLEAN NOT NULL DEFAULT false,
+       trace_sample_rate NUMERIC NOT NULL DEFAULT 1.0,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    // agent_log_cursors: gateway logs.tail poll cursor. Cursors are not
+    // globally monotonic across source-kind transitions, so tracked per
+    // source kind. Ephemeral collector state, not retained log data, so it
+    // cascades with the agent normally.
+    `CREATE TABLE IF NOT EXISTS agent_log_cursors (
+       agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+       source_kind TEXT NOT NULL CHECK (source_kind IN ('file', 'journal')),
+       cursor TEXT,
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       PRIMARY KEY (agent_id, source_kind)
+     )`,
+    // log_segment_legacy_copies: retained old-destination copies from a
+    // storage-destination migration where the operator chose "keep" over
+    // "delete". log_segment_id is a plain reference (no FK): this row is
+    // deliberately decoupled from log_segments' lifecycle, since the
+    // originating row may later be deleted by retention while this row's own
+    // independently-snapshotted ts_to keeps it alive under its own expiry.
+    `CREATE TABLE IF NOT EXISTS log_segment_legacy_copies (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       log_segment_id UUID NOT NULL,
+       storage_backend TEXT NOT NULL,
+       storage_config JSONB NOT NULL DEFAULT '{}',
+       ts_to TIMESTAMPTZ NOT NULL,
+       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_log_segment_legacy_copies_segment
+       ON log_segment_legacy_copies(log_segment_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_log_segment_legacy_copies_ts_to
+       ON log_segment_legacy_copies(ts_to)`,
+    // deleted_log_owners: snapshot behind the admin-only recovery view for
+    // logs kept after an agent or workspace was deleted. source_id carries no
+    // FK since the source row is gone by the time this is written; the
+    // recovery view joins log_segments/agent_spans against this table by
+    // source_id, never against agents or workspaces.
+    `CREATE TABLE IF NOT EXISTS deleted_log_owners (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       kind TEXT NOT NULL CHECK (kind IN ('agent', 'workspace')),
+       source_id UUID NOT NULL,
+       display_name TEXT,
+       owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+       retention_days INTEGER,
+       deleted_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+       deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_deleted_log_owners_source
+       ON deleted_log_owners(kind, source_id)`,
+    // storage_migration_jobs: progress/resumability record for an
+    // in-progress or completed storage-destination change. checkpoint is the
+    // last processed log_segments.id, read back on worker restart or a
+    // capacity pause so the job resumes rather than reprocesses
+    // already-migrated segments. `paused` (distinct from `failed`) means a
+    // migration into `local` hit the installation's disk-budget cap and will
+    // resume on its own once usage drops back under it.
+    `CREATE TABLE IF NOT EXISTS storage_migration_jobs (
+       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       from_backend TEXT NOT NULL,
+       to_backend TEXT NOT NULL,
+       keep_source BOOLEAN NOT NULL DEFAULT false,
+       status TEXT NOT NULL DEFAULT 'running'
+         CHECK (status IN ('running', 'paused', 'completed', 'failed')),
+       segments_total INTEGER NOT NULL DEFAULT 0,
+       segments_migrated INTEGER NOT NULL DEFAULT 0,
+       checkpoint UUID,
+       started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       completed_at TIMESTAMPTZ
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_storage_migration_jobs_status
+       ON storage_migration_jobs(status)`,
+    // Per-plan log retention ceilings, mirroring backup_plan_limits.
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_retention_plan_limits JSONB NOT NULL DEFAULT '{}'::jsonb`,
+    // Platform-wide log segment storage destination, changeable
+    // after setup exactly like the backup_* columns — see logStorageConfig.ts.
+    // Columns are nullable (unlike the backup_*
+    // columns' NOT NULL DEFAULTs) so "no row has ever been written" is
+    // distinguishable from "explicitly set to local" — logStorageConfig.ts's
+    // readPlatformLogStorageRow() falls back to the NORA_LOG_* env block
+    // whenever log_storage_backend is NULL.
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_backend TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_local_path TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_s3_bucket TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_s3_region TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_s3_endpoint TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_s3_access_key_id_encrypted TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_s3_secret_access_key_encrypted TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_host TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_port INTEGER`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_username TEXT`,
+    `ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS log_storage_ssh_remote_path TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_ssh_private_key_encrypted TEXT`,
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_storage_ssh_password_encrypted TEXT`,
+    // tracing_capability: per-agent fact, not a setting -- whether the last
+    // attempt to enable OTel tracing on THIS agent's own OpenClaw install
+    // actually succeeded (the `diagnostics-otel` plugin requires OpenClaw
+    // plugin API >=2026.9.3; agents on an older version can never satisfy
+    // this no matter what workspace_log_settings.traces_enabled says).
+    // 'unknown' until applyTracingConfig has run against the agent at least
+    // once. Read by the Traces lens to show an honest per-agent reason
+    // instead of a silently empty trace list.
+    `ALTER TABLE agents
+       ADD COLUMN IF NOT EXISTS tracing_capability TEXT NOT NULL DEFAULT 'unknown'
+       CHECK (tracing_capability IN ('unknown', 'supported', 'unsupported'))`,
+    // tracing_openclaw_version: raw `openclaw --version` output captured in
+    // the SAME check as tracing_capability above, purely for diagnostic
+    // display (e.g. "OpenClaw 2026.6.11 — needs >=2026.9.3" in the Traces
+    // lens). Deliberately NOT part of the supported/unsupported decision --
+    // that stays capability-based (did the plugin actually end up enabled),
+    // not a hardcoded version floor, so a manually-updated agent reads
+    // correctly without Nora maintaining a version number anywhere.
+    `ALTER TABLE agents ADD COLUMN IF NOT EXISTS tracing_openclaw_version TEXT`,
+    // tracing_capability_checked_at: throttles how often reconcileTracingConfig
+    // re-runs the plugin install/enable/list check (buildEnableTracingPluginCommand)
+    // against a given agent. Root-caused after a manually-run `openclaw update`
+    // on an agent collided with Nora's own automatic capability check running
+    // concurrently every 30s against the SAME on-disk OpenClaw install/state,
+    // producing a much worse outcome (persisted corruption surviving a
+    // container restart) than an interrupted update alone. Once a verdict is
+    // known, there is no reason to keep re-attempting the network- and
+    // lock-touching plugin install on every single reconcile tick forever —
+    // see TRACING_CAPABILITY_RECHECK_INTERVAL_MS in agentTracing.ts.
+    `ALTER TABLE agents ADD COLUMN IF NOT EXISTS tracing_capability_checked_at TIMESTAMPTZ`,
+    // An agent belongs to at most one workspace, so workspace-scoped settings
+    // (e.g. workspace_log_settings) never have to arbitrate between two
+    // workspaces for the same agent. Installations that predate this rule may
+    // have the same agent_id linked to more than one workspace_id; keep the
+    // most recent link per agent before the constraint is added, so this
+    // stays idempotent and never fails on legacy data.
+    `DELETE FROM workspace_agents a
+       USING workspace_agents b
+      WHERE a.ctid < b.ctid
+        AND a.agent_id = b.agent_id`,
+    `DROP INDEX IF EXISTS idx_workspace_agents_unique`,
+    `DROP INDEX IF EXISTS idx_workspace_agents_agent`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agents_agent_unique
+       ON workspace_agents(agent_id)`,
+    // Whether agent logs are collected at all (NULL = nobody has decided yet) and
+    // the state of a "delete all collected logs" request. Append-only: leave the
+    // statements above untouched.
+    `ALTER TABLE platform_settings
+       ADD COLUMN IF NOT EXISTS log_collection_enabled BOOLEAN,
+       ADD COLUMN IF NOT EXISTS log_collection_updated_at TIMESTAMPTZ,
+       ADD COLUMN IF NOT EXISTS log_purge_job JSONB`,
   ];
 
   return runVersionedMigrations(database, migrations, {

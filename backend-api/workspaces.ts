@@ -161,7 +161,10 @@ async function listWorkspaces(userId) {
 
 /**
  * Assign or update an agent in a workspace, optionally requiring the caller's
- * direct ownership of that agent before the upsert.
+ * direct ownership of that agent before the upsert. An agent belongs to at
+ * most one workspace (enforced by a UNIQUE(agent_id) constraint), so this
+ * rejects assigning an agent that is already linked to a *different*
+ * workspace rather than silently moving it.
  *
  * @param {string} workspaceId - Workspace receiving the agent.
  * @param {string} agentId - Agent being assigned.
@@ -179,15 +182,32 @@ async function addAgent(workspaceId, agentId, role = "member", userId = null) {
   }
 
   const normalizedRole = normalizeAgentRole(role);
-  const result = await db.query(
-    `INSERT INTO workspace_agents(workspace_id, agent_id, role)
-     VALUES($1, $2, $3)
-     ON CONFLICT (workspace_id, agent_id)
-     DO UPDATE SET role = EXCLUDED.role
-     RETURNING *`,
-    [workspaceId, agentId, normalizedRole],
-  );
-  return result.rows[0];
+  try {
+    const result = await db.query(
+      `INSERT INTO workspace_agents(workspace_id, agent_id, role)
+       VALUES($1, $2, $3)
+       ON CONFLICT (agent_id)
+       DO UPDATE SET role = EXCLUDED.role
+       WHERE workspace_agents.workspace_id = EXCLUDED.workspace_id
+       RETURNING *`,
+      [workspaceId, agentId, normalizedRole],
+    );
+    if (!result.rows[0]) {
+      const error = new Error("Agent already belongs to another workspace");
+      error.statusCode = 409;
+      error.code = "agent_already_assigned";
+      throw error;
+    }
+    return result.rows[0];
+  } catch (e) {
+    if (e.code === "23505") {
+      const error = new Error("Agent already belongs to another workspace");
+      error.statusCode = 409;
+      error.code = "agent_already_assigned";
+      throw error;
+    }
+    throw e;
+  }
 }
 
 async function getWorkspaceAgents(workspaceId, userId = null) {
@@ -233,6 +253,8 @@ async function getWorkspaceAgents(workspaceId, userId = null) {
  * @returns {Promise<Array>} Candidate agents with assignment state.
  */
 async function listAgentCandidates(workspaceId, userId) {
+  // An agent belongs to at most one workspace, so an agent already linked to
+  // a *different* workspace is not a valid candidate here.
   const result = await db.query(
     `SELECT a.id, a.name, a.status, a.backend_type, a.runtime_family, a.deploy_target,
             a.execution_target_id, a.sandbox_profile, a.container_name, a.created_at,
@@ -243,6 +265,11 @@ async function listAgentCandidates(workspaceId, userId) {
             ) AS assigned
        FROM agents a
       WHERE a.user_id = $2
+        AND NOT EXISTS (
+              SELECT 1
+                FROM workspace_agents wa
+               WHERE wa.agent_id = a.id AND wa.workspace_id != $1
+            )
       ORDER BY assigned DESC, a.created_at DESC`,
     [workspaceId, userId],
   );

@@ -1,0 +1,994 @@
+// Logging control plane — Runtime lens API client.
+//
+// Typed helpers over `fetchWithAuth`, mirroring `workspaceClient.ts`'s
+// `jsonOrThrow` error-handling shape. Wraps `GET /logs/search` and
+// `GET /logs/export` (`backend-api/routes/observability.ts` +
+// `backend-api/logSearch.ts`) plus a couple of best-effort helpers used to
+// surface the capacity-halt state.
+//
+// Also home to a handful of small, deliberately pure functions (windowing
+// math, capability-state resolution, capacity-window pairing, filename
+// extraction, "is this row's timestamp approximate" check) so they can be
+// unit-tested under this package's actual test runner
+// (`tsx --test lib/*.test.ts` — see package.json). This package has no
+// component-testing harness (no Jest/RTL/jsdom), so anything that needs a
+// DOM or React rendering to verify is exercised manually instead; see
+// observabilityClient.test.ts for exactly which behaviors that applies to.
+
+import { fetchWithAuth } from "./api";
+
+export type LogStream = "runtime" | "gateway";
+export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR" | string;
+export type TsSource = "source" | "collector";
+
+export interface LogLine {
+  ts: string | null;
+  observed_ts: string;
+  ts_source: TsSource;
+  stream: LogStream;
+  level: LogLevel | null;
+  message: string;
+  agentId?: string;
+  workspaceId?: string | null;
+  trace_id?: string | null;
+  span_id?: string | null;
+  session_id?: string | null;
+  channel?: string | null;
+  ord?: number;
+  // Client-only marker for lines appended by the live-tail WebSocket rather
+  // than returned by `/logs/search` — see `RuntimeLens`'s live-tail section
+  // in pages/logs/index.tsx for why this stream is not merged server-side.
+  _live?: boolean;
+}
+
+export interface SearchLogsParams {
+  workspaceId?: string | null;
+  agentId: string;
+  streams?: LogStream[];
+  levels?: string[];
+  from?: string;
+  to?: string;
+  q?: string;
+  traceId?: string;
+  cursor?: string;
+  limit?: number;
+  order?: "asc" | "desc";
+}
+
+export interface SearchLogsResult {
+  lines: LogLine[];
+  nextCursor: string | null;
+  warning?: "recent_lines_unavailable";
+  /** Stored segments that could not be read, so these results may be incomplete. */
+  unreadableSegments?: number;
+}
+
+async function jsonOrThrow<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Request failed (${res.status})`);
+  }
+  return res.json();
+}
+
+function buildLogQuery(params: SearchLogsParams | LogExportParams): URLSearchParams {
+  const query = new URLSearchParams();
+  query.set("agentId", params.agentId);
+  if (params.workspaceId) query.set("workspaceId", params.workspaceId);
+  if (params.streams?.length) query.set("streams", params.streams.join(","));
+  if (params.levels?.length) query.set("levels", params.levels.join(","));
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.q) query.set("q", params.q);
+  return query;
+}
+
+/**
+ * `GET /logs/search` — one agent's merged runtime/gateway timeline.
+ * `agentId` is required: this is intentionally single-agent, not fleet-wide.
+ */
+export async function searchLogs(params: SearchLogsParams): Promise<SearchLogsResult> {
+  const query = buildLogQuery(params);
+  if ("traceId" in params && params.traceId) query.set("traceId", params.traceId);
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.order) query.set("order", params.order);
+  const res = await fetchWithAuth(`/api/logs/search?${query.toString()}`);
+  return jsonOrThrow<SearchLogsResult>(res);
+}
+
+export interface LogExportParams {
+  workspaceId?: string | null;
+  agentId: string;
+  streams?: LogStream[];
+  levels?: string[];
+  from: string;
+  to: string;
+  q?: string;
+  format?: "ndjson" | "csv";
+}
+
+/**
+ * Extracts the filename from a `Content-Disposition: attachment;
+ * filename="..."` header value. Pure and unit-tested — mirrors
+ * `admin-dashboard/pages/audit.tsx`'s `extractFilename`.
+ */
+export function extractFilenameFromContentDisposition(
+  header: string | null,
+  fallback: string,
+): string {
+  if (!header) return fallback;
+  const match = header.match(/filename="([^"]+)"/i);
+  return match?.[1] || fallback;
+}
+
+/**
+ * `GET /logs/export` — downloads the filtered range as NDJSON or CSV,
+ * mirroring the Blob-download pattern already used for agent export
+ * (`pages/agents/[id].tsx`'s `handleExport`).
+ */
+export async function exportLogs(params: LogExportParams): Promise<{ filename: string }> {
+  const query = buildLogQuery(params);
+  if (params.format) query.set("format", params.format);
+  const res = await fetchWithAuth(`/api/logs/export?${query.toString()}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Export failed (${res.status})`);
+  }
+  const disposition = res.headers.get("content-disposition");
+  const filename = extractFilenameFromContentDisposition(
+    disposition,
+    `nora-logs-${new Date().toISOString().replace(/[:.]/g, "-")}.${params.format === "csv" ? "csv" : "ndjson"}`,
+  );
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return { filename };
+}
+
+// ── Capacity status (best-effort) ──────────────────────────────
+//
+// `GET /admin/log-storage` is platform-admin-only
+// (`requireAdmin`) and reports the CURRENT installation-wide capacity state
+// only — not a historical per-range signal. This frontend deliberately does
+// not add a new backend endpoint (the file list is frontend-only), so
+// this call is attempted and silently degrades to `null` for any non-admin
+// actor (403) or transport failure, rather than being treated as available.
+export interface CapacityStatus {
+  usedBytes: number;
+  limitBytes: number;
+  state: "ok" | "warning" | "halted";
+}
+
+/**
+ * The notice for a search that skipped stored segments it could not read (a
+ * lost or replaced encryption key, or files missing after a backup restore).
+ * Null when everything was readable.
+ */
+export function describeUnreadableSegments(count: number | null | undefined): string | null {
+  const n = Number(count || 0);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return (
+    `${n} stored log segment${n === 1 ? "" : "s"} could not be read, so these results may be incomplete. ` +
+    "This usually means the log encryption key changed or the stored files are missing."
+  );
+}
+
+/**
+ * Whether the platform is collecting agent logs at all. Collection is opt-in
+ * (an admin turns it on), so an empty Logs page usually means "off", not
+ * "nothing happened". `decided` is false until someone has chosen. Null when
+ * the answer cannot be read, so callers say nothing rather than guess.
+ */
+export interface LogCollectionStatus {
+  enabled: boolean;
+  decided: boolean;
+}
+
+export async function getLogCollectionStatus(): Promise<LogCollectionStatus | null> {
+  try {
+    const res = await fetchWithAuth("/api/logs/collection-status");
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    if (typeof body?.enabled !== "boolean") return null;
+    return { enabled: body.enabled, decided: Boolean(body.decided) };
+  } catch {
+    return null;
+  }
+}
+
+/** The notice to show above the log views, or null when there is nothing to say. */
+export function describeCollectionOff(
+  status: LogCollectionStatus | null | undefined,
+): { title: string; detail: string } | null {
+  if (!status || status.enabled) return null;
+  return {
+    title: "Log collection is off",
+    detail: status.decided
+      ? "Nora is not saving new agent logs. Logs collected earlier stay searchable until they expire."
+      : "Nora does not save agent logs until an administrator turns collection on.",
+  };
+}
+
+export async function getCurrentCapacityStatus(): Promise<CapacityStatus | null> {
+  try {
+    const res = await fetchWithAuth("/api/admin/log-storage");
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    if (!body?.capacity) return null;
+    return body.capacity as CapacityStatus;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Historical capacity-halt windows, built from the real `events` rows
+ * the retention sweeper writes (`log_storage_capacity_halted` /
+ * `log_storage_capacity_resumed`) via the already-workspace-scoped
+ * `GET /monitoring/events` (which supports `workspaceId` filtering for exactly
+ * this kind of session-side query). This is a REAL signal
+ * — not a guess — but it is installation-wide in origin (the capacity gate
+ * has no per-workspace dimension) and paired chronologically on the client
+ * rather than joined by any shared key, since the events themselves carry
+ * no pairing id. Treat gaps between an unmatched trailing "halted" event and
+ * "now" as still-open windows.
+ */
+export interface CapacityHaltWindow {
+  haltedAt: string;
+  resumedAt: string | null;
+}
+
+async function fetchEventTimestamps(
+  type: string,
+  workspaceId: string | null | undefined,
+): Promise<string[]> {
+  try {
+    const query = new URLSearchParams({ type, limit: "100" });
+    if (workspaceId) query.set("workspaceId", workspaceId);
+    const res = await fetchWithAuth(`/api/monitoring/events?${query.toString()}`);
+    if (!res.ok) return [];
+    const body = await res.json().catch(() => null);
+    const events = Array.isArray(body) ? body : Array.isArray(body?.events) ? body.events : [];
+    return events.map((event: any) => event.created_at).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Pure: pairs sorted halted/resumed timestamps into windows. */
+export function pairCapacityHaltWindows(
+  haltedAt: string[],
+  resumedAt: string[],
+): CapacityHaltWindow[] {
+  const halts = [...haltedAt].sort();
+  const resumes = [...resumedAt].sort();
+  const windows: CapacityHaltWindow[] = [];
+  let resumeIndex = 0;
+  for (const halt of halts) {
+    while (resumeIndex < resumes.length && resumes[resumeIndex] < halt) resumeIndex++;
+    const resumedAtValue = resumeIndex < resumes.length ? resumes[resumeIndex] : null;
+    windows.push({ haltedAt: halt, resumedAt: resumedAtValue });
+    if (resumedAtValue) resumeIndex++;
+  }
+  return windows;
+}
+
+/** Pure: does a capacity-halt window overlap the queried [from, to] range? */
+export function windowOverlapsRange(
+  window: CapacityHaltWindow,
+  from: string | undefined,
+  to: string | undefined,
+): boolean {
+  const windowStart = new Date(window.haltedAt).getTime();
+  const windowEnd = window.resumedAt ? new Date(window.resumedAt).getTime() : Date.now();
+  const rangeStart = from ? new Date(from).getTime() : -Infinity;
+  const rangeEnd = to ? new Date(to).getTime() : Infinity;
+  return windowStart <= rangeEnd && windowEnd >= rangeStart;
+}
+
+export async function fetchCapacityHaltWindows(
+  workspaceId: string | null | undefined,
+  from: string | undefined,
+  to: string | undefined,
+): Promise<CapacityHaltWindow[]> {
+  const [halted, resumed] = await Promise.all([
+    fetchEventTimestamps("log_storage_capacity_halted", workspaceId),
+    fetchEventTimestamps("log_storage_capacity_resumed", workspaceId),
+  ]);
+  const windows = pairCapacityHaltWindows(halted, resumed);
+  return windows.filter((window) => windowOverlapsRange(window, from, to));
+}
+
+// ── Row timestamp approximation marker ─────────────────────────
+
+/** Pure: true when a line's ordering is approximate (collector clock). */
+export function isApproximateTimestamp(line: Pick<LogLine, "ts_source">): boolean {
+  return line.ts_source === "collector";
+}
+
+// ── Row timestamp display ────────────────────────────────────────────────
+
+// Formats a row timestamp as HH:MM:SS.mmm in either the viewer's local zone
+// or UTC. The runtime writes UTC into its own message text, so the lens lets
+// operators line the column up with it instead of silently mixing zones.
+export function formatLogTime(value: string | null | undefined, utc: boolean): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  const pad = (n: number, width = 2) => String(n).padStart(width, "0");
+  const h = utc ? date.getUTCHours() : date.getHours();
+  const m = utc ? date.getUTCMinutes() : date.getMinutes();
+  const s = utc ? date.getUTCSeconds() : date.getSeconds();
+  const ms = utc ? date.getUTCMilliseconds() : date.getMilliseconds();
+  return `${pad(h)}:${pad(m)}:${pad(s)}.${pad(ms, 3)}`;
+}
+
+// Short zone name for the column header ("EDT", "GMT+2"); "UTC" when utc.
+export function logTimeZoneLabel(utc: boolean, at: Date = new Date()): string {
+  if (utc) return "UTC";
+  const part = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+    .formatToParts(at)
+    .find((p) => p.type === "timeZoneName");
+  return part?.value || "Local";
+}
+
+// Leading ISO-8601 timestamp with an explicit zone, optionally bracketed,
+// e.g. "2026-09-14T18:44:09.085+00:00 " or "[2026-09-14 18:44:09Z] ".
+// Zone-less stamps are left alone: their zone is ambiguous, so they can't be
+// proven redundant with the row's `ts`.
+const LEADING_ISO_TIMESTAMP =
+  /^\[?(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2}))\]?\s+/;
+
+export const REDUNDANT_TIMESTAMP_TOLERANCE_MS = 1000;
+
+// Display-only: drops a message's leading timestamp when it is within
+// tolerance of the row's source `ts`, since the time column already shows
+// it. The stored/searched/exported message is never modified. Collector-
+// stamped rows keep the prefix — there the embedded time is the best source
+// timestamp the operator has.
+export function stripRedundantTimestamp(
+  line: Pick<LogLine, "message" | "ts" | "ts_source">,
+  toleranceMs: number = REDUNDANT_TIMESTAMP_TOLERANCE_MS,
+): string {
+  const { message } = line;
+  if (!message || !line.ts || isApproximateTimestamp(line)) return message;
+  const match = LEADING_ISO_TIMESTAMP.exec(message);
+  if (!match) return message;
+  const embedded = Date.parse(match[1].replace(" ", "T"));
+  const rowTs = Date.parse(line.ts);
+  if (Number.isNaN(embedded) || Number.isNaN(rowTs)) return message;
+  if (Math.abs(embedded - rowTs) > toleranceMs) return message;
+  return message.slice(match[0].length);
+}
+
+// ── Capability-state resolution ─────────────────────────────────
+
+export type RuntimeLensCapability = "ok" | "no_gateway_stream" | "k8s_local_unsupported" | "empty";
+
+export interface RuntimeLensCapabilityInput {
+  runtimeSupportsGatewayStream: boolean;
+  streamsFilter: LogStream[];
+  storageBackend: string | null; // null when unknown (non-admin actor)
+  deployTarget: string | null;
+  lineCount: number;
+}
+
+/**
+ * Pure: decides which explicit capability state (if any) should replace a
+ * misleading blank list. Order matters — the Kubernetes+local
+ * misconfiguration is a platform-level condition and takes priority over
+ * the runtime's own gateway-support question.
+ */
+export function resolveRuntimeLensCapability(
+  input: RuntimeLensCapabilityInput,
+): RuntimeLensCapability {
+  if (input.lineCount > 0) return "ok";
+
+  const isKubernetes = (input.deployTarget || "").toLowerCase().startsWith("k8s");
+  if (isKubernetes && input.storageBackend === "local") {
+    return "k8s_local_unsupported";
+  }
+
+  const wantsGatewayOnly =
+    input.streamsFilter.length > 0 && input.streamsFilter.every((stream) => stream === "gateway");
+  if (!input.runtimeSupportsGatewayStream && wantsGatewayOnly) {
+    return "no_gateway_stream";
+  }
+  if (!input.runtimeSupportsGatewayStream && input.streamsFilter.length === 0) {
+    // No explicit stream filter, but this runtime family never emits a
+    // gateway stream at all — still worth naming rather than leaving blank.
+    return "no_gateway_stream";
+  }
+
+  return "empty";
+}
+
+// ── Virtualization math ──────────────────────────────
+//
+// This package has no `react-window`/`@tanstack/react-virtual` dependency, so
+// a small fixed-row-height virtualizer is hand-rolled here rather than adding a
+// new dependency for one table. The windowing math itself is pure and
+// unit-tested; the DOM-mounting side of it lives in `components/logs/LogTable.tsx`.
+// DOM-mounting side of it lives in `components/logs/LogTable.tsx`.
+
+export interface VirtualRange {
+  startIndex: number;
+  endIndex: number; // exclusive
+}
+
+/**
+ * Given a scroll position, viewport height, row height, total row count,
+ * and an overscan margin, returns the inclusive-exclusive index range that
+ * should actually be mounted. Bounded regardless of `totalCount` — this is
+ * what keeps a 50,000-line result set from mounting 50,000 DOM nodes.
+ */
+export function computeVirtualRange(
+  scrollTop: number,
+  viewportHeight: number,
+  rowHeight: number,
+  totalCount: number,
+  overscan = 8,
+): VirtualRange {
+  if (totalCount <= 0 || rowHeight <= 0) return { startIndex: 0, endIndex: 0 };
+  const firstVisible = Math.floor(scrollTop / rowHeight);
+  const visibleCount = Math.ceil(viewportHeight / rowHeight);
+  const startIndex = Math.max(0, firstVisible - overscan);
+  const endIndex = Math.min(totalCount, firstVisible + visibleCount + overscan);
+  return { startIndex, endIndex };
+}
+
+/**
+ * Variable-height counterpart to `computeVirtualRange`, for rows that wrap
+ * (log messages can be any length, so a fixed row height forces either
+ * truncation or overlapping rows). `offsets` is a cumulative-sum array of
+ * length `totalCount + 1` where `offsets[i]` is the top position of row `i`
+ * and `offsets[totalCount]` is the total content height — rows not yet
+ * measured should contribute an estimated height so the array stays
+ * monotonically non-decreasing. Binary search keeps this O(log n) per call
+ * regardless of row count, same bound as the fixed-height version.
+ */
+export function computeVirtualRangeFromOffsets(
+  offsets: number[],
+  scrollTop: number,
+  viewportHeight: number,
+  overscan = 8,
+): VirtualRange {
+  const totalCount = offsets.length - 1;
+  if (totalCount <= 0) return { startIndex: 0, endIndex: 0 };
+
+  const firstVisible = findRowIndexForOffset(offsets, scrollTop, totalCount);
+  const lastVisible = findRowIndexForOffset(offsets, scrollTop + viewportHeight, totalCount);
+
+  const startIndex = Math.max(0, firstVisible - overscan);
+  const endIndex = Math.min(totalCount, lastVisible + 1 + overscan);
+  return { startIndex, endIndex };
+}
+
+// Row index under a vertical position (e.g. the viewport's top edge); -1 for
+// an empty list. Used to record the scroll anchor the lens restores when rows
+// are added or removed above an operator who has scrolled up.
+export function rowIndexAtOffset(offsets: number[], y: number): number {
+  const totalCount = offsets.length - 1;
+  if (totalCount <= 0) return -1;
+  return findRowIndexForOffset(offsets, y, totalCount);
+}
+
+// ── Runtime lens ordering / follow-bottom ────────────────────────────────
+
+// Pixels from the bottom that still count as "at the bottom", so sub-pixel
+// rounding or a small trackpad nudge doesn't silently stop following.
+export const FOLLOW_BOTTOM_THRESHOLD_PX = 40;
+
+export function isScrolledToBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  threshold: number = FOLLOW_BOTTOM_THRESHOLD_PX,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+// Runtime lens rows run oldest → newest (newest at the bottom, like a
+// terminal). Search results arrive newest-first (`order: "desc"`) and live
+// tail lines newest-last, so the search page is reversed and live lines
+// follow it.
+export function orderRuntimeLensLines(searchDesc: LogLine[], live: LogLine[]): LogLine[] {
+  const ordered = new Array<LogLine>(searchDesc.length + live.length);
+  for (let i = 0; i < searchDesc.length; i++) ordered[i] = searchDesc[searchDesc.length - 1 - i];
+  for (let i = 0; i < live.length; i++) ordered[searchDesc.length + i] = live[i];
+  return ordered;
+}
+
+// Best-effort stable identity for a row across list changes (live-tail
+// appends, buffer trimming, re-renders). Not guaranteed unique — callers
+// that need uniqueness (React keys) must add a disambiguator.
+export function logRowIdentity(line: LogLine): string {
+  return `${line._live ? "live" : "search"}:${line.stream}:${line.ord ?? ""}:${line.ts || line.observed_ts}`;
+}
+
+// Returns the row index i such that target falls within [offsets[i], offsets[i+1]),
+// clamped to [0, totalCount - 1] for targets outside the measured range.
+function findRowIndexForOffset(offsets: number[], target: number, totalCount: number): number {
+  let lo = 0;
+  let hi = totalCount - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid + 1] <= target) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+// ── Traces lens — API contract ──────────────────────────────
+//
+// Response shapes for `GET /traces` and `GET /traces/:traceId`
+// (`backend-api/traceQuery.ts`). `normalizeTraceSummary` /
+// `normalizeTraceDetail` / `normalizeSpanRow` / `normalizeCorrelatedLog` are the
+// ONLY places a field-name mismatch should need touching; every component reads
+// through those.
+//
+// Shapes:
+//
+//   GET /traces?workspaceId=&agentId=&from=&to=&cursor=&limit=
+//     -> TraceSummary[] (defensively also accepts `{ traces: [...],
+//        nextCursor }`, mirroring how `searchLogs` above tolerates a bare
+//        array vs. an enveloped result)
+//     TraceSummary: { traceId, startedAt, agentId, rootSpanName,
+//       durationMs, spanCount, status, tokensIn, tokensOut, costUsd }
+//
+//   GET /traces/:traceId
+//     -> { trace: { traceId, agentId, workspaceId, startedAt, durationMs,
+//            status },
+//          spans: SpanRow[],
+//          correlatedLogs: CorrelatedLogRow[] }
+//     SpanRow: { spanId, parentSpanId, name, kind, startedAt, durationMs,
+//       status, model, provider, tokensIn, tokensOut, costUsd }
+//     CorrelatedLogRow: { ts, observedTs, tsSource, stream, level, message,
+//       traceId, spanId, inTrace } — `inTrace: false` marks an untraced
+//       runtime line included because it's in the same agent+time window,
+//       NOT because it belongs to the trace.
+//
+// The normalizers below accept both camelCase field names and their snake_case
+// equivalents (`trace_id`, `started_at`, `span_id`, `parent_span_id`,
+// `tokens_in`, `tokens_out`, `cost_usd`, `observed_ts`/`ts_source`,
+// `in_trace`), since this codebase's other endpoints (`/logs/search`) use
+// snake_case for exactly these concepts. Whichever an endpoint returns, this
+// file keeps working without a component-level change.
+
+/** `GET /workspaces/:id/log-settings` — workspace log settings (workspace-admin only). */
+export interface WorkspaceLogSettings {
+  tracesEnabled: boolean;
+}
+
+export interface TraceSummary {
+  traceId: string;
+  startedAt: string;
+  agentId: string;
+  rootSpanName: string | null;
+  durationMs: number;
+  spanCount: number;
+  status: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+}
+
+export interface SpanRow {
+  spanId: string;
+  parentSpanId: string | null;
+  name: string;
+  kind: string | null;
+  startedAt: string;
+  durationMs: number;
+  status: string | null;
+  model: string | null;
+  provider: string | null;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+}
+
+export interface CorrelatedLogRow {
+  ts: string | null;
+  observedTs: string;
+  tsSource: TsSource;
+  stream: LogStream | string;
+  level: string | null;
+  message: string;
+  traceId: string | null;
+  spanId: string | null;
+  /** false = untraced runtime line included for context (same agent+window), not part of the trace. */
+  inTrace: boolean;
+}
+
+export interface TraceDetail {
+  trace: {
+    traceId: string;
+    agentId: string;
+    workspaceId: string | null;
+    startedAt: string;
+    durationMs: number;
+    status: string | null;
+  };
+  spans: SpanRow[];
+  correlatedLogs: CorrelatedLogRow[];
+}
+
+function num(...candidates: unknown[]): number {
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value)) return value;
+  }
+  return 0;
+}
+
+function str(...candidates: unknown[]): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate) return candidate;
+  }
+  return null;
+}
+
+function normalizeTraceSummary(raw: any): TraceSummary {
+  return {
+    traceId: str(raw.traceId, raw.trace_id) || "",
+    startedAt: str(raw.startedAt, raw.started_at) || "",
+    agentId: str(raw.agentId, raw.agent_id) || "",
+    rootSpanName: str(raw.rootSpanName, raw.root_span_name),
+    durationMs: num(raw.durationMs, raw.duration_ms),
+    spanCount: num(raw.spanCount, raw.span_count),
+    status: str(raw.status),
+    tokensIn: num(raw.tokensIn, raw.tokens_in),
+    tokensOut: num(raw.tokensOut, raw.tokens_out),
+    costUsd: num(raw.costUsd, raw.cost_usd),
+  };
+}
+
+function normalizeSpanRow(raw: any): SpanRow {
+  return {
+    spanId: str(raw.spanId, raw.span_id) || "",
+    parentSpanId: str(raw.parentSpanId, raw.parent_span_id),
+    name: str(raw.name) || "(unnamed span)",
+    kind: str(raw.kind),
+    startedAt: str(raw.startedAt, raw.started_at) || "",
+    durationMs: num(raw.durationMs, raw.duration_ms),
+    status: str(raw.status),
+    model: str(raw.model),
+    provider: str(raw.provider),
+    tokensIn: num(raw.tokensIn, raw.tokens_in),
+    tokensOut: num(raw.tokensOut, raw.tokens_out),
+    costUsd: num(raw.costUsd, raw.cost_usd),
+  };
+}
+
+function normalizeCorrelatedLog(raw: any): CorrelatedLogRow {
+  return {
+    ts: str(raw.ts),
+    observedTs: str(raw.observedTs, raw.observed_ts) || raw.ts || "",
+    tsSource: (str(raw.tsSource, raw.ts_source) as TsSource) || "collector",
+    stream: str(raw.stream) || "runtime",
+    level: str(raw.level),
+    message: str(raw.message) || "",
+    traceId: str(raw.traceId, raw.trace_id),
+    spanId: str(raw.spanId, raw.span_id),
+    inTrace: raw.inTrace ?? raw.in_trace ?? false,
+  };
+}
+
+function normalizeTraceDetail(raw: any): TraceDetail {
+  const rawTrace = raw?.trace || {};
+  return {
+    trace: {
+      traceId: str(rawTrace.traceId, rawTrace.trace_id) || "",
+      agentId: str(rawTrace.agentId, rawTrace.agent_id) || "",
+      workspaceId: str(rawTrace.workspaceId, rawTrace.workspace_id),
+      startedAt: str(rawTrace.startedAt, rawTrace.started_at) || "",
+      durationMs: num(rawTrace.durationMs, rawTrace.duration_ms),
+      status: str(rawTrace.status),
+    },
+    spans: Array.isArray(raw?.spans) ? raw.spans.map(normalizeSpanRow) : [],
+    correlatedLogs: Array.isArray(raw?.correlatedLogs)
+      ? raw.correlatedLogs.map(normalizeCorrelatedLog)
+      : [],
+  };
+}
+
+export interface ListTracesParams {
+  workspaceId?: string | null;
+  agentId: string;
+  from?: string;
+  to?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ListTracesResult {
+  traces: TraceSummary[];
+  nextCursor: string | null;
+  // `GET /traces` embeds the
+  // requesting agent's resolved `tracesEnabled`/`traceSampleRate` directly in
+  // its response (via `agentTracing.resolveTracingSettings`), rather
+  // than requiring a separate call to `GET /workspaces/:id/log-settings`.
+  // That settings endpoint is guarded by `requireWorkspaceRole("admin", "id")`
+  //, so a plain workspace viewer/editor legitimately using the
+  // Traces lens would get a 403 from it and `getWorkspaceTracesEnabled`
+  // would incorrectly resolve to `null` ("unknown" -> CTA shown) even when
+  // tracing is genuinely on. Reading it off this response instead only
+  // requires the same per-agent viewer access this endpoint already needs.
+  // `getWorkspaceTracesEnabled` below is kept for admin-context callers
+  // (e.g. a future settings page) but the Traces lens itself must NOT use it.
+  tracesEnabled: boolean | null;
+  traceSampleRate: number | null;
+  // Per-AGENT fact (not a setting): whether the last attempt to enable OTel
+  // tracing on this specific agent's own OpenClaw install actually
+  // succeeded. Distinct from `tracesEnabled` above, which is only the
+  // workspace-level policy ("should Nora try") -- an agent can have
+  // `tracesEnabled: true` and still be `tracingCapability: "unsupported"`
+  // if its OpenClaw version is too old for the required plugin.
+  // 'unknown' before Nora has attempted this at least once for the agent.
+  tracingCapability: "unknown" | "supported" | "unsupported";
+  // Raw detected `openclaw --version` output, diagnostic-only (see backend
+  // comment) -- `null` when never captured (agent never checked, or an
+  // older backend response with no such field).
+  tracingOpenclawVersion: string | null;
+}
+
+/**
+ * `GET /traces` — trace summaries for one agent's window, plus that agent's
+ * resolved tracing enablement (see `ListTracesResult.tracesEnabled` above).
+ * Mirrors `searchLogs`'s error-handling shape (`jsonOrThrow`) exactly.
+ */
+export async function listTraces(params: ListTracesParams): Promise<ListTracesResult> {
+  const query = new URLSearchParams();
+  query.set("agentId", params.agentId);
+  if (params.workspaceId) query.set("workspaceId", params.workspaceId);
+  if (params.from) query.set("from", params.from);
+  if (params.to) query.set("to", params.to);
+  if (params.cursor) query.set("cursor", params.cursor);
+  if (params.limit) query.set("limit", String(params.limit));
+  const res = await fetchWithAuth(`/api/traces?${query.toString()}`);
+  const body = await jsonOrThrow<any>(res);
+  const rawList = Array.isArray(body) ? body : Array.isArray(body?.traces) ? body.traces : [];
+  const rawTracesEnabled = body?.tracesEnabled ?? body?.traces_enabled;
+  const rawTraceSampleRate = body?.traceSampleRate ?? body?.trace_sample_rate;
+  const rawTracingCapability = body?.tracingCapability ?? body?.tracing_capability;
+  const rawTracingOpenclawVersion = body?.tracingOpenclawVersion ?? body?.tracing_openclaw_version;
+  return {
+    traces: rawList.map(normalizeTraceSummary),
+    nextCursor: body?.nextCursor ?? null,
+    tracesEnabled: typeof rawTracesEnabled === "boolean" ? rawTracesEnabled : null,
+    traceSampleRate: typeof rawTraceSampleRate === "number" ? rawTraceSampleRate : null,
+    tracingCapability:
+      rawTracingCapability === "supported" || rawTracingCapability === "unsupported"
+        ? rawTracingCapability
+        : "unknown",
+    tracingOpenclawVersion:
+      typeof rawTracingOpenclawVersion === "string" ? rawTracingOpenclawVersion : null,
+  };
+}
+
+/**
+ * `GET /traces/:traceId` — span tree plus correlated log lines for one
+ * trace. Mirrors `searchLogs`'s error-handling shape exactly. See the
+ * API contract block above for the field-name caveat.
+ */
+export async function getTraceDetail(
+  traceId: string,
+  workspaceId?: string | null,
+): Promise<TraceDetail> {
+  const query = new URLSearchParams();
+  if (workspaceId) query.set("workspaceId", workspaceId);
+  const qs = query.toString();
+  const res = await fetchWithAuth(
+    `/api/traces/${encodeURIComponent(traceId)}${qs ? `?${qs}` : ""}`,
+  );
+  const body = await jsonOrThrow<any>(res);
+  return normalizeTraceDetail(body);
+}
+
+/**
+ * `GET /workspaces/:id/log-settings` — used ONLY to read
+ * `tracesEnabled` so the Traces lens can show an "enable tracing" CTA
+ * instead of a misleadingly empty list. Best-effort
+ * like `getCurrentCapacityStatus` above: returns `null` (== "unknown") on
+ * any transport failure, 404, or non-boolean
+ * field, rather than guessing. `resolveTracesLensView` below treats `null`
+ * the same as `false` — the "false/unset" language in the spec — so an
+ * unreachable settings endpoint conservatively shows the CTA rather than
+ * silently pretending tracing is on.
+ *
+ * No workspace selected ("My agents (no workspace)") has no workspace-level
+ * setting to check, so this returns `null` immediately in that case too.
+ */
+export async function getWorkspaceTracesEnabled(
+  workspaceId: string | null | undefined,
+): Promise<boolean | null> {
+  if (!workspaceId) return null;
+  try {
+    const res = await fetchWithAuth(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/log-settings`,
+    );
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null);
+    const raw =
+      body?.tracesEnabled ??
+      body?.traces_enabled ??
+      body?.logSettings?.tracesEnabled ??
+      body?.logSettings?.traces_enabled;
+    return typeof raw === "boolean" ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Traces lens view resolution ──────────────────────────────
+
+export type TracesLensView = "enable_cta" | "unsupported" | "unverified" | "empty" | "list";
+
+export interface TracesLensViewInput {
+  /** `null` = unknown (settings fetch failed, 404'd, or no workspace selected). */
+  tracesEnabled: boolean | null;
+  traceCount: number;
+  /** Per-agent capability — see `ListTracesResult.tracingCapability`. */
+  tracingCapability?: "unknown" | "supported" | "unsupported";
+}
+
+/**
+ * Pure: decides which of the five Traces-lens states to render for an
+ * agent that's already selected (the "no agent selected yet" state is
+ * handled separately, one layer up, the same way the Runtime lens does it).
+ * `tracesEnabled !== true` (i.e. `false` OR `null`/unknown) always wins —
+ * that is the literal "false/unset" language in the spec — so a
+ * workspace this frontend can't confirm has tracing on gets the CTA rather
+ * than an empty list that looks like a bug. Only once the workspace-level
+ * policy is confirmed on does the per-agent capability get a say: an agent
+ * whose OpenClaw install can't run the required plugin shows `"unsupported"`
+ * — a distinct, actionable message — rather than an empty list
+ * indistinguishable from "tracing is on, this agent just hasn't done
+ * anything yet".
+ *
+ * `traceCount > 0` wins over `tracingCapability === "unknown"` -- spans
+ * already landed, so capability is proven regardless of what the persisted
+ * verdict currently says. `"unknown"` only produces `"unverified"` (a third
+ * distinct state, separate from both `"unsupported"` and the ordinary
+ * `"empty"`) when there is also nothing to show yet: the capability check
+ * only ever runs against a *running* agent (see `reconcileTracingConfig`'s
+ * `status IN ('running','warning')` filter in agentTracing.ts) -- a stopped
+ * or never-started agent can sit at the `"unknown"` default indefinitely,
+ * which must not look identical to a confirmed-working agent that simply
+ * hasn't produced a trace yet.
+ */
+export function resolveTracesLensView(input: TracesLensViewInput): TracesLensView {
+  if (input.tracesEnabled !== true) return "enable_cta";
+  if (input.tracingCapability === "unsupported") return "unsupported";
+  if (input.traceCount > 0) return "list";
+  if (input.tracingCapability === "unknown") return "unverified";
+  return "empty";
+}
+
+// ── Correlated log partitioning ────────────────────────────────
+
+export interface PartitionedCorrelatedLogs {
+  inTrace: CorrelatedLogRow[];
+  inWindowOnly: CorrelatedLogRow[];
+}
+
+/**
+ * Pure: splits a trace detail's correlated log lines into the ones that
+ * actually belong to the trace vs. the untraced-but-same-window runtime
+ * lines included for context (`inTrace: false` — see the API
+ * contract block). Order within each group is preserved.
+ */
+export function partitionCorrelatedLogs(logs: CorrelatedLogRow[]): PartitionedCorrelatedLogs {
+  const inTrace: CorrelatedLogRow[] = [];
+  const inWindowOnly: CorrelatedLogRow[] = [];
+  for (const log of logs) {
+    (log.inTrace ? inTrace : inWindowOnly).push(log);
+  }
+  return { inTrace, inWindowOnly };
+}
+
+// ── Span waterfall layout math ─────────────────────────────────
+
+const WATERFALL_MIN_WIDTH_PCT = 0.75;
+
+export interface WaterfallSpan {
+  spanId: string;
+  parentSpanId: string | null;
+  name: string;
+  /** Nesting depth from the span's trace root (root = 0). */
+  depth: number;
+  /** Left offset, as a percentage of the trace's total duration. */
+  offsetPct: number;
+  /** Bar width, as a percentage of the trace's total duration. */
+  widthPct: number;
+  startedAt: string;
+  durationMs: number;
+  status: string | null;
+  model: string | null;
+  provider: string | null;
+}
+
+/**
+ * Pure: lays out a trace's span tree for the waterfall visualization —
+ * each span's horizontal offset/width relative to the trace's start and
+ * total duration, plus its nesting depth for indentation. Returns spans in
+ * depth-first, chronological-sibling order (so the array itself is a
+ * legible render order — parent immediately followed by its children,
+ * children ordered by start time), which is why `TraceWaterfall` maps this
+ * array directly into rows rather than re-sorting it.
+ *
+ * A span whose `parentSpanId` doesn't resolve to another span in the same
+ * list (missing, or pointing outside this trace) is treated as a root —
+ * this keeps one malformed row from hiding the rest of the tree.
+ */
+export function computeWaterfallLayout(
+  spans: SpanRow[],
+  traceStartedAt: string,
+  traceDurationMs: number,
+): WaterfallSpan[] {
+  const traceStart = new Date(traceStartedAt).getTime();
+  // Guard divide-by-zero for a zero/negative/unparseable trace duration —
+  // every span collapses to offset 0 rather than NaN/Infinity.
+  const safeDuration =
+    Number.isFinite(traceDurationMs) && traceDurationMs > 0 ? traceDurationMs : 1;
+
+  const byId = new Map(spans.map((span) => [span.spanId, span]));
+  const childrenByParent = new Map<string, SpanRow[]>();
+  const roots: SpanRow[] = [];
+  for (const span of spans) {
+    const parentId = span.parentSpanId && byId.has(span.parentSpanId) ? span.parentSpanId : null;
+    if (parentId) {
+      const siblings = childrenByParent.get(parentId) || [];
+      siblings.push(span);
+      childrenByParent.set(parentId, siblings);
+    } else {
+      roots.push(span);
+    }
+  }
+
+  const byStartTime = (a: SpanRow, b: SpanRow) =>
+    new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime();
+  roots.sort(byStartTime);
+  for (const siblings of childrenByParent.values()) siblings.sort(byStartTime);
+
+  const result: WaterfallSpan[] = [];
+
+  function visit(span: SpanRow, depth: number) {
+    const startOffsetMs = new Date(span.startedAt).getTime() - traceStart;
+    const offsetPct = Math.min(100, Math.max(0, (startOffsetMs / safeDuration) * 100));
+    const rawWidthPct = (Math.max(0, span.durationMs) / safeDuration) * 100;
+    const widthPct = Math.max(WATERFALL_MIN_WIDTH_PCT, Math.min(rawWidthPct, 100 - offsetPct));
+
+    result.push({
+      spanId: span.spanId,
+      parentSpanId: span.parentSpanId,
+      name: span.name,
+      depth,
+      offsetPct,
+      widthPct,
+      startedAt: span.startedAt,
+      durationMs: span.durationMs,
+      status: span.status,
+      model: span.model,
+      provider: span.provider,
+    });
+
+    for (const child of childrenByParent.get(span.spanId) || []) {
+      visit(child, depth + 1);
+    }
+  }
+
+  for (const root of roots) visit(root, 0);
+  return result;
+}

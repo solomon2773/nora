@@ -1,16 +1,32 @@
 import Layout from "../../components/layout/Layout";
 import { useEffect, useState } from "react";
-import { ArrowUpRight, Loader2, Plus, FolderOpen, Trash2, Bot, Users } from "lucide-react";
+import {
+  ArrowUpRight,
+  Loader2,
+  Plus,
+  FolderOpen,
+  Trash2,
+  Bot,
+  Users,
+  Settings,
+} from "lucide-react";
 import { useRouter } from "next/router";
 import { clsx } from "clsx";
 import { fetchWithAuth } from "../../lib/api";
 import { useToast } from "../../components/Toast";
+import ConfirmDialog from "../../components/ConfirmDialog";
 
 export default function Workspaces() {
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  // Workspace delete used to have NO confirmation dialog — the trash icon
+  // called `remove(id)` directly. The backend now also rejects a delete request missing
+  // `deleteLogs`, so this needed both a confirmation step and the explicit
+  // keep-or-delete-logs choice, with no default.
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteLogsChoice, setDeleteLogsChoice] = useState(null);
   const toast = useToast();
   const router = useRouter();
 
@@ -32,7 +48,10 @@ export default function Workspaces() {
 
   const create = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim()) {
+      toast.error("Enter a workspace name first");
+      return;
+    }
     setCreating(true);
     try {
       const res = await fetchWithAuth("/api/workspaces", {
@@ -43,6 +62,9 @@ export default function Workspaces() {
       if (res.ok) {
         setName("");
         load();
+      } else {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body.error || "Failed to create workspace");
       }
     } catch (err) {
       console.error(err);
@@ -51,14 +73,29 @@ export default function Workspaces() {
     setCreating(false);
   };
 
-  const remove = async (id) => {
+  const remove = async (id, deleteLogs) => {
     try {
-      await fetchWithAuth(`/api/workspaces/${id}`, { method: "DELETE" });
+      const res = await fetchWithAuth(`/api/workspaces/${id}`, {
+        method: "DELETE",
+        body: JSON.stringify({ deleteLogs: Boolean(deleteLogs) }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to delete workspace");
+      }
       load();
     } catch (err) {
       console.error(err);
-      toast.error("Failed to delete workspace");
+      toast.error(err.message || "Failed to delete workspace");
     }
+  };
+
+  const confirmDelete = () => {
+    if (!pendingDelete || deleteLogsChoice === null) return;
+    const target = pendingDelete;
+    setPendingDelete(null);
+    setDeleteLogsChoice(null);
+    remove(target.id, deleteLogsChoice);
   };
 
   return (
@@ -137,7 +174,7 @@ export default function Workspaces() {
                     </button>
                     {w.role === "owner" && (
                       <button
-                        onClick={() => remove(w.id)}
+                        onClick={() => setPendingDelete(w)}
                         aria-label={`Delete workspace ${w.name}`}
                         className="p-2.5 rounded-xl hover:bg-red-50 text-slate-400 hover:text-red-500 transition-all"
                       >
@@ -175,12 +212,70 @@ export default function Workspaces() {
                     <ArrowUpRight size={14} />
                     Members
                   </button>
+                  <button
+                    onClick={() => router.push(`/workspaces/${w.id}/settings`)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    <Settings size={14} />
+                    Settings
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="Delete workspace"
+        message={
+          pendingDelete
+            ? `Delete "${pendingDelete.name}"? This removes the workspace and its member/agent assignments. This action cannot be undone.`
+            : "Are you sure?"
+        }
+        confirmLabel="Delete Workspace"
+        confirmDisabled={deleteLogsChoice === null}
+        onConfirm={confirmDelete}
+        onCancel={() => {
+          setPendingDelete(null);
+          setDeleteLogsChoice(null);
+        }}
+      >
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-xs font-bold uppercase tracking-widest text-slate-500">
+            This workspace's logs
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Choose whether to keep or delete the runtime logs for every agent in this workspace.
+            There is no default — pick one before deleting.
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setDeleteLogsChoice(false)}
+              className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${
+                deleteLogsChoice === false
+                  ? "border-blue-500 bg-blue-50 text-blue-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Keep logs
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteLogsChoice(true)}
+              className={`flex-1 rounded-xl border px-3 py-2 text-xs font-bold transition-all ${
+                deleteLogsChoice === true
+                  ? "border-red-500 bg-red-50 text-red-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+              }`}
+            >
+              Delete logs
+            </button>
+          </div>
+        </div>
+      </ConfirmDialog>
     </Layout>
   );
 }

@@ -188,9 +188,12 @@ set_env_value() {
 }
 
 resolve_docker_gid() {
-  if [ -e /var/run/docker.sock ]; then
-    stat -c '%g' /var/run/docker.sock 2>/dev/null ||
-      stat -f '%g' /var/run/docker.sock 2>/dev/null ||
+  # Docker Desktop on macOS exposes the socket as root:root (gid 0) inside its
+  # VM; the host symlink's gid (e.g. "daemon" = 1) is meaningless to containers.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    printf '0\n'
+  elif [ -e /var/run/docker.sock ]; then
+    stat -L -c '%g' /var/run/docker.sock 2>/dev/null ||
       printf '0\n'
   else
     printf '0\n'
@@ -1404,6 +1407,85 @@ if [ -z "$SETUP_MODE" ]; then
   fi
 fi
 
+# Asks the three log-collection questions (on/off, days to keep, local disk
+# cap) and sets NORA_LOG_ENABLED / NORA_LOG_RETENTION_CEILING_DAYS /
+# NORA_LOG_LOCAL_MAX_BYTES / NORA_TRACES_ENABLED for the caller to write out.
+# Reads from /dev/tty, so callers must only use it on an interactive run.
+#
+# $1 is the answer a bare Enter gives: "yes" (fresh install, the recommended
+# choice) or "no" (an upgrade, where nobody should start storing logs by
+# accident).
+prompt_log_collection_settings() {
+  local default_answer="${1:-yes}"
+  # Recommended local cap: the smaller of 10 GB and 20% of free disk (0 when
+  # under 5 GB is free). Reconfigure keeps the operator's previous answers.
+  LOG_RECOMMENDED_BYTES="$(bash infra/ensure-log-env.sh --recommend-bytes .)"
+  NORA_LOG_ENABLED="$(read_env_value "$ENV_FILE" "NORA_LOG_ENABLED" "")"
+  NORA_LOG_LOCAL_MAX_BYTES="$(read_env_value "$ENV_FILE" "NORA_LOG_LOCAL_MAX_BYTES" "")"
+  [[ "$NORA_LOG_LOCAL_MAX_BYTES" =~ ^[0-9]+$ ]] || NORA_LOG_LOCAL_MAX_BYTES=""
+  NORA_LOG_RETENTION_CEILING_DAYS="$(read_env_value "$ENV_FILE" "NORA_LOG_RETENTION_CEILING_DAYS" "30")"
+  # Tracing is off unless an operator already turned it on; setup never asks.
+  NORA_TRACES_ENABLED="$(read_env_value "$ENV_FILE" "NORA_TRACES_ENABLED" "false")"
+  [ "$NORA_TRACES_ENABLED" = "true" ] || NORA_TRACES_ENABLED="false"
+  [[ "$NORA_LOG_RETENTION_CEILING_DAYS" =~ ^[0-9]+$ ]] && [ "$NORA_LOG_RETENTION_CEILING_DAYS" -ge 1 ] ||
+    NORA_LOG_RETENTION_CEILING_DAYS="30"
+
+  printf "  Nora can collect agent runtime and gateway logs and keep them for a set\n"
+  printf "  number of days (workspaces can choose a shorter period in their settings).\n"
+  printf "  Logs are stored encrypted on this server; S3, R2, or SSH storage can be\n"
+  printf "  configured later in Admin → Log Storage (required for Kubernetes agents).\n\n"
+  if [ "$LOG_RECOMMENDED_BYTES" -eq 0 ] && [ -z "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
+    warn "Less than 5 GB of free disk — log collection is not recommended here."
+    printf "  Enable log collection? [y/N] "
+    read -r log_enabled_answer < /dev/tty
+    [[ "$log_enabled_answer" =~ ^[Yy]$ ]] && NORA_LOG_ENABLED="true" || NORA_LOG_ENABLED="false"
+  elif [ "$NORA_LOG_ENABLED" = "false" ] || [ "$default_answer" = "no" ]; then
+    printf "  Enable log collection? (recommended) [y/N] "
+    read -r log_enabled_answer < /dev/tty
+    [[ "$log_enabled_answer" =~ ^[Yy]$ ]] && NORA_LOG_ENABLED="true" || NORA_LOG_ENABLED="false"
+  else
+    printf "  Enable log collection? (recommended) [Y/n] "
+    read -r log_enabled_answer < /dev/tty
+    [[ "$log_enabled_answer" =~ ^[Nn]$ ]] && NORA_LOG_ENABLED="false" || NORA_LOG_ENABLED="true"
+  fi
+
+  if [ "$NORA_LOG_ENABLED" = "true" ]; then
+    while true; do
+      printf "  Keep logs for how many days? [%s]: " "$NORA_LOG_RETENTION_CEILING_DAYS"
+      read -r log_days_answer < /dev/tty
+      log_days_answer="${log_days_answer:-$NORA_LOG_RETENTION_CEILING_DAYS}"
+      if [[ "$log_days_answer" =~ ^[0-9]+$ ]] && [ "$log_days_answer" -ge 1 ] && [ "$log_days_answer" -le 3650 ]; then
+        break
+      fi
+      warn "Enter a whole number of days between 1 and 3650."
+    done
+    NORA_LOG_RETENTION_CEILING_DAYS="$log_days_answer"
+    if [ -n "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
+      log_default_gb=$(( (NORA_LOG_LOCAL_MAX_BYTES + 1073741823) / 1073741824 ))
+    else
+      log_default_gb=$(( LOG_RECOMMENDED_BYTES / 1073741824 ))
+    fi
+    [ "$log_default_gb" -ge 1 ] || log_default_gb=1
+    while true; do
+      printf "  Max disk space for logs in GB [%s]: " "$log_default_gb"
+      read -r log_gb_answer < /dev/tty
+      log_gb_answer="${log_gb_answer:-$log_default_gb}"
+      if [[ "$log_gb_answer" =~ ^[0-9]+$ ]] && [ "$log_gb_answer" -ge 1 ]; then
+        break
+      fi
+      warn "Enter a whole number of GB (1 or more)."
+    done
+    NORA_LOG_LOCAL_MAX_BYTES=$(( log_gb_answer * 1073741824 ))
+    ok "Log collection enabled — kept ${NORA_LOG_RETENTION_CEILING_DAYS} days, local cap ${log_gb_answer} GB (collection pauses when full)"
+  else
+    if [ -z "$NORA_LOG_LOCAL_MAX_BYTES" ]; then
+      NORA_LOG_LOCAL_MAX_BYTES="$LOG_RECOMMENDED_BYTES"
+      [ "$NORA_LOG_LOCAL_MAX_BYTES" -ge 1073741824 ] || NORA_LOG_LOCAL_MAX_BYTES=1073741824
+    fi
+    info "Log collection disabled — set NORA_LOG_ENABLED=true in .env to turn it on later"
+  fi
+}
+
 if [ "$SETUP_MODE" = "update" ]; then
   if [ ! -f "$ENV_FILE" ]; then
     error "Update mode requires an existing $ENV_FILE. Run setup without --update for first install."
@@ -1472,6 +1554,18 @@ if [ "$SETUP_MODE" = "update" ]; then
   ensure_agent_hub_hash_secret_env "$ENV_FILE"
   ensure_api_key_hash_secret_env "$ENV_FILE"
   ensure_backup_encryption_key_env "$ENV_FILE"
+  # First upgrade onto log collection: ask once, on a terminal. Unattended runs
+  # (cron, CI, the one-click upgrade) cannot ask, so they leave
+  # NORA_LOG_ENABLED unset and collection stays off until an admin decides.
+  if [ -z "$(read_env_value "$ENV_FILE" "NORA_LOG_ENABLED" "")" ] &&
+    [ -t 0 ] && [ -t 1 ] && [ "${NORA_SETUP_NONINTERACTIVE:-}" != "1" ]; then
+    header "Log Collection"
+    prompt_log_collection_settings no
+    set_env_value "$ENV_FILE" "NORA_LOG_ENABLED" "$NORA_LOG_ENABLED"
+    set_env_value "$ENV_FILE" "NORA_LOG_RETENTION_CEILING_DAYS" "$NORA_LOG_RETENTION_CEILING_DAYS"
+    set_env_value "$ENV_FILE" "NORA_LOG_LOCAL_MAX_BYTES" "$NORA_LOG_LOCAL_MAX_BYTES"
+  fi
+  bash infra/ensure-log-env.sh "$ENV_FILE"
   materialize_compose_secret_files "$ENV_FILE"
   stamp_release_tracking_env "$ENV_FILE"
   bash infra/render-public-nginx.sh "$ENV_FILE" "$compose_file_value"
@@ -1520,6 +1614,12 @@ NORA_BACKUP_ENCRYPTION_KEY="$(read_env_value "$ENV_FILE" "NORA_BACKUP_ENCRYPTION
 [[ "$NORA_BACKUP_ENCRYPTION_KEY" =~ ^[0-9a-fA-F]{64}$ ]] || NORA_BACKUP_ENCRYPTION_KEY=$(openssl rand -hex 32)
 NORA_AGENT_HUB_API_KEY_HASH_SECRET="$(read_env_value "$ENV_FILE" "NORA_AGENT_HUB_API_KEY_HASH_SECRET" "")"
 [[ "$NORA_AGENT_HUB_API_KEY_HASH_SECRET" =~ ^[0-9a-fA-F]{64}$ ]] || NORA_AGENT_HUB_API_KEY_HASH_SECRET=$(openssl rand -hex 32)
+# The log key may hold a comma-separated rotation ring, so any existing value
+# is kept as-is; replacing it would make every stored log segment unreadable.
+NORA_LOG_ENCRYPTION_KEY="$(read_env_value "$ENV_FILE" "NORA_LOG_ENCRYPTION_KEY" "")"
+[ -n "$NORA_LOG_ENCRYPTION_KEY" ] || NORA_LOG_ENCRYPTION_KEY=$(openssl rand -hex 32)
+NORA_OTLP_INGEST_SECRET="$(read_env_value "$ENV_FILE" "NORA_OTLP_INGEST_SECRET" "")"
+[ -n "$NORA_OTLP_INGEST_SECRET" ] || NORA_OTLP_INGEST_SECRET=$(openssl rand -hex 32)
 NORA_API_KEY_HASH_SECRET="$(read_env_value "$ENV_FILE" "NORA_API_KEY_HASH_SECRET" "")"
 if [ -z "$NORA_API_KEY_HASH_SECRET" ]; then
   if [ -f "$ENV_FILE" ]; then
@@ -1537,6 +1637,8 @@ ok "JWT_SECRET            (64-char hex)"
 ok "ENCRYPTION_KEY        (64-char hex — AES-256-GCM)"
 ok "BACKUP_ENCRYPTION_KEY (64-char hex — managed backup archives)"
 ok "AGENT_HUB_HASH        (64-char hex)"
+ok "LOG_ENCRYPTION_KEY    (64-char hex — stored log segments)"
+ok "OTLP_INGEST_SECRET    (64-char hex — agent trace-ingest keys)"
 ok "API_KEY_HASH          (preserved primary/fallback secret)"
 ok "DB_PASSWORD           (48-char hex)"
 
@@ -1737,6 +1839,12 @@ fi
 
 ENABLED_BACKENDS="$(IFS=,; echo "${enabled_backends[*]}")"
 ok "Enabled backends: ${ENABLED_BACKENDS}"
+
+# ── Log collection ───────────────────────────────────────────
+
+header "Log Collection"
+
+prompt_log_collection_settings
 
 enabled_runtime_families=()
 [ "$OPENCLAW_RUNTIME_ENABLED" = "true" ] && enabled_runtime_families+=("openclaw")
@@ -2022,6 +2130,10 @@ ENCRYPTION_KEY=${ENCRYPTION_KEY}
 NORA_BACKUP_ENCRYPTION_KEY=${NORA_BACKUP_ENCRYPTION_KEY}
 NORA_AGENT_HUB_API_KEY_HASH_SECRET=${NORA_AGENT_HUB_API_KEY_HASH_SECRET}
 NORA_API_KEY_HASH_SECRET=${NORA_API_KEY_HASH_SECRET}
+# Encrypts stored logs. Keep a copy with your .env backup: a new key cannot
+# read logs written under the old one, including logs stored in S3/R2/SSH.
+NORA_LOG_ENCRYPTION_KEY=${NORA_LOG_ENCRYPTION_KEY}
+NORA_OTLP_INGEST_SECRET=${NORA_OTLP_INGEST_SECRET}
 
 # ── Bootstrap Admin Account (optional; seeded only when both are set securely) ──
 DEFAULT_ADMIN_EMAIL=${DEFAULT_ADMIN_EMAIL_ENV}
@@ -2223,6 +2335,16 @@ NEMOCLAW_DEFAULT_MODEL=nvidia/nemotron-3-super-120b-a12b
 # clusters, build/preload nora-nemoclaw-agent:local and override this value.
 NEMOCLAW_SANDBOX_IMAGE=${NEMOCLAW_SANDBOX_IMAGE}
 
+# ── Log collection (storage destination: Admin → Log Storage) ──
+NORA_LOG_ENABLED=${NORA_LOG_ENABLED}
+NORA_LOG_LOCAL_MAX_BYTES=${NORA_LOG_LOCAL_MAX_BYTES}
+# Platform-wide maximum days logs and traces are kept. Workspaces can choose
+# a shorter period in their settings, never a longer one.
+NORA_LOG_RETENTION_CEILING_DAYS=${NORA_LOG_RETENTION_CEILING_DAYS}
+# Platform-wide OpenClaw trace collection. Leave off for now: it needs a newer
+# OpenClaw than Nora currently deploys.
+NORA_TRACES_ENABLED=${NORA_TRACES_ENABLED}
+
 # ── Security ─────────────────────────────────────────────────
 CORS_ORIGINS=${CORS_ORIGINS}
 
@@ -2255,7 +2377,7 @@ else
   printf "  Admin:        Not pre-seeded (create via signup)\n"
   printf "  Password:     Not set\n"
 fi
-printf "  Secrets:      auto-generated (JWT, AES, backups, Agent Hub)\n"
+printf "  Secrets:      auto-generated (JWT, AES, backups, Agent Hub, logs)\n"
 printf "  Database:     PostgreSQL 15 (Docker Compose)\n"
 printf "  DB Access:    %s / auto-generated / %s (.env)\n" "$DB_USER" "$DB_NAME"
 printf "  Redis:        Redis 7 (Docker Compose)\n"
@@ -2282,6 +2404,11 @@ fi
 printf "  Families:     %s\n" "$ENABLED_RUNTIME_FAMILIES"
 printf "  Backends:     %s\n" "$ENABLED_BACKENDS"
 printf "  Sandboxes:    %s\n" "$ENABLED_SANDBOX_PROFILES"
+if [ "$NORA_LOG_ENABLED" = "true" ]; then
+  printf "  Logs:         on — kept %s days, up to %s GB on this server\n" "$NORA_LOG_RETENTION_CEILING_DAYS" "$(( NORA_LOG_LOCAL_MAX_BYTES / 1073741824 ))"
+else
+  printf "  Logs:         off\n"
+fi
 
 if [ -n "$GOOGLE_CLIENT_ID" ] || [ -n "$GITHUB_CLIENT_ID" ]; then
   providers=""
@@ -2354,6 +2481,9 @@ fi
 echo ""
 
 info "Next: sign in, add an LLM provider in Settings, then open Deploy when you're ready to create your first agent."
+echo ""
+warn "Back up .env somewhere off this server. It holds the keys for encrypted"
+warn "backups and logs (NORA_BACKUP_ENCRYPTION_KEY, NORA_LOG_ENCRYPTION_KEY)."
 
 echo ""
 info "Useful commands:"

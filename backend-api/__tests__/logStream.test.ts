@@ -204,6 +204,41 @@ describe("log stream websocket auth", () => {
     ws.close();
   });
 
+  // Regression guard: docker.ts/k8s.ts
+  // no longer default an absent `tail` to 100 (they now treat "no tail
+  // passed" as unlimited, for the new collector's reconnect path). The live
+  // WebSocket viewer must keep its historical "last 100 lines on connect"
+  // behavior by passing `tail: 100` explicitly at this call site rather than
+  // relying on the adapters' former implicit default.
+  it("requests exactly the last 100 lines from containerManager.logs, unaffected by the adapter tail-default fix", async () => {
+    const logStream = new PassThrough();
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "agent-tail-regression",
+          name: "Tail Regression Agent",
+          status: "running",
+          container_id: "oclaw-agent-tail-regression",
+          backend_type: "docker",
+          deploy_target: "docker",
+          user_id: "owner-1",
+        },
+      ],
+    });
+    mockContainerManager.status.mockResolvedValueOnce({ running: true });
+    mockContainerManager.logs.mockResolvedValueOnce(logStream);
+
+    const ws = openLogStream("agent-tail-regression", { id: "admin-1", role: "admin" });
+    await flushAsyncWork();
+
+    expect(mockContainerManager.logs).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "agent-tail-regression" }),
+      { follow: true, tail: 100 },
+    );
+
+    ws.close();
+  });
+
   it("surfaces backend log stream errors to the websocket client", async () => {
     const logStream = new PassThrough();
     mockDb.query.mockResolvedValueOnce({
@@ -648,6 +683,66 @@ describe("log stream websocket auth", () => {
       ws.close();
     },
   );
+
+  // ── Shared parser wire-format regression guard ───────────────────────────
+  // attachLogStream consumes agent-runtime/lib/logLine.ts's
+  // parseContainerLogChunk instead of an inline parsing block. The browser
+  // contract — { type: "log", timestamp, level, message } — must not change
+  // shape, even though the parser now fixes the level-inference and
+  // timestamp-fabrication bugs described in the logging control plane
+  // manifest.
+  it("emits { type, timestamp, level, message } log messages via the shared parser", async () => {
+    const logStream = new PassThrough();
+    const dbRow = {
+      id: "agent-wire-format",
+      name: "Wire Format Agent",
+      status: "running",
+      container_id: "oclaw-agent-wire-format",
+      backend_type: "docker",
+      deploy_target: "docker",
+      user_id: "owner-1",
+    };
+    mockDb.query.mockResolvedValue({ rows: [dbRow] });
+    mockContainerManager.status.mockResolvedValue({ running: true });
+    mockContainerManager.logs.mockResolvedValue(logStream);
+
+    const ws = openLogStream(dbRow.id, { id: "owner-1", role: "user" });
+    await flushAsyncWork();
+
+    logStream.emit(
+      "data",
+      Buffer.from(
+        "2026-08-14T14:32:01.482Z tool exec failed: exit 1\nan unparseable line with no timestamp\n",
+        "utf8",
+      ),
+    );
+    await flushAsyncWork();
+
+    const logMessages = ws.sent.filter((m) => m.type === "log");
+    expect(logMessages).toHaveLength(2);
+
+    for (const message of logMessages) {
+      expect(Object.keys(message).sort()).toEqual(["level", "message", "timestamp", "type"]);
+    }
+
+    expect(logMessages[0]).toEqual({
+      type: "log",
+      timestamp: "2026-08-14T14:32:01.482Z",
+      level: "INFO",
+      message: "tool exec failed: exit 1",
+    });
+
+    // Unparseable timestamp: never fabricated onto the `ts` field internally,
+    // but the wire `timestamp` still gets a real (collector-observed) value —
+    // this is the same externally-visible fallback the old inline code had,
+    // just sourced from `observed_ts` rather than a second `new Date()` call.
+    expect(logMessages[1].message).toBe("an unparseable line with no timestamp");
+    expect(logMessages[1].level).toBe("INFO");
+    expect(typeof logMessages[1].timestamp).toBe("string");
+    expect(Number.isNaN(Date.parse(logMessages[1].timestamp))).toBe(false);
+
+    ws.close();
+  });
 
   it.each(["stopped", "warning", "error"])(
     "still corrects a stale '%s' status when the container is observed live",
