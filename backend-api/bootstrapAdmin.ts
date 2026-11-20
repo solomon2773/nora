@@ -63,7 +63,7 @@ function isSignupEnabled(value = process.env.SIGNUP_ENABLED) {
  * @returns {Object} Seed decision, normalized email, and reason.
  */
 function getBootstrapAdminSeedConfig({ adminEmail, adminPassword }) {
-  const normalizedEmail = typeof adminEmail === "string" ? adminEmail.trim() : "";
+  const normalizedEmail = typeof adminEmail === "string" ? adminEmail.trim().toLowerCase() : "";
   const password = typeof adminPassword === "string" ? adminPassword : "";
 
   if (!normalizedEmail || !password) {

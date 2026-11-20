@@ -75,4 +75,18 @@ describe("bootstrap admin policy", () => {
       reason: "ok",
     });
   });
+
+  it("lowercases the email so the seeded account matches the login lookup", () => {
+    expect(
+      getBootstrapAdminSeedConfig({
+        adminEmail: "  Admin@Example.COM ",
+        adminPassword: "supersecure12",
+      }),
+    ).toEqual({
+      shouldSeed: true,
+      email: "admin@example.com",
+      password: "supersecure12",
+      reason: "ok",
+    });
+  });
 });
