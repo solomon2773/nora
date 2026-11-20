@@ -51,6 +51,13 @@ which carries the full notes and verification details.
   the same pooler-safe mechanism the migration runner already used. Session-level advisory
   locks still work best on a direct (unpooled) connection; the environment-variable docs now
   say so next to `DATABASE_URL`. Reported with a full diagnosis by @rileydev (#453).
+- **Remote-docker Hermes agents now return the `connect` block** (runtime API URL and key,
+  dashboard URL and basic-auth credentials) from `GET /api/agents/:id/hermes-ui`, built from the
+  host and published ports the worker persisted at deploy time. Previously only local-Docker
+  agents returned it, leaving no control-plane path to recover a remote agent's runtime
+  credentials. When the placement supports a connect block but the key cannot be resolved, the
+  response now carries an explicit `apiKeyIssue` reason instead of a silently null credential.
+  Reported with a full diagnosis by @rileydev (#456).
 
 ## [v1.22.0](https://github.com/solomon2773/nora/releases/tag/v1.22.0) — 2026-09-16
 

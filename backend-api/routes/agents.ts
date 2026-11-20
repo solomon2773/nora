@@ -648,6 +648,13 @@ function formatHostForUrl(host) {
   return require("net").isIP(host) === 6 ? `[${host}]` : host;
 }
 
+// Surfaced as `connect.apiKeyIssue` when the placement supports a connect
+// block but the credential cannot be resolved — an explicit reason instead of
+// a silently absent key, which is expensive to diagnose (#456).
+const HERMES_API_KEY_UNRESOLVABLE =
+  "The runtime API key could not be resolved: the stored credential failed to decrypt " +
+  "(for example after an ENCRYPTION_KEY rotation) and runtime inspection did not recover it.";
+
 async function resolveHermesConnectInfo(agent, req) {
   // The connect block carries the decrypted runtime API key, so it is a
   // management capability rather than ordinary status metadata. Keep the
@@ -657,6 +664,13 @@ async function resolveHermesConnectInfo(agent, req) {
 
   const runtimeFields = buildAgentRuntimeFields(agent);
   if (runtimeFields.runtime_family !== "hermes") return null;
+  // Remote Docker is a first-class Hermes placement (#456): its connect block
+  // is built from the host/ports the worker persisted at deploy time — the
+  // local Docker socket knows nothing about the remote daemon, and nothing
+  // needs inspecting anyway.
+  if (runtimeFields.deploy_target === "remote-docker") {
+    return resolveRemoteHermesConnectInfo(agent);
+  }
   if (runtimeFields.deploy_target !== "docker") return null;
   if (!agent.container_id) return null;
 
@@ -707,6 +721,38 @@ async function resolveHermesConnectInfo(agent, req) {
     runtimeApiUrl: `${proto}://${host}:${runtimeApiHostPort}`,
     dashboardUrl: dashboardHostPort ? `${proto}://${host}:${dashboardHostPort}` : null,
     apiKey: apiKey || null,
+    apiKeyIssue: apiKey ? null : HERMES_API_KEY_UNRESOLVABLE,
+    dashboardUsername: dashboardAuth?.username ?? null,
+    dashboardPassword: dashboardAuth?.password ?? null,
+  };
+}
+
+// Connect info for a Hermes agent on a registered remote Docker host. The
+// worker already persisted the advertised address and the published runtime
+// and dashboard host ports on the agent row at deploy time — the same values
+// this response's `runtime` and `dashboard` blocks are built from — so no
+// daemon inspection is needed or possible here. URLs are plain HTTP at the
+// published host ports, the same addresses the readiness probe and the
+// dashboard embed proxy use; the local path's browsing-host heuristics do not
+// apply to a remote machine.
+async function resolveRemoteHermesConnectInfo(agent) {
+  const host = String(agent?.runtime_host || "").trim();
+  const runtimePort = Number.parseInt(agent?.runtime_port, 10);
+  if (!host || !Number.isInteger(runtimePort) || runtimePort < 1 || runtimePort > 65535) {
+    return null;
+  }
+  const formattedHost = formatHostForUrl(host);
+  const dashboardPort = Number.parseInt(agent?.dashboard_port, 10);
+  const apiKey = await resolveHermesApiToken(agent);
+  const dashboardAuth = apiKey ? deriveHermesDashboardBasicAuth(apiKey) : null;
+  return {
+    runtimeApiUrl: `http://${formattedHost}:${runtimePort}`,
+    dashboardUrl:
+      Number.isInteger(dashboardPort) && dashboardPort >= 1 && dashboardPort <= 65535
+        ? `http://${formattedHost}:${dashboardPort}`
+        : null,
+    apiKey: apiKey || null,
+    apiKeyIssue: apiKey ? null : HERMES_API_KEY_UNRESOLVABLE,
     dashboardUsername: dashboardAuth?.username ?? null,
     dashboardPassword: dashboardAuth?.password ?? null,
   };
@@ -1245,6 +1291,11 @@ async function resolveHermesApiToken(agent) {
   }
   if (storedToken) return storedToken;
   if (!agent?.container_id) return null;
+  // The env-inspection fallback talks to the LOCAL Docker socket; for any
+  // other placement (remote-docker, k8s, proxmox) the container id names a
+  // container on a different daemon, so inspecting here is at best a 404 and
+  // never the right container (#456).
+  if (buildAgentRuntimeFields(agent).deploy_target !== "docker") return null;
 
   try {
     const Docker = require("dockerode");
