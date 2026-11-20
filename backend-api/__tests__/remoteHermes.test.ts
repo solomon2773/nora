@@ -104,24 +104,32 @@ describe("RemoteHermesBackend port publishing", () => {
       gatewayHostPort: 19500,
       dashboardHostPort: 19044,
     });
+    // Literal keys on purpose: these once asserted `${HERMES_RUNTIME_PORT}/tcp`
+    // with a constant that the contracts module never exported, so production
+    // and the test agreed on the malformed key "undefined/tcp" (#450).
     expect(bindings).toEqual({
-      [`${HERMES_RUNTIME_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19500" }],
-      [`${HERMES_DASHBOARD_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19044" }],
+      "8642/tcp": [{ HostIp: "0.0.0.0", HostPort: "19500" }],
+      "9119/tcp": [{ HostIp: "0.0.0.0", HostPort: "19044" }],
     });
   });
 
   it("publishes only the runtime port when no dashboard port is allocated", () => {
     const backend = new RemoteHermesBackend(hermesProfile());
     expect(backend._hermesPortBindings({ gatewayHostPort: 19500 })).toEqual({
-      [`${HERMES_RUNTIME_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19500" }],
+      "8642/tcp": [{ HostIp: "0.0.0.0", HostPort: "19500" }],
     });
   });
 
   it("publishes only the dashboard port when no runtime port is allocated", () => {
     const backend = new RemoteHermesBackend(hermesProfile());
     expect(backend._hermesPortBindings({ dashboardHostPort: 19044 })).toEqual({
-      [`${HERMES_DASHBOARD_PORT}/tcp`]: [{ HostIp: "0.0.0.0", HostPort: "19044" }],
+      "9119/tcp": [{ HostIp: "0.0.0.0", HostPort: "19044" }],
     });
+  });
+
+  it("the shared contracts module is the single source of truth for both ports", () => {
+    expect(HERMES_RUNTIME_PORT).toBe(8642);
+    expect(HERMES_DASHBOARD_PORT).toBe(9119);
   });
 
   it("publishes nothing when no host port is allocated", () => {
