@@ -1014,6 +1014,7 @@ describe("provisioner deployment lifecycle", () => {
 
   it("terminalizes a replacement when placement persistence fails after destroying the old runtime", async () => {
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
@@ -1238,6 +1239,7 @@ describe("provisioner deployment lifecycle", () => {
 
   it("rejects a queued deployment whose claimed user differs from the persisted owner", async () => {
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
@@ -1313,6 +1315,7 @@ describe("provisioner deployment lifecycle", () => {
     });
     mockAssertRemoteHostAgentUse.mockRejectedValue(revoked);
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
@@ -1383,6 +1386,7 @@ describe("provisioner deployment lifecycle", () => {
     });
     mockAssertRemoteHostAgentUse.mockRejectedValue(revoked);
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
@@ -1493,6 +1497,7 @@ describe("provisioner deployment lifecycle", () => {
       };
     });
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
@@ -1599,6 +1604,7 @@ describe("provisioner deployment lifecycle", () => {
       };
     });
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
@@ -1705,6 +1711,7 @@ describe("provisioner deployment lifecycle", () => {
 
   function queueLocalHermesAgentRow(overrides = {}) {
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {
@@ -1989,6 +1996,7 @@ describe("provisioner deployment lifecycle", () => {
 
   it("does not run a queued job after another flow terminalized the agent", async () => {
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockResolvedValueOnce({
@@ -2131,6 +2139,7 @@ describe("provisioner deployment lifecycle", () => {
 
   it("refuses to provision a replacement while a prior runtime identity remains", async () => {
     mockLockClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [{ locked: true }] })
       .mockResolvedValueOnce({ rows: [{ pg_advisory_unlock: true }] });
     mockWorkerDb.query.mockImplementation(async (sql) => {

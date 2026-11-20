@@ -105,7 +105,7 @@ const { releaseGatewayPort } = require("../portAllocations");
 const { buildPostgresConfig } = require("../lib/connectionConfig");
 const {
   advisoryLockBusyError,
-  advisoryLockClientOptions,
+  connectAdvisoryLockSession,
   isAdvisoryLockTimeout,
 } = require("../lib/advisoryLocks");
 const {
@@ -232,16 +232,7 @@ function createDemoActivationLockClient() {
     ...process.env,
     DB_APPLICATION_NAME: "nora-backend-demo-activation",
   });
-  // Bounded lock waits: the activation lock is acquired with a blocking
-  // pg_advisory_lock, so without this a stuck holder makes demo activation hang
-  // rather than fail (#406).
-  return new Client({
-    ...clientConfig,
-    options: advisoryLockClientOptions(
-      process.env.DEMO_ACTIVATION_LOCK_TIMEOUT_MS,
-      clientConfig.options,
-    ),
-  });
+  return new Client(clientConfig);
 }
 
 function demoActivationJobId(agentId) {
@@ -1945,7 +1936,11 @@ router.post("/activate-demo", requireSession, async (req, res) => {
     // queue, and audit work. Keep it off the main pool so DB_POOL_MAX=1 does
     // not self-deadlock while the session lock is held.
     client = createDemoActivationLockClient();
-    await client.connect();
+    // Bounded lock waits: the activation lock is acquired with a blocking
+    // pg_advisory_lock, so without the bound a stuck holder makes demo
+    // activation hang rather than fail (#406). Applied per-session after
+    // connect, never as a startup parameter pooled endpoints reject (#453).
+    await connectAdvisoryLockSession(client, process.env.DEMO_ACTIVATION_LOCK_TIMEOUT_MS);
     connected = true;
     try {
       await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);

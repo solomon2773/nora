@@ -113,6 +113,7 @@ describe("llmProviders demo/default transitions", () => {
 
   it("promotes the first real provider when demo is the current default", async () => {
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [] }) // session advisory lock
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [{ provider_count: 1, demo_is_default: true }] })
@@ -165,6 +166,7 @@ describe("llmProviders demo/default transitions", () => {
 
   it("keeps a new real provider non-default when a real default already exists", async () => {
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
@@ -189,6 +191,7 @@ describe("llmProviders demo/default transitions", () => {
 
   it("serializes default changes and the provider update in one mutation-lock transaction", async () => {
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [] }) // session advisory lock
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // clear previous default
@@ -207,6 +210,7 @@ describe("llmProviders demo/default transitions", () => {
     expect(
       mockDbClient.query.mock.calls.map(([sql]) => sql.trim().split(/\s+/).slice(0, 3).join(" ")),
     ).toEqual([
+      "SELECT set_config('lock_timeout', $1,",
       "SELECT pg_advisory_lock(hashtextextended($1, 0))",
       "BEGIN",
       "UPDATE llm_providers SET",
@@ -219,6 +223,7 @@ describe("llmProviders demo/default transitions", () => {
 
   it("repairs a historical missing default when adding another provider", async () => {
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
@@ -236,6 +241,7 @@ describe("llmProviders demo/default transitions", () => {
 
   it("serializes provider deletion with deployment finalization", async () => {
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "provider-openai" }] })
@@ -246,16 +252,16 @@ describe("llmProviders demo/default transitions", () => {
 
     expect(mockDb.query).not.toHaveBeenCalled();
     expect(mockDbClient.query).toHaveBeenNthCalledWith(
-      1,
+      2,
       "SELECT pg_advisory_lock(hashtextextended($1, 0))",
       ["nora:llm-providers:user-1"],
     );
     expect(mockDbClient.query).toHaveBeenNthCalledWith(
-      3,
+      4,
       "DELETE FROM llm_providers WHERE id = $1 AND user_id = $2 RETURNING id",
       ["provider-openai", "user-1"],
     );
-    expect(mockDbClient.query.mock.calls[3][0]).toContain("NOT EXISTS");
+    expect(mockDbClient.query.mock.calls[4][0]).toContain("NOT EXISTS");
     expect(mockDbClient.end).toHaveBeenCalledTimes(1);
   });
 
@@ -320,6 +326,7 @@ describe("llmProviders demo/default transitions", () => {
   it("does not run afterCommit when the mutation rolls back", async () => {
     const afterCommit = jest.fn();
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [] }) // lock
       .mockResolvedValueOnce({ rows: [] }) // BEGIN
       .mockResolvedValueOnce({ rows: [] }) // clear defaults
@@ -340,6 +347,7 @@ describe("llmProviders demo/default transitions", () => {
 
   it("keeps a sole provider as the default when a client tries to unset it", async () => {
     mockDbClient.query
+      .mockResolvedValueOnce({ rows: [] }) // bound lock waits (set_config, #453)
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({
@@ -387,11 +395,12 @@ describe("llmProviders demo/default transitions", () => {
     await expect(withProviderStateLock("user-1", operation)).resolves.toBe("synced");
 
     expect(mockDbClient.query.mock.calls.map(([sql]) => sql)).toEqual([
+      "SELECT set_config('lock_timeout', $1, false)",
       "SELECT pg_advisory_lock(hashtextextended($1, 0))",
       "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
     ]);
     expect(mockDbClient.query).toHaveBeenNthCalledWith(
-      1,
+      2,
       "SELECT pg_advisory_lock(hashtextextended($1, 0))",
       ["nora:llm-providers:user-1"],
     );

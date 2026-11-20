@@ -10,8 +10,8 @@
 //
 // Two guards, for the two sides of that failure:
 //
-//   advisoryLockClientOptions — waiters. A bare `pg_advisory_lock` blocks with no
-//   bound, so a stuck holder turned `POST /api/llm-providers` into a request
+//   connectAdvisoryLockSession — waiters. A bare `pg_advisory_lock` blocks with
+//   no bound, so a stuck holder turned `POST /api/llm-providers` into a request
 //   that hung past the reverse proxy's 60s limit and 504'd, sometimes after the
 //   INSERT had already committed, so a client retry produced duplicate rows.
 //   Postgres applies lock_timeout to advisory locks, so a bounded wait fails
@@ -52,26 +52,40 @@ function normalizeAdvisoryLockWaitMs(value, fallbackMs = DEFAULT_LOCK_WAIT_MS) {
 }
 
 /**
- * Build the pg connection `options` that bound lock waits on a lock session.
+ * Connect a dedicated lock client and bound every lock wait on its session.
  *
- * Applied at connect time rather than as a follow-up statement: it needs no
- * extra round trip, cannot be skipped by an early return between connecting and
- * acquiring, and keeps the query sequence on these sessions unchanged.
+ * The bound is applied as a session-scoped `set_config` right after connect
+ * rather than as a `-c lock_timeout=` connect-time startup parameter: pooled
+ * Postgres endpoints (transaction poolers such as PgBouncer, Neon's pooled
+ * URLs) reject unsupported startup parameters outright, which refused every
+ * one of these connections and silently broke provider writes and deploy
+ * finalization while reads kept working (#453). One extra round trip on a
+ * client that exists to hold a lock is the acceptable cost.
  *
- * The bound covers every lock wait on the session, not only the advisory
- * acquire. That is intended — these are dedicated, short-lived lock clients, and
- * a row lock that never returns wedges the caller just as thoroughly as an
- * advisory one.
+ * Session scope (`is_local = false`) keeps the old semantics: the bound covers
+ * every lock wait on the session, not only the advisory acquire. That is
+ * intended — these are dedicated, short-lived lock clients, and a row lock
+ * that never returns wedges the caller just as thoroughly as an advisory one.
  *
+ * @param {Object} client - Disconnected pg client dedicated to lock work.
  * @param {*} waitMs - Desired wait, normalized before use.
- * @param {string} [existingOptions] - Options already configured, preserved.
- * @returns {string} Value for the pg client's `options` field.
+ * @returns {Promise<void>} Resolves once the session is connected and bounded.
  */
-function advisoryLockClientOptions(waitMs, existingOptions = "") {
+async function connectAdvisoryLockSession(client, waitMs) {
   const normalized = normalizeAdvisoryLockWaitMs(waitMs);
-  return [String(existingOptions || "").trim(), `-c lock_timeout=${normalized}`]
-    .filter(Boolean)
-    .join(" ");
+  await client.connect();
+  try {
+    await client.query("SELECT set_config('lock_timeout', $1, false)", [`${normalized}ms`]);
+  } catch (error) {
+    // An unbounded session would wait forever behind a stuck holder — the
+    // exact hang this module exists to prevent (#406). Close the session
+    // rather than proceeding unbounded, and say what failed.
+    await Promise.resolve(client.end?.()).catch(() => {});
+    if (error instanceof Error) {
+      error.message = `Could not bound lock_timeout on an advisory-lock session: ${error.message}`;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -134,7 +148,7 @@ module.exports = {
   DEFAULT_LOCK_WAIT_MS,
   LOCK_TIMEOUT_SQLSTATE,
   advisoryLockBusyError,
-  advisoryLockClientOptions,
+  connectAdvisoryLockSession,
   isAdvisoryLockTimeout,
   normalizeAdvisoryLockWaitMs,
   startAdvisoryLockHoldWatchdog,
