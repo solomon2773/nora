@@ -524,9 +524,12 @@ test("gateway lines older than when collection was turned on are skipped, and th
   const agent = agentRow();
   const tenant = { workspaceId: "ws-1", ownerUserId: null };
 
+  // Relative to now (recentTs): the collector also drops lines older than the
+  // retention window (counted back from the wall clock), so absolute fixture
+  // dates would start falling into that cutoff as they age and break this test.
   const records = [
-    { level: "info", msg: "written while collection was off", ts: "2026-10-01T15:44:11.000Z" },
-    { level: "info", msg: "written after it was turned on", ts: "2026-10-01T15:44:50.000Z" },
+    { level: "info", msg: "written while collection was off", ts: recentTs(-60) },
+    { level: "info", msg: "written after it was turned on", ts: recentTs(-10) },
   ];
   const client = fakeGatewayClient([{ lines: records, cursor: "c9", sourceKind: "file" }]);
   const cursorState = { currentSourceKind: "file", sourceCursors: new Map() };
@@ -538,7 +541,7 @@ test("gateway lines older than when collection was turned on are skipped, and th
     segmentWriter,
     tenant,
     resolveLogRetention: alwaysAllowRetention,
-    getCollectionSince: async () => "2026-10-01T15:44:33.000Z",
+    getCollectionSince: async () => recentTs(-30),
     logger: silentLogger(),
   });
 
