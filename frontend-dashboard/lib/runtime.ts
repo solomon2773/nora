@@ -273,6 +273,7 @@ function buildRemoteHostTarget(
   template: any = {},
   host: any = {},
   enabledSandboxProfileIds: string[] | undefined = undefined,
+  runtimeFamilyId: string | undefined = undefined,
 ) {
   const enabledProfileIds = new Set(
     Array.isArray(enabledSandboxProfileIds) ? enabledSandboxProfileIds : ["standard"],
@@ -281,7 +282,10 @@ function buildRemoteHostTarget(
     [template.defaultSandboxProfile, "standard", ...enabledProfileIds].find((profileId) =>
       enabledProfileIds.has(profileId),
     ) || "standard";
-  const runtimeFamily = template.runtimeFamily || "openclaw";
+  // The family being merged wins over whatever the cloned template carries:
+  // a catalog template without a runtimeFamily must not silently relabel a
+  // hermes host target as openclaw (#455).
+  const runtimeFamily = runtimeFamilyId || template.runtimeFamily || "openclaw";
   const runtimeFamilyLabel = template.runtimeFamilyLabel || formatRuntimeFamilyLabel(runtimeFamily);
   const targetLabel = host.label || host.executionTargetId;
   const sandboxProfiles = (template.sandboxProfiles || []).map((profile: any) => {
@@ -338,6 +342,8 @@ function buildRemoteHostTarget(
     adapter: "remote-docker",
     deployTarget: "remote-docker",
     legacyBackendId: "remote-docker",
+    runtimeFamily,
+    runtimeFamilyLabel,
     label: targetLabel,
     shortLabel: targetLabel,
     summary: `Your remote Docker host · ${remoteHostTargetLabel(host)}`,
@@ -389,15 +395,19 @@ export function mergeRemoteHostsIntoConfig(
   if (!runtimeFamilies.length) return backendConfig;
 
   const nextRuntimeFamilies = runtimeFamilies.map((family: any) => {
-    if (family.id !== "openclaw") return family;
     const targets = Array.isArray(family.executionTargets) ? family.executionTargets : [];
+    // Full parity across runtime families (#455): a family supports BYOC
+    // remote Docker exactly when the backend catalog handed it a remote-docker
+    // execution target (the generic placeholder that stays disabled until a
+    // concrete host exists). Families without one are returned untouched —
+    // openclaw is not special-cased; the catalog is the source of truth, the
+    // same one the deploy API validates against.
     const template =
       targets.find((target: any) => target.id === "remote-docker") ||
-      targets.find((target: any) => target.deployTarget === "remote-docker") ||
-      targets.find((target: any) => target.id === "docker");
+      targets.find((target: any) => target.deployTarget === "remote-docker");
     if (!template) return family;
     const hostTargets = hosts.map((host) =>
-      buildRemoteHostTarget(template, host, family.enabledSandboxProfiles),
+      buildRemoteHostTarget(template, host, family.enabledSandboxProfiles, family.id),
     );
     const withoutPlaceholder = targets.filter(
       (target: any) => target.deployTarget !== "remote-docker",
