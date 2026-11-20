@@ -29,7 +29,11 @@ test("dedicated session locks leave a one-connection work pool available", async
   const dedicatedClient = {
     connect: async () => events.push("lock:connect"),
     query: async (sql) => {
-      events.push(sql.includes("unlock") ? "lock:unlock" : "lock:acquire");
+      if (sql.includes("set_config")) {
+        events.push("lock:bound");
+      } else {
+        events.push(sql.includes("unlock") ? "lock:unlock" : "lock:acquire");
+      }
       return { rows: [{ locked: true }] };
     },
     end: async () => events.push("lock:end"),
@@ -48,6 +52,9 @@ test("dedicated session locks leave a one-connection work pool available", async
 
   assert.deepEqual(events, [
     "lock:connect",
+    // The session's lock waits are bounded right after connect (#453), before
+    // anything tries to acquire.
+    "lock:bound",
     "lock:acquire",
     "main:query",
     "lock:unlock",
@@ -84,6 +91,10 @@ test("dedicated session locks close exactly once when advisory unlock fails", as
     createClient: () => ({
       connect: async () => events.push("connect"),
       query: async (sql) => {
+        if (sql.includes("set_config")) {
+          events.push("bound");
+          return { rows: [] };
+        }
         if (sql.includes("unlock")) {
           events.push("unlock");
           throw new Error("connection dropped during unlock");
@@ -104,6 +115,7 @@ test("dedicated session locks close exactly once when advisory unlock fails", as
 
   assert.deepEqual(events, [
     "connect",
+    "bound",
     "acquire",
     "unlock",
     "release-error:connection dropped during unlock",

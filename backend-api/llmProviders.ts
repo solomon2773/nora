@@ -7,7 +7,7 @@ const { encrypt, decrypt, ensureEncryptionConfigured } = require("./crypto");
 const { buildPostgresConfig } = require("./lib/connectionConfig");
 const {
   advisoryLockBusyError,
-  advisoryLockClientOptions,
+  connectAdvisoryLockSession,
   isAdvisoryLockTimeout,
   startAdvisoryLockHoldWatchdog,
 } = require("./lib/advisoryLocks");
@@ -250,13 +250,7 @@ function createProviderMutationClient() {
     ...process.env,
     DB_APPLICATION_NAME: "nora-backend-provider-mutation",
   });
-  return new Client({
-    ...clientConfig,
-    options: advisoryLockClientOptions(
-      process.env.PROVIDER_MUTATION_LOCK_TIMEOUT_MS,
-      clientConfig.options,
-    ),
-  });
+  return new Client(clientConfig);
 }
 
 async function withProviderStateLock(userId, operation) {
@@ -273,14 +267,15 @@ async function withProviderStateLock(userId, operation) {
   let lockHeld = false;
   let cancelHoldWatchdog = () => {};
   try {
-    await client.connect();
+    // Connect and bound every lock wait on the session (session-scoped
+    // set_config, not a startup parameter — pooled endpoints reject those,
+    // #453). A bare pg_advisory_lock blocks indefinitely, so a holder whose
+    // work never returns turned this call into a request that hung past the
+    // reverse proxy's timeout and 504'd — sometimes after the INSERT had
+    // committed, so the operator's retry created duplicate provider rows
+    // (#406). Failing fast keeps the outcome unambiguous.
+    await connectAdvisoryLockSession(client, process.env.PROVIDER_MUTATION_LOCK_TIMEOUT_MS);
     connected = true;
-    // The wait is bounded by lock_timeout on the connection itself (see
-    // createProviderMutationClient). A bare pg_advisory_lock blocks
-    // indefinitely, so a holder whose work never returns turned this call into a
-    // request that hung past the reverse proxy's timeout and 504'd — sometimes
-    // after the INSERT had committed, so the operator's retry created duplicate
-    // provider rows (#406). Failing fast keeps the outcome unambiguous.
     try {
       await client.query("SELECT pg_advisory_lock(hashtextextended($1, 0))", [lockKey]);
     } catch (error) {
