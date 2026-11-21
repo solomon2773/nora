@@ -66,6 +66,18 @@ which carries the full notes and verification details.
   new `NORA_COMPOSE_NETWORK` variable names the platform network explicitly and is consulted
   before any heuristic. Reported by @rileydev (#452).
 
+### Changed
+
+- **Security dependency sweep across all workspaces**, clearing every open critical and high
+  advisory: Next.js 16.4.6 (all three frontends), nodemailer 10.6, undici 7.30, body-parser
+  2.4.0, proxy-addr 2.0.8, handlebars 4.7.10, the legacy transitive js-yaml copy to 3.15.2,
+  @grpc/grpc-js 1.14.7, ip-address 10.7.6, follow-redirects 1.16.3, source-map-js 1.2.4, sharp
+  0.35.5, @modelcontextprotocol/sdk 1.32 (with hono 4.13.19 and @hono/node-server 2.1), zod
+  4.6, fast-uri 3.1.9, and the agent-runtime dev toolchain to vite 8.3.8 / vitest 5.1.
+  `npm audit --omit=dev --audit-level=high` is clean in every workspace; the deliberate
+  sanitize-html hold (moderate; its fix requires an ESM-only htmlparser2 the Jest sandbox
+  cannot load) remains in place.
+
 ## [v1.22.0](https://github.com/solomon2773/nora/releases/tag/v1.22.0) — 2026-09-16
 
 Admin localization and dependency refresh release. The remaining top-level admin dashboard
