@@ -151,6 +151,94 @@ test("a NemoClaw-only runtime family selects NemoClaw as the concrete host defau
   );
 });
 
+// A hermes runtime family as /config/backends serves it: its own remote-docker
+// placeholder (hermes supports remote Docker in the backend catalog), standard
+// sandbox only. The placeholder deliberately omits `runtimeFamily` to pin that
+// the merge takes the family from the family being merged, not the template.
+function createHermesFamily() {
+  return {
+    id: "hermes",
+    label: "Hermes",
+    enabledSandboxProfiles: ["standard"],
+    executionTargets: [
+      {
+        id: "docker",
+        adapter: "docker",
+        deployTarget: "docker",
+        enabled: true,
+        configured: true,
+        available: true,
+        sandboxProfiles: [
+          {
+            id: "standard",
+            label: "Standard",
+            enabled: true,
+            configured: true,
+            available: true,
+            onboardingVisible: true,
+          },
+        ],
+      },
+      {
+        id: "remote-docker",
+        adapter: "remote-docker",
+        deployTarget: "remote-docker",
+        enabled: false,
+        configured: false,
+        available: false,
+        sandboxProfiles: [
+          {
+            id: "standard",
+            label: "Standard",
+            enabled: false,
+            configured: false,
+            available: false,
+            availableForOnboarding: false,
+            onboardingVisible: true,
+            issue: "Remote Docker requires a registered host.",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+test("connected Remote Docker hosts appear for the hermes family too — full parity (#455)", () => {
+  const backendConfig = createBackendConfig();
+  backendConfig.runtimeFamilies.push(createHermesFamily() as any);
+
+  const merged = mergeRemoteHostsIntoConfig(backendConfig, [connectedHost]);
+  const target = activeExecutionTargetFromConfig(merged, "hermes", "remote:build-host");
+
+  assert.ok(target, "the hermes family must receive a selectable remote host target");
+  assert.equal(target.adapter, "remote-docker");
+  assert.equal(target.deployTarget, "remote-docker");
+  assert.equal(target.available, true);
+  assert.equal(target.runtimeFamily, "hermes");
+  assert.deepEqual(target.enabledSandboxProfiles, ["standard"]);
+  assert.equal(target.sandboxProfiles[0].selectionId, "hermes:remote:build-host:standard");
+  assert.equal(target.sandboxProfiles[0].fullLabel, "Hermes + Build host");
+
+  // And the openclaw family still gets its own host target alongside.
+  const openclawTarget = activeExecutionTargetFromConfig(merged, "openclaw", "remote:build-host");
+  assert.ok(openclawTarget);
+  assert.equal(openclawTarget.runtimeFamily, "openclaw");
+});
+
+test("a family whose catalog has no remote-docker target is returned untouched", () => {
+  const hermesFamily = createHermesFamily() as any;
+  hermesFamily.executionTargets = hermesFamily.executionTargets.filter(
+    (target: any) => target.deployTarget !== "remote-docker",
+  );
+  const backendConfig = { runtimeFamilies: [hermesFamily] };
+
+  const merged = mergeRemoteHostsIntoConfig(backendConfig, [connectedHost]);
+
+  // No placeholder means the catalog says this family does not support remote
+  // Docker — a docker target alone must not conjure remote host entries.
+  assert.equal(merged.runtimeFamilies[0], hermesFamily);
+});
+
 test("unavailable or view-only remote hosts do not become deploy targets", () => {
   const backendConfig = createBackendConfig();
 

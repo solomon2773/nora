@@ -10,7 +10,6 @@ const {
 } = require("../../backend-api/lib/connectionConfig");
 const {
   advisoryLockBusyError,
-  advisoryLockClientOptions,
   isAdvisoryLockTimeout,
 } = require("../../backend-api/lib/advisoryLocks");
 const { getDefaultAgentImage } = require("../../agent-runtime/lib/agentImages");
@@ -157,16 +156,10 @@ function createProvisionerLockClient(scope) {
     ...process.env,
     DB_APPLICATION_NAME: `nora-worker-provisioner-${scope}`,
   });
-  // Bound every lock wait on these dedicated lock sessions. The provider
-  // mutation lock acquires with a blocking pg_advisory_lock, so without this a
-  // stuck holder makes the worker wait forever behind it (#406).
-  return new Client({
-    ...clientConfig,
-    options: advisoryLockClientOptions(
-      process.env.PROVISIONER_LOCK_TIMEOUT_MS,
-      clientConfig.options,
-    ),
-  });
+  // Lock waits on these dedicated sessions are bounded when
+  // acquireDedicatedSessionLock connects them (PROVISIONER_LOCK_TIMEOUT_MS,
+  // applied per-session — see connectAdvisoryLockSession, #406/#453).
+  return new Client(clientConfig);
 }
 
 // Hash any agent ID (uuid string or integer) to a signed 64-bit BigInt suitable

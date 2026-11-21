@@ -1,6 +1,9 @@
 // @ts-nocheck
 const crypto = require("crypto");
-const { startAdvisoryLockHoldWatchdog } = require("../../backend-api/lib/advisoryLocks.ts");
+const {
+  connectAdvisoryLockSession,
+  startAdvisoryLockHoldWatchdog,
+} = require("../../backend-api/lib/advisoryLocks.ts");
 
 function normalizeProviderConfig(config) {
   if (typeof config !== "string") return config ?? null;
@@ -91,6 +94,11 @@ async function acquireDedicatedSessionLock({
   // lock, which is the same path a crash takes.
   maxHoldMs,
   onHoldTimeout,
+  // Bound on every lock wait of the session, applied right after connect
+  // (session-scoped set_config — pooled Postgres endpoints reject the
+  // equivalent startup parameter, #453). Without it a stuck holder makes this
+  // waiter block forever (#406).
+  lockWaitMs = process.env.PROVISIONER_LOCK_TIMEOUT_MS,
 } = {}) {
   if (typeof createClient !== "function") {
     throw new Error("createClient is required");
@@ -109,7 +117,7 @@ async function acquireDedicatedSessionLock({
 
   let connected = false;
   try {
-    await client.connect();
+    await connectAdvisoryLockSession(client, lockWaitMs);
     connected = true;
     const result = await acquire(client);
     if (!isAcquired(result)) {

@@ -24,6 +24,7 @@ const {
 const {
   AGENT_RUNTIME_PORT,
   OPENCLAW_GATEWAY_PORT,
+  HERMES_RUNTIME_PORT,
   HERMES_DASHBOARD_PORT,
 } = require("../../../agent-runtime/lib/contracts");
 const { shellSingleQuote } = require("../../../agent-runtime/lib/containerCommand");
@@ -51,7 +52,6 @@ const {
   toFiniteInteger,
 } = require("./telemetry");
 
-const HERMES_RUNTIME_PORT = 8642;
 const HERMES_HOME = "/opt/data";
 const HERMES_WORKSPACE = `${HERMES_HOME}/workspace`;
 const OPENCLAW_ENV_FILE = "/etc/nora/openclaw.env.b64";

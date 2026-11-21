@@ -1,7 +1,7 @@
 // @ts-nocheck
 const {
   advisoryLockBusyError,
-  advisoryLockClientOptions,
+  connectAdvisoryLockSession,
   isAdvisoryLockTimeout,
   normalizeAdvisoryLockWaitMs,
   startAdvisoryLockHoldWatchdog,
@@ -14,24 +14,65 @@ const {
 // block forever, and holders must not hold forever.
 describe("advisory lock guards (#406)", () => {
   describe("bounded waits", () => {
-    it("sets lock_timeout as a connection option", () => {
-      expect(advisoryLockClientOptions(5000)).toBe("-c lock_timeout=5000");
+    function fakeLockClient({ setConfigError = null } = {}) {
+      return {
+        connect: jest.fn().mockResolvedValue(undefined),
+        query: jest.fn(() =>
+          setConfigError ? Promise.reject(setConfigError) : Promise.resolve({ rows: [] }),
+        ),
+        end: jest.fn().mockResolvedValue(undefined),
+      };
+    }
+
+    it("bounds lock waits with a session-scoped set_config after connect", async () => {
+      // Session-scoped (is_local = false) and issued as a plain query, never a
+      // `-c lock_timeout=` startup parameter: pooled Postgres endpoints reject
+      // unknown startup parameters outright, which refused the connection and
+      // silently broke provider writes and deploy finalization (#453).
+      const client = fakeLockClient();
+      await connectAdvisoryLockSession(client, 5000);
+
+      expect(client.connect).toHaveBeenCalledTimes(1);
+      expect(client.query).toHaveBeenCalledTimes(1);
+      expect(client.query).toHaveBeenCalledWith("SELECT set_config('lock_timeout', $1, false)", [
+        "5000ms",
+      ]);
+      expect(client.end).not.toHaveBeenCalled();
     });
 
-    it("preserves options the connection already carries", () => {
-      expect(advisoryLockClientOptions(5000, "-c statement_timeout=1000")).toBe(
-        "-c statement_timeout=1000 -c lock_timeout=5000",
+    it("closes the session and says what failed when the bound cannot be applied", async () => {
+      // An unbounded lock session would wait forever behind a stuck holder —
+      // refuse to hand it to the caller, and don't leak the connection.
+      const client = fakeLockClient({ setConfigError: new Error("permission denied") });
+
+      await expect(connectAdvisoryLockSession(client, 5000)).rejects.toThrow(
+        "Could not bound lock_timeout on an advisory-lock session: permission denied",
       );
+      expect(client.end).toHaveBeenCalledTimes(1);
     });
 
-    it("clamps absurd values rather than trusting the environment", () => {
+    it("leaves the client untouched when connect itself fails", async () => {
+      const client = fakeLockClient();
+      client.connect.mockRejectedValue(new Error("ECONNREFUSED"));
+
+      await expect(connectAdvisoryLockSession(client, 5000)).rejects.toThrow("ECONNREFUSED");
+      expect(client.query).not.toHaveBeenCalled();
+      expect(client.end).not.toHaveBeenCalled();
+    });
+
+    it("clamps absurd values rather than trusting the environment", async () => {
       expect(normalizeAdvisoryLockWaitMs("1")).toBe(10);
       expect(normalizeAdvisoryLockWaitMs("99999999")).toBe(120000);
       // A missing or unparseable value must still produce a bound, never zero
       // (which Postgres reads as "wait forever" — the bug being fixed).
       expect(normalizeAdvisoryLockWaitMs(undefined)).toBe(30000);
       expect(normalizeAdvisoryLockWaitMs("not-a-number")).toBe(30000);
-      expect(advisoryLockClientOptions(undefined)).toBe("-c lock_timeout=30000");
+
+      const client = fakeLockClient();
+      await connectAdvisoryLockSession(client, undefined);
+      expect(client.query).toHaveBeenCalledWith("SELECT set_config('lock_timeout', $1, false)", [
+        "30000ms",
+      ]);
     });
 
     it("recognises Postgres refusing to keep waiting", () => {

@@ -22,6 +22,7 @@ which carries the full notes and verification details.
 
   No rows means nothing is removed. Otherwise, decide which workspace should keep each agent
   before upgrading.
+
 - **Log collection is off after an upgrade until you turn it on.** It stores agent output on
   disk, so Nora does not enable it for you. `setup.sh --update` and `setup.ps1` ask three
   questions (on or off, days to keep, disk cap; a bare Enter means off) when run from a terminal
@@ -38,6 +39,32 @@ which carries the full notes and verification details.
   `backendEnv.NORA_LOG_STORAGE` must be `s3` or `r2` (the chart refuses to render with `local` or
   unset), and `workerProvisioner.replicas` must stay `1`. An install that never enables logging
   needs no log storage settings.
+
+### Fixed
+
+- **Advisory-lock sessions work through pooled Postgres endpoints.** Provider writes, demo
+  activation, and the worker's provisioning locks bounded their lock waits with a
+  `-c lock_timeout=` connect-time startup parameter, which transaction poolers (for example
+  Neon's pooled URLs) reject outright — so after upgrading past v1.17.0, provider changes and
+  deploy finalization failed silently against a pooled `DATABASE_URL` while the API booted
+  healthy. The bound is now applied as a session-scoped `set_config` right after connecting,
+  the same pooler-safe mechanism the migration runner already used. Session-level advisory
+  locks still work best on a direct (unpooled) connection; the environment-variable docs now
+  say so next to `DATABASE_URL`. Reported with a full diagnosis by @rileydev (#453).
+- **Remote-docker Hermes agents now return the `connect` block** (runtime API URL and key,
+  dashboard URL and basic-auth credentials) from `GET /api/agents/:id/hermes-ui`, built from the
+  host and published ports the worker persisted at deploy time. Previously only local-Docker
+  agents returned it, leaving no control-plane path to recover a remote agent's runtime
+  credentials. When the placement supports a connect block but the key cannot be resolved, the
+  response now carries an explicit `apiKeyIssue` reason instead of a silently null credential.
+  Reported with a full diagnosis by @rileydev (#456).
+- **Compose-network detection fails closed on ambiguity.** On a Docker host running several
+  Compose projects, all three detection strategies picked the first `*_default` match in
+  enumeration order, so agents could silently attach to the wrong project's network. With more
+  than one candidate, detection now refuses to guess (logging the candidates) and agents fall
+  back to the default bridge with published ports — predictable instead of silently wrong. The
+  new `NORA_COMPOSE_NETWORK` variable names the platform network explicitly and is consulted
+  before any heuristic. Reported by @rileydev (#452).
 
 ## [v1.22.0](https://github.com/solomon2773/nora/releases/tag/v1.22.0) — 2026-09-16
 
