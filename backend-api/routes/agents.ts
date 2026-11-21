@@ -42,6 +42,7 @@ const {
 } = require("../gatewayProxy");
 const {
   HERMES_DASHBOARD_PORT,
+  HERMES_RUNTIME_PORT,
   OPENCLAW_GATEWAY_PORT,
 } = require("../../agent-runtime/lib/contracts");
 const {
@@ -614,11 +615,6 @@ function resolvePublishedGatewayProtocol(req) {
   // produces browser TLS errors on direct gateway ports like :19618.
   return "http";
 }
-
-// Runtime API port inside the Hermes container (Nora's compose network talks
-// to this via runtime_host:runtime_port; this constant is only used to look
-// up the matching HOST-published port binding below).
-const HERMES_RUNTIME_PORT = 8642;
 
 // Externally-reachable connect info for Hermes Desktop / direct clients on a
 // LOCAL Docker agent. Nora's own traffic uses the compose-network address

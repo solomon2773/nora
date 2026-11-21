@@ -8,7 +8,10 @@ const {
   uptimeFromContainerInfo,
 } = require("./telemetry");
 const { getHermesDockerAgentImage } = require("../../../agent-runtime/lib/agentImages");
-const { HERMES_DASHBOARD_PORT } = require("../../../agent-runtime/lib/contracts");
+const {
+  HERMES_RUNTIME_PORT,
+  HERMES_DASHBOARD_PORT,
+} = require("../../../agent-runtime/lib/contracts");
 const { buildContainerBootstrap } = require("../../../agent-runtime/lib/containerCommand");
 const {
   buildHermesRuntimeConfigBootstrapCommand,
@@ -17,7 +20,6 @@ const {
   deriveHermesDashboardBasicAuth,
 } = require("../../../agent-runtime/lib/hermesDashboardAuth");
 
-const HERMES_RUNTIME_PORT = 8642;
 const HERMES_HOME = "/opt/data";
 const HERMES_WORKSPACE = `${HERMES_HOME}/workspace`;
 const HERMES_DASHBOARD_LOG = `${HERMES_HOME}/hermes-dashboard.log`;

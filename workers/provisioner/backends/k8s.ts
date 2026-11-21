@@ -16,6 +16,7 @@ const {
 const {
   OPENCLAW_GATEWAY_PORT,
   AGENT_RUNTIME_PORT,
+  HERMES_RUNTIME_PORT,
   HERMES_DASHBOARD_PORT,
 } = require("../../../agent-runtime/lib/contracts");
 const {
@@ -39,7 +40,6 @@ const {
   roundMetric,
 } = require("./telemetry");
 
-const HERMES_RUNTIME_PORT = 8642;
 const HERMES_HOME = "/opt/data";
 const HERMES_WORKSPACE = `${HERMES_HOME}/workspace`;
 const HERMES_DASHBOARD_LOG = `${HERMES_HOME}/hermes-dashboard.log`;
