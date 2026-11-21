@@ -77,6 +77,23 @@ updates:
       # deploy/exec/logs check on a real cluster.
       - dependency-name: "@kubernetes/client-node"
         versions: [">=2"]
+      # OpenTelemetry's 0.x exporters version in lockstep with a core/SDK
+      # major: exporter 0.2xx pairs with SDK/core/resources 2.x (api <1.10),
+      # exporter 0.30x requires core 3.x (api >=1.10 <1.11). Dependabot reads
+      # 0.222 -> 0.301 as a MINOR bump, so the grouped update moves the
+      # exporters alone and leaves an unsolvable peer set — `npm ci` fails
+      # ERESOLVE outright in backend-api (#501). Hold every piece of the
+      # matrix at the 2.x line and lift all four rules together in one
+      # deliberate SDK-3 migration that bumps api, core/sdk/resources, and
+      # the exporters in the same change.
+      - dependency-name: "@opentelemetry/exporter-*"
+        versions: [">=0.300.0"]
+      - dependency-name: "@opentelemetry/sdk-*"
+        versions: [">=3"]
+      - dependency-name: "@opentelemetry/resources"
+        versions: [">=3"]
+      - dependency-name: "@opentelemetry/api"
+        versions: [">=1.10.0"]
     # Minor and patch updates land as one grouped PR per directory; majors stay
     # individual so a breaking bump is reviewed on its own.
     groups:
