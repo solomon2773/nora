@@ -82,6 +82,10 @@ const mockGetDeploymentDefaults = jest.fn().mockResolvedValue({
 const mockGetAgentHubSourceApiKey = jest.fn().mockResolvedValue("nora_hub_test_key");
 const mockAssertKubernetesExecutionTargetAvailable = jest.fn().mockResolvedValue();
 const mockAssertRemoteHostExecutionTargetAvailable = jest.fn().mockResolvedValue();
+// Hermes WebUI routes authorize remote-docker agents against the registered
+// host before anything else; default to "authorized and connected" so route
+// behavior can be tested without staging remote_hosts rows.
+const mockAssertRemoteHostAgentUse = jest.fn().mockResolvedValue(null);
 const mockVerifyApiKey = jest.fn();
 const mockGetAgentVersion = jest.fn();
 const mockRecordAgentVersion = jest.fn();
@@ -132,6 +136,7 @@ jest.mock("../kubernetesClusters", () => ({
 jest.mock("../remoteHosts", () => ({
   ...jest.requireActual("../remoteHosts"),
   assertRemoteHostExecutionTargetAvailable: mockAssertRemoteHostExecutionTargetAvailable,
+  assertRemoteHostAgentUse: mockAssertRemoteHostAgentUse,
 }));
 jest.mock("../scheduler", () => ({
   selectNode: jest.fn().mockResolvedValue({ name: "worker-01" }),
@@ -563,6 +568,7 @@ beforeEach(() => {
   mockGetAgentVersion.mockReset();
   mockVerifyApiKey.mockReset().mockResolvedValue(null);
   mockAssertRemoteHostExecutionTargetAvailable.mockReset().mockResolvedValue();
+  mockAssertRemoteHostAgentUse.mockReset().mockResolvedValue(null);
   mockRecordAgentVersion.mockReset().mockResolvedValue({
     id: "version-restored",
     versionNumber: 3,
@@ -1215,9 +1221,141 @@ describe("Hermes WebUI routes", () => {
       runtimeApiUrl: "http://100.71.115.105:19500",
       dashboardUrl: "http://100.71.115.105:19044",
       apiKey: "hermes-token",
+      apiKeyIssue: null,
       dashboardUsername: "nora",
       dashboardPassword: HERMES_CONNECT_DASHBOARD.password,
     });
+  });
+
+  it("returns the connect block for a remote-docker Hermes agent from the persisted row (#456)", async () => {
+    mockReadHermesRuntimeSnapshot.mockResolvedValueOnce({
+      runtimeStatus: {
+        gateway_state: "running",
+        active_agents: 1,
+        updated_at: "2026-04-12T12:00:00.000Z",
+        platforms: {},
+      },
+      directory: {
+        updated_at: "2026-04-12T12:00:00.000Z",
+        platforms: {},
+      },
+      platformDetails: {},
+      jobsCount: 0,
+      modelConfig: {
+        defaultModel: "gpt-5.5",
+        provider: "custom",
+        baseUrl: "https://api.openai.com/v1",
+      },
+    });
+    // The worker persisted the advertised remote host and the published
+    // runtime/dashboard HOST ports on the agent row at deploy time — the
+    // connect block is built from those, never from a daemon inspection.
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "a-hermes-connect-remote",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "remote-docker",
+          deploy_target: "remote-docker",
+          execution_target_id: "remote:build-host",
+          container_id: "hermes-remote-container",
+          runtime_host: "laptop.tail-scale.ts.net",
+          runtime_port: 19500,
+          dashboard_port: 19044,
+          gateway_token: "hermes-token",
+        },
+      ],
+    });
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        createMockFetchResponse({
+          body: { status: "ok", platform: "hermes-agent" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createMockFetchResponse({
+          body: {
+            object: "list",
+            data: [{ id: "desk-bot", object: "model" }],
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        createMockFetchResponse({
+          body: {
+            version: "1.0.0",
+            gateway_running: true,
+            gateway_state: "running",
+            active_sessions: 4,
+          },
+        }),
+      );
+
+    const res = await auth(request(app).get("/agents/a-hermes-connect-remote/hermes-ui"));
+
+    expect(res.status).toBe(200);
+    expect(res.body.connect).toEqual({
+      runtimeApiUrl: "http://laptop.tail-scale.ts.net:19500",
+      dashboardUrl: "http://laptop.tail-scale.ts.net:19044",
+      apiKey: "hermes-token",
+      apiKeyIssue: null,
+      dashboardUsername: "nora",
+      dashboardPassword: HERMES_CONNECT_DASHBOARD.password,
+    });
+    // The remote daemon is not reachable through the local socket — the
+    // remote connect path must never inspect a container.
+    expect(mockDockerInspect).not.toHaveBeenCalled();
+  });
+
+  it("rejects a remote-docker Hermes agent with no persisted runtime address without touching Docker", async () => {
+    mockReadHermesRuntimeSnapshot.mockResolvedValueOnce({
+      runtimeStatus: {
+        gateway_state: "running",
+        active_agents: 1,
+        updated_at: "2026-04-12T12:00:00.000Z",
+        platforms: {},
+      },
+      directory: {
+        updated_at: "2026-04-12T12:00:00.000Z",
+        platforms: {},
+      },
+      platformDetails: {},
+      jobsCount: 0,
+      modelConfig: {
+        defaultModel: "gpt-5.5",
+        provider: "custom",
+        baseUrl: "https://api.openai.com/v1",
+      },
+    });
+    mockDb.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "a-hermes-remote-no-addr",
+          user_id: "user-1",
+          status: "running",
+          runtime_family: "hermes",
+          backend_type: "remote-docker",
+          deploy_target: "remote-docker",
+          execution_target_id: "remote:build-host",
+          container_id: "hermes-remote-container",
+          runtime_host: null,
+          runtime_port: null,
+          gateway_token: "hermes-token",
+        },
+      ],
+    });
+    global.fetch = jest.fn().mockResolvedValue(createMockFetchResponse({ body: {} }));
+
+    const res = await auth(request(app).get("/agents/a-hermes-remote-no-addr/hermes-ui"));
+
+    // The route's own runtime-address guard fires before any connect
+    // resolution — the agent row carries no address to connect to at all.
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/runtime address not available/i);
+    expect(mockDockerInspect).not.toHaveBeenCalled();
   });
 
   it("returns null connect credentials when the runtime token is unresolvable", async () => {
@@ -1284,6 +1422,9 @@ describe("Hermes WebUI routes", () => {
       runtimeApiUrl: "http://100.71.115.105:19500",
       dashboardUrl: "http://100.71.115.105:19044",
       apiKey: null,
+      // The block stays present with an explicit reason instead of a silently
+      // absent credential (#456).
+      apiKeyIssue: expect.stringContaining("could not be resolved"),
       dashboardUsername: null,
       dashboardPassword: null,
     });
@@ -1442,6 +1583,7 @@ describe("Hermes WebUI routes", () => {
       runtimeApiUrl: "http://100.71.115.105:19500",
       dashboardUrl: "http://100.71.115.105:19044",
       apiKey: "hermes-token",
+      apiKeyIssue: null,
       dashboardUsername: "nora",
       dashboardPassword: HERMES_CONNECT_DASHBOARD.password,
     });
@@ -1506,6 +1648,7 @@ describe("Hermes WebUI routes", () => {
       runtimeApiUrl: "http://nora.internal.example:19500",
       dashboardUrl: "http://nora.internal.example:19044",
       apiKey: "hermes-token",
+      apiKeyIssue: null,
       dashboardUsername: "nora",
       dashboardPassword: HERMES_CONNECT_DASHBOARD.password,
     });
