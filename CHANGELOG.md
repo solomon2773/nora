@@ -58,6 +58,13 @@ which carries the full notes and verification details.
   credentials. When the placement supports a connect block but the key cannot be resolved, the
   response now carries an explicit `apiKeyIssue` reason instead of a silently null credential.
   Reported with a full diagnosis by @rileydev (#456).
+- **Compose-network detection fails closed on ambiguity.** On a Docker host running several
+  Compose projects, all three detection strategies picked the first `*_default` match in
+  enumeration order, so agents could silently attach to the wrong project's network. With more
+  than one candidate, detection now refuses to guess (logging the candidates) and agents fall
+  back to the default bridge with published ports — predictable instead of silently wrong. The
+  new `NORA_COMPOSE_NETWORK` variable names the platform network explicitly and is consulted
+  before any heuristic. Reported by @rileydev (#452).
 
 ## [v1.22.0](https://github.com/solomon2773/nora/releases/tag/v1.22.0) — 2026-09-16
 
