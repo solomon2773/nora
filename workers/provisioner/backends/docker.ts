@@ -310,16 +310,50 @@ class DockerBackend extends ProvisionerBackend {
   }
 
   /**
+   * Pick the Compose network from candidate network names: exactly one
+   * `*_default` candidate wins. Several candidates make the choice depend on
+   * Docker's enumeration order rather than anything the operator controls
+   * (multiple Compose projects on one host, a container attached to several
+   * networks, a leftover network from a removed stack), so ambiguity fails
+   * closed — the caller then falls back to the default bridge with a published
+   * host port, which is predictable, unlike a silently wrong network attach
+   * (#452). `NORA_COMPOSE_NETWORK` is the deterministic escape hatch.
+   */
+  _pickUniqueComposeNetwork(names, strategy) {
+    const candidates = Array.from(
+      new Set((names || []).filter((name) => String(name || "").endsWith("_default"))),
+    );
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      console.warn(
+        `[docker] Ambiguous Compose network candidates (${strategy}): ${candidates.join(", ")} — ` +
+          "refusing to guess. Set NORA_COMPOSE_NETWORK to the platform network name.",
+      );
+    }
+    return null;
+  }
+
+  /**
    * Find the Docker Compose-managed network so agent containers can communicate
    * with backend-api and other platform services.
    *
-   * Three strategies tried in order — the first match wins:
+   * The `NORA_COMPOSE_NETWORK` override is consulted first; otherwise three
+   * strategies are tried in order, each accepting only an unambiguous match:
    *   1. Self-inspect via HOSTNAME / /etc/hostname (container ID)
    *   2. Find worker-provisioner container via Compose service label
    *   3. Scan all networks for a Compose-labelled *_default network
    */
   async _findComposeNetwork() {
     if (this._composeNetwork) return this._composeNetwork;
+
+    // Explicit operator override — the deterministic answer on hosts running
+    // several Compose projects, consulted before any heuristic (#452).
+    const configured = String(process.env.NORA_COMPOSE_NETWORK || "").trim();
+    if (configured) {
+      this._composeNetwork = configured;
+      console.log(`[docker] Using Compose network (NORA_COMPOSE_NETWORK): ${configured}`);
+      return this._composeNetwork;
+    }
 
     // Strategy 1: self-inspect via container ID from hostname
     try {
@@ -330,7 +364,7 @@ class DockerBackend extends ProvisionerBackend {
         const self = this.docker.getContainer(hostname);
         const info = await self.inspect();
         const nets = info.NetworkSettings?.Networks || {};
-        const composeName = Object.keys(nets).find((n) => n.endsWith("_default"));
+        const composeName = this._pickUniqueComposeNetwork(Object.keys(nets), "self-inspect");
         if (composeName) {
           this._composeNetwork = composeName;
           console.log(`[docker] Using Compose network (self-inspect): ${composeName}`);
@@ -349,7 +383,7 @@ class DockerBackend extends ProvisionerBackend {
       if (containers.length > 0) {
         const info = await this.docker.getContainer(containers[0].Id).inspect();
         const nets = info.NetworkSettings?.Networks || {};
-        const composeName = Object.keys(nets).find((n) => n.endsWith("_default"));
+        const composeName = this._pickUniqueComposeNetwork(Object.keys(nets), "service label");
         if (composeName) {
           this._composeNetwork = composeName;
           console.log(`[docker] Using Compose network (service label): ${composeName}`);
@@ -363,13 +397,13 @@ class DockerBackend extends ProvisionerBackend {
     // Strategy 3: scan all networks for a Compose-labelled *_default network
     try {
       const networks = await this.docker.listNetworks();
-      const net = networks.find(
-        (n) =>
-          n.Name.endsWith("_default") && n.Labels?.["com.docker.compose.network"] === "default",
-      );
-      if (net) {
-        this._composeNetwork = net.Name;
-        console.log(`[docker] Using Compose network (label scan): ${net.Name}`);
+      const labelled = networks
+        .filter((n) => n.Labels?.["com.docker.compose.network"] === "default")
+        .map((n) => n.Name);
+      const composeName = this._pickUniqueComposeNetwork(labelled, "label scan");
+      if (composeName) {
+        this._composeNetwork = composeName;
+        console.log(`[docker] Using Compose network (label scan): ${composeName}`);
       }
     } catch {
       console.warn("[docker] Failed to scan networks");
