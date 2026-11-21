@@ -4,7 +4,25 @@ All notable changes to Nora are documented here. Each entry summarizes the
 corresponding [GitHub release](https://github.com/solomon2773/nora/releases),
 which carries the full notes and verification details.
 
-## Unreleased
+## [v1.23.0](https://github.com/solomon2773/nora/releases/tag/v1.23.0) — 2026-11-21
+
+Observability release. Nora gains a full logging and tracing control plane — opt-in encrypted
+log collection with search and export, OTLP trace ingest, and Runtime/Traces lenses in the
+operator dashboard — alongside a six-bug community fix batch (thanks @rileydev and
+@abhiishek-sharma) and a security dependency sweep that clears every open critical and high
+advisory. Read the upgrade notes below before updating: this release adds two required secrets
+and runs a one-way workspace-link migration.
+
+### Added
+
+- **Logging and tracing control plane.** Agent output is collected (opt-in), encrypted, and
+  stored in S3/R2-compatible object storage with retention sweeping, search, export, deletion,
+  and recovery; agents can emit OTLP traces into the same plane. The operator dashboard's Logs
+  page gains Runtime and Traces lenses (including a trace waterfall), workspaces control
+  retention, and the admin dashboard gains Log Collection, Log Storage, and Log Recovery
+  surfaces. Collection is **off** until an admin turns it on; `setup.sh`/`setup.ps1` ask during
+  install and upgrade. Kubernetes installs get Helm parity with chart guards. See the
+  [logging guide](https://docs.norafleet.ai/guides/logging) for the full feature.
 
 ### Upgrade notes — logging control plane
 
@@ -58,6 +76,20 @@ which carries the full notes and verification details.
   credentials. When the placement supports a connect block but the key cannot be resolved, the
   response now carries an explicit `apiKeyIssue` reason instead of a silently null credential.
   Reported with a full diagnosis by @rileydev (#456).
+- **Remote Hermes deploys publish the runtime port correctly.** `RemoteHermesBackend` imported
+  `HERMES_RUNTIME_PORT` from a module that never exported it, so the runtime port binding was
+  built under the literal key `"undefined/tcp"` — Docker rejects the create request and the
+  readiness probe could never pass. The constant is now exported from the shared contracts
+  module and all four previously drifted copies import it. Reported with a full diagnosis by
+  @rileydev (#450).
+- **The deploy picker offers remote Docker hosts for every runtime family that supports them.**
+  Registered remote hosts were injected for the openclaw family only, so a Hermes agent could
+  not be deployed to a remote host from the dashboard even though the API supports it. The
+  picker now gates on the backend catalog's own support signal, and host targets carry the
+  correct runtime family. Reported with a full diagnosis by @rileydev (#455).
+- **A mixed-case `DEFAULT_ADMIN_EMAIL` no longer seeds an admin account that can never log
+  in.** The bootstrap seed trimmed but did not lowercase the address, while login normalizes
+  with trim + lowercase. Contributed by @abhiishek-sharma (#451).
 - **Compose-network detection fails closed on ambiguity.** On a Docker host running several
   Compose projects, all three detection strategies picked the first `*_default` match in
   enumeration order, so agents could silently attach to the wrong project's network. With more
